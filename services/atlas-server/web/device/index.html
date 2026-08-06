@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atlas Device Login</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { max-width: 28rem; margin: 4rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.5rem; }
+    code { font-size: 1.1rem; letter-spacing: 0.08em; }
+    .box { border: 1px solid #8884; border-radius: 8px; padding: 1.25rem; }
+    label { display: block; margin-bottom: 0.35rem; }
+    input[type=text] {
+      width: 100%; box-sizing: border-box; padding: 0.6rem 0.75rem;
+      font-size: 1.1rem; letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .actions { display: flex; gap: 0.75rem; margin-top: 1rem; }
+    button { padding: 0.55rem 1rem; cursor: pointer; }
+    .ok { color: #0a7; margin-top: 1rem; }
+    .err { color: #c33; margin-top: 1rem; }
+    .meta { color: #666; font-size: 0.9rem; margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Atlas device login</h1>
+  <p>Confirm the code shown in your CLI and enter your account machine code.</p>
+  <p class="meta">Signed in as <strong>{{.Email}}</strong>{{if .MachineCode}} · your machine code is <code>{{.MachineCode}}</code>{{end}}</p>
+  <div class="box">
+    {{if .Success}}
+      <p class="ok">Approved. You can return to the Atlas CLI.</p>
+    {{else}}
+      <form method="post" action="/atlas/oauth2/device">
+        <label for="user_code">CLI user code</label>
+        <input id="user_code" name="user_code" type="text" value="{{.UserCode}}" autocomplete="one-time-code" required />
+        <label for="machine_code">Your machine code</label>
+        <input id="machine_code" name="machine_code" type="text" autocomplete="off" required placeholder="ABCD-EFGH" />
+        <div class="actions">
+          <button type="submit" name="action" value="approve">Approve</button>
+          <button type="submit" name="action" value="deny">Deny</button>
+        </div>
+      </form>
+      {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+    {{end}}
+  </div>
+</body>
+</html>

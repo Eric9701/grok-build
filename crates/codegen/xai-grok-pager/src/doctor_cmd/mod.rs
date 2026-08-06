@@ -199,7 +199,7 @@ fn write_fix_preview(plan: &FixPlan, writer: &mut impl Write) -> std::io::Result
     writeln!(writer, "\nBehavior:")?;
     writeln!(
         writer,
-        "  New interactive shells run typed `ssh ...` as `grok wrap ssh ...`."
+        "  New interactive shells run typed `ssh ...` as `atlas wrap ssh ...`."
     )?;
     writeln!(
         writer,

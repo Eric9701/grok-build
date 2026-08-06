@@ -1316,9 +1316,9 @@ pub fn user_config_path() -> PathBuf {
     config_path()
 }
 
-/// Path to a project-level config file (`<dir>/.grok/config.toml`).
+/// Path to a project-level config file (`<dir>/.atlas/config.toml`, legacy `.grok`).
 pub fn project_config_path(dir: &std::path::Path) -> PathBuf {
-    dir.join(".grok").join("config.toml")
+    xai_grok_config::project_dir_in(dir).join("config.toml")
 }
 
 /// True when the config file at `path` defines `[mcp_servers.<name>]`.

@@ -61,9 +61,13 @@ pub fn is_cli_chat_proxy_url(url: &str) -> bool {
     if matches_trusted_base_url(url, crate::env::PROD_CLI_CHAT_PROXY_BASE_URL) {
         return true;
     }
+    // Legacy public xAI cli-chat-proxy (still accepted for header injection).
+    if matches_trusted_base_url(url, "https://cli-chat-proxy.grok.com/v1") {
+        return true;
+    }
     if let Ok(u) = reqwest::Url::parse(url)
         && let Some(h) = u.host_str()
-        && (h == "localhost" || h == "127.0.0.1" || h == "::1")
+        && (h == "localhost" || h == "127.0.0.1" || h == "::1" || h == "10.218.220.237")
     {
         return true;
     }

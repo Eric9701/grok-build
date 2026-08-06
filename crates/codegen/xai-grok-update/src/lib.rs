@@ -4,4 +4,7 @@ pub mod version;
 
 pub use auto_update::UpdateStatus;
 pub use minimum_version::enforce_minimum_version_or_exit;
-pub use version::{UpdateConfig, channel_label, channel_name, write_version_cache};
+pub use version::{
+    UpdateConfig, channel_label, channel_name, resolve_cli_base_urls, write_version_cache,
+    DEFAULT_CLI_BASE_URL,
+};

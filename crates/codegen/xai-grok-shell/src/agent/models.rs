@@ -993,6 +993,8 @@ impl ModelsManager {
             tracing::info!("model catalog refresh skipped: remote_fetch disabled");
             return;
         }
+        // Online refresh must hit the network so managed-model sync can run.
+        self.inner.cache.invalidate();
         let cfg = self.inner.cfg.read().clone();
         let endpoints = cfg.endpoints.clone();
         let fetch_auth = *self.inner.fetch_auth.read();
@@ -1062,6 +1064,8 @@ impl ModelsManager {
             tracing::info!("model catalog refresh skipped: remote_fetch disabled");
             return;
         }
+        // Force network so managed catalog syncs on `/model` Online refresh.
+        self.inner.cache.invalidate();
         let auth = self.inner.auth_manager.auth().await.ok();
         let has_auth = auth.is_some();
         let fetch_auth = *self.inner.fetch_auth.read();
@@ -1381,13 +1385,48 @@ fn build_prefetched_map(
     api_base_url_override: Option<String>,
 ) -> IndexMap<String, ModelEntry> {
     let mut map: IndexMap<String, ModelEntry> = IndexMap::with_capacity(models.len());
-    for m in models {
+    for mut m in models {
+        let managed = m.managed == Some(true);
+        // Managed catalog: id + model must be ENC(...) and decrypt; reject tamper.
+        if managed {
+            match crate::util::model_secret::require_decrypt_managed(&m.model, "model") {
+                Ok(plain) => m.model = plain,
+                Err(e) => {
+                    tracing::warn!(error = %e, id = ?m.id, "skipping managed model (model id)");
+                    continue;
+                }
+            }
+            if let Some(ref id) = m.id {
+                match crate::util::model_secret::require_decrypt_managed(id, "id") {
+                    Ok(plain) => m.id = Some(plain),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "skipping managed model (catalog id)");
+                        continue;
+                    }
+                }
+            }
+            // Already decrypted; avoid ModelInfo::from_config treating plaintext as tamper.
+            m.managed = None;
+        } else {
+            if let Ok(plain) =
+                crate::util::model_secret::resolve_catalog_string(&m.model, false, "model")
+            {
+                m.model = plain;
+            }
+            if let Some(ref id) = m.id.clone() {
+                if let Ok(plain) =
+                    crate::util::model_secret::resolve_catalog_string(&id, false, "id")
+                {
+                    m.id = Some(plain);
+                }
+            }
+        }
         let key = m.id.clone().unwrap_or_else(|| m.model.clone());
         let info = config::ModelInfo::from_config(&m);
         let entry = ModelEntry {
             info,
-            api_key: None,
-            env_key: None,
+            api_key: crate::util::model_secret::maybe_decrypt_api_key(m.api_key.clone()),
+            env_key: m.env_key.clone(),
             auth_provider: None,
             api_base_url: m.api_base_url.clone().or(api_base_url_override.clone()),
         };
@@ -1470,6 +1509,24 @@ fn prefetch_models_blocking_gated(
                 ModelFetchAuth::ApiKey => Some(endpoints.xai_api_base_url.clone()),
                 _ => None,
             };
+            // Persist ENC-bearing / explicitly managed entries for offline use.
+            // Managed models carry ENC(model) + ENC(id) on the wire.
+            let to_sync: Vec<_> = models
+                .iter()
+                .filter(|m| {
+                    m.managed == Some(true)
+                        || m.api_key
+                            .as_deref()
+                            .is_some_and(crate::util::model_secret::is_enc)
+                        || crate::util::model_secret::is_enc(&m.model)
+                })
+                .cloned()
+                .collect();
+            if let Err(e) =
+                crate::config::managed_models::sync_managed_models_to_config(&to_sync)
+            {
+                tracing::warn!(error = %e, "failed to persist managed models to config.toml");
+            }
             let map = build_prefetched_map(models, api_base_url_override);
 
             // NOTE: inheriting context_window / agent_type / api_backend
@@ -3403,6 +3460,7 @@ mod tests {
             show_model_fingerprint: false,
             stream_tool_calls: None,
             laziness_detector: config::LazinessDetectorPerModelConfig::default(),
+            managed: None,
         }
     }
 

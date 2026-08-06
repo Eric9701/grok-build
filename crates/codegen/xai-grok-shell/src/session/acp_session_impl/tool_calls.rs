@@ -15,6 +15,37 @@ fn is_mcp_create_pull_request(tool_name: &str) -> bool {
         None => tool_name == "create_pull_request",
     }
 }
+/// Whether `tool_name` is a file write/edit tool whose successful call
+/// produces an artifact (a file created or modified). Used to feed the
+/// per-session artifact list for task/agent/artifact reporting. Deliberately
+/// excludes read-only tools (e.g. `read_file`) that also carry a path arg.
+fn is_artifact_tool(tool_name: &str) -> bool {
+    let short = crate::session::mcp_servers::parse_mcp_tool_name(tool_name)
+        .map(|(_, tool)| tool.to_string())
+        .unwrap_or_else(|| tool_name.to_string());
+    matches!(
+        short.as_str(),
+        "write"
+            | "write_file"
+            | "search_replace"
+            | "str_replace"
+            | "strreplace"
+            | "edit"
+            | "edit_file"
+            | "apply_patch"
+            | "create_file"
+            | "multi_edit"
+    )
+}
+/// Extract the target file path from raw tool-call JSON arguments, checking
+/// the common path keys used by write/edit tools.
+fn extract_artifact_path(raw_arguments: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(raw_arguments).ok()?;
+    ["file_path", "target_file", "filePath", "path"]
+        .iter()
+        .find_map(|k| parsed.get(*k).and_then(|p| p.as_str()))
+        .map(str::to_owned)
+}
 /// Blocking wait tools that should abort when a mid-turn interjection is pending.
 fn is_interruptible_wait_tool(tool_name: &str, args: &serde_json::Value) -> bool {
     match tool_name {
@@ -694,6 +725,12 @@ impl SessionActor {
                 outcome = <&'static str >::from(tool_outcome),
             )
             .in_scope(|| {});
+            if matches!(tool_outcome, crate::session::events::ToolOutcome::Success)
+                && is_artifact_tool(&prepared.tool_name)
+                && let Some(path) = extract_artifact_path(&prepared.raw_arguments)
+            {
+                self.signals_handle().record_artifact_written(path);
+            }
             if let Some(artifact) = compaction_artifact_read(&prepared.parsed_args) {
                 tracing::info_span!(
                     "compaction.segment_read", session_id = % self.session_info.id.0,

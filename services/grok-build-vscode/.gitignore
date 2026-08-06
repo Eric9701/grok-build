@@ -1,0 +1,21 @@
+node_modules/
+out/
+out-integration/
+*.vsix
+!releases/*.vsix
+.vscode-test/
+.DS_Store
+.env
+docs/codex-style-analysis.md
+
+# Local agent working practice — depends on Pawel's own tooling, not the project
+CLAUDE.local.md
+
+# Runtime artifacts written by agent commands during dev/testing
+terminals/
+
+# Machine-specific agent tool permissions — per-developer, never shared
+.claude/settings.local.json
+
+# Ad-hoc raw-output dirs an agent may leave behind while verifying
+.verification/

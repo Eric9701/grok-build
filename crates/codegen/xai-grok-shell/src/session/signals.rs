@@ -160,6 +160,9 @@ pub struct SessionSignalsDelta {
     /// `true` when `tools_this_turn` was truncated (> 100 unique entries)
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub tools_this_turn_truncated: bool,
+    /// Files written/edited during this turn (dedup, order-preserving).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts_this_turn: Vec<String>,
     /// Per-tool success/failure breakdown for this turn.
     /// Each entry records how many times a specific tool succeeded or failed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -260,6 +263,10 @@ pub struct SessionSignals {
     /// Distinct tools that have been used in this session
     #[serde(default)]
     pub tools_used: Vec<String>,
+    /// Files written or edited in this session by write/edit tools
+    /// (dedup, order-preserving). Used for task/agent/artifact reporting.
+    #[serde(default)]
+    pub artifacts_written: Vec<String>,
 
     // === Model Usage ===
     /// Distinct models that have been used in this session
@@ -451,6 +458,10 @@ pub enum SignalEvent {
     RecordToolFailure(String),
     /// Record a tool execution duration
     RecordToolDuration { tool_name: String, duration_ms: u64 },
+    /// Record a file path written/edited by a successful write/edit tool
+    RecordArtifactWritten(String),
+    /// Drain per-turn written/edited paths (cancel/error paths that skip snapshot)
+    TakeArtifactsThisTurn(oneshot::Sender<Vec<String>>),
 
     // === Error Events ===
     /// Record a general error (sampling, network, etc.)
@@ -664,6 +675,23 @@ impl SessionSignalsHandle {
             tool_name: tool_name.into(),
             duration_ms,
         });
+    }
+
+    /// Record a file path produced by a successful write/edit tool.
+    pub fn record_artifact_written(&self, path: impl Into<String>) {
+        let _ = self
+            .tx
+            .send(SignalEvent::RecordArtifactWritten(path.into()));
+    }
+
+    /// Drain files written/edited since the last take / turn start.
+    /// Used when turn-end snapshot was not taken (cancel/error paths).
+    pub async fn take_artifacts_this_turn(&self) -> Vec<String> {
+        let (tx, rx) = oneshot::channel();
+        if self.tx.send(SignalEvent::TakeArtifactsThisTurn(tx)).is_err() {
+            return Vec::new();
+        }
+        rx.await.unwrap_or_default()
     }
 
     /// Record a bare echo/printf command for telemetry.
@@ -1027,6 +1055,9 @@ pub struct SessionSignalsActor {
     /// Tools called during the current turn (accumulated between snapshots).
     /// Reset after each `TakeTurnEndSnapshot`.
     tools_this_turn: Vec<String>,
+    /// Files written/edited during the current turn.
+    /// Reset after each `TakeTurnEndSnapshot` / `TakeArtifactsThisTurn`.
+    artifacts_this_turn: Vec<String>,
     /// Per-tool success/failure counts for the current turn.
     /// Key: tool name, Value: (successes, failures).
     /// Reset after each `TakeTurnEndSnapshot`.
@@ -1136,6 +1167,7 @@ impl SessionSignalsActor {
             // Turn delta state
             previous_turn_snapshot: None,
             tools_this_turn: Vec::new(),
+            artifacts_this_turn: Vec::new(),
             tool_outcomes_this_turn: HashMap::new(),
             error_types_this_turn: Vec::new(),
             tool_durations_this_turn: Vec::new(),
@@ -1254,6 +1286,17 @@ impl SessionSignalsActor {
                         tool_name,
                         duration_ms,
                     });
+                }
+                SignalEvent::RecordArtifactWritten(path) => {
+                    if !self.signals.artifacts_written.contains(&path) {
+                        self.signals.artifacts_written.push(path.clone());
+                    }
+                    if !self.artifacts_this_turn.contains(&path) {
+                        self.artifacts_this_turn.push(path);
+                    }
+                }
+                SignalEvent::TakeArtifactsThisTurn(respond_to) => {
+                    let _ = respond_to.send(std::mem::take(&mut self.artifacts_this_turn));
                 }
                 SignalEvent::RecordBareEcho => {
                     self.signals.bash_bare_echo_count += 1;
@@ -1470,6 +1513,7 @@ impl SessionSignalsActor {
                         error_types_this_turn: std::mem::take(&mut self.error_types_this_turn),
                         tools_this_turn: Vec::new(),      // filled below
                         tools_this_turn_truncated: false, // filled below
+                        artifacts_this_turn: Vec::new(),   // filled below
                         tool_outcomes_this_turn: Vec::new(), // filled below
                         tool_durations_this_turn: std::mem::take(
                             &mut self.tool_durations_this_turn,
@@ -1531,6 +1575,7 @@ impl SessionSignalsActor {
                     }
                     delta.tools_this_turn = tools;
                     delta.tools_this_turn_truncated = truncated;
+                    delta.artifacts_this_turn = std::mem::take(&mut self.artifacts_this_turn);
 
                     // Build sorted per-tool outcome list from the accumulated map.
                     let mut outcomes: Vec<ToolOutcome> =

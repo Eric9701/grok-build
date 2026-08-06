@@ -1,0 +1,1002 @@
+import { describe, it, expect } from "vitest";
+import { isPrimerSummary } from "../src/grok-primer";
+import * as path from "node:path";
+import {
+  forkDisplayName,
+  FsLike,
+  SessionMetaOverrides,
+  carrySessionName,
+  classifyUserQueries,
+  clearSessions,
+  cliSessionTitle,
+  deleteSessionDir,
+  extractUserQueries,
+  fallbackName,
+  indexSessions,
+  isEmptySession,
+  isPathInside,
+  listSessions,
+  mostRecentSession,
+  readContextUsage,
+  readSessionEntries,
+  resolveGrokHome,
+  sessionsDirFor,
+  type SessionListEntry,
+} from "../src/sessions";
+
+// Real grok chat_history.jsonl shape: role keyed on `type`, content is an array of
+// {type:"text",text}, injected context (<user_info>/<system-reminder>) carries a
+// `synthetic_reason`, and the user's prompt is wrapped in <user_query>. The primer
+// is always the first real query.
+const userMsg = (text: string, synthetic?: string) =>
+  JSON.stringify({ type: "user", content: [{ type: "text", text }], ...(synthetic ? { synthetic_reason: synthetic } : {}) });
+const PRIMER_LINE = userMsg("<user_query>\n[grok-build-vscode primer v4]\n\n## HIDDEN PRIMER\nstuff\n</user_query>");
+const SYSTEM_LINE = JSON.stringify({ type: "system", content: [{ type: "text", text: "You are an AI coding assistant…" }] });
+const USERINFO_LINE = userMsg("<user_info>\nOS: darwin\n</user_info>");
+const REMINDER_LINE = userMsg("<system-reminder>\nbackground task X completed\n</system-reminder>", "system_reminder");
+const ASSISTANT_LINE = JSON.stringify({ type: "assistant", content: [{ type: "text", text: "ok" }] });
+const realQuery = (q: string) => userMsg(`<user_query>\n${q}\n</user_query>`);
+// grok/composer sends some prompts (notably slash commands) UNWRAPPED — a plain
+// user message with no <user_query>. These must still count as real queries.
+const unwrappedQuery = (q: string) => userMsg(q);
+
+describe("mostRecentSession", () => {
+  const entry = (id: string, updatedAt: number, kind?: "subagent"): SessionListEntry => ({
+    id,
+    cwd: "/work/repo",
+    displayName: id,
+    rawSummary: id,
+    updatedAt,
+    createdAt: updatedAt,
+    numMessages: 1,
+    kind,
+  });
+
+  it("chooses the newest session in a repository scope", () => {
+    expect(mostRecentSession([entry("older", 10), entry("newest", 30), entry("middle", 20)])?.id)
+      .toBe("newest");
+  });
+
+  it("returns no session when the scoped history is empty", () => {
+    expect(mostRecentSession([])).toBeUndefined();
+  });
+
+  it("does not treat a subagent catalog entry as conversation history", () => {
+    expect(mostRecentSession([entry("child", 40, "subagent"), entry("chat", 20)])?.id).toBe("chat");
+  });
+});
+
+describe("extractUserQueries / classifyUserQueries (empty-session detection)", () => {
+  it("pulls only <user_query> text, skipping system / <user_info> / <system-reminder> / assistant", () => {
+    const jsonl = [SYSTEM_LINE, USERINFO_LINE, REMINDER_LINE, PRIMER_LINE, ASSISTANT_LINE].join("\n");
+    const qs = extractUserQueries(jsonl);
+    expect(qs).toHaveLength(1);
+    expect(qs[0]).toMatch(/^\[grok-build-vscode primer v4\]/);
+  });
+
+  it("classifies a primer-only history (with injected context turns) as primer:1 real:0", () => {
+    const jsonl = [SYSTEM_LINE, USERINFO_LINE, REMINDER_LINE, PRIMER_LINE, ASSISTANT_LINE].join("\n");
+    expect(classifyUserQueries(jsonl)).toEqual({ primer: 1, real: 0 });
+  });
+
+  it("counts a real follow-up as real:1", () => {
+    const jsonl = [SYSTEM_LINE, USERINFO_LINE, PRIMER_LINE, realQuery("fix the login bug")].join("\n");
+    expect(classifyUserQueries(jsonl)).toEqual({ primer: 1, real: 1 });
+  });
+
+  it("counts an UNWRAPPED prompt (composer slash command, no <user_query>) as real", () => {
+    // The composer-format session that exposed the bug: the real query is a plain
+    // user message, only the primer is wrapped. Must read as a real session.
+    const jsonl = [SYSTEM_LINE, USERINFO_LINE, unwrappedQuery("/imagine-video Elon Musk celebrating"), REMINDER_LINE, PRIMER_LINE].join("\n");
+    expect(classifyUserQueries(jsonl)).toEqual({ primer: 1, real: 1 });
+  });
+
+  it("tolerates blank and unparseable lines", () => {
+    const jsonl = ["", "not json", PRIMER_LINE, "  "].join("\n");
+    expect(classifyUserQueries(jsonl)).toEqual({ primer: 1, real: 0 });
+  });
+});
+
+describe("isEmptySession", () => {
+  const primerOnly = [SYSTEM_LINE, USERINFO_LINE, PRIMER_LINE, ASSISTANT_LINE].join("\n");
+  const withRealTurn = [SYSTEM_LINE, USERINFO_LINE, PRIMER_LINE, realQuery("do the thing")].join("\n");
+  // What a session opened by today's extension and never typed into looks like:
+  // grok's own boot lines and nothing else. Requiring a primer here is exactly what
+  // made the sweep a no-op after v2.2.0 (#97).
+  const neverTypedInto = [SYSTEM_LINE, USERINFO_LINE, REMINDER_LINE].join("\n");
+
+  it("content is authoritative: a session with no real query at all ⇒ empty", () => {
+    expect(isEmptySession({ numMessages: 0, chatHistory: neverTypedInto })).toBe(true);
+  });
+
+  it("content is authoritative: legacy primer-only ⇒ empty", () => {
+    expect(isEmptySession({ numMessages: 4, chatHistory: primerOnly })).toBe(true);
+  });
+
+  it("content is authoritative: any real query ⇒ NOT empty, even at low message count", () => {
+    expect(isEmptySession({ numMessages: 6, chatHistory: withRealTurn })).toBe(false);
+  });
+
+  it("never flags a session the user renamed", () => {
+    expect(isEmptySession({ numMessages: 4, customName: "My work", chatHistory: primerOnly })).toBe(false);
+  });
+
+  it("never flags a pinned, worktree-bound, or subagent session", () => {
+    expect(isEmptySession({ numMessages: 0, pinnedAt: 1, chatHistory: neverTypedInto })).toBe(false);
+    expect(isEmptySession({ numMessages: 0, worktreePath: "/work/wt", chatHistory: neverTypedInto })).toBe(false);
+    expect(isEmptySession({ numMessages: 0, kind: "subagent", chatHistory: neverTypedInto })).toBe(false);
+  });
+
+  it("never flags a session whose history exists but could not be read", () => {
+    // A locked or unreadable file proves nothing; claiming emptiness there would
+    // delete real work on a transient error.
+    expect(isEmptySession({ numMessages: 0, historyUnreadable: true })).toBe(false);
+  });
+
+  it("never flags a session whose history is in a shape we cannot read", () => {
+    // The interlock that keeps one CLI schema change from turning the sweep into a
+    // shredder: a reader that skips what it does not recognise cannot tell "nothing
+    // was said" from "the format moved".
+    const alien = ["not json at all", "{\"speaker\":\"user\",\"body\":\"do the thing\"}"].join("\n");
+    expect(isEmptySession({ numMessages: 12, chatHistory: alien })).toBe(false);
+    expect(isEmptySession({ numMessages: 0, chatHistory: alien })).toBe(false);
+  });
+
+  it("a truncated final line does not hide the real queries before it", () => {
+    // An ordinary mid-write read. The earlier lines still parse, so the session is
+    // correctly seen as having work in it.
+    const midWrite = [SYSTEM_LINE, USERINFO_LINE, realQuery("fix the flaky test"), '{"type":"assis'].join("\n");
+    expect(isEmptySession({ numMessages: 3, chatHistory: midWrite })).toBe(false);
+  });
+
+  it("an empty history FILE falls through to the message count, not to a parse failure", () => {
+    // Zero bytes is not an unreadable format — it is a session grok registered and
+    // never wrote a turn into.
+    expect(isEmptySession({ numMessages: 0, chatHistory: "" })).toBe(true);
+    expect(isEmptySession({ numMessages: 0, chatHistory: "\n\n" })).toBe(true);
+    expect(isEmptySession({ numMessages: 4, chatHistory: "", summary: "Fix the login bug" })).toBe(false);
+  });
+
+  it("never flags a session that isn't ours (a real query from the CLI)", () => {
+    const foreign = [SYSTEM_LINE, USERINFO_LINE, realQuery("hello from the CLI")].join("\n");
+    expect(isEmptySession({ numMessages: 3, chatHistory: foreign })).toBe(false);
+  });
+
+  it("never flags a composer session whose real prompt is UNWRAPPED (the #24 composer near-miss)", () => {
+    const composer = [SYSTEM_LINE, USERINFO_LINE, unwrappedQuery("/imagine a desert scene"), REMINDER_LINE, PRIMER_LINE].join("\n");
+    expect(isEmptySession({ numMessages: 8, chatHistory: composer })).toBe(false);
+  });
+
+  it("content stays authoritative ABOVE the message gate (agentic primer-only turn)", () => {
+    // Regression: a primer turn can balloon to dozens of tool/reasoning messages with
+    // NO real user query (and grok re-primes on restore/compact). num_messages must
+    // not veto the content signal, or such a session (the real 74-message one) lingers.
+    expect(isEmptySession({ numMessages: 999, chatHistory: primerOnly })).toBe(true);
+  });
+
+  it("a directory holding nothing but summary.json is empty (#97's unloadable rows)", () => {
+    expect(isEmptySession({ numMessages: 0 })).toBe(true);
+    expect(isEmptySession({ numMessages: 0, summary: "", generatedTitle: "" })).toBe(true);
+  });
+
+  it("without any history, a session that recorded messages or earned a title is kept", () => {
+    expect(isEmptySession({ numMessages: 3 })).toBe(false);
+    expect(isEmptySession({ numMessages: 0, summary: "Fix the login bug" })).toBe(false);
+  });
+
+  it("falls back to the title heuristic when no chat history is available", () => {
+    expect(isEmptySession({ numMessages: 4, summary: "Grok Build VSCode Primer v4 Plan Mode" })).toBe(true);
+    expect(isEmptySession({ numMessages: 4, generatedTitle: "Hidden Primer v4" })).toBe(true);
+    expect(isEmptySession({ numMessages: 4, summary: "Fix the login bug" })).toBe(false);
+  });
+
+  it("without chat history, the message gate still guards the title heuristic", () => {
+    // The numMessages gate only applies on the no-content fallback path: a large
+    // session with a primer-ish title but no readable history is NOT flagged.
+    expect(isEmptySession({ numMessages: 999, summary: "Grok Build VSCode Primer v4 Plan Mode" })).toBe(false);
+  });
+});
+
+describe("cliSessionTitle", () => {
+  it("prefers session_summary, falling back to generated_title", () => {
+    expect(cliSessionTitle("Rail archiving", "Something else")).toBe("Rail archiving");
+    expect(cliSessionTitle("  ", "Rail archiving")).toBe("Rail archiving");
+    expect(cliSessionTitle(undefined, undefined)).toBe("");
+  });
+
+  it("rejects legacy primer-derived titles in both forms", () => {
+    // grok summarizes from message #1, which for older extension sessions was our
+    // hidden primer — sometimes summarized, sometimes copied verbatim.
+    expect(cliSessionTitle("Grok VSCode Plan Mode Hidden Primer")).toBe("");
+    expect(cliSessionTitle("[grok-build-vscode primer v4] ## HIDDEN PRIMER This is")).toBe("");
+    expect(cliSessionTitle("Grok VSCode Plan Mode Hidden Primer", "Refactor the uplink"))
+      .toBe("Refactor the uplink");
+  });
+
+  it("keeps a real session that merely mentions a primer", () => {
+    expect(cliSessionTitle("Write a primer for new contributors")).toBe("Write a primer for new contributors");
+  });
+});
+
+interface FileEntry {
+  isDir: boolean;
+  content?: string;
+  mtimeMs?: number;
+}
+
+function buildFs(files: Record<string, FileEntry>): FsLike {
+  const removed = new Set<string>();
+  const exists = (p: string) => !removed.has(p) && files[p] !== undefined;
+  return {
+    existsSync: exists,
+    readdirSync: (p) => {
+      if (!exists(p)) throw new Error(`ENOENT: ${p}`);
+      const prefix = p.endsWith("/") || p.endsWith("\\") ? p : p + path.sep;
+      const names = new Set<string>();
+      for (const fp of Object.keys(files)) {
+        if (removed.has(fp)) continue;
+        const altPrefix = p + (p.endsWith("/") ? "" : "/");
+        if (fp.startsWith(prefix) || fp.startsWith(altPrefix)) {
+          const rest = fp.startsWith(prefix) ? fp.slice(prefix.length) : fp.slice(altPrefix.length);
+          const first = rest.split(/[\\/]/)[0];
+          if (first) names.add(first);
+        }
+      }
+      return Array.from(names);
+    },
+    readFileSync: (p) => {
+      const f = files[p];
+      if (!f || removed.has(p)) throw new Error(`ENOENT: ${p}`);
+      return f.content ?? "";
+    },
+    statSync: (p) => {
+      const f = files[p];
+      if (!f || removed.has(p)) throw new Error(`ENOENT: ${p}`);
+      return { isDirectory: () => f.isDir, mtimeMs: f.mtimeMs ?? 0 };
+    },
+    rmSync: (p) => {
+      for (const fp of Object.keys(files)) {
+        if (fp === p || fp.startsWith(p + "/") || fp.startsWith(p + path.sep)) {
+          removed.add(fp);
+        }
+      }
+    },
+    rmdirSync: (p) => {
+      for (const fp of Object.keys(files)) {
+        if (fp === p || fp.startsWith(p + "/") || fp.startsWith(p + path.sep)) {
+          removed.add(fp);
+        }
+      }
+    },
+  };
+}
+
+const grokHome = "/home/user/.grok";
+const cwd = "/tmp/project";
+
+function dirFor(id: string): string {
+  return path.join(sessionsDirFor(grokHome, cwd), id);
+}
+
+describe("sessionsDirFor", () => {
+  it("URL-encodes the cwd path like grok does", () => {
+    expect(sessionsDirFor("/h/.grok", "/tmp")).toBe(path.join("/h/.grok", "sessions", "%2Ftmp"));
+  });
+
+  it("URL-encodes a nested cwd path", () => {
+    const out = sessionsDirFor("/h/.grok", "/work/space");
+    expect(out).toBe(path.join("/h/.grok", "sessions", "%2Fwork%2Fspace"));
+  });
+
+  it.each([
+    ["", "%00"],
+    [".", "%2E"],
+    ["..", "%2E%2E"],
+  ])("keeps a non-canonical cwd catalog inside the sessions root: %j", (badCwd, leaf) => {
+    expect(sessionsDirFor(grokHome, badCwd)).toBe(path.join(grokHome, "sessions", leaf));
+  });
+});
+
+describe("fallbackName", () => {
+  it("uses the summary when available", () => {
+    expect(fallbackName("Fix login bug", 0)).toBe("Fix login bug");
+  });
+
+  it("truncates very long summaries", () => {
+    const long = "x".repeat(100);
+    const out = fallbackName(long, 0);
+    expect(out.length).toBeLessThanOrEqual(60);
+    expect(out.endsWith("…")).toBe(true);
+  });
+
+  it("falls back to formatted date when summary is empty", () => {
+    const ts = Date.UTC(2026, 4, 22, 12, 30);
+    const out = fallbackName("", ts);
+    expect(out.startsWith("Untitled (")).toBe(true);
+  });
+
+  it("returns 'Untitled' on invalid updatedAt", () => {
+    expect(fallbackName("", NaN)).toMatch(/Untitled/);
+  });
+});
+
+describe("listSessions", () => {
+  const dir = sessionsDirFor(grokHome, cwd);
+
+  it("returns [] when sessions dir does not exist", () => {
+    const fs = buildFs({});
+    const out = listSessions({ fs, grokHome, cwd, overrides: {} });
+    expect(out).toEqual([]);
+  });
+
+  it("returns entries sorted by updatedAt desc", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [dirFor("b")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "a", cwd },
+          session_summary: "first",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+          num_messages: 4,
+        }),
+      },
+      [path.join(dirFor("b"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "b", cwd },
+          session_summary: "second",
+          created_at: "2026-02-01T00:00:00Z",
+          updated_at: "2026-02-01T00:00:00Z",
+          num_messages: 2,
+        }),
+      },
+    });
+    const out = listSessions({ fs, grokHome, cwd, overrides: {} });
+    expect(out.map((s) => s.id)).toEqual(["b", "a"]);
+  });
+
+  it("prefers customName override over session_summary", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "a", cwd },
+          session_summary: "raw summary",
+          updated_at: "2026-01-01T00:00:00Z",
+          num_messages: 3,
+        }),
+      },
+    });
+    const overrides: SessionMetaOverrides = { a: { customName: "My session" } };
+    const out = listSessions({ fs, grokHome, cwd, overrides });
+    expect(out[0].displayName).toBe("My session");
+    expect(out[0].customName).toBe("My session");
+    expect(out[0].rawSummary).toBe("raw summary");
+  });
+
+  it("prefers grok's own title over our first-message autoName (#96)", () => {
+    // The row the CLI shows for this session is "Rail archiving"; ours was a
+    // truncated opening prompt. Same conversation, so it should read the same way.
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "a", cwd },
+          session_summary: "Rail archiving",
+          updated_at: "2026-01-01T00:00:00Z",
+          num_messages: 8,
+        }),
+      },
+    });
+    const overrides: SessionMetaOverrides = { a: { autoName: "I'd also introduce one more section in rails: P…" } };
+    expect(listSessions({ fs, grokHome, cwd, overrides })[0].displayName).toBe("Rail archiving");
+  });
+
+  it("a manual rename still outranks grok's title", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "a", cwd },
+          session_summary: "Rail archiving",
+          updated_at: "2026-01-01T00:00:00Z",
+          num_messages: 8,
+        }),
+      },
+    });
+    const overrides: SessionMetaOverrides = { a: { customName: "My session", autoName: "opening prompt…" } };
+    expect(listSessions({ fs, grokHome, cwd, overrides })[0].displayName).toBe("My session");
+  });
+
+  it("uses generated_title when session_summary is blank, and skips a primer title", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [dirFor("b")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "a", cwd },
+          session_summary: "",
+          generated_title: "Uplink reconnect",
+          updated_at: "2026-01-02T00:00:00Z",
+          num_messages: 4,
+        }),
+      },
+      [path.join(dirFor("b"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "b", cwd },
+          session_summary: "Grok VSCode Plan Mode Hidden Primer",
+          updated_at: "2026-01-01T00:00:00Z",
+          num_messages: 4,
+        }),
+      },
+    });
+    const overrides: SessionMetaOverrides = { b: { autoName: "fix the flaky test" } };
+    const out = listSessions({ fs, grokHome, cwd, overrides });
+    expect(out.find((s) => s.id === "a")?.displayName).toBe("Uplink reconnect");
+    // A legacy primer title must not become the permanent name; ours shows instead.
+    expect(out.find((s) => s.id === "b")?.displayName).toBe("fix the flaky test");
+  });
+
+  it("falls back to autoName before the date when grok has no title yet", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "a", cwd },
+          session_summary: "",
+          updated_at: "2026-01-01T12:00:00Z",
+          num_messages: 1,
+        }),
+      },
+    });
+    const overrides: SessionMetaOverrides = { a: { autoName: "fix the flaky test" } };
+    expect(listSessions({ fs, grokHome, cwd, overrides })[0].displayName).toBe("fix the flaky test");
+  });
+
+  it("falls back to date when summary is empty and no customName", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "a", cwd },
+          session_summary: "",
+          updated_at: "2026-01-01T12:00:00Z",
+          num_messages: 0,
+        }),
+      },
+    });
+    const out = listSessions({ fs, grokHome, cwd, overrides: {} });
+    expect(out[0].displayName).toMatch(/Untitled/);
+  });
+
+  it("tolerates malformed summary.json by skipping the entry", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [dirFor("b")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: {
+        isDir: false,
+        content: "{ not json",
+      },
+      [path.join(dirFor("b"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "b", cwd },
+          session_summary: "ok",
+          updated_at: "2026-01-01T00:00:00Z",
+          num_messages: 1,
+        }),
+      },
+    });
+    const out = listSessions({ fs, grokHome, cwd, overrides: {} });
+    expect(out.map((s) => s.id)).toEqual(["b"]);
+  });
+
+  it("skips entries with missing summary.json", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("ghost")]: { isDir: true },
+    });
+    const out = listSessions({ fs, grokHome, cwd, overrides: {} });
+    expect(out).toEqual([]);
+  });
+
+  it("extracts model id and num_messages from summary", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "a", cwd },
+          session_summary: "hi",
+          current_model_id: "grok-build",
+          num_messages: 7,
+          updated_at: "2026-01-01T00:00:00Z",
+        }),
+      },
+    });
+    const out = listSessions({ fs, grokHome, cwd, overrides: {} });
+    expect(out[0].modelId).toBe("grok-build");
+    expect(out[0].numMessages).toBe(7);
+  });
+});
+
+describe("indexSessions", () => {
+  const dir = sessionsDirFor(grokHome, cwd);
+
+  it("returns [] when the sessions dir does not exist", () => {
+    const fs = buildFs({});
+    expect(indexSessions({ fs, grokHome, cwd })).toEqual([]);
+  });
+
+  it("orders ids newest-first by summary.json mtime without reading content", () => {
+    let reads = 0;
+    const base = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("old")]: { isDir: true },
+      [dirFor("new")]: { isDir: true },
+      [dirFor("mid")]: { isDir: true },
+      [path.join(dirFor("old"), "summary.json")]: { isDir: false, content: "{}", mtimeMs: 100 },
+      [path.join(dirFor("new"), "summary.json")]: { isDir: false, content: "{}", mtimeMs: 300 },
+      [path.join(dirFor("mid"), "summary.json")]: { isDir: false, content: "{}", mtimeMs: 200 },
+    });
+    const fs: FsLike = { ...base, readFileSync: (p, e) => { reads++; return base.readFileSync(p, e); } };
+    const out = indexSessions({ fs, grokHome, cwd });
+    expect(out.map((e) => e.id)).toEqual(["new", "mid", "old"]);
+    expect(reads).toBe(0);
+  });
+
+  it("skips dirs without a summary.json", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("ghost")]: { isDir: true },
+      [dirFor("real")]: { isDir: true },
+      [path.join(dirFor("real"), "summary.json")]: { isDir: false, content: "{}", mtimeMs: 1 },
+    });
+    expect(indexSessions({ fs, grokHome, cwd }).map((e) => e.id)).toEqual(["real"]);
+  });
+});
+
+describe("readSessionEntries", () => {
+  const dir = sessionsDirFor(grokHome, cwd);
+
+  function buildTwo(): FsLike {
+    return buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [dirFor("b")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "a", cwd },
+          session_summary: "first",
+          updated_at: "2026-01-01T00:00:00Z",
+          num_messages: 4,
+        }),
+      },
+      [path.join(dirFor("b"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "b", cwd },
+          session_summary: "second",
+          updated_at: "2026-02-01T00:00:00Z",
+          num_messages: 2,
+        }),
+      },
+    });
+  }
+
+  it("reads only the requested ids, in the requested order", () => {
+    let reads = 0;
+    const base = buildTwo();
+    const fs: FsLike = { ...base, readFileSync: (p, e) => { reads++; return base.readFileSync(p, e); } };
+    const out = readSessionEntries({ fs, grokHome, cwd, ids: ["b"], overrides: {} });
+    expect(out.map((e) => e.id)).toEqual(["b"]);
+    expect(out[0].displayName).toBe("second");
+    expect(reads).toBe(1); // only the one requested id was read
+  });
+
+  it("preserves the id order it was given (no internal re-sort)", () => {
+    const fs = buildTwo();
+    const out = readSessionEntries({ fs, grokHome, cwd, ids: ["a", "b"], overrides: {} });
+    expect(out.map((e) => e.id)).toEqual(["a", "b"]);
+  });
+
+  it("applies customName overrides", () => {
+    const fs = buildTwo();
+    const overrides: SessionMetaOverrides = { a: { customName: "Renamed" } };
+    const out = readSessionEntries({ fs, grokHome, cwd, ids: ["a"], overrides });
+    expect(out[0].displayName).toBe("Renamed");
+  });
+
+  // The projects rail reads pin state off the entry. `pinnedAt` sat declared but
+  // unread for a long time; this is the assertion against it drifting back.
+  it("surfaces the pin from the override, and leaves unpinned rows bare", () => {
+    const fs = buildTwo();
+    const overrides: SessionMetaOverrides = { a: { pinnedAt: 1234, pinnedCwd: cwd } };
+    const out = readSessionEntries({ fs, grokHome, cwd, ids: ["a", "b"], overrides });
+    expect(out.find((e) => e.id === "a")?.pinnedAt).toBe(1234);
+    expect(out.find((e) => e.id === "b")?.pinnedAt).toBeUndefined();
+  });
+
+  it("skips malformed or missing summaries", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("bad")]: { isDir: true },
+      [path.join(dirFor("bad"), "summary.json")]: { isDir: false, content: "{ not json" },
+    });
+    expect(readSessionEntries({ fs, grokHome, cwd, ids: ["bad", "gone"], overrides: {} })).toEqual([]);
+  });
+});
+
+describe("deleteSessionDir", () => {
+  it("removes the on-disk session directory", () => {
+    const sessDir = dirFor("a");
+    const fs = buildFs({
+      [sessionsDirFor(grokHome, cwd)]: { isDir: true },
+      [sessDir]: { isDir: true },
+      [path.join(sessDir, "summary.json")]: { isDir: false, content: "{}" },
+    });
+    deleteSessionDir({ fs, grokHome, cwd, id: "a" });
+    expect(fs.existsSync(sessDir)).toBe(false);
+  });
+
+  it("is a no-op when the directory is missing", () => {
+    const fs = buildFs({});
+    expect(() => deleteSessionDir({ fs, grokHome, cwd, id: "missing" })).not.toThrow();
+  });
+
+  it.each(["..", "../..", "..\\..", "/outside", "C:\\outside"])(
+    "refuses an id that could escape the sessions directory: %s",
+    (id) => {
+      const sessionsRoot = sessionsDirFor(grokHome, cwd);
+      const outside = path.resolve(sessionsRoot, id);
+      const fs = buildFs({
+        [sessionsRoot]: { isDir: true },
+        [outside]: { isDir: true },
+      });
+
+      deleteSessionDir({ fs, grokHome, cwd, id });
+
+      expect(fs.existsSync(outside)).toBe(true);
+    },
+  );
+
+  it("cannot escape through a non-canonical cwd even with a safe session id", () => {
+    const outside = path.join(grokHome, "victim");
+    const fs = buildFs({ [outside]: { isDir: true } });
+
+    deleteSessionDir({ fs, grokHome, cwd: "..", id: "victim" });
+
+    expect(fs.existsSync(outside)).toBe(true);
+  });
+});
+
+describe("clearSessions", () => {
+  const dir = sessionsDirFor(grokHome, cwd);
+
+  function buildThree(): FsLike {
+    return buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [dirFor("b")]: { isDir: true },
+      [dirFor("c")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: { isDir: false, content: "{}" },
+      [path.join(dirFor("b"), "summary.json")]: { isDir: false, content: "{}" },
+      [path.join(dirFor("c"), "summary.json")]: { isDir: false, content: "{}" },
+    });
+  }
+
+  it("returns [] when the sessions dir does not exist", () => {
+    const fs = buildFs({});
+    expect(clearSessions({ fs, grokHome, cwd })).toEqual([]);
+  });
+
+  it("removes every session dir and returns their ids", () => {
+    const fs = buildThree();
+    const removed = clearSessions({ fs, grokHome, cwd });
+    expect(removed.sort()).toEqual(["a", "b", "c"]);
+    expect(fs.existsSync(dirFor("a"))).toBe(false);
+    expect(fs.existsSync(dirFor("b"))).toBe(false);
+    expect(fs.existsSync(dirFor("c"))).toBe(false);
+  });
+
+  it("keeps the exceptId session", () => {
+    const fs = buildThree();
+    const removed = clearSessions({ fs, grokHome, cwd, exceptId: "b" });
+    expect(removed.sort()).toEqual(["a", "c"]);
+    expect(fs.existsSync(dirFor("b"))).toBe(true);
+    expect(fs.existsSync(dirFor("a"))).toBe(false);
+    expect(fs.existsSync(dirFor("c"))).toBe(false);
+  });
+
+  it("keeps every protected session id", () => {
+    const fs = buildThree();
+    const removed = clearSessions({ fs, grokHome, cwd, exceptIds: ["a", "c"] });
+    expect(removed).toEqual(["b"]);
+    expect(fs.existsSync(dirFor("a"))).toBe(true);
+    expect(fs.existsSync(dirFor("b"))).toBe(false);
+    expect(fs.existsSync(dirFor("c"))).toBe(true);
+  });
+
+  it("skips non-directory entries", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("a")]: { isDir: true },
+      [path.join(dirFor("a"), "summary.json")]: { isDir: false, content: "{}" },
+      [path.join(dir, "stray.txt")]: { isDir: false, content: "x" },
+    });
+    const removed = clearSessions({ fs, grokHome, cwd });
+    expect(removed).toEqual(["a"]);
+  });
+});
+
+describe("carrySessionName", () => {
+  it("moves a customName from the old id to the new and drops the old entry", () => {
+    const overrides: SessionMetaOverrides = { old: { customName: "My renamed session" } };
+    const next = carrySessionName(overrides, "old", "new");
+    expect(next.old).toBeUndefined();
+    expect(next.new).toEqual({ customName: "My renamed session" });
+  });
+
+  it("does not mutate the input overrides", () => {
+    const overrides: SessionMetaOverrides = { old: { customName: "Keep me" } };
+    const next = carrySessionName(overrides, "old", "new");
+    expect(overrides.old).toEqual({ customName: "Keep me" });
+    expect(next).not.toBe(overrides);
+  });
+
+  it("only carries customName, not plans/unread, from the abandoned session", () => {
+    const overrides: SessionMetaOverrides = {
+      old: { customName: "Named", unread: true, plans: [{ text: "p", verdict: "approved" }] },
+    };
+    const next = carrySessionName(overrides, "old", "new");
+    expect(next.new).toEqual({ customName: "Named" });
+  });
+
+  it("merges the carried name into an existing override on the new id", () => {
+    const overrides: SessionMetaOverrides = {
+      old: { customName: "Carried" },
+      new: { unread: true },
+    };
+    const next = carrySessionName(overrides, "old", "new");
+    expect(next.new).toEqual({ unread: true, customName: "Carried" });
+  });
+
+  it("just drops the old entry when there is no customName to carry", () => {
+    const overrides: SessionMetaOverrides = { old: { unread: true }, other: { customName: "x" } };
+    const next = carrySessionName(overrides, "old", "new");
+    expect(next.old).toBeUndefined();
+    expect(next.new).toBeUndefined();
+    expect(next.other).toEqual({ customName: "x" });
+  });
+
+  it("drops the old entry even when there is no target id (failed restart)", () => {
+    const overrides: SessionMetaOverrides = { old: { customName: "Gone" } };
+    const next = carrySessionName(overrides, "old", undefined);
+    expect(next.old).toBeUndefined();
+    expect(Object.keys(next)).toEqual([]);
+  });
+
+  it("treats a whitespace-only customName as nothing to carry", () => {
+    const overrides: SessionMetaOverrides = { old: { customName: "   " } };
+    const next = carrySessionName(overrides, "old", "new");
+    expect(next.new).toBeUndefined();
+  });
+});
+
+describe("subagent child sessions (session_kind)", () => {
+  const dir = sessionsDirFor(grokHome, cwd);
+
+  it("marks a session_kind:subagent summary so the history list can hide it", () => {
+    const fs = buildFs({
+      [path.join(dirFor("child"), "summary.json")]: {
+        isDir: false,
+        // Real child-session summary shape (grok 0.2.93): session_kind +
+        // agent_name identify the delegation workspace.
+        content: JSON.stringify({
+          info: { id: "child", cwd },
+          session_summary: "Analyze add() function in math.js file",
+          session_kind: "subagent",
+          agent_name: "general-purpose",
+          updated_at: "2026-07-11T18:00:00Z",
+        }),
+      },
+      [path.join(dirFor("real"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({ info: { id: "real", cwd }, session_summary: "Fix the login bug", updated_at: "2026-07-11T18:00:00Z" }),
+      },
+      [dir]: { isDir: true },
+    });
+    const out = readSessionEntries({ fs, grokHome, cwd, ids: ["child", "real"], overrides: {} });
+    expect(out.find((e) => e.id === "child")?.kind).toBe("subagent");
+    expect(out.find((e) => e.id === "real")?.kind).toBeUndefined();
+  });
+});
+
+describe("readContextUsage", () => {
+  const signalsPath = (id: string) => path.join(dirFor(id), "signals.json");
+
+  // Real signals.json shape (grok 0.2.x): flat JSON with contextTokensUsed /
+  // contextWindowTokens among many other counters. This sample mirrors a real
+  // post-compact capture: totalTokensBeforeCompaction > contextTokensUsed.
+  const realSignals = JSON.stringify({
+    turnCount: 19,
+    compactionCount: 1,
+    totalTokensBeforeCompaction: 40088,
+    contextWindowUsage: 14,
+    contextTokensUsed: 29088,
+    contextWindowTokens: 200000,
+    primaryModelId: "grok-composer-2.5-fast",
+  });
+
+  it("reads used + window from a real-shaped signals.json (post-compact value)", () => {
+    const fs = buildFs({ [signalsPath("s1")]: { isDir: false, content: realSignals } });
+    expect(readContextUsage({ fs, grokHome, cwd, id: "s1" })).toEqual({ used: 29088, window: 200000 });
+  });
+
+  it("returns null when the file is missing", () => {
+    const fs = buildFs({});
+    expect(readContextUsage({ fs, grokHome, cwd, id: "nope" })).toBeNull();
+  });
+
+  it("returns null on malformed JSON", () => {
+    const fs = buildFs({ [signalsPath("s1")]: { isDir: false, content: "{not json" } });
+    expect(readContextUsage({ fs, grokHome, cwd, id: "s1" })).toBeNull();
+  });
+
+  it("returns null when the count is missing, zero, or not a finite number", () => {
+    for (const bad of [
+      "{}",
+      JSON.stringify({ contextTokensUsed: 0, contextWindowTokens: 200000 }),
+      JSON.stringify({ contextTokensUsed: -5 }),
+      JSON.stringify({ contextTokensUsed: "29088" }),
+      JSON.stringify({ contextTokensUsed: null }),
+    ]) {
+      const fs = buildFs({ [signalsPath("s1")]: { isDir: false, content: bad } });
+      expect(readContextUsage({ fs, grokHome, cwd, id: "s1" })).toBeNull();
+    }
+  });
+
+  it("returns used without a window when contextWindowTokens is absent or invalid", () => {
+    for (const content of [
+      JSON.stringify({ contextTokensUsed: 1234 }),
+      JSON.stringify({ contextTokensUsed: 1234, contextWindowTokens: 0 }),
+      JSON.stringify({ contextTokensUsed: 1234, contextWindowTokens: "200000" }),
+    ]) {
+      const fs = buildFs({ [signalsPath("s1")]: { isDir: false, content } });
+      expect(readContextUsage({ fs, grokHome, cwd, id: "s1" })).toEqual({ used: 1234, window: undefined });
+    }
+  });
+});
+
+// #48 — a fork is named after its parent so it's recognisable in history.
+describe("forkDisplayName", () => {
+  it("tags the fork with the parent's name, LEADING", () => {
+    // Leading, not trailing: history rows ellipsize at the panel edge, so a
+    // trailing tag is the first thing to vanish in a narrow sidebar.
+    expect(forkDisplayName("Evaluate GitHub issues for implementation priorities"))
+      .toBe("(Fork) Evaluate GitHub issues for implementation priorities");
+  });
+
+  it("is idempotent — forking a fork must not stack tags", () => {
+    expect(forkDisplayName("(Fork) Refactor the parser")).toBe("(Fork) Refactor the parser");
+    expect(forkDisplayName(forkDisplayName(forkDisplayName("Foo")))).toBe("(Fork) Foo");
+  });
+
+  it("matches the tag case-insensitively but preserves the parent's casing", () => {
+    expect(forkDisplayName("(FORK) Thing")).toBe("(FORK) Thing");
+    expect(forkDisplayName("(fork) Thing")).toBe("(fork) Thing");
+  });
+
+  it("degrades cleanly with no parent name — no stray separator", () => {
+    expect(forkDisplayName("")).toBe("(Fork)");
+    expect(forkDisplayName("   ")).toBe("(Fork)");
+    expect(forkDisplayName(undefined)).toBe("(Fork)");
+  });
+
+  it("does not treat a trailing '(Fork)' as the tag — it re-tags at the front", () => {
+    // A name that merely ENDS with the tag isn't tagged in our scheme.
+    expect(forkDisplayName("experiments (Fork)")).toBe("(Fork) experiments (Fork)");
+  });
+});
+
+// The name a fork inherits must be the one the user SEES in history — never
+// grok's internal `session_summary`, which is primer-derived on every session we
+// prime ("… Primer v4 Plan Mode …") and would propagate forever through a
+// fork-of-a-fork. This pins the guard that rejects those.
+describe("isPrimerSummary guards fork naming (#48)", () => {
+  it("recognises the real primer titles grok generated on disk", () => {
+    for (const t of [
+      "Grok-build-vscode Primer v4 Plan Mode Handling",
+      "Grok Build VSCode Primer v4 Plan Mode",
+      "Grok Build VSCode Plan Mode Primer v4",
+      "Grok-Build-VSCode v4 Plan Mode Primer Instructions",
+    ]) {
+      expect(isPrimerSummary(t)).toBe(true);
+    }
+  });
+
+  it("leaves a real conversation title alone", () => {
+    expect(isPrimerSummary("Evaluate GitHub issues for implementation priorities")).toBe(false);
+    expect(isPrimerSummary("Analyze this solution in depth")).toBe(false);
+  });
+});
+
+// resolveGrokHome must match CLI `default_grok_home`: `$GROK_HOME` override,
+// then `~/.atlas` if present, else legacy `~/.grok` if present, else `~/.atlas`.
+// On Windows home is USERPROFILE-based (HOME ignored), matching the CLI.
+describe("resolveGrokHome", () => {
+  it("prefers USERPROFILE over HOME on Windows (matching the CLI + cli-locator)", () => {
+    const env = { HOME: "C:\\weird\\gitbash-home", USERPROFILE: "C:\\Users\\p" };
+    // Neither .atlas nor .grok exists under the fake profile → preferred default .atlas
+    expect(resolveGrokHome(env, "win32")).toBe(path.join("C:\\Users\\p", ".atlas"));
+  });
+
+  it("uses HOME on POSIX and never consults USERPROFILE there", () => {
+    const env = { HOME: "/home/p", USERPROFILE: "C:\\Users\\p" };
+    expect(resolveGrokHome(env, "linux")).toBe(path.join("/home/p", ".atlas"));
+    expect(resolveGrokHome(env, "darwin")).toBe(path.join("/home/p", ".atlas"));
+  });
+
+  it("honors the CLI's GROK_HOME override verbatim on every platform", () => {
+    const env = { GROK_HOME: "D:\\data\\grok-home", HOME: "/home/p", USERPROFILE: "C:\\Users\\p" };
+    expect(resolveGrokHome(env, "win32")).toBe("D:\\data\\grok-home");
+    expect(resolveGrokHome(env, "linux")).toBe("D:\\data\\grok-home");
+  });
+
+  it("falls back to os.homedir() when the platform env var is unset", () => {
+    // Windows with only HOME set: the CLI ignores HOME (Rust home_dir uses the
+    // profile dir), so we must not use it either.
+    const win = resolveGrokHome({ HOME: "C:\\weird" }, "win32");
+    expect(win.endsWith(".atlas") || win.endsWith(".grok")).toBe(true);
+    expect(win).not.toBe(path.join("C:\\weird", ".atlas"));
+    const posix = resolveGrokHome({}, "linux");
+    expect(posix.endsWith(".atlas") || posix.endsWith(".grok")).toBe(true);
+  });
+});
+
+// isPathInside backs isServableFromDisk (generated-media serving): a path-segment
+// boundary check, not a string-prefix one.
+describe("isPathInside", () => {
+  const root = path.join(path.sep === "\\" ? "C:\\Users\\p" : "/home/p", ".grok");
+
+  it("accepts a file below the root", () => {
+    expect(isPathInside(root, path.join(root, "sessions", "s1", "images", "out.png"))).toBe(true);
+  });
+
+  it("accepts a dir literally named with a leading double-dot (`..foo`)", () => {
+    // The old `!rel.startsWith("..")` string-prefix check rejected this legal
+    // name and forced the base64 fallback.
+    expect(isPathInside(root, path.join(root, "..foo", "x.jpg"))).toBe(true);
+  });
+
+  it("rejects the root itself and the parent traversal", () => {
+    expect(isPathInside(root, root)).toBe(false);
+    expect(isPathInside(root, path.join(root, ".."))).toBe(false);
+    expect(isPathInside(root, path.join(root, "..", "escape.png"))).toBe(false);
+  });
+
+  it("rejects an unrelated absolute path", () => {
+    const other = path.sep === "\\" ? "D:\\elsewhere\\x.png" : "/var/elsewhere/x.png";
+    expect(isPathInside(root, other)).toBe(false);
+  });
+});

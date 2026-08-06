@@ -35,6 +35,7 @@ pub mod plugin;
 pub mod relay;
 pub mod remote;
 pub mod sampling;
+pub(crate) mod task_report;
 pub mod session;
 pub mod terminal;
 #[cfg(test)]

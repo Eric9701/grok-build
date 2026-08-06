@@ -12,14 +12,14 @@ use crate::diagnostics::{DiagnosticId, DiagnosticReport};
 use crate::terminal::TerminalContext;
 
 pub const SSH_WRAP_ID: DiagnosticId = DiagnosticId::new("terminal", "ssh-wrap");
-pub const SSH_WRAP_FIX_COMMAND: &str = "grok doctor fix terminal.ssh-wrap";
-pub const SSH_WRAP_ONE_OFF: &str = "grok wrap ssh <host>";
+pub const SSH_WRAP_FIX_COMMAND: &str = "atlas doctor fix terminal.ssh-wrap";
+pub const SSH_WRAP_ONE_OFF: &str = "atlas wrap ssh <host>";
 
 const SSH_WRAP_FIX_HANDLE: &str = "ssh-wrap";
 
-const MANAGED_NAMESPACE: &str = "grok doctor";
-const SSH_WRAP_ALIAS_POSIX: &str = "alias ssh='grok wrap ssh'";
-const SSH_WRAP_ALIAS_FISH: &str = "alias ssh 'grok wrap ssh'";
+const MANAGED_NAMESPACE: &str = "atlas doctor";
+const SSH_WRAP_ALIAS_POSIX: &str = "alias ssh='atlas wrap ssh'";
+const SSH_WRAP_ALIAS_FISH: &str = "alias ssh 'atlas wrap ssh'";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AutomaticRemediation {
@@ -188,7 +188,7 @@ pub fn resolve_fix_id(value: &str) -> Result<DiagnosticId, FixError> {
 }
 
 pub(crate) fn human_fix_command(id: DiagnosticId) -> Option<String> {
-    fix_handle(id).map(|handle| format!("grok doctor fix {handle}"))
+    fix_handle(id).map(|handle| format!("atlas doctor fix {handle}"))
 }
 
 fn fix_handle(id: DiagnosticId) -> Option<&'static str> {
@@ -251,7 +251,7 @@ pub fn plan_fix(
             "The alias is loaded only by new interactive shell sessions.",
             "Use `command ssh ...` to bypass the alias.",
             "For manually typed `ssh -f`, ControlPersist workflows, or OpenSSH `~^Z` local suspend, use `command ssh ...`; wrapping is not fully transparent for those cases.",
-            "`grok wrap` spawns the real SSH process directly, so the alias does not recurse.",
+            "`atlas wrap` spawns the real SSH process directly, so the alias does not recurse.",
             "Conflict detection covers direct alias/function declarations in this file only; sourced files, plugins, and dynamic shell setup require manual review.",
         ],
         managed,

@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atlas · Task Reports</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f3f1ec;
+      --bg-elev: #fffcf7;
+      --ink: #1c1b19;
+      --muted: #6b6860;
+      --line: #ddd8ce;
+      --accent: #0f766e;
+      --accent-soft: #d8ebe8;
+      --ok: #1f7a4c;
+      --ok-bg: #e6f4ec;
+      --err: #b42318;
+      --err-bg: #fceceb;
+      --warn: #9a6700;
+      --warn-bg: #fef4e0;
+      --shadow: 0 1px 2px rgba(28, 27, 25, 0.04), 0 8px 24px rgba(28, 27, 25, 0.06);
+      --radius: 12px;
+      --font: "DM Sans", "Segoe UI", "PingFang SC", sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #141311;
+        --bg-elev: #1e1c19;
+        --ink: #f4f0e8;
+        --muted: #a39e94;
+        --line: #34312c;
+        --accent: #5eead4;
+        --accent-soft: #1a3330;
+        --ok: #6ee7a8;
+        --ok-bg: #163327;
+        --err: #fca5a5;
+        --err-bg: #3a1d1d;
+        --warn: #fcd34d;
+        --warn-bg: #3a2e12;
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 12px 28px rgba(0, 0, 0, 0.28);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: var(--font);
+      color: var(--ink);
+      background:
+        radial-gradient(ellipse 80% 50% at 10% -10%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 55%),
+        radial-gradient(ellipse 60% 40% at 100% 0%, color-mix(in srgb, var(--warn) 10%, transparent), transparent 50%),
+        var(--bg);
+      line-height: 1.45;
+    }
+    .shell {
+      max-width: 72rem;
+      margin: 0 auto;
+      padding: 1.5rem 1.25rem 3rem;
+    }
+    .topbar {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.5rem;
+    }
+    .brand {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .brand-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .brand-mark::before {
+      content: "";
+      width: 0.55rem;
+      height: 0.55rem;
+      border-radius: 2px;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(1.55rem, 2.4vw, 2rem);
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .subtitle { margin: 0; color: var(--muted); font-size: 0.95rem; }
+    .actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+    .date-field {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.35rem 0.65rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg-elev);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.4) inset;
+    }
+    .date-field label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+    }
+    .date-field input[type="date"] {
+      font: inherit;
+      font-variant-numeric: tabular-nums;
+      border: none;
+      background: transparent;
+      color: var(--ink);
+      padding: 0.2rem 0;
+      outline: none;
+    }
+    button {
+      font: inherit;
+      font-weight: 550;
+      cursor: pointer;
+      border: 1px solid var(--line);
+      background: var(--bg-elev);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 0.5rem 0.95rem;
+      box-shadow: 0 1px 0 rgba(255,255,255,0.4) inset;
+      transition: border-color 0.15s, transform 0.15s, background 0.15s;
+    }
+    button:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+    button:active { transform: translateY(1px); }
+    button.primary {
+      background: var(--accent);
+      border-color: transparent;
+      color: #fff;
+    }
+    @media (prefers-color-scheme: dark) {
+      button.primary { color: #0b2422; }
+    }
+    .err {
+      margin: 0 0 1rem;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      background: var(--err-bg);
+      color: var(--err);
+      border: 1px solid color-mix(in srgb, var(--err) 25%, transparent);
+    }
+    .hidden { display: none !important; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+      gap: 0.85rem;
+      margin-bottom: 1.5rem;
+    }
+    .card {
+      position: relative;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1rem 1.05rem 0.95rem;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      animation: rise 0.35s ease both;
+    }
+    .card::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+      background: var(--accent);
+      opacity: 0.85;
+    }
+    .card.tone-ok::before { background: var(--ok); }
+    .card.tone-err::before { background: var(--err); }
+    .card.tone-warn::before { background: var(--warn); }
+    .card .n {
+      font-size: 1.55rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
+    }
+    .card .l {
+      margin-top: 0.2rem;
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 860px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+    .panel {
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      animation: rise 0.4s ease both;
+    }
+    .panel-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.9rem 1.1rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .panel-head h2 {
+      margin: 0;
+      font-size: 0.95rem;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+    .panel-head .hint {
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    .panel-body { padding: 0; }
+    .empty {
+      margin: 0;
+      padding: 2rem 1.25rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.7rem 1.05rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: middle;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    th {
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: color-mix(in srgb, var(--bg) 55%, var(--bg-elev));
+      position: sticky;
+      top: 0;
+    }
+    td.num { font-variant-numeric: tabular-nums; font-weight: 550; }
+    tr.clickable { cursor: pointer; transition: background 0.12s; }
+    tr.clickable:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    tr.clickable:hover td:last-child::after {
+      content: "→";
+      float: right;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    code, .mono {
+      font-family: var(--mono);
+      font-size: 0.82em;
+      font-weight: 500;
+    }
+    .rank {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.45rem;
+      height: 1.45rem;
+      border-radius: 6px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.75rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .status-ok { color: var(--ok); background: var(--ok-bg); }
+    .status-err { color: var(--err); background: var(--err-bg); }
+    .status-cancel { color: var(--warn); background: var(--warn-bg); }
+    .truncate {
+      max-width: 18rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .user-hero {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.15rem;
+      padding: 1rem 1.15rem;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .user-hero .who { font-size: 1.05rem; font-weight: 650; }
+    .user-hero .id { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
+    .loading {
+      display: inline-block;
+      width: 0.85rem;
+      height: 0.85rem;
+      border: 2px solid var(--line);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: -0.1rem;
+      margin-right: 0.4rem;
+    }
+    .stack { display: flex; flex-direction: column; gap: 1rem; }
+    .scroll {
+      max-height: min(28rem, 60vh);
+      overflow: auto;
+    }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: none; }
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">Atlas</span>
+        <h1>Task Reports</h1>
+        <p class="subtitle" id="pageHint">按区间汇总 · 默认当天 · 点击用户查看个人明细</p>
+      </div>
+      <div class="actions" id="topActions">
+        <div class="date-field">
+          <label for="reportFrom">从</label>
+          <input type="date" id="reportFrom" />
+        </div>
+        <div class="date-field">
+          <label for="reportTo">到</label>
+          <input type="date" id="reportTo" />
+        </div>
+        <button type="button" id="dateToday">今天</button>
+        <button type="button" class="primary" id="refreshOverall">刷新</button>
+      </div>
+    </header>
+
+    <div id="error" class="err hidden"></div>
+
+    <section id="overall">
+      <div id="summaryCards" class="cards"></div>
+      <div class="grid-2">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>按人排行</h2>
+            <span class="hint">点击行下钻</span>
+          </div>
+          <div class="panel-body" id="usersTable"></div>
+        </div>
+        <div class="stack">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>按 Agent</h2>
+              <span class="hint">全站分布</span>
+            </div>
+            <div class="panel-body scroll" id="agentsTable"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>按 Model</h2>
+              <span class="hint">全站分布</span>
+            </div>
+            <div class="panel-body scroll" id="modelsTable"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="userView" class="hidden">
+      <div class="user-hero">
+        <div>
+          <div class="who" id="userEmail">—</div>
+          <div class="id mono" id="userIdLabel"></div>
+        </div>
+        <div class="actions">
+          <button type="button" id="backOverall">← 返回整体</button>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>该用户 · Agent 分布</h2>
+            </div>
+            <div class="panel-body" id="userAgentsTable"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>该用户 · Model 分布</h2>
+            </div>
+            <div class="panel-body" id="userModelsTable"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>最近任务</h2>
+            <span class="hint">最多 50 条</span>
+          </div>
+          <div class="panel-body scroll" id="userReportsTable"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const errEl = $("error");
+    let currentUser = null; // { id, email } when in per-user view
+
+    function todayLocal() {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+
+    function selectedFrom() {
+      return ($("reportFrom").value || todayLocal());
+    }
+
+    function selectedTo() {
+      return ($("reportTo").value || todayLocal());
+    }
+
+    function rangeLabel() {
+      const a = selectedFrom();
+      const b = selectedTo();
+      return a === b ? a : (a + " ~ " + b);
+    }
+
+    function dateQuery() {
+      return "from=" + encodeURIComponent(selectedFrom())
+        + "&to=" + encodeURIComponent(selectedTo());
+    }
+
+    function applyRangeFromResponse(data) {
+      if (data.from && data.from !== "all") $("reportFrom").value = data.from;
+      if (data.to && data.to !== "all") $("reportTo").value = data.to;
+    }
+
+    function showErr(msg) {
+      errEl.textContent = msg;
+      errEl.classList.toggle("hidden", !msg);
+    }
+
+    function fmt(n) {
+      return (n ?? 0).toLocaleString();
+    }
+
+    function fmtDuration(ms) {
+      const n = Number(ms) || 0;
+      if (n < 1000) return n + " ms";
+      if (n < 60000) return (n / 1000).toFixed(1) + " s";
+      return (n / 60000).toFixed(1) + " min";
+    }
+
+    function statusBadge(status, success) {
+      let cls = "status-err";
+      let label = status || "error";
+      if (success) { cls = "status-ok"; label = status || "completed"; }
+      else if (status === "cancelled") { cls = "status-cancel"; }
+      return `<span class="badge ${cls}">${esc(label)}</span>`;
+    }
+
+    function setLoading(targetIds, on) {
+      targetIds.forEach((id) => {
+        if (on) $(id).innerHTML = `<p class="empty"><span class="loading"></span>加载中…</p>`;
+      });
+    }
+
+    function renderSummary(s) {
+      const rate = s.totalTasks
+        ? Math.round((100 * (s.successCount || 0)) / s.totalTasks)
+        : 0;
+      const cards = [
+        ["任务数", s.totalTasks, ""],
+        ["成功率", rate + "%", "tone-ok"],
+        ["成功", s.successCount, "tone-ok"],
+        ["失败", s.failedCount, "tone-err"],
+        ["取消", s.cancelledCount, "tone-warn"],
+        ["产物", s.totalArtifacts, ""],
+        ["Tokens", s.totalTokens, ""],
+        ["用户数", s.uniqueUsers, ""],
+        ["模型数", s.uniqueModels, ""],
+      ];
+      $("summaryCards").innerHTML = cards.map(([l, n, tone], i) =>
+        `<div class="card ${tone}" style="animation-delay:${i * 0.03}s"><div class="n">${typeof n === "number" ? fmt(n) : esc(String(n))}</div><div class="l">${l}</div></div>`
+      ).join("");
+    }
+
+    function renderUsers(users) {
+      if (!users || !users.length) {
+        $("usersTable").innerHTML = `<p class="empty">暂无上报数据</p>`;
+        return;
+      }
+      const rows = users.map((u, i) => `
+        <tr class="clickable" data-user-id="${esc(u.userId)}" data-email="${esc(u.email || "")}">
+          <td><span class="rank">${i + 1}</span></td>
+          <td>
+            <div>${esc(u.email || "—")}</div>
+            <div class="mono" style="color:var(--muted);font-size:0.78rem;margin-top:0.15rem">${esc(u.userId || "")}</div>
+          </td>
+          <td class="num">${fmt(u.count)}</td>
+          <td class="num">${fmt(u.successCount)}</td>
+          <td class="num">${fmt(u.artifactCount)}</td>
+          <td class="num">${fmt(u.tokensUsed)}</td>
+        </tr>`).join("");
+      $("usersTable").innerHTML = `
+        <div class="scroll">
+          <table>
+            <thead><tr>
+              <th>#</th><th>用户</th><th>任务</th><th>成功</th><th>产物</th><th>Tokens</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+      $("usersTable").querySelectorAll("tr.clickable").forEach((tr) => {
+        tr.addEventListener("click", () => openUser(tr.dataset.userId, tr.dataset.email));
+      });
+    }
+
+    function renderAgents(targetId, agents) {
+      const el = $(targetId);
+      if (!agents || !agents.length) {
+        el.innerHTML = `<p class="empty">暂无 Agent 数据</p>`;
+        return;
+      }
+      const max = Math.max(...agents.map((a) => a.count || 0), 1);
+      const rows = agents.map((a) => {
+        const pct = Math.round((100 * (a.count || 0)) / max);
+        return `
+        <tr>
+          <td>
+            <div class="mono">${esc(a.subagentType)}</div>
+            <div style="margin-top:0.35rem;height:4px;border-radius:99px;background:var(--line);overflow:hidden">
+              <div style="width:${pct}%;height:100%;background:var(--accent);opacity:0.75"></div>
+            </div>
+          </td>
+          <td class="num">${fmt(a.count)}</td>
+          <td class="num">${fmt(a.artifactCount)}</td>
+          <td class="num">${fmt(a.tokensUsed)}</td>
+        </tr>`;
+      }).join("");
+      el.innerHTML = `
+        <table>
+          <thead><tr><th>Agent</th><th>任务</th><th>产物</th><th>Tokens</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function renderModels(targetId, models) {
+      const el = $(targetId);
+      if (!models || !models.length) {
+        el.innerHTML = `<p class="empty">暂无 Model 数据</p>`;
+        return;
+      }
+      const max = Math.max(...models.map((a) => a.count || 0), 1);
+      const rows = models.map((a) => {
+        const pct = Math.round((100 * (a.count || 0)) / max);
+        const label = a.model || "(unknown)";
+        return `
+        <tr>
+          <td>
+            <div class="mono" title="${esc(label)}">${esc(label)}</div>
+            <div style="margin-top:0.35rem;height:4px;border-radius:99px;background:var(--line);overflow:hidden">
+              <div style="width:${pct}%;height:100%;background:var(--warn);opacity:0.8"></div>
+            </div>
+          </td>
+          <td class="num">${fmt(a.count)}</td>
+          <td class="num">${fmt(a.artifactCount)}</td>
+          <td class="num">${fmt(a.tokensUsed)}</td>
+        </tr>`;
+      }).join("");
+      el.innerHTML = `
+        <table>
+          <thead><tr><th>Model</th><th>任务</th><th>产物</th><th>Tokens</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function renderReports(reports) {
+      if (!reports || !reports.length) {
+        $("userReportsTable").innerHTML = `<p class="empty">暂无明细</p>`;
+        return;
+      }
+      const rows = reports.map((r) => {
+        const arts = (r.artifacts || []).map((a) => a.path).join(", ");
+        const when = (r.createdAt || "").replace("T", " ").replace(/\.\d+Z?$/, "").replace(/Z$/, "");
+        const model = r.model || "—";
+        return `
+        <tr>
+          <td class="truncate" title="${esc(r.description || "")}">${esc(r.description || "—")}</td>
+          <td><span class="mono">${esc(r.subagentType)}</span></td>
+          <td class="truncate" title="${esc(model)}"><span class="mono">${esc(model)}</span></td>
+          <td>${statusBadge(r.status, r.success)}</td>
+          <td class="num">${fmt(r.artifactCount)}</td>
+          <td class="truncate" title="${esc(arts)}">${esc(arts || "—")}</td>
+          <td class="num">${fmtDuration(r.durationMs)}</td>
+          <td style="white-space:nowrap;color:var(--muted);font-size:0.85rem">${esc(when)}</td>
+        </tr>`;
+      }).join("");
+      $("userReportsTable").innerHTML = `
+        <table>
+          <thead><tr>
+            <th>任务</th><th>Agent</th><th>Model</th><th>状态</th><th>产物</th><th>路径</th><th>耗时</th><th>时间</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function esc(s) {
+      return String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    async function loadOverall() {
+      showErr("");
+      setLoading(["summaryCards", "usersTable", "agentsTable", "modelsTable"], true);
+      const res = await fetch("/atlas/admin/api/task-reports?" + dateQuery());
+      if (!res.ok) throw new Error("整体汇总失败: " + res.status + " " + (await res.text()));
+      const data = await res.json();
+      applyRangeFromResponse(data);
+      $("pageHint").textContent = "按区间汇总 · " + rangeLabel() + " · 点击用户查看个人明细";
+      renderSummary(data.summary || {});
+      renderUsers(data.users || []);
+      renderAgents("agentsTable", data.agents || []);
+      renderModels("modelsTable", data.models || []);
+    }
+
+    async function loadUser(userId, email) {
+      showErr("");
+      setLoading(["userAgentsTable", "userModelsTable", "userReportsTable"], true);
+      const q = dateQuery() + "&user_id=" + encodeURIComponent(userId);
+      const [aggRes, listRes] = await Promise.all([
+        fetch("/atlas/admin/api/task-reports?" + q + "&aggregate=1"),
+        fetch("/atlas/admin/api/task-reports?" + q + "&limit=50"),
+      ]);
+      if (!aggRes.ok) throw new Error("个人汇总失败: " + aggRes.status);
+      if (!listRes.ok) throw new Error("个人明细失败: " + listRes.status);
+      const agg = await aggRes.json();
+      const list = await listRes.json();
+      applyRangeFromResponse(agg);
+      renderAgents("userAgentsTable", agg.agents || []);
+      renderModels("userModelsTable", agg.models || []);
+      renderReports(list.reports || []);
+      $("pageHint").textContent = "个人视图 · " + rangeLabel() + " · Agent / Model 分布与最近任务";
+    }
+
+    async function openUser(userId, email) {
+      if (!userId) return;
+      currentUser = { id: userId, email: email || "" };
+      $("overall").classList.add("hidden");
+      $("userView").classList.remove("hidden");
+      $("userEmail").textContent = email || userId;
+      $("userIdLabel").textContent = email ? userId : "";
+      try {
+        await loadUser(userId, email);
+      } catch (e) {
+        showErr(String(e.message || e));
+      }
+    }
+
+    function showOverall() {
+      currentUser = null;
+      $("userView").classList.add("hidden");
+      $("overall").classList.remove("hidden");
+      $("pageHint").textContent = "按区间汇总 · " + rangeLabel() + " · 点击用户查看个人明细";
+      showErr("");
+    }
+
+    async function reloadCurrent() {
+      if (currentUser) {
+        await loadUser(currentUser.id, currentUser.email);
+      } else {
+        await loadOverall();
+      }
+    }
+
+    const today = todayLocal();
+    $("reportFrom").value = today;
+    $("reportTo").value = today;
+    ["reportFrom", "reportTo"].forEach((id) => {
+      $(id).addEventListener("change", () => {
+        reloadCurrent().catch((e) => showErr(String(e.message || e)));
+      });
+    });
+    $("dateToday").addEventListener("click", () => {
+      const t = todayLocal();
+      $("reportFrom").value = t;
+      $("reportTo").value = t;
+      reloadCurrent().catch((e) => showErr(String(e.message || e)));
+    });
+    $("refreshOverall").addEventListener("click", () => {
+      reloadCurrent().catch((e) => showErr(String(e.message || e)));
+    });
+    $("backOverall").addEventListener("click", () => {
+      showOverall();
+      loadOverall().catch((e) => showErr(String(e.message || e)));
+    });
+
+    loadOverall().catch((e) => showErr(String(e.message || e)));
+  </script>
+</body>
+</html>

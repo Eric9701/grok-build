@@ -88,7 +88,7 @@ fn resolve_agent_profile_path(path: &std::path::Path) -> std::path::PathBuf {
 /// Print startup information for the serve command.
 fn print_serve_startup_info(bind_addr: SocketAddr, secret: &str) {
     eprintln!();
-    eprintln!("   Grok agent server starting...");
+    eprintln!("   Atlas agent server starting...");
     eprintln!();
     eprintln!("   Address:  {}:{}", bind_addr.ip(), bind_addr.port());
     eprintln!("   Secret:   {}", secret);
@@ -154,7 +154,7 @@ async fn run_setup_command(json: bool) {
     if !managed_config::has_principal() {
         eprintln!("No deployment key or team sign-in found.");
         eprintln!();
-        eprintln!("To install managed configuration, sign in with a team using `grok login`,");
+        eprintln!("To install managed configuration, sign in with a team using `atlas login`,");
         eprintln!("or set a deployment key:");
         eprintln!();
         if cfg!(unix) {
@@ -162,15 +162,15 @@ async fn run_setup_command(json: bool) {
         } else {
             eprintln!("  $env:GROK_DEPLOYMENT_KEY=\"<your-key>\"");
         }
-        eprintln!("  grok setup");
+        eprintln!("  atlas setup");
         eprintln!();
-        eprintln!("Or add the key to ~/.grok/config.toml:");
+        eprintln!("Or add the key to ~/.atlas/config.toml:");
         eprintln!();
         eprintln!("  [endpoints]");
         eprintln!("  deployment_key = \"<your-key>\"");
         eprintln!();
         eprintln!(
-            "If you don't have a deployment key, contact your organization's Grok administrator."
+            "If you don't have a deployment key, contact your organization's Atlas administrator."
         );
         std::process::exit(1);
     }
@@ -202,7 +202,7 @@ async fn run_setup_command(json: bool) {
         }
         SetupOutcome::Skipped => {
             eprintln!(
-                "Managed configuration was not applied this run (another process held the apply lock, or the credential changed during the fetch). Run `grok setup` again."
+                "Managed configuration was not applied this run (another process held the apply lock, or the credential changed during the fetch). Run `atlas setup` again."
             );
         }
         SetupOutcome::Failed(e) => {
@@ -271,7 +271,7 @@ async fn kill_leaders() -> Result<()> {
         };
         if !xai_grok_shell::util::is_grok_process(pid) {
             if let Some(ref lock) = d.lock_path {
-                eprintln!("  PID {pid} is not a grok process, removing stale lock");
+                eprintln!("  PID {pid} is not an atlas process, removing stale lock");
                 let _ = std::fs::remove_file(lock);
                 cleaned += 1;
             }
@@ -424,14 +424,14 @@ async fn run_workspace_mgmt(args: WorkspaceMgmtArgs) -> Result<()> {
         WorkspaceGate::Enabled => {}
         WorkspaceGate::Disabled => {
             anyhow::bail!(
-                "`grok workspace` is not enabled for this account \
+                "`atlas workspace` is not enabled for this account \
              (gated by a server-side feature flag that is currently off)."
             )
         }
         WorkspaceGate::Unknown => {
             anyhow::bail!(
-                "Could not load your settings for `grok workspace`. Check your \
-             network connection (run `grok login` if you are signed out), then \
+                "Could not load your settings for `atlas workspace`. Check your \
+             network connection (run `atlas login` if you are signed out), then \
              try again."
             )
         }
@@ -487,7 +487,7 @@ async fn connect_workspace_control(
     .map_err(|e| {
         anyhow::anyhow!(
             "no running leader for this environment ({e}). \
-             Start a grok session, or run `grok workspace start`."
+             Start an atlas session, or run `atlas workspace start`."
         )
     })
 }
@@ -527,14 +527,14 @@ async fn workspace_start(
     );
     if !use_leader {
         anyhow::bail!(
-            "`grok workspace` requires leader mode (the workspace is shared via the leader).\n\
+            "`atlas workspace` requires leader mode (the workspace is shared via the leader).\n\
              Enable it with `[cli] use_leader = true` in ~/.grok/config.toml, or pass --leader."
         );
     }
     ensure_authenticated(
         &agent_config.grok_com_config,
         false,
-        Some("No cached credentials found. Run `grok login` first."),
+        Some("No cached credentials found. Run `atlas login` first."),
     )
     .await?;
     let env_urls = LeaderEnvUrls::from(&agent_config.grok_com_config);
@@ -1035,7 +1035,7 @@ async fn run_agent_command(
     let is_leader = matches!(agent_args.mode, Some(AgentCmd::Leader(_)));
     if !is_stdio && !is_leader {
         eprintln!(
-            "Grok Build (pager) - v{}",
+            "Atlas (pager) - v{}",
             xai_grok_version::display_version_with_commit(
                 env!("VERSION_WITH_COMMIT"),
                 xai_grok_update::channel_label(),
@@ -1068,7 +1068,7 @@ async fn run_agent_command(
         None,
     );
     if let Some(warning) = launch_yolo.blocked_warning {
-        eprintln!("grok: {warning}");
+        eprintln!("atlas: {warning}");
     }
     agent_config.default_yolo_mode = launch_yolo.yolo;
     agent_config.default_auto_mode = xai_grok_shell::util::config::effective_auto_for_launch(
@@ -1606,7 +1606,7 @@ fn install_heap_profile_hooks() {
 }
 fn version_text(channel_label: &str) -> String {
     format!(
-        "grok {}\n",
+        "atlas {}\n",
         xai_grok_version::display_version_with_commit(env!("VERSION_WITH_COMMIT"), channel_label,)
     )
 }
@@ -1659,10 +1659,10 @@ fn main() {
     );
     raise_fd_limit();
     if let Err(e) = xai_grok_config::validate_requirements() {
-        eprintln!("Couldn't start Grok: {e}");
+        eprintln!("Couldn't start Atlas: {e}");
         eprintln!();
         eprintln!(
-            "Update Grok to a version the policy allows, or ask your administrator \
+            "Update Atlas to a version the policy allows, or ask your administrator \
              to fix the managed requirements."
         );
         std::process::exit(2);
@@ -1678,7 +1678,7 @@ fn main() {
     if xai_grok_shell::util::config::load_crash_handler_enabled_sync() {
         let crash_dir = xai_grok_shell::util::grok_home::grok_home().join("crash");
         if let Some(report) = xai_crash_handler::check_previous_crash(&crash_dir) {
-            eprintln!("Grok crashed during your last session.");
+            eprintln!("Atlas crashed during your last session.");
             eprintln!("  Signal:  {}", report.signal_name);
             eprintln!("  Version: {}", report.app_version);
             eprintln!("  Report:  {}", report.report_path.display());
@@ -1981,7 +1981,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
             None,
         );
         if let Some(warning) = launch_yolo.blocked_warning {
-            eprintln!("grok: {warning}");
+            eprintln!("atlas: {warning}");
         }
         let json_schema = args
             .json_schema
@@ -2056,9 +2056,9 @@ async fn async_main(args: PagerArgs) -> Result<()> {
         Ok(true) => {
             let adopted = bg_update_wait.lock().await.take();
             if finish_update_on_exit(adopted, &update_config).await {
-                eprintln!("Update installed. Run `grok` to start.");
+                eprintln!("Update installed. Run `atlas` to start.");
             } else {
-                eprintln!("Update did not complete. Run `grok update` to retry.");
+                eprintln!("Update did not complete. Run `atlas update` to retry.");
             }
             Ok(())
         }
@@ -2132,11 +2132,34 @@ fn build_update_config() -> UpdateConfig {
     config.npm_registry = std::env::var(obfstr::obfstr!("GROK_NPM_REGISTRY"))
         .ok()
         .or_else(xai_grok_shell::util::config::load_npm_registry_sync);
-    if let Ok(root) = xai_grok_shell::config::load_effective_config_disk_only()
-        && let Some(ch) = xai_grok_shell::util::config::channel_from_toml_opt(&root)
-    {
-        config.channel = ch;
+    let mut toml_cli_base: Option<String> = None;
+    let mut toml_proxy: Option<String> = None;
+    if let Ok(root) = xai_grok_shell::config::load_effective_config_disk_only() {
+        if let Some(ch) = xai_grok_shell::util::config::channel_from_toml_opt(&root) {
+            config.channel = ch;
+        }
+        if let Some(endpoints) = root.get("endpoints") {
+            toml_cli_base = endpoints
+                .get("cli_update_base_url")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+            toml_proxy = endpoints
+                .get("cli_chat_proxy_base_url")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned);
+        }
     }
+    let endpoints = xai_grok_shell::agent::config::EndpointsConfig::default();
+    let explicit = toml_cli_base.or(endpoints.cli_update_base_url.clone());
+    let proxy = toml_proxy
+        .or(endpoints.cli_chat_proxy_base_url.clone())
+        .or_else(|| Some(config.proxy_base_url.clone()));
+    config.cli_base_urls =
+        xai_grok_update::resolve_cli_base_urls(explicit.as_deref(), proxy.as_deref());
     config
 }
 /// Central gate for auto-update checks; add new suppression rules here,
@@ -2316,7 +2339,7 @@ mod tests {
             let mut output = Vec::new();
             write_version(&mut output, label).unwrap();
             let output = String::from_utf8(output).unwrap();
-            assert!(output.starts_with("grok "));
+            assert!(output.starts_with("atlas "));
             assert!(output.contains(env!("VERSION_WITH_COMMIT")));
             assert!(output.ends_with(expected_suffix), "{output:?}");
         }

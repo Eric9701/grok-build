@@ -164,7 +164,7 @@ fn mixed_report() -> DiagnosticReport {
             disposition: FindingDisposition::Recommendation,
             message: "Use local SSH wrapping".to_owned(),
             remediation: Some(ManualRemediation {
-                fix: "grok wrap ssh <host>".to_owned(),
+                fix: "atlas wrap ssh <host>".to_owned(),
                 config_path: None,
             }),
             automatic_remediation: Some(crate::diagnostics::ssh_wrap_automatic_remediation()),
@@ -317,7 +317,7 @@ fn human_wayland_error_includes_detail_once() {
     assert_eq!(
         human::format(&report),
         concat!(
-            "Grok Doctor\n",
+            "Atlas Doctor\n",
             "\n",
             "Terminal\n",
             "  · terminal                     Ghostty\n",
@@ -422,7 +422,7 @@ fn human_healthy_fixture_is_exact() {
     assert_eq!(
         human::format(&healthy_report()),
         concat!(
-            "Grok Doctor\n",
+            "Atlas Doctor\n",
             "\n",
             "Terminal\n",
             "  · terminal                     Ghostty\n",
@@ -449,7 +449,7 @@ fn human_mixed_fixture_is_exact() {
     assert_eq!(
         human::format(&mixed_report()),
         concat!(
-            "Grok Doctor\n",
+            "Atlas Doctor\n",
             "\n",
             "Terminal\n",
             "  · terminal                     Ghostty\n",
@@ -474,8 +474,8 @@ fn human_mixed_fixture_is_exact() {
             "    → Add `set -g set-clipboard on` to ~/.tmux.conf\n",
             "      Reload tmux after editing.\n",
             "  i terminal.ssh-wrap            Use local SSH wrapping\n",
-            "    → Automatic setup: `grok doctor fix ssh-wrap`\n",
-            "    → One-off: `grok wrap ssh <host>`\n",
+            "    → Automatic setup: `atlas doctor fix ssh-wrap`\n",
+            "    → One-off: `atlas wrap ssh <host>`\n",
             "\n",
             "Probe notes\n",
             "  ? tmux.version                 unavailable\n",
@@ -485,7 +485,7 @@ fn human_mixed_fixture_is_exact() {
             "  ? tmux.control-mode            error: server unavailable\n",
             "\n",
             "Live TUI evidence\n",
-            "  Run /doctor inside Grok.\n",
+            "  Run /doctor inside Atlas.\n",
             "\n",
             "1 issue, 1 recommendation\n",
         )
@@ -508,11 +508,11 @@ fn fix_preview_contains_exact_change_and_caveats() {
     assert!(preview.contains("File: "));
     assert!(
         preview.contains(
-            "# >>> grok doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='grok wrap ssh'"
+            "# >>> atlas doctor >>>\n# >>> terminal.ssh-wrap >>>\nalias ssh='atlas wrap ssh'"
         )
     );
     assert!(
-        preview.contains("One-off alternative without changing config: `grok wrap ssh <host>`")
+        preview.contains("One-off alternative without changing config: `atlas wrap ssh <host>`")
     );
     assert!(preview.contains("Use `command ssh ...` to bypass the alias."));
     assert!(preview.contains("ssh -f"));
@@ -605,7 +605,7 @@ fn human_incomplete_fixture_is_exact_without_duplicate_probe_rows() {
     assert_eq!(
         human::format(&report),
         concat!(
-            "Grok Doctor\n",
+            "Atlas Doctor\n",
             "\n",
             "Terminal\n",
             "  · terminal                     Ghostty\n",
@@ -623,7 +623,7 @@ fn human_incomplete_fixture_is_exact_without_duplicate_probe_rows() {
             "  · status                       confirmed\n",
             "\n",
             "Live TUI evidence\n",
-            "  Run /doctor inside Grok.\n",
+            "  Run /doctor inside Atlas.\n",
             "\n",
             "0 issues, 0 recommendations\n",
         )
@@ -737,10 +737,10 @@ fn json_contract_is_structural_stable_ordered_and_ansi_free() {
                     "id": "terminal.ssh-wrap",
                     "disposition": "recommendation",
                     "message": "Use local SSH wrapping",
-                    "remediation": {"fix": "grok wrap ssh <host>", "configPath": null},
+                    "remediation": {"fix": "atlas wrap ssh <host>", "configPath": null},
                     "automaticRemediation": {
                         "fixId": "terminal.ssh-wrap",
-                        "command": "grok doctor fix terminal.ssh-wrap"
+                        "command": "atlas doctor fix terminal.ssh-wrap"
                     },
                     "note": null
                 }
@@ -768,7 +768,7 @@ fn json_contract_is_structural_stable_ordered_and_ansi_free() {
     assert!(issue < recommendation);
     assert!(version < extended && extended < unsupported && unsupported < unavailable);
     assert!(!text.contains("\u{1b}"));
-    assert!(!text.contains("Grok Doctor"));
+    assert!(!text.contains("Atlas Doctor"));
 }
 
 #[test]

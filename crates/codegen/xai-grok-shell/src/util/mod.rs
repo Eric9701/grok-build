@@ -1,6 +1,7 @@
 pub mod config;
 pub mod grok_auth_credentials;
 pub mod hooks;
+pub(crate) mod model_secret;
 pub(crate) mod subprocess;
 pub(crate) mod user_identity;
 

@@ -327,8 +327,8 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
             hit!("plugins");
         }
     }
-    // Project `.grok/lsp.json`.
-    if cwd.join(".grok").join("lsp.json").is_file() {
+    // Project `.atlas/lsp.json` (legacy `.grok/lsp.json`).
+    if xai_grok_config::project_dir_in(cwd).join("lsp.json").is_file() {
         hit!("lsp");
     }
     // Project `.cursor/mcp.json` — vendor MCP loading is default-on and tagged
@@ -363,7 +363,7 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
     // resolve trusted and run ungated. Presence mirrors discovery's "something to
     // gate" check.
     let hook_root = chain.git_root.as_deref().unwrap_or(cwd);
-    if path_present_or_uncertain(&hook_root.join(".grok").join("hooks"))
+    if path_present_or_uncertain(&xai_grok_config::project_dir_in(hook_root).join("hooks"))
         || hook_root.join(".cursor").join("hooks.json").is_file()
     {
         hit!("hooks");
@@ -386,14 +386,14 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
         hit!("agents");
     }
     // Presence matches exact-cwd discovery without parsing repository content.
-    let grok = cwd.join(".grok");
+    let grok = xai_grok_config::project_dir_in(cwd);
     if directory_present_or_uncertain(&grok.join("roles")) {
         hit!("roles");
     }
     if directory_present_or_uncertain(&grok.join("personas")) {
         hit!("personas");
     }
-    if directory_present_or_uncertain(&hook_root.join(".grok").join("workflows")) {
+    if directory_present_or_uncertain(&xai_grok_config::project_dir_in(hook_root).join("workflows")) {
         hit!("workflows");
     }
     // `~/.claude.json` `projects.<cwd>.mcpServers`.

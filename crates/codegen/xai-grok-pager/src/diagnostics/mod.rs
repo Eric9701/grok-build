@@ -64,7 +64,7 @@ pub fn apply_voice_probe(report: &mut DiagnosticReport, emit_missing_issue: bool
                     automatic_remediation: None,
                     note: Some(
                         "Connect or select an input device in your system sound settings, then \
-                         re-run /terminal-setup or grok doctor."
+                         re-run /terminal-setup or atlas doctor."
                             .to_owned(),
                     ),
                 });
@@ -111,7 +111,7 @@ pub enum WarningCategory {
     /// Below truecolor: truecolor themes hidden. Explicit `/doctor` only.
     LimitedColorSupport,
     SandboxProfileConflict,
-    /// The session runs over SSH without `grok wrap` on the local end, so
+    /// The session runs over SSH without `atlas wrap` on the local end, so
     /// clipboard forwarding and terminal-mode restore on dropped connections
     /// are not guaranteed. Informational recommendation, not a breakage.
     SshWithoutWrap,
@@ -388,7 +388,7 @@ fn sandbox_profile_conflict_warning_from(conflicts: Vec<String>) -> Option<Termi
     Some(TerminalWarning {
         category: WarningCategory::SandboxProfileConflict,
         message: format!(
-            "Your project sandbox profile conflicts with user config.\nProfile: {profiles}\nProject config: .grok/sandbox.toml\nUser config: ~/.grok/sandbox.toml"
+            "Your project sandbox profile conflicts with user config.\nProfile: {profiles}\nProject config: .atlas/sandbox.toml\nUser config: ~/.atlas/sandbox.toml"
         ),
         fix: Some("Using the user profile instead.".to_string()),
         config_path: None,
@@ -396,8 +396,8 @@ fn sandbox_profile_conflict_warning_from(conflicts: Vec<String>) -> Option<Termi
     })
 }
 
-/// Pure SSH `grok wrap` recommendation — suggests launching the session
-/// through `grok wrap ssh <host>` on the user's local machine, which gives a
+/// Pure SSH `atlas wrap` recommendation — suggests launching the session
+/// through `atlas wrap ssh <host>` on the user's local machine, which gives a
 /// remote session reliable clipboard forwarding plus terminal-mode restore
 /// when the connection drops.
 ///
@@ -430,10 +430,10 @@ pub fn ssh_wrap_hint(
     }
     let mut warning = TerminalWarning::new(
         WarningCategory::SshWithoutWrap,
-        "Running over SSH without `grok wrap` -- clipboard copies depend on the \
+        "Running over SSH without `atlas wrap` -- clipboard copies depend on the \
          terminal's escape-sequence support, and a dropped connection can leave \
          your local terminal in a bad state",
-        Some("grok wrap ssh <host>"),
+        Some("atlas wrap ssh <host>"),
         None,
     );
     warning.note = Some(
@@ -767,15 +767,15 @@ pub fn format_clipboard_diagnostics(input: ClipboardDiagnosticsInput<'_>) -> Cli
     let fix = match delivery {
         ClipboardDelivery::Confirmed => None,
         ClipboardDelivery::Unverified if input.is_ssh => {
-            Some("grok wrap <ssh command> or /minimal")
+            Some("atlas wrap <ssh command> or /minimal")
         }
         ClipboardDelivery::Unverified if input.container_no_display => {
-            Some("grok wrap <command> or /minimal")
+            Some("atlas wrap <command> or /minimal")
         }
-        ClipboardDelivery::Unverified => Some("grok wrap or /minimal"),
-        ClipboardDelivery::Failed if input.is_ssh => Some("grok wrap <ssh command> or /minimal"),
+        ClipboardDelivery::Unverified => Some("atlas wrap or /minimal"),
+        ClipboardDelivery::Failed if input.is_ssh => Some("atlas wrap <ssh command> or /minimal"),
         ClipboardDelivery::Failed if input.container_no_display => {
-            Some("grok wrap <command> or /minimal")
+            Some("atlas wrap <command> or /minimal")
         }
         ClipboardDelivery::Failed => Some("/minimal"),
     };
@@ -1131,7 +1131,7 @@ mod tests {
             "osc 52       unknown",
             "wrap         off",
             "status       unverified",
-            "fix          grok wrap <ssh command> or /minimal",
+            "fix          atlas wrap <ssh command> or /minimal",
         ] {
             assert!(
                 diagnostics.text.contains(expected),
@@ -1155,7 +1155,7 @@ mod tests {
         assert!(
             unsupported
                 .text
-                .contains("fix          grok wrap <ssh command> or /minimal")
+                .contains("fix          atlas wrap <ssh command> or /minimal")
         );
         assert!(unsupported.has_issue);
 
@@ -1230,7 +1230,7 @@ mod tests {
         assert!(
             container
                 .text
-                .contains("fix          grok wrap <command> or /minimal")
+                .contains("fix          atlas wrap <command> or /minimal")
         );
 
         let remote_container = format_clipboard_diagnostics(ClipboardDiagnosticsInput {
@@ -1245,7 +1245,7 @@ mod tests {
         assert!(
             remote_container
                 .text
-                .contains("fix          grok wrap <ssh command> or /minimal")
+                .contains("fix          atlas wrap <ssh command> or /minimal")
         );
     }
 
@@ -1965,14 +1965,14 @@ mod tests {
         assert!(out[1].message.contains("sandbox profile"));
     }
 
-    // -- ssh_wrap_hint: `grok wrap ssh` recommendation --------------------------
+    // -- ssh_wrap_hint: `atlas wrap ssh` recommendation --------------------------
 
     #[test]
     fn ssh_wrap_hint_fires_over_plain_ssh() {
         // is_ssh, no sink, not VS Code remote → recommend wrap.
         let w = ssh_wrap_hint(true, false, false).expect("hint must fire");
         assert_eq!(w.category, WarningCategory::SshWithoutWrap);
-        assert_eq!(w.fix.as_deref(), Some("grok wrap ssh <host>"));
+        assert_eq!(w.fix.as_deref(), Some("atlas wrap ssh <host>"));
         assert!(
             w.config_path.is_none(),
             "fix is a command, not a config line"
@@ -1994,7 +1994,7 @@ mod tests {
     #[test]
     fn ssh_wrap_hint_suppressed_when_sink_active() {
         // An active OSC 52 sink means the session already runs under
-        // `grok wrap` — adoption silences the hint by itself.
+        // `atlas wrap` — adoption silences the hint by itself.
         assert!(ssh_wrap_hint(true, true, false).is_none());
     }
 

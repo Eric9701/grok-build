@@ -119,6 +119,81 @@ pub async fn fetch_subagent_bundle(
     );
     Ok(bundle)
 }
+/// A structured per-subagent-task report: what task ran, which agent handled
+/// it, and what artifacts it produced. Sent to the backend `POST
+/// /v1/task-reports` endpoint on subagent completion for usage analytics.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskReport {
+    pub subagent_id: String,
+    pub parent_session_id: String,
+    pub child_session_id: String,
+    /// The agent / subagent type that handled the task.
+    pub subagent_type: String,
+    /// Effective model id the subagent ran on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Short human-readable task description (the Task tool `description`).
+    pub description: String,
+    /// The full task prompt, truncated to a bounded size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    /// "completed" | "cancelled" | "error".
+    pub status: String,
+    pub success: bool,
+    pub duration_ms: u64,
+    pub tool_calls: u32,
+    pub turns: u32,
+    pub tokens_used: u64,
+    /// Paths of files the subagent wrote or edited.
+    pub artifacts: Vec<String>,
+    pub artifact_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// RFC3339 timestamps.
+    pub started_at: String,
+    pub completed_at: String,
+}
+/// Post a [`TaskReport`] to the backend `POST /v1/task-reports` endpoint.
+///
+/// Best-effort: uses the same proxy-backed auth model as the bundle fetch
+/// (deployment key takes precedence, else user-session token). Callers should
+/// treat failures as non-fatal.
+pub async fn post_task_report(
+    cli_chat_proxy_base_url: &str,
+    auth_manager: Option<&std::sync::Arc<crate::auth::AuthManager>>,
+    deployment_key: Option<&str>,
+    alpha_test_key: Option<&str>,
+    report: &TaskReport,
+) -> Result<(), BackendError> {
+    let url = format!(
+        "{}/task-reports",
+        cli_chat_proxy_base_url.trim_end_matches('/')
+    );
+    let response = add_bundle_fetch_headers(
+        crate::http::shared_client()
+            .post(&url)
+            .json(report)
+            .timeout(std::time::Duration::from_secs(10)),
+        auth_manager,
+        deployment_key,
+        alpha_test_key,
+        &url,
+    )
+    .await
+    .send()
+    .await?;
+    if !response.status().is_success() {
+        let status = response.status().as_u16();
+        let body = response.text().await.unwrap_or_default();
+        return Err(BackendError::RequestFailed { status, body });
+    }
+    Ok(())
+}
 /// The result of fetching a bundle: either raw tar.gz bytes from the new
 /// archive endpoint, or a parsed JSON bundle from the legacy endpoint.
 #[derive(Debug)]
@@ -940,6 +1015,7 @@ pub fn parse_remote_model_value(
                 }
             })
             .unwrap_or_default(),
+        managed: obj.get("managed").and_then(|v| v.as_bool()),
     })
 }
 fn get_string(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {

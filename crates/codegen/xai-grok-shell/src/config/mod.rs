@@ -1,5 +1,6 @@
 pub mod reloader;
 pub mod watcher;
+pub mod managed_models;
 use crate::bundle;
 use serde::Deserialize;
 pub use xai_grok_config_types::{

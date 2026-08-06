@@ -25,7 +25,7 @@ const MIN_DEVICE_CODE_EXPIRY_FALLBACK_SECS: i64 = 10 * 60;
 pub enum DeviceCodeError {
     #[error(
         "Device-code login is not available for this deployment. \
-         Try `grok login` or set XAI_API_KEY instead."
+         Try `atlas login` or set XAI_API_KEY instead."
     )]
     NotEnabled,
     #[error(transparent)]
@@ -204,7 +204,7 @@ pub async fn request_device_code(
 
 /// Poll the token endpoint until the user approves (or denies / expires).
 ///
-/// On success, persists credentials to `~/.grok/auth.json` and returns
+/// On success, persists credentials to `~/.atlas/auth.json` and returns
 /// the authenticated `GrokAuth`.
 ///
 /// Callers should have already displayed `device_code.verification_uri`
@@ -232,7 +232,7 @@ pub async fn complete_device_code_login(
         tokio::time::sleep(poll_interval).await;
 
         if tokio::time::Instant::now() > deadline {
-            anyhow::bail!("Device code expired. Run `grok login --device-auth` again.");
+            anyhow::bail!("Device code expired. Run `atlas login --device-auth` again.");
         }
 
         let resp = with_alpha_test_key(
@@ -273,7 +273,7 @@ pub async fn complete_device_code_login(
             }
             "expired_token" => {
                 tracing::warn!(description = detail, "device auth token expired");
-                anyhow::bail!("Device code expired. Run `grok login --device-auth` again.");
+                anyhow::bail!("Device code expired. Run `atlas login --device-auth` again.");
             }
             other => {
                 tracing::warn!(
@@ -527,9 +527,22 @@ fn validate_verification_uri(uri: &str) -> anyhow::Result<()> {
 
     match parsed.scheme() {
         "https" => Ok(()),
-        "http" if matches!(parsed.host_str(), Some("localhost") | Some("127.0.0.1")) => Ok(()),
+        // Plain HTTP is only for loopback / private LAN (enterprise atlas-server).
+        "http" if parsed
+            .host_str()
+            .is_some_and(http_verification_host_allowed) =>
+        {
+            Ok(())
+        }
         _ => anyhow::bail!("Server returned unsupported verification URI scheme"),
     }
+}
+
+fn http_verification_host_allowed(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "::1" | "10.218.220.237")
+        || host
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_loopback() || ip.is_private() || ip.is_link_local())
 }
 
 #[cfg(test)]
@@ -542,6 +555,20 @@ pub(crate) mod tests {
     #[test]
     fn validate_verification_uri_rejects_unsupported_scheme() {
         let err = validate_verification_uri("javascript:alert(1)").unwrap_err();
+        assert_eq!(
+            "Server returned unsupported verification URI scheme",
+            err.to_string()
+        );
+    }
+
+    #[test]
+    fn validate_verification_uri_allows_https_and_private_http() {
+        validate_verification_uri("https://accounts.x.ai/oauth2/device").unwrap();
+        validate_verification_uri("http://127.0.0.1:22255/atlas/oauth2/device").unwrap();
+        validate_verification_uri("http://localhost:22255/atlas/oauth2/device").unwrap();
+        validate_verification_uri("http://10.218.220.237:22255/atlas/oauth2/device").unwrap();
+        validate_verification_uri("http://10.0.0.5:22255/atlas/oauth2/device").unwrap();
+        let err = validate_verification_uri("http://example.com/oauth2/device").unwrap_err();
         assert_eq!(
             "Server returned unsupported verification URI scheme",
             err.to_string()

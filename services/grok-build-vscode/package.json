@@ -1,0 +1,424 @@
+{
+  "name": "atlas-vscode",
+  "displayName": "Atlas for VS Code",
+  "description": "GUI for Atlas CLI (ACP client). Multiple sessions, worktrees, plan mode, images/videos, Mermaid, and LaTeX. Compatible with Atlas enterprise proxy (/atlas/v1). Uses GROK_* env vars for CLI home and proxy. Fair Source (FSL-1.1-MIT).",
+  "version": "3.1.0",
+  "publisher": "PawelHuryn",
+  "author": {
+    "name": "Paweł Huryn",
+    "url": "https://www.productcompass.pm"
+  },
+  "license": "FSL-1.1-MIT",
+  "homepage": "https://github.com/phuryn/grok-build-vscode",
+  "bugs": {
+    "url": "https://github.com/phuryn/grok-build-vscode/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/phuryn/grok-build-vscode"
+  },
+  "engines": {
+    "vscode": "^1.106.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "atlas",
+    "atlas-cli",
+    "grok",
+    "grok-build",
+    "acp",
+    "acp-client",
+    "agent-client-protocol",
+    "agent",
+    "ai",
+    "chat",
+    "sidebar"
+  ],
+  "icon": "resources/grok-icon.png",
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "atlasSidebar",
+          "title": "Atlas",
+          "icon": "resources/grok-icon.svg"
+        }
+      ],
+      "activitybar": [
+        {
+          "id": "atlasPrimary",
+          "title": "Atlas",
+          "icon": "resources/grok-icon.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "atlasPanel",
+          "title": "Atlas",
+          "icon": "resources/grok-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "atlasSidebar": [
+        {
+          "type": "webview",
+          "id": "atlas.chat",
+          "name": "Atlas"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "atlas.open",
+        "title": "Atlas: Open"
+      },
+      {
+        "command": "atlas.newSession",
+        "title": "Atlas: New Session"
+      },
+      {
+        "command": "atlas.newWorktreeSession",
+        "title": "Atlas: New Worktree Session"
+      },
+      {
+        "command": "atlas.applyWorktree",
+        "title": "Atlas: Apply Worktree"
+      },
+      {
+        "command": "atlas.removeWorktree",
+        "title": "Atlas: Remove Worktree"
+      },
+      {
+        "command": "atlas.rewind",
+        "title": "Atlas: Rewind Conversation"
+      },
+      {
+        "command": "atlas.compact",
+        "title": "Atlas: Compact Conversation"
+      },
+      {
+        "command": "atlas.pickModel",
+        "title": "Atlas: Pick Model"
+      },
+      {
+        "command": "atlas.toggleMode",
+        "title": "Atlas: Toggle Plan / Agent Mode"
+      },
+      {
+        "command": "atlas.sendSelection",
+        "title": "Add Selection to Atlas"
+      },
+      {
+        "command": "atlas.sendFile",
+        "title": "Atlas: Send File"
+      },
+      {
+        "command": "atlas.insertAtMention",
+        "title": "Atlas: Insert @-Mention"
+      },
+      {
+        "command": "atlas.showLogs",
+        "title": "Atlas: Show Logs"
+      },
+      {
+        "command": "atlas.expandAllToolDetails",
+        "title": "Atlas: Expand All Tool Details (This Session)"
+      },
+      {
+        "command": "atlas.collapseAllToolDetails",
+        "title": "Atlas: Collapse All Tool Details (This Session)"
+      },
+      {
+        "command": "atlas.logout",
+        "title": "Atlas: Log Out"
+      },
+      {
+        "command": "atlas.linkRemote",
+        "title": "AFK Pilot: Link this device"
+      },
+      {
+        "command": "atlas.unlinkRemote",
+        "title": "AFK Pilot: Unlink this device"
+      },
+      {
+        "command": "atlas._debugDummyPlan",
+        "title": "Atlas: Debug — Show dummy plan card (for testing Approve/Reject/Cancel)"
+      },
+      {
+        "command": "atlas.composerForward",
+        "title": "Atlas: Composer — Move Forward"
+      },
+      {
+        "command": "atlas.composerPreviousLine",
+        "title": "Atlas: Composer — Move to Previous Line"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "atlas.open",
+        "key": "ctrl+;",
+        "mac": "cmd+;"
+      },
+      {
+        "command": "atlas.insertAtMention",
+        "key": "alt+g",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "atlas.composerForward",
+        "key": "ctrl+f",
+        "when": "isMac && atlas.composerFocus"
+      },
+      {
+        "command": "atlas.composerPreviousLine",
+        "key": "ctrl+p",
+        "when": "isMac && atlas.composerFocus"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "atlas._debugDummyPlan",
+          "when": "false"
+        },
+        {
+          "command": "atlas.composerForward",
+          "when": "false"
+        },
+        {
+          "command": "atlas.composerPreviousLine",
+          "when": "false"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "atlas.sendSelection",
+          "when": "editorHasSelection",
+          "group": "atlas@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "atlas.sendFile",
+          "when": "resourceScheme == file",
+          "group": "atlas@1"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "atlas.sendFile",
+          "when": "resourceScheme == file",
+          "group": "atlas@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Atlas",
+      "properties": {
+        "atlas.cliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the atlas binary. Empty = auto-discover (~/.atlas/bin/atlas, then ~/.grok/bin/grok, then PATH)."
+        },
+        "atlas.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Model ID to use on new sessions. Empty = CLI default. If a non-empty value isn't available for the session's agent, it's replaced with the model the CLI falls back to (no prompt)."
+        },
+        "atlas.defaultMode": {
+          "type": "string",
+          "enum": [
+            "",
+            "agent",
+            "yolo"
+          ],
+          "enumDescriptions": [
+            "Agent mode (CLI default)",
+            "Agent mode",
+            "Auto accept — auto-approve every permission request"
+          ],
+          "default": "",
+          "description": "Mode for new sessions. Updated automatically to remember your last switch between Agent and Auto accept (Plan is never remembered). Empty = Agent."
+        },
+        "atlas.includeActiveFileByDefault": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-add the active editor file as a context chip."
+        },
+        "atlas.mentionIndexLimit": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 100,
+          "markdownDescription": "Max workspace files indexed for composer **@** file autocomplete. Default 5000 keeps a cold index build bounded; raise it (no upper limit) if files are missing from the `@` list in large repos. Applies on the next `@` after the setting changes. Very large values cost more time on the first rebuild."
+        },
+        "atlas.defaultEffort": {
+          "type": "string",
+          "enum": [
+            "",
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "enumDescriptions": [
+            "CLI default (no flag passed to grok agent stdio)",
+            "None",
+            "Minimal",
+            "Low — faster, lighter reasoning",
+            "Medium",
+            "High",
+            "XHigh — deepest reasoning, slowest"
+          ],
+          "default": "",
+          "description": "Reasoning effort passed as --reasoning-effort to grok agent stdio. Values match the grok CLI's accepted set (none, minimal, low, medium, high, xhigh). Applies live on recent CLIs (grok 0.2.101+); older CLIs, and resetting to the model default, restart the session."
+        },
+        "atlas.useCtrlEnterToSend": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Ctrl/Cmd+Enter to send (Enter inserts newline)."
+        },
+        "atlas.terminalShell": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "cmd"
+          ],
+          "enumDescriptions": [
+            "PowerShell on Windows (pwsh, then Windows PowerShell 5.1) — matches the standalone Grok CLI",
+            "Force cmd.exe on Windows (legacy)"
+          ],
+          "default": "auto",
+          "markdownDescription": "Which shell runs the agent's commands **on Windows**. `auto` (default) uses PowerShell — `pwsh.exe` if installed, else Windows PowerShell 5.1 — so your PowerShell profile functions and pipelines work like they do in the standalone Grok CLI (#46). `cmd` forces `cmd.exe` (the pre-1.5.13 behavior) if the PowerShell host causes trouble. **Tip: install PowerShell 7 (`pwsh`)** — the 5.1 fallback rejects `&&` chains and reports every failing command's exit code as 1. No effect on macOS/Linux (always `/bin/sh`)."
+        },
+        "atlas.showThinking": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Show Grok's reasoning (thinking) traces in chat. Off by default — a lightweight \"Thinking…\" indicator stands in while Grok reasons. Also toggleable live from the gear menu → **Config & debug → Show thinking traces** (applies to already-loaded sessions too)."
+        },
+        "atlas.expandCommandOutputs": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Expand tool details by default — each shell command's IN/OUT block (full command text + captured output) and each edit's inline diff (useful for auditing Auto-accept sessions). With this setting on, groups containing command or edit details (such as \"Ran N commands\" or \"Edited N files\") open too; read/explore-only groups stay collapsed, and a lone command outside a group opens its details. Off: click a row or group header (›) to expand it — edit rows always show a `+N −M` change count, even when their diff is closed. Also toggleable live from the gear menu → **Config & debug → Expand tool details**."
+        },
+        "atlas.steerByDefault": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Send straight into Grok's running turn instead of queueing it. Off (default): a message you send while Grok is working waits, and is sent as one prompt when the turn ends — you can still steer it on demand with the **Steer** button on the pending message. On: sending while Grok works **skips the queue** and injects the message into the turn immediately, so Grok changes course mid-answer. Steering never cancels the turn and never discards in-flight tool work — it is not a Stop. It carries plain text only: no attached files, no editor context, and no `/commands`. Needs a recent Grok Build CLI; where it's unsupported, messages fall back to the queue. Also toggleable live from the gear menu → **Config & debug → Steer by default**."
+        },
+        "atlas.soundNotifications": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Play a short sound when Grok finishes a turn or hits an error — a rising chime on completion, a lower tone on error. Off by default. Plays **only when the Grok panel isn't focused** (you've switched to the editor or another window), so it notifies you when you've stepped away without beeping while you watch. Also toggleable live from the gear menu → **Config & debug → Sound notifications**."
+        },
+        "atlas.processingSound": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Play a quiet repeating sound while Grok is still working. The first cue waits seven seconds, then repeats every eight seconds until the turn ends. Off by default and separate from the completion/error sound. Also toggleable live from the gear menu → **Config & debug → Still-processing sound**."
+        },
+        "atlas.readRepliesAloud": {
+          "type": "boolean",
+          "default": false,
+          "description": "Read completed Grok replies aloud in the VS Code chat. Code blocks are skipped."
+        },
+        "atlas.summarizeRepliesAloud": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Read simplified summaries of spoken Grok replies. Each reply costs an extra xAI call and adds network delay; the full reply is used if summarization fails. Uses the same credential resolution as Voice input. AFK Pilot keeps its own per-device browser preference."
+        },
+        "atlas.remote.keepAwake": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Keep this machine awake while it's linked to an **AFK Pilot** account, so a remote turn isn't cut off by idle sleep. Only active once you've signed in (gear → AFK Pilot → *Sign in*); unlinking releases the lock immediately. The display is still free to sleep — only system/idle sleep is blocked. Uses `caffeinate` on macOS, `SetThreadExecutionState` on Windows and `systemd-inhibit` on Linux. **A closed laptop lid still sleeps** on every platform — that's an OS-level decision no application can override."
+        },
+        "atlas.telemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Send anonymous, privacy-first usage telemetry. A single `session_start` event per session carries only an anonymous install id (a random GUID, no account/identity) plus the chosen mode/model/effort — **never** any message content, code, or file paths. Also requires VS Code's global `telemetry.telemetryLevel` to be enabled; turning either off stops all sending."
+        },
+        "atlas.chatFontScale": {
+          "type": "number",
+          "default": 100,
+          "minimum": 60,
+          "maximum": 300,
+          "markdownDescription": "Zoom for the Grok chat panel only, as a percent (100 = default). Scales the whole chat UI — text, icons, spacing — without affecting the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live, no reload needed. Supports User (global) and Workspace (local) scope."
+        },
+        "atlas.voiceApiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Optional override key for voice Speech-to-Text (`api.x.ai/v1/stt`). **Leave empty and it just works** — the extension reuses your `grok login` token automatically. Set this (or `GROK_VOICE_API_KEY` / `XAI_API_KEY` in your workspace `.env`) only to use a dedicated [console.x.ai](https://console.x.ai) developer key instead. Setup + costs: [docs/voice-setup.md](https://github.com/PawelHuryn/grok-vscode/blob/main/docs/voice-setup.md)."
+        },
+        "atlas.ffmpegPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the ffmpeg binary used to record the microphone for voice control. Empty = use 'ffmpeg' from PATH. Install ffmpeg from https://ffmpeg.org if voice control reports it as missing."
+        },
+        "atlas.voiceInputDevice": {
+          "type": "string",
+          "default": "",
+          "description": "Microphone device for voice control. Empty = system default (on Windows, the first DirectShow audio device is auto-detected). Set this to a specific device name (Windows/dshow) or index (macOS/avfoundation) to override."
+        },
+        "atlas.voiceSendPhrase": {
+          "type": "string",
+          "default": "atlas send",
+          "description": "Spoken phrase that auto-submits the message when it ends a voice transcription (e.g. say \"…fix the bug, grok send\"). The phrase is stripped before sending. Leave empty to disable hands-free sending."
+        },
+        "atlas.voiceKeyterms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Words or phrases to help streaming voice recognition spell code and project vocabulary correctly (for example, \"Get-ChildItem\", \"useEffect\", or an internal package name). Put the most important terms first. xAI accepts at most 100 terms of 50 characters each; the send phrase and \"Grok\" are kept first, then user terms fill the remaining slots. Supports User and Workspace scope."
+        },
+        "atlas.voiceLanguage": {
+          "type": "string",
+          "default": "",
+          "description": "Optional language code for streaming voice text formatting (for example, \"en\", \"fr\", \"de\", or \"ja\"). When set, xAI converts spoken numbers, currencies, and units to written forms. Leave empty to keep Inverse Text Normalization off and preserve spoken-form text. Supports User and Workspace scope."
+        },
+        "atlas.voiceStreaming": {
+          "type": "boolean",
+          "default": true,
+          "description": "Stream voice transcription live as you speak (words appear in the composer in real time, and \"grok send\" can submit without a second click). Disable to use one-shot batch mode (click to start, click to stop, then transcribe). Streaming costs $0.20/hr of audio vs $0.10/hr batch."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "tsc -p .",
+    "compile": "tsc -p .",
+    "watch": "tsc -p . -w",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:perf": "vitest run --config vitest.perf.config.ts",
+    "compile:integration": "tsc -p integration/tsconfig.json",
+    "test:integration": "npm run compile && npm run compile:integration && vscode-test",
+    "test:live": "tsc -p . && node scripts/live-tests.cjs",
+    "telemetry:probe": "tsc -p . && node scripts/telemetry-probe.cjs",
+    "prepackage": "node -e \"for (const f of require('fs').readdirSync('.')) if (f.endsWith('.vsix')) require('fs').unlinkSync(f)\"",
+    "package": "node scripts/vsce-node18.cjs package",
+    "publish": "node scripts/vsce-node18.cjs publish"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.94.0",
+    "@types/ws": "^8.18.1",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^2.32.0",
+    "happy-dom": "^20.9.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "jpeg-js": "^0.4.4",
+    "ws": "^8.21.0"
+  }
+}

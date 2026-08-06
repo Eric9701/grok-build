@@ -26,12 +26,15 @@ pub enum UpdateRunMode {
 const PROMPT_UPDATE_NOW: &str = "Update now? [Y/n/d]";
 const MSG_AUTO_UPDATE_BACKGROUND: &str = "Auto-update running in background.";
 const MSG_RUN_UPDATE_MANUAL: &str = "Run `grok update` to get the latest version.";
-/// Manual-install one-liner for this platform's bootstrap installer.
-fn manual_install_cmd() -> &'static str {
+fn manual_install_cmd() -> String {
+    let base = crate::version::resolve_cli_base_urls(None, None)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| crate::version::DEFAULT_CLI_BASE_URL.to_string());
     if cfg!(windows) {
-        "irm https://x.ai/cli/install.ps1 | iex"
+        format!("irm {base}/install.ps1 | iex")
     } else {
-        "curl -fsSL https://x.ai/cli/install.sh | bash"
+        format!("curl -fsSL {base}/install.sh | bash")
     }
 }
 
@@ -417,7 +420,7 @@ pub async fn check_update_background(update_config: &UpdateConfig) -> Background
     )
     .unwrap_or(false)
     {
-        let stable_ptr = try_fetch_stable_pointer().await;
+        let stable_ptr = try_fetch_stable_pointer(&update_config.cli_base_urls).await;
         write_version_cache(&latest_version, stable_ptr.as_deref()).await;
         return BackgroundUpdateCheck::none();
     }
@@ -517,7 +520,7 @@ pub async fn run_update_if_available(
     )
     .unwrap_or(false)
     {
-        let stable_ptr = try_fetch_stable_pointer().await;
+        let stable_ptr = try_fetch_stable_pointer(&update_config.cli_base_urls).await;
         write_version_cache(&latest_version, stable_ptr.as_deref()).await;
         return Ok(false);
     }
@@ -1090,7 +1093,14 @@ async fn download_cli_artifact_from_gcs(
 }
 
 async fn install_internal(target: Option<&str>, update_config: &UpdateConfig) -> Result<()> {
-    install_internal_from_bases(target, update_config, crate::version::CLI_BASE_URLS).await
+    let bases = update_config.cli_base_url_refs();
+    if bases.is_empty() {
+        anyhow::bail!(
+            "no CLI base URLs configured (set {} or endpoints.cli_update_base_url)",
+            crate::version::CLI_BASE_URL_ENV
+        );
+    }
+    install_internal_from_bases(target, update_config, &bases).await
 }
 
 /// Try the base-dependent install phase ([`download_verified_from_base`]:
@@ -2355,7 +2365,7 @@ pub async fn run_update(
                 if channel_switch.is_some() && effective_current != install_target {
                     // Fall through to install
                 } else {
-                    let stable_ptr = try_fetch_stable_pointer().await;
+                    let stable_ptr = try_fetch_stable_pointer(&update_config.cli_base_urls).await;
                     write_version_cache(&install_target, stable_ptr.as_deref()).await;
                     eprintln!("Already up to date ({}).", effective_current);
                     // Retry if a prior sync failed.
@@ -2415,7 +2425,7 @@ pub async fn run_update(
     // Fetch the stable pointer now so the new binary has it immediately
     // for channel_label() display, rather than waiting for the next
     // TTL-gated update check (~30 min).
-    let stable_ptr = try_fetch_stable_pointer().await;
+    let stable_ptr = try_fetch_stable_pointer(&update_config.cli_base_urls).await;
     write_version_cache(target_version, stable_ptr.as_deref()).await;
     refresh_deployment_config().await;
     eprintln!("  ✓ grok v{} installed successfully!", target_version);

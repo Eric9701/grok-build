@@ -59,10 +59,12 @@ rustflags = [
 ]
 
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "force-unwind-tables=yes", "-C", "target-feature=+crt-static"]
+# Prefer rust-lld: MSVC link.exe aborts with STATUS_STACK_BUFFER_OVERRUN
+# (0xc0000409) on this large binary. Drop crt-static for local Windows builds.
+rustflags = ["-C", "force-unwind-tables=yes", "-C", "linker=rust-lld"]
 
 [target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "force-unwind-tables=yes", "-C", "target-feature=+crt-static"]
+rustflags = ["-C", "force-unwind-tables=yes", "-C", "linker=rust-lld"]
 
 
 # jemalloc page size for Apple Silicon (macOS aarch64 uses 16KB pages = 2^14).

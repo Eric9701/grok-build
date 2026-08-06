@@ -1,9 +1,14 @@
-//! Filesystem locations for grok config files and binaries.
+//! Filesystem locations for Atlas (historically "grok") config files and binaries.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 static GROK_HOME: OnceLock<PathBuf> = OnceLock::new();
+
+/// Project-local config directory name (preferred).
+pub const PROJECT_DIR_NAME: &str = ".atlas";
+/// Legacy project-local config directory (read fallback).
+pub const LEGACY_PROJECT_DIR_NAME: &str = ".grok";
 
 #[cfg(target_os = "macos")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str =
@@ -11,7 +16,7 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str =
 #[cfg(target_os = "linux")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
 
-/// The default user grok directory (`~/.grok`, canonicalized) used when
+/// The default user Atlas directory (`~/.atlas`, canonicalized) used when
 /// `GROK_HOME` is unset. Exposed so callers (e.g. display helpers) can detect
 /// whether [`grok_home()`] is the default without duplicating the computation.
 ///
@@ -19,19 +24,32 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.js
 /// Windows, std returns a verbatim path (`\\?\C:\Users\...`) which external
 /// tools choke on — e.g. `git clone` rejects `\\?\` destinations with
 /// "Invalid argument", breaking marketplace cache clones under
-/// `~/.grok/marketplace-cache`. `dunce` strips the prefix whenever the path
+/// `~/.atlas/marketplace-cache`. `dunce` strips the prefix whenever the path
 /// is safely representable in legacy form; on non-Windows it is identical to
 /// `std::fs::canonicalize`.
 ///
 /// Keep the dunce canonicalization in sync with the hand-rolled duplicate in
 /// `xai_fast_worktree::db::resolve_grok_home` (deliberately standalone crate).
+///
+/// If `~/.atlas` does not exist but legacy `~/.grok` does, returns the legacy
+/// path so existing installs keep working until the user migrates.
 pub fn default_grok_home() -> PathBuf {
     #[allow(deprecated)]
     let home = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    dunce::canonicalize(&home).unwrap_or(home).join(".grok")
+    let home = dunce::canonicalize(&home).unwrap_or(home);
+    let atlas = home.join(".atlas");
+    if atlas.exists() {
+        return atlas;
+    }
+    let legacy = home.join(".grok");
+    if legacy.exists() {
+        return legacy;
+    }
+    atlas
 }
 
-/// Per-user config directory: `$GROK_HOME` or `~/.grok`. Created if needed.
+/// Per-user config directory: `$GROK_HOME` or `~/.atlas` (legacy `~/.grok`).
+/// Created if needed.
 pub fn grok_home() -> PathBuf {
     GROK_HOME
         .get_or_init(|| {
@@ -46,35 +64,51 @@ pub fn grok_home() -> PathBuf {
         .clone()
 }
 
-/// The user-global grok home, but only when one genuinely resolves: `Some` when
+/// The user-global Atlas home, but only when one genuinely resolves: `Some` when
 /// `$GROK_HOME` is set or a home directory is found, `None` otherwise. Unlike
-/// [`grok_home()`], this never falls back to a cwd-relative `.grok`, so callers
-/// that *scan* user-global grok resources (hooks, marketplace sources, ...) don't
-/// mistake a project's `.grok` tree for the user-global one when no home resolves.
+/// [`grok_home()`], this never falls back to a cwd-relative `.atlas`, so callers
+/// that *scan* user-global resources (hooks, marketplace sources, ...) don't
+/// mistake a project's `.atlas` tree for the user-global one when no home resolves.
 pub fn user_grok_home() -> Option<PathBuf> {
     #[allow(deprecated)]
     let resolvable = std::env::var_os("GROK_HOME").is_some() || std::env::home_dir().is_some();
     resolvable.then(grok_home)
 }
 
-/// Canonical grok application path: `$GROK_HOME/bin/grok` (Unix) or `grok.exe` (Windows).
+/// Canonical application path: `$GROK_HOME/bin/atlas` (Unix) or `atlas.exe` (Windows).
 pub fn grok_application() -> PathBuf {
     grok_application_in(&grok_home())
 }
 
 /// [`grok_application`] under an explicit home instead of `$GROK_HOME`.
 pub fn grok_application_in(home: &std::path::Path) -> PathBuf {
-    let name = if cfg!(windows) { "grok.exe" } else { "grok" };
+    let name = if cfg!(windows) { "atlas.exe" } else { "atlas" };
     home.join("bin").join(name)
 }
 
-/// System-wide config directory: `/etc/grok/` on Unix, `None` on Windows.
+/// System-wide config directory: `/etc/atlas/` on Unix, `None` on Windows.
 pub fn system_config_dir() -> Option<PathBuf> {
     if cfg!(unix) {
-        Some(PathBuf::from("/etc/grok"))
+        Some(PathBuf::from("/etc/atlas"))
     } else {
         None
     }
+}
+
+/// Resolve the project-local config directory under `cwd`.
+///
+/// Prefers `.atlas` when it exists; otherwise falls back to legacy `.grok` if
+/// present; otherwise returns `.atlas` (for new writes).
+pub fn project_dir_in(cwd: &Path) -> PathBuf {
+    let atlas = cwd.join(PROJECT_DIR_NAME);
+    if atlas.exists() {
+        return atlas;
+    }
+    let legacy = cwd.join(LEGACY_PROJECT_DIR_NAME);
+    if legacy.exists() {
+        return legacy;
+    }
+    atlas
 }
 
 /// System path for the managed-settings.json used for settings compat, if it exists.
@@ -312,7 +346,11 @@ mod tests {
         // canonicalization must yield a plain path. No-op assertion on Unix.
         let home = default_grok_home();
         assert!(!home.to_string_lossy().starts_with(r"\\?\"));
-        assert!(home.ends_with(".grok"));
+        let name = home.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        assert!(
+            name == ".atlas" || name == ".grok",
+            "expected .atlas or legacy .grok, got {home:?}"
+        );
     }
 
     #[test]

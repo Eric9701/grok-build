@@ -1,3 +1,49 @@
+# Rust
 /target
 **/*.rs.bk
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Compiled / packaged binaries
+*.exe
+*.exe.bak
+*.dll
+*.so
+*.dylib
+*.vsix
+
+# Editor / OS backup files
+*~
+*.swp
+.idea/
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+
+# Local toolchains (protoc etc.) - not source
+/bin/
+
+# Ad-hoc local vendor trees
+/vendor/
+
+# Archives left by doc/export dumps
+*.zip
+*.tar.gz
+*.tgz
+
+# Node (VS Code extension and similar)
+node_modules/
+
+# Atlas server: runtime/config artifacts only.
+# Do NOT use a bare "atlas-server" pattern - it ignores services/atlas-server source.
+/services/atlas-server/atlas-server
+/services/atlas-server/download/
+/services/atlas-server/downloads/
+/services/atlas-server/releases/*
+!/services/atlas-server/releases/.gitkeep
+/services/atlas-server/atlas-server.toml*
+!/services/atlas-server/atlas-server.toml.example

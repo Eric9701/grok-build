@@ -129,7 +129,10 @@ pub struct OAuth2ProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub referrer: Option<String>,
 }
-pub const XAI_OAUTH2_ISSUER: &str = "https://auth.x.ai";
+/// Default Atlas enterprise OAuth2 issuer (atlas-server public base URL).
+pub const XAI_OAUTH2_ISSUER: &str = "http://10.218.220.237:22255/atlas";
+/// Legacy public xAI issuer (kept for `is_xai_oauth2_issuer` / existing auth.json).
+const XAI_OAUTH2_LEGACY_ISSUER: &str = "https://auth.x.ai";
 /// Production accounts-app origin allowlist — the only origins builds without
 /// non-production builds accept. Lives in its own const, referenced by both
 /// profiles below, so the frozen-contract test (monorepo CI compiles with
@@ -163,8 +166,10 @@ pub fn accounts_app_cors_layer(method: axum::http::Method) -> tower_http::cors::
         ))
         .allow_methods([method])
 }
-/// Local-dev OAuth2 issuer (accounts-app running on localhost).
-const XAI_OAUTH2_LOCAL_ISSUER: &str = "http://localhost:22255";
+/// Local-dev OAuth2 issuer (`GROK_LOCAL_AUTH=1`) — atlas-server on loopback.
+const XAI_OAUTH2_LOCAL_ISSUER: &str = "http://localhost:22255/atlas";
+/// Pre-/atlas path local issuer (older auth.json scopes).
+const XAI_OAUTH2_LOCAL_ISSUER_LEGACY: &str = "http://localhost:22255";
 const DEFAULT_OAUTH2_REFERRER: &str = "grok-build";
 /// Returns `true` when `GROK_LOCAL_AUTH=1` is set,
 /// indicating the local accounts-app should be used as the OAuth2 issuer.
@@ -173,8 +178,8 @@ pub fn use_local_auth() -> bool {
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false)
 }
-/// Returns the active xAI OAuth2 issuer — the local-dev issuer when
-/// `GROK_LOCAL_AUTH=1` is set, otherwise the production issuer.
+/// Returns the active OAuth2 issuer — loopback atlas when
+/// `GROK_LOCAL_AUTH=1` is set, otherwise the default Atlas enterprise issuer.
 pub fn xai_oauth2_issuer() -> &'static str {
     if use_local_auth() {
         XAI_OAUTH2_LOCAL_ISSUER
@@ -182,12 +187,14 @@ pub fn xai_oauth2_issuer() -> &'static str {
         XAI_OAUTH2_ISSUER
     }
 }
-/// Returns `true` if `issuer` is a recognised xAI OAuth2 issuer
-/// (production **or** local-dev). Use this instead of comparing against
-/// [`XAI_OAUTH2_ISSUER`] directly so that local-dev sessions are still
-/// treated as first-party xAI auth.
+/// Returns `true` if `issuer` is a recognised first-party OAuth2 issuer
+/// (Atlas default, loopback, or legacy auth.x.ai). Use this instead of
+/// comparing against [`XAI_OAUTH2_ISSUER`] directly.
 pub fn is_xai_oauth2_issuer(issuer: &str) -> bool {
-    issuer == XAI_OAUTH2_ISSUER || issuer == XAI_OAUTH2_LOCAL_ISSUER
+    issuer == XAI_OAUTH2_ISSUER
+        || issuer == XAI_OAUTH2_LOCAL_ISSUER
+        || issuer == XAI_OAUTH2_LOCAL_ISSUER_LEGACY
+        || issuer == XAI_OAUTH2_LEGACY_ISSUER
 }
 /// auth.json scope key used by the pre-OIDC `grok login --legacy` flow.
 /// Matches the key format produced by the original `accounts.x.ai` relay auth.

@@ -13,18 +13,11 @@ const TTL_SECONDS_BEFORE_AUTO_UPDATE: Duration = Duration::from_secs(60 * 30);
 const NPM_PACKAGE: &str = "@xai-official/grok";
 pub const GH_RELEASE_REPO: &str = "xai-org-shared/grok-build";
 
-/// Primary CLI base URL: Cloudflare-fronted x.ai endpoint with edge caching
-/// for binaries and origin-respecting no-cache for channel pointers.
-pub(crate) const CLI_BASE_URL_PRIMARY: &str = "https://x.ai/cli";
+/// Default Atlas CLI update base when no env/config/proxy override is set.
+pub const DEFAULT_CLI_BASE_URL: &str = "http://10.218.220.237:22255/atlas/cli";
 
-/// Fallback CLI base URL: direct GCS, used when the primary is unreachable
-/// (Cloudflare outage, regional CF egress issue, DNS hijack, etc.).
-pub(crate) const CLI_BASE_URL_FALLBACK: &str =
-    "https://storage.googleapis.com/grok-build-public-artifacts/cli";
-
-/// CLI base URLs in preference order. Callers (channel-pointer fetch, binary
-/// download, in-app updater) try each in turn and stop at the first success.
-pub(crate) const CLI_BASE_URLS: &[&str] = &[CLI_BASE_URL_PRIMARY, CLI_BASE_URL_FALLBACK];
+/// Env override for CLI artifact base URL(s). Comma-separated; first success wins.
+pub const CLI_BASE_URL_ENV: &str = "GROK_CLI_BASE_URL";
 
 /// Minimal configuration the update system needs from the environment.
 ///
@@ -33,9 +26,9 @@ pub(crate) const CLI_BASE_URLS: &[&str] = &[CLI_BASE_URL_PRIMARY, CLI_BASE_URL_F
 /// about the `GrokBuildEnvironment` enum directly.
 #[derive(Debug, Clone)]
 pub struct UpdateConfig {
-    /// Chat API proxy base URL (versioned `https://cli-chat-proxy.grok.com/v1` endpoint).
+    /// Chat API proxy base URL (versioned `…/v1` endpoint).
     pub proxy_base_url: String,
-    /// Auth scope key for `~/.grok/auth.json`.
+    /// Auth scope key for `~/.atlas/auth.json`.
     pub auth_scope: String,
     /// Enterprise deployment key (GROK_DEPLOYMENT_KEY).
     pub deployment_key: Option<String>,
@@ -45,19 +38,83 @@ pub struct UpdateConfig {
     pub channel: String,
     /// Custom npm registry URL. When set, passed as `--registry=` to npm CLI.
     pub npm_registry: Option<String>,
+    /// Ordered CLI artifact base URLs (no trailing slash). Used for channel
+    /// pointers and binary downloads. Never falls back to public x.ai/GCS.
+    pub cli_base_urls: Vec<String>,
 }
 
 impl UpdateConfig {
     pub fn from_environment(env: &GrokBuildEnvironment) -> Self {
+        let proxy = env.cli_chat_proxy_base_url();
         Self {
-            proxy_base_url: env.cli_chat_proxy_base_url(),
+            proxy_base_url: proxy.clone(),
             auth_scope: xai_grok_shell::auth::GrokComConfig::default().auth_scope(),
             deployment_key: None,
             alpha_test_key: None,
             channel: "stable".to_string(),
             npm_registry: None,
+            cli_base_urls: resolve_cli_base_urls(None, Some(proxy.as_str())),
         }
     }
+
+    /// Borrow base URLs as `&str` slices for install helpers.
+    pub fn cli_base_url_refs(&self) -> Vec<&str> {
+        self.cli_base_urls.iter().map(String::as_str).collect()
+    }
+}
+
+/// Resolve ordered CLI update bases.
+///
+/// Priority: `GROK_CLI_BASE_URL` → `explicit` (config) → derive from local/custom
+/// proxy (`…/v1` → `…/cli`) → [`DEFAULT_CLI_BASE_URL`]. Public x.ai / grok.com
+/// hosts are never used.
+pub fn resolve_cli_base_urls(
+    explicit: Option<&str>,
+    proxy_base_url: Option<&str>,
+) -> Vec<String> {
+    if let Ok(v) = std::env::var(CLI_BASE_URL_ENV) {
+        let urls = split_base_urls(&v);
+        if !urls.is_empty() {
+            return urls;
+        }
+    }
+    if let Some(v) = explicit {
+        let urls = split_base_urls(v);
+        if !urls.is_empty() {
+            return urls;
+        }
+    }
+    if let Some(proxy) = proxy_base_url
+        && let Some(derived) = derive_cli_base_from_proxy(proxy)
+    {
+        return vec![derived];
+    }
+    vec![DEFAULT_CLI_BASE_URL.to_string()]
+}
+
+fn split_base_urls(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.trim_end_matches('/').to_string())
+        .collect()
+}
+
+fn derive_cli_base_from_proxy(proxy: &str) -> Option<String> {
+    let p = proxy.trim().trim_end_matches('/');
+    if p.is_empty() {
+        return None;
+    }
+    let lower = p.to_ascii_lowercase();
+    // Do not point updates at public xAI hosts.
+    if lower.contains("x.ai") || lower.contains("grok.com") {
+        return None;
+    }
+    let root = p.strip_suffix("/v1").unwrap_or(p).trim_end_matches('/');
+    if root.is_empty() {
+        return None;
+    }
+    Some(format!("{root}/cli"))
 }
 
 #[derive(Debug, serde::Serialize, Deserialize)]
@@ -224,26 +281,32 @@ async fn fetch_gh_release_latest(exclude_pre: bool) -> Result<String> {
     Ok(version)
 }
 
-/// Fetch the latest version from a public CLI channel pointer.
+/// Fetch the latest version from a CLI channel pointer served by atlas-server
+/// (or any compatible `{base}/{channel}` host).
 ///
 /// Reads `{base}/{channel}` which contains a plain-text semver string
-/// (e.g. `0.1.181`). No auth required — the upstream bucket is public.
+/// (e.g. `0.1.181`). No auth required for the local atlas publish layout.
 ///
 /// For the alpha channel, fetches both `alpha` and `stable` pointers and
 /// returns the semver-greater, matching the behavior of the npm and
 /// gh-release paths.
 ///
-/// Tries each base URL in [`CLI_BASE_URLS`] in order and stops at the first
-/// success. Each individual base also retries up to 3 times with exponential
+/// Tries each base URL in `bases` in order and stops at the first success.
+/// Each individual base also retries up to 3 times with exponential
 /// backoff (1s, 2s, 4s) on transient failures before falling through to the
 /// next base.
-pub(crate) async fn fetch_gcs_version(channel: &str) -> Result<String> {
+pub(crate) async fn fetch_gcs_version(channel: &str, bases: &[String]) -> Result<String> {
+    if bases.is_empty() {
+        anyhow::bail!(
+            "no CLI base URLs configured (set {CLI_BASE_URL_ENV} or endpoints.cli_update_base_url)"
+        );
+    }
     let mut last_err: Option<anyhow::Error> = None;
-    for (i, base) in CLI_BASE_URLS.iter().enumerate() {
+    for (i, base) in bases.iter().enumerate() {
         match fetch_gcs_version_from_base(channel, base).await {
             Ok(v) => return Ok(v),
             Err(e) => {
-                if i + 1 < CLI_BASE_URLS.len() {
+                if i + 1 < bases.len() {
                     tracing::warn!(
                         "channel pointer fetch from {} failed ({:#}); trying next base URL",
                         base,
@@ -257,8 +320,7 @@ pub(crate) async fn fetch_gcs_version(channel: &str) -> Result<String> {
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no CLI base URLs configured")))
 }
 
-/// Test-only entry point: same as [`fetch_gcs_version`] but reads from
-/// `base_url` instead of the hardcoded GCS bucket.
+/// Same as [`fetch_gcs_version`] but reads from a single `base_url`.
 #[doc(hidden)]
 pub async fn fetch_gcs_version_from_base(channel: &str, base_url: &str) -> Result<String> {
     if channel == "alpha" {
@@ -346,7 +408,7 @@ pub async fn fetch_latest_version(installer: &str, config: &UpdateConfig) -> Res
     match installer {
         "npm" => fetch_npm_version(&config.channel, config.npm_registry.as_deref()).await,
         "gh-release" => fetch_gh_release_version(&config.channel).await,
-        _ => fetch_gcs_version(&config.channel).await,
+        _ => fetch_gcs_version(&config.channel, &config.cli_base_urls).await,
     }
 }
 
@@ -392,11 +454,12 @@ pub async fn write_version_cache(version: &str, stable_version: Option<&str>) {
 /// Each installer is fully independent — no cross-installer fallback.
 ///
 /// - `"npm"` — uses `npm view` against the public registry.
-/// - `"internal"` — reads the channel pointer from the public GCS bucket.
+/// - `"internal"` — reads the channel pointer from configured CLI base URLs
+///   (atlas-server `/cli` by default).
 /// - `"gh-release"` — uses `gh release list` against GitHub Releases.
 pub async fn get_latest_version(installer: &str, config: &UpdateConfig) -> Result<String> {
     let version = fetch_latest_version(installer, config).await?;
-    let stable_ptr = try_fetch_stable_pointer().await;
+    let stable_ptr = try_fetch_stable_pointer(&config.cli_base_urls).await;
     write_version_cache(&version, stable_ptr.as_deref()).await;
     Ok(version)
 }
@@ -478,7 +541,7 @@ pub(crate) fn version_from_versioned_binary_name(name: &str, bin_prefix: &str) -
 
 /// Fetch the stable channel pointer for caching alongside the version.
 ///
-/// Tries each base URL in [`CLI_BASE_URLS`] and returns the first success.
+/// Tries each configured base URL and returns the first success.
 /// Best-effort: returns `None` on any failure (the caller will simply omit
 /// the stable pointer from the cache, and `channel_label()` will return `""`
 /// until the next successful fetch).
@@ -488,9 +551,9 @@ pub(crate) fn version_from_versioned_binary_name(name: &str, bin_prefix: &str) -
 /// for correctness. On slow or unreachable networks the timeout fires and we
 /// return `None`; the label will populate on the next successful TTL check
 /// (~30 min). This keeps startup and post-install paths fast.
-pub(crate) async fn try_fetch_stable_pointer() -> Option<String> {
+pub(crate) async fn try_fetch_stable_pointer(bases: &[String]) -> Option<String> {
     tokio::time::timeout(Duration::from_millis(500), async {
-        for base in CLI_BASE_URLS {
+        for base in bases {
             if let Ok(v) = fetch_gcs_channel_pointer("stable", base).await {
                 return Some(v);
             }
@@ -780,5 +843,29 @@ mod tests {
         use xai_grok_shell::env::GrokBuildEnvironment;
         let cfg = UpdateConfig::from_environment(&GrokBuildEnvironment::Production);
         assert_eq!(cfg.channel, "stable");
+    }
+
+    #[test]
+    fn resolve_cli_base_urls_defaults_to_local_atlas() {
+        unsafe { std::env::remove_var(CLI_BASE_URL_ENV) };
+        let urls = resolve_cli_base_urls(None, Some("https://cli-chat-proxy.grok.com/v1"));
+        assert_eq!(urls, vec![DEFAULT_CLI_BASE_URL.to_string()]);
+    }
+
+    #[test]
+    fn resolve_cli_base_urls_derives_from_custom_proxy() {
+        unsafe { std::env::remove_var(CLI_BASE_URL_ENV) };
+        let urls = resolve_cli_base_urls(None, Some("http://127.0.0.1:22255/v1"));
+        assert_eq!(urls, vec!["http://127.0.0.1:22255/cli".to_string()]);
+    }
+
+    #[test]
+    fn resolve_cli_base_urls_explicit_wins() {
+        unsafe { std::env::remove_var(CLI_BASE_URL_ENV) };
+        let urls = resolve_cli_base_urls(
+            Some("http://updates.example/cli"),
+            Some("http://127.0.0.1:22255/v1"),
+        );
+        assert_eq!(urls, vec!["http://updates.example/cli".to_string()]);
     }
 }

@@ -46,7 +46,7 @@ pub fn default_agent_type() -> String {
     DEFAULT_AGENT_TYPE.to_owned()
 }
 /// Default base URL for the cli chat proxy.
-pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = "https://cli-chat-proxy.grok.com/v1";
+pub const CLI_CHAT_PROXY_BASE_URL_DEFAULT: &str = "http://10.218.220.237:22255/atlas/v1";
 /// Default base URL for the public xAI API.
 pub const XAI_API_BASE_URL_DEFAULT: &str = "https://api.x.ai/v1";
 /// Default base URL for the asset server (profile images, etc.).
@@ -187,6 +187,12 @@ pub struct EndpointsConfig {
     /// Sent on telemetry and service requests for deployment-level attribution.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deployment_key: Option<String>,
+    /// Env: `GROK_CLI_BASE_URL`. Base URL for CLI channel pointers + binaries
+    /// (atlas-server `/cli`). When unset, derived from `cli_chat_proxy_base_url`
+    /// (`…/v1` → `…/cli`) for local/custom proxies, else
+    /// `http://127.0.0.1:22255/cli`. Never uses public x.ai CDN.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cli_update_base_url: Option<String>,
     /// Env: `GROK_MANAGED_CONFIG_URL`. Override the managed config endpoint.
     /// Defaults to `{proxy_url()}/deployment/config`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -558,6 +564,7 @@ impl Default for EndpointsConfig {
             trace_upload_credentials: None,
             trace_upload_endpoint_url: env_string("GROK_TRACE_UPLOAD_ENDPOINT_URL"),
             deployment_key: env_string("GROK_DEPLOYMENT_KEY"),
+            cli_update_base_url: env_string("GROK_CLI_BASE_URL"),
             managed_config_url: env_string("GROK_MANAGED_CONFIG_URL"),
             otel_exporter_otlp_endpoint: env_string("OTEL_EXPORTER_OTLP_ENDPOINT"),
             otel_exporter_otlp_traces_endpoint: env_string("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"),
@@ -2295,6 +2302,10 @@ impl Config {
         Resolved::new(TelemetryMode::Disabled, ConfigSource::Default)
     }
     pub(crate) fn resolve_trace_upload(&self) -> Resolved<bool> {
+        // Opt-in: default OFF. Enable via `[telemetry] trace_upload = true`,
+        // `GROK_TELEMETRY_TRACE_UPLOAD=1`, remote `trace_upload_enabled`, or a
+        // requirement pin. When telemetry itself is disabled, remote flags are
+        // ignored (explicit config/env/requirement can still force ON).
         let mode = self.resolve_telemetry_mode();
         let ff = if mode.value.is_disabled() {
             None
@@ -2307,7 +2318,7 @@ impl Config {
             .requirement(self.requirements.trace_upload.pinned())
             .config(self.telemetry.trace_upload)
             .feature_flag(ff)
-            .default(mode.value.is_enabled())
+            .default(false)
             .resolve()
     }
     /// Resolve jemalloc heap-profile config from stored remote settings + gates.
@@ -3721,6 +3732,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 show_model_fingerprint: m.show_model_fingerprint,
                 stream_tool_calls: None,
                 laziness_detector: LazinessDetectorPerModelConfig::default(),
+                managed: None,
             };
             (key, config)
         })
@@ -3844,6 +3856,9 @@ pub struct ModelEntryConfig {
     /// the all-disabled state via `#[serde(default)]`.
     #[serde(default, skip_serializing_if = "is_default_laziness_detector")]
     pub laziness_detector: LazinessDetectorPerModelConfig,
+    /// Atlas cloud-managed catalog entry (persist to config.toml for offline).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<bool>,
 }
 /// True when `cfg` equals the all-disabled default. Derives `PartialEq`
 /// on `f32`, which is fine for the current shape because both `f32`
@@ -3907,6 +3922,9 @@ pub struct ConfigModelOverride {
     pub compaction_at_tokens: Option<CompactionAtTokens>,
     pub show_model_fingerprint: Option<bool>,
     pub stream_tool_calls: Option<bool>,
+    /// Cloud-synced entry; sync may overwrite/remove. User-authored entries omit this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub managed: Option<bool>,
 }
 impl ConfigModelOverride {
     pub(crate) fn apply(
@@ -3916,8 +3934,21 @@ impl ConfigModelOverride {
         endpoints: &EndpointsConfig,
     ) -> ModelEntry {
         let mut entry = base.unwrap_or_else(|| ModelEntry::fallback(key, endpoints));
+        let managed = self.managed == Some(true);
         if let Some(ref v) = self.model {
-            entry.info.model = v.clone();
+            match crate::util::model_secret::resolve_catalog_string(v, managed, "model") {
+                Ok(plain) => entry.info.model = plain,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        key,
+                        "managed model routing id rejected; hiding catalog entry"
+                    );
+                    entry.info.model = String::new();
+                    entry.info.hidden = true;
+                    entry.info.user_selectable = false;
+                }
+            }
         }
         if let Some(ref v) = self.base_url {
             entry.info.base_url = v.clone();
@@ -3996,7 +4027,7 @@ impl ConfigModelOverride {
             entry.info.stream_tool_calls = self.stream_tool_calls;
         }
         if self.api_key.is_some() {
-            entry.api_key.clone_from(&self.api_key);
+            entry.api_key = crate::util::model_secret::maybe_decrypt_api_key(self.api_key.clone());
         }
         if self.env_key.is_some() {
             entry.env_key.clone_from(&self.env_key);
@@ -4124,10 +4155,29 @@ impl ModelInfo {
     }
     /// Extract shared model metadata from a flat config entry.
     pub fn from_config(entry: &ModelEntryConfig) -> Self {
+        let managed = entry.managed == Some(true);
+        let model = crate::util::model_secret::resolve_catalog_string(
+            &entry.model,
+            managed,
+            "model",
+        )
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "ModelInfo::from_config: model id");
+            String::new()
+        });
+        let id = entry.id.as_ref().and_then(|raw| {
+            crate::util::model_secret::resolve_catalog_string(raw, managed, "id")
+                .map_err(|e| {
+                    tracing::warn!(error = %e, "ModelInfo::from_config: catalog id");
+                    e
+                })
+                .ok()
+        });
+        let model_ok = !model.is_empty();
         ModelInfo {
-            user_selectable: true,
-            id: entry.id.clone(),
-            model: entry.model.clone(),
+            user_selectable: model_ok,
+            id,
+            model,
             base_url: entry.base_url.clone(),
             name: entry.name.clone(),
             description: entry.description.clone(),
@@ -4144,7 +4194,7 @@ impl ModelInfo {
             agent_type: entry.agent_type.clone(),
             inference_idle_timeout_secs: entry.inference_idle_timeout_secs,
             max_retries: entry.max_retries,
-            hidden: entry.hidden,
+            hidden: entry.hidden || !model_ok,
             supported_in_api: entry.supported_in_api,
             reasoning_effort: entry.reasoning_effort,
             supports_reasoning_effort: entry.supports_reasoning_effort,
@@ -4222,7 +4272,7 @@ impl ModelEntry {
     pub fn from_config_entry(entry: &ModelEntryConfig) -> Self {
         Self {
             info: ModelInfo::from_config(entry),
-            api_key: entry.api_key.clone(),
+            api_key: crate::util::model_secret::maybe_decrypt_api_key(entry.api_key.clone()),
             env_key: entry.env_key.clone(),
             auth_provider: None,
             api_base_url: entry.api_base_url.clone(),
@@ -7274,6 +7324,7 @@ if n == name && f.as_deref() == field
             show_model_fingerprint: false,
             stream_tool_calls: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
+            managed: None,
         };
         let info = ModelInfo::from_config(&entry);
         assert!(info.use_concise);
@@ -7433,6 +7484,7 @@ if n == name && f.as_deref() == field
             show_model_fingerprint: false,
             stream_tool_calls: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
+            managed: None,
         };
         let info = ModelInfo::from_config(&entry);
         assert_eq!(info.agent_type, "codex");
@@ -7884,6 +7936,7 @@ if n == name && f.as_deref() == field
             show_model_fingerprint: false,
             stream_tool_calls: None,
             laziness_detector: LazinessDetectorPerModelConfig::default(),
+            managed: None,
         };
         let info = ModelInfo::from_config(&entry);
         assert_eq!(info.inference_idle_timeout_secs, Some(120));
@@ -8512,6 +8565,7 @@ if n == name && f.as_deref() == field
     fn unset_endpoint_env_vars() {
         for k in [
             "GROK_CLI_CHAT_PROXY_BASE_URL",
+            "GROK_CLI_BASE_URL",
             "GROK_XAI_API_BASE_URL",
             "GROK_FEEDBACK_BASE_URL",
             "GROK_TRACE_UPLOAD_URL",
@@ -9055,7 +9109,12 @@ if n == name && f.as_deref() == field
         assert_eq!(r.source, ConfigSource::Config);
         cfg.telemetry.trace_upload = None;
         let r = cfg.resolve_trace_upload();
-        assert!(r.value, "defaults on when telemetry fully enabled");
+        assert!(!r.value, "defaults off when unset (opt-in)");
+        assert_eq!(r.source, ConfigSource::Default);
+        cfg.telemetry.trace_upload = Some(true);
+        let r = cfg.resolve_trace_upload();
+        assert!(r.value, "explicit config can opt in");
+        assert_eq!(r.source, ConfigSource::Config);
     }
     #[test]
     #[serial]

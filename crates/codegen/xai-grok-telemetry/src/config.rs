@@ -98,7 +98,8 @@ pub struct TelemetryConfig {
     pub events_api_key: Option<String>,
     pub mixpanel_token: Option<String>,
     pub mixpanel_enabled: bool,
-    /// `None` = inherit from `[features] telemetry`. `Some(false)` = disable GCS uploads only.
+    /// `None` = default off (opt-in). `Some(true/false)` pins GCS/session
+    /// trace uploads independently of `[features] telemetry`.
     pub trace_upload: Option<bool>,
     /// External OTEL master switch (`= GROK_EXTERNAL_OTEL`, env wins).
     pub otel_enabled: Option<bool>,

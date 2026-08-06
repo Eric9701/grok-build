@@ -504,7 +504,7 @@ When telemetry is on, enterprises running their own collector can redirect it or
 events_url = "https://telemetry.your-company.com/events"  # send events to your own collector
 events_api_key = "your-collector-token"                   # auth for your collector, if required
 mixpanel_enabled = false                                  # disable Mixpanel product analytics
-trace_upload = false                                      # disable session/trace uploads (inherits the telemetry toggle when unset)
+trace_upload = true                                       # opt-in session/trace uploads (default off when unset)
 ```
 
 Set these only to point telemetry at your own infrastructure or to switch parts off. The built-in endpoint and credentials are managed by Grok — leave them unset to use the defaults.

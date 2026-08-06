@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atlas Account</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { max-width: 32rem; margin: 4rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.5rem; }
+    .box { border: 1px solid #8884; border-radius: 8px; padding: 1.25rem; margin-top: 1rem; }
+    code { font-size: 1.1rem; letter-spacing: 0.08em; }
+    .actions { display: flex; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap; }
+    a.button, button { padding: 0.55rem 1rem; cursor: pointer; text-decoration: none; border: 1px solid #8884; border-radius: 6px; color: inherit; background: transparent; }
+    dt { font-weight: 600; margin-top: 0.75rem; }
+    dd { margin: 0.2rem 0 0; }
+  </style>
+</head>
+<body>
+  <h1>Atlas account</h1>
+  <div class="box">
+    <dl>
+      <dt>Email</dt><dd>{{.Email}}</dd>
+      <dt>Name</dt><dd>{{.FirstName}} {{.LastName}}</dd>
+      <dt>User ID</dt><dd><code>{{.UserID}}</code></dd>
+      <dt>Machine code</dt>
+      <dd><code>{{.MachineCode}}</code></dd>
+    </dl>
+    <p>Use this machine code when approving a CLI device login.</p>
+    <div class="actions">
+      <a class="button" href="/atlas/oauth2/device">Approve device</a>
+      <a class="button" href="/atlas/logout">Sign out</a>
+    </div>
+  </div>
+</body>
+</html>

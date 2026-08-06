@@ -52,6 +52,7 @@ fn make_config(channel: &str) -> UpdateConfig {
         alpha_test_key: None,
         channel: channel.to_string(),
         npm_registry: None,
+        cli_base_urls: vec!["http://127.0.0.1:9/cli".to_string()],
     }
 }
 

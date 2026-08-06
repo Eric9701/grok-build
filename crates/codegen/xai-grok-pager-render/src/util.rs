@@ -11,19 +11,24 @@ pub fn pager_toml_path() -> PathBuf {
     grok_home().join("pager.toml")
 }
 
-/// User-facing label for the user grok directory (``~/.grok`` or ``$GROK_HOME``).
+/// User-facing label for the user Atlas directory (``~/.atlas``, legacy
+/// ``~/.grok``, or ``$GROK_HOME``).
 ///
 /// Derived from resolved [`grok_home()`] vs `xai_grok_config::default_grok_home()`,
 /// not from whether `GROK_HOME` is set in the environment.
 pub fn display_grok_home_prefix() -> String {
     if grok_home() == xai_grok_config::default_grok_home() {
-        "~/.grok".to_string()
+        if grok_home().file_name().and_then(|n| n.to_str()) == Some(".grok") {
+            "~/.grok".to_string()
+        } else {
+            "~/.atlas".to_string()
+        }
     } else {
         "$GROK_HOME".to_string()
     }
 }
 
-/// User-facing path under [`grok_home()`], e.g. ``~/.grok/config.toml``.
+/// User-facing path under [`grok_home()`], e.g. ``~/.atlas/config.toml``.
 pub fn display_user_grok_path(relative: impl AsRef<Path>) -> String {
     let rel = relative.as_ref();
     let prefix = display_grok_home_prefix();
@@ -421,14 +426,14 @@ mod tests {
         if std::env::var("GROK_HOME").is_ok() {
             return;
         }
-        assert_eq!(display_grok_home_prefix(), "~/.grok");
+        assert_eq!(display_grok_home_prefix(), "~/.atlas");
     }
 
     #[test]
     fn display_user_grok_path_joins_relative() {
         let path = display_user_grok_path("config.toml");
         assert!(path.ends_with("/config.toml") || path.ends_with("\\config.toml"));
-        assert!(path.contains(".grok") || path.contains("$GROK_HOME"));
+        assert!(path.contains(".atlas") || path.contains(".grok") || path.contains("$GROK_HOME"));
     }
 
     #[test]

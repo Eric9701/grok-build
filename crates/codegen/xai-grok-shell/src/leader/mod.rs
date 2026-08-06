@@ -256,7 +256,7 @@ fn build_live_leader_info(payload: ControlPayload) -> Result<LiveLeaderInfo, Lea
 async fn fetch_live_leader_info(socket_path: &Path) -> Result<LiveLeaderInfo, LeaderTargetError> {
     let client = LeaderClient::connect(
         socket_path.to_path_buf(),
-        "grok-leader-discovery",
+        "atlas-leader-discovery",
         ClientMode::Stdio,
         ClientCapabilities::default(),
     )
@@ -1356,7 +1356,7 @@ fn resolve_binary_with_home(grok_home: &Path) -> Result<std::path::PathBuf, Conn
 }
 /// Binary file name for the managed grok install (`grok` / `grok.exe`).
 fn managed_grok_bin_name() -> &'static str {
-    if cfg!(windows) { "grok.exe" } else { "grok" }
+    if cfg!(windows) { "atlas.exe" } else { "atlas" }
 }
 /// Core leader-binary resolution with the current-exe path injected, for testability.
 fn resolve_binary_impl(

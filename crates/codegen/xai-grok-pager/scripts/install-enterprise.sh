@@ -1,18 +1,17 @@
 #!/bin/bash
 #
-# Grok CLI installer (enterprise channel) — https://x.ai/cli/enterprise-install.sh
+# Atlas CLI installer (enterprise channel) — atlas-server /cli/install-enterprise.sh
 #
 # Standalone installer for the enterprise channel. This is intentionally a full
 # copy of the install logic (not a wrapper around install.sh) so that changes to
 # the stable installer cannot accidentally break enterprise deployments.
 #
-# Auth: GROK_DEPLOYMENT_KEY (takes precedence) or ~/.grok/auth.json from `grok login`.
-# Env: GROK_BIN_DIR, GROK_PROXY_URL
+# Auth: GROK_DEPLOYMENT_KEY (takes precedence) or ~/.atlas/auth.json from `atlas login`.
+# Env: GROK_BIN_DIR, GROK_PROXY_URL, GROK_CLI_BASE_URL
 #
 # Usage:
-#   curl -fsSL https://x.ai/cli/enterprise-install.sh | bash            # latest enterprise
-#   curl -fsSL https://x.ai/cli/enterprise-install.sh | bash -s 0.1.42  # specific version
-#   GROK_DEPLOYMENT_KEY=<key> bash <(curl -fsSL https://x.ai/cli/enterprise-install.sh)
+#   curl -fsSL http://127.0.0.1:22255/cli/install-enterprise.sh | bash
+#   curl -fsSL http://127.0.0.1:22255/cli/install-enterprise.sh | bash -s 0.2.110
 #
 # Windows: run under Git for Windows / MSYS2 Bash (same curl | bash flow); WSL
 # uses the Linux binary.
@@ -103,7 +102,7 @@ is_not_found() {
     [ "$code" = "404" ]
 }
 
-# JSON field extractor — extract a top-level string value using sed.
+# JSON field extractor �?extract a top-level string value using sed.
 json_get() {
     local json="$1" field="$2"
     # Extract value (handling \" inside strings), then unescape JSON sequences.
@@ -111,10 +110,10 @@ json_get() {
         | sed -e 's/\\"/"/g' -e 's/\\n/\'$'\n''/g' -e 's/\\t/\'$'\t''/g' -e 's/\\\\/\\/g'
 }
 
-# Read a token from ~/.grok/auth.json for the given scope key.
+# Read a token from ~/.atlas/auth.json for the given scope key.
 # Format: {"scope_url": {"key": "token"}, ...}
-read_grok_token() {
-    local auth_file="$HOME/.grok/auth.json"
+read_atlas_token() {
+    local auth_file="$HOME/.atlas/auth.json"
     local scope="$1"
     [ -f "$auth_file" ] || return 1
     # Flatten to one line then extract: find the scope, then the "key" value after it
@@ -130,21 +129,21 @@ if [ -n "$GROK_DEPLOYMENT_KEY" ]; then
     AUTH_SOURCE="deployment key"
     echo "Auth: using deployment key." >&2
 else
-    OIDC_TOKEN=$(read_grok_token "$OIDC_SCOPE" 2>/dev/null) || true
-    LEGACY_TOKEN=$(read_grok_token "$LEGACY_SCOPE" 2>/dev/null) || true
+    OIDC_TOKEN=$(read_atlas_token "$OIDC_SCOPE" 2>/dev/null) || true
+    LEGACY_TOKEN=$(read_atlas_token "$LEGACY_SCOPE" 2>/dev/null) || true
     if [ -n "$OIDC_TOKEN" ]; then
         AUTH_SOURCE="auth.json (oidc)"
-        echo "Auth: using OIDC token from ~/.grok/auth.json." >&2
+        echo "Auth: using OIDC token from ~/.atlas/auth.json." >&2
     elif [ -n "$LEGACY_TOKEN" ]; then
         AUTH_SOURCE="auth.json (legacy)"
-        echo "Auth: using legacy token from ~/.grok/auth.json." >&2
+        echo "Auth: using legacy token from ~/.atlas/auth.json." >&2
     fi
 fi
 
 case "$(uname -s)" in
     Darwin) os="macos" ;;
     Linux)  os="linux" ;;
-    # Git for Windows / MSYS2 / Cygwin host — native Windows builds
+    # Git for Windows / MSYS2 / Cygwin host �?native Windows builds
     MINGW* | MSYS* | CYGWIN*) os="windows" ;;
     *)      echo "Unsupported OS: $(uname -s)" >&2; exit 1 ;;
 esac
@@ -155,35 +154,24 @@ case "$(uname -m)" in
     *)                    echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-BASE_URL_PRIMARY="https://x.ai/cli"
-BASE_URL_FALLBACK="https://storage.googleapis.com/grok-build-public-artifacts/cli"
-DOWNLOAD_DIR="$HOME/.grok/downloads"
-BIN_DIR="${GROK_BIN_DIR:-$HOME/.grok/bin}"
+BASE_URL="${GROK_CLI_BASE_URL:-http://127.0.0.1:22255/cli}"
+BASE_URL="${BASE_URL%/}"
+DOWNLOAD_DIR="$HOME/.atlas/downloads"
+BIN_DIR="${GROK_BIN_DIR:-$HOME/.atlas/bin}"
 mkdir -p "$DOWNLOAD_DIR" "$BIN_DIR"
 
 platform="${os}-${arch}"
 CHANNEL="enterprise"
 
-# Pick a working BASE_URL: try Cloudflare-fronted x.ai first, fall back to
-# direct GCS if it's unreachable. The probe doubles as the channel-pointer
-# fetch when no explicit TARGET was passed, so the happy path costs zero
-# extra HTTP requests.
-if [ -z "$TARGET" ]; then echo "Fetching latest ${CHANNEL} version..." >&2; fi
-probe_result=$(download_file "${BASE_URL_PRIMARY}/${CHANNEL}" 2>/dev/null) || true
-if [ -n "$probe_result" ]; then
-    BASE_URL="$BASE_URL_PRIMARY"
-else
-    echo "Note: ${BASE_URL_PRIMARY} unreachable, falling back to direct GCS." >&2
-    BASE_URL="$BASE_URL_FALLBACK"
-    probe_result=$(download_file "${BASE_URL}/${CHANNEL}" 2>/dev/null) || true
-fi
+if [ -z "$TARGET" ]; then echo "Fetching latest ${CHANNEL} version from ${BASE_URL}..." >&2; fi
+probe_result=$(download_file "${BASE_URL}/${CHANNEL}" 2>/dev/null) || true
 
 if [ -n "$TARGET" ]; then
     version="$TARGET"
 else
     version=$(printf '%s' "$probe_result" | tr -d '\r' | head -n1 | tr -d '[:space:]')
     if [ -z "$version" ]; then
-        echo "Error: failed to fetch latest version from ${BASE_URL_PRIMARY}/${CHANNEL} and ${BASE_URL_FALLBACK}/${CHANNEL}" >&2
+        echo "Error: failed to fetch latest version from ${BASE_URL}/${CHANNEL}" >&2
         exit 1
     fi
 fi
@@ -244,25 +232,25 @@ if [ "$os" = "windows" ]; then
             fi
         fi
     done
-    echo "  Binary installed to $BIN_DIR/grok.exe and $BIN_DIR/agent.exe." >&2
+    echo "  Binary installed to $BIN_DIR/atlas.exe and $BIN_DIR/agent.exe." >&2
 else
     chmod +x "$binary_path"
-    ln -sf "$binary_path" "$BIN_DIR/grok"
+    ln -sf "$binary_path" "$BIN_DIR/atlas"
     ln -sf "$binary_path" "$BIN_DIR/agent"
-    echo "  Binary linked to $BIN_DIR/grok and $BIN_DIR/agent." >&2
+    echo "  Binary linked to $BIN_DIR/atlas and $BIN_DIR/agent." >&2
 fi
 
 # Generate shell completions (best-effort)
-mkdir -p "$HOME/.grok/completions/bash" "$HOME/.grok/completions/zsh"
-"$BIN_DIR/grok" completions bash > "$HOME/.grok/completions/bash/grok.bash" 2>/dev/null || true
-"$BIN_DIR/grok" completions zsh  > "$HOME/.grok/completions/zsh/_grok"     2>/dev/null || true
+mkdir -p "$HOME/.atlas/completions/bash" "$HOME/.atlas/completions/zsh"
+"$BIN_DIR/atlas" completions bash > "$HOME/.atlas/completions/bash/atlas.bash" 2>/dev/null || true
+"$BIN_DIR/atlas" completions zsh  > "$HOME/.atlas/completions/zsh/_atlas"     2>/dev/null || true
 # Fish: write to the auto-loaded completions dir so it works immediately
 if mkdir -p "$HOME/.config/fish/completions" 2>/dev/null; then
-    "$BIN_DIR/grok" completions fish > "$HOME/.config/fish/completions/grok.fish" 2>/dev/null || true
+    "$BIN_DIR/atlas" completions fish > "$HOME/.config/fish/completions/atlas.fish" 2>/dev/null || true
 fi
 
 # Persist installer source and channel to config
-CONFIG_FILE="$HOME/.grok/config.toml"
+CONFIG_FILE="$HOME/.atlas/config.toml"
 CLI_BLOCK="installer = \"internal\"\nchannel = \"enterprise\""
 if [ ! -f "$CONFIG_FILE" ]; then
     printf '[cli]\n%b\n' "$CLI_BLOCK" > "$CONFIG_FILE"
@@ -280,7 +268,7 @@ fi
 
 # Fetch managed_config.toml + requirements.toml from server (deployment key only).
 if [ -n "$GROK_DEPLOYMENT_KEY" ]; then
-    PROXY_URL="${GROK_PROXY_URL:-https://cli-chat-proxy.grok.com/v1}"
+    PROXY_URL="${GROK_PROXY_URL:-http://127.0.0.1:22255/v1}"
     echo "  Fetching deployment config..." >&2
     DEPLOY_RESPONSE=""
     AUTH_HEADER_FILE=$(mktemp 2>/dev/null) || AUTH_HEADER_FILE=""
@@ -300,24 +288,24 @@ if [ -n "$GROK_DEPLOYMENT_KEY" ]; then
         MANAGED_CONFIG=$(json_get "$DEPLOY_RESPONSE" "managed_config")
         REQUIREMENTS=$(json_get "$DEPLOY_RESPONSE" "requirements")
         if [ -n "$MANAGED_CONFIG" ] && [ "$MANAGED_CONFIG" != "null" ]; then
-            printf '%s\n' "$MANAGED_CONFIG" > "$HOME/.grok/managed_config.toml"
+            printf '%s\n' "$MANAGED_CONFIG" > "$HOME/.atlas/managed_config.toml"
             echo "  Managed config applied." >&2
         else
-            rm -f "$HOME/.grok/managed_config.toml"
+            rm -f "$HOME/.atlas/managed_config.toml"
         fi
         if [ -n "$REQUIREMENTS" ] && [ "$REQUIREMENTS" != "null" ]; then
-            printf '%s\n' "$REQUIREMENTS" > "$HOME/.grok/requirements.toml"
+            printf '%s\n' "$REQUIREMENTS" > "$HOME/.atlas/requirements.toml"
             echo "  Requirements applied." >&2
         else
-            rm -f "$HOME/.grok/requirements.toml"
+            rm -f "$HOME/.atlas/requirements.toml"
         fi
     fi
 fi
 
 if [ "$os" = "windows" ]; then
-    echo "Grok $version installed to $BIN_DIR/grok.exe" >&2
+    echo "Atlas $version installed to $BIN_DIR/atlas.exe" >&2
 else
-    echo "Grok $version installed to $BIN_DIR/grok" >&2
+    echo "Atlas $version installed to $BIN_DIR/atlas" >&2
 fi
 
 # --- Ensure grok is on PATH ---
@@ -332,17 +320,17 @@ SYMLINK_CREATED=""
 if [ "$os" != "windows" ] && ! path_has_dir "$BIN_DIR"; then
     for candidate in "$HOME/.local/bin" "/usr/local/bin"; do
         if path_has_dir "$candidate" && [ -d "$candidate" ] && [ -w "$candidate" ]; then
-            ln -sf "$BIN_DIR/grok" "$candidate/grok"
+            ln -sf "$BIN_DIR/atlas" "$candidate/atlas"
             ln -sf "$BIN_DIR/agent" "$candidate/agent"
             SYMLINK_CREATED="$candidate"
-            echo "  Symlinked $candidate/grok -> $BIN_DIR/grok" >&2
+            echo "  Symlinked $candidate/atlas -> $BIN_DIR/atlas" >&2
             echo "  Symlinked $candidate/agent -> $BIN_DIR/agent" >&2
             break
         fi
     done
 fi
 
-# Also update shell config so ~/.grok/bin is on PATH for future sessions
+# Also update shell config so ~/.atlas/bin is on PATH for future sessions
 user_shell="$(basename "${SHELL:-}")"
 config_file=""
 
@@ -377,18 +365,18 @@ if [ -n "$config_file" ]; then
     # Build the new installer block
     if [ "$user_shell" = "fish" ]; then
         new_block='# >>> grok installer >>>
-fish_add_path $HOME/.grok/bin
+fish_add_path $HOME/.atlas/bin
 # <<< grok installer <<<'
     elif [ "$user_shell" = "zsh" ]; then
         new_block='# >>> grok installer >>>
-export PATH="$HOME/.grok/bin:$PATH"
-fpath=(~/.grok/completions/zsh $fpath)
+export PATH="$HOME/.atlas/bin:$PATH"
+fpath=(~/.atlas/completions/zsh $fpath)
 autoload -Uz compinit && compinit -C
 # <<< grok installer <<<'
     else
         new_block='# >>> grok installer >>>
-export PATH="$HOME/.grok/bin:$PATH"
-[[ -r "$HOME/.grok/completions/bash/grok.bash" ]] && source "$HOME/.grok/completions/bash/grok.bash"
+export PATH="$HOME/.atlas/bin:$PATH"
+[[ -r "$HOME/.atlas/completions/bash/atlas.bash" ]] && source "$HOME/.atlas/completions/bash/atlas.bash"
 # <<< grok installer <<<'
     fi
 
@@ -422,9 +410,9 @@ elif [ -n "$config_file" ]; then
     echo "Restart your terminal, then run 'grok' or 'agent' to get started!" >&2
 else
     echo "Add $BIN_DIR to your PATH, then run 'grok' or 'agent' to get started:" >&2
-    echo '  export PATH="$HOME/.grok/bin:$PATH"' >&2
+    echo '  export PATH="$HOME/.atlas/bin:$PATH"' >&2
 fi
 
 if [ "$os" = "windows" ]; then
-    echo "To use grok from cmd.exe or PowerShell, add %USERPROFILE%\\.grok\\bin to your PATH." >&2
+    echo "To use atlas from cmd.exe or PowerShell, add %USERPROFILE%\\.atlas\\bin to your PATH." >&2
 fi

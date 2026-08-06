@@ -132,10 +132,10 @@ impl GrokAuth {
             .num_seconds()
     }
 
-    /// `true` when the token comes from a first-party xAI account —
-    /// either an OIDC login against https://auth.x.ai (or the local-dev
-    /// equivalent), or an external auth provider that declared an xAI
-    /// issuer for its token.
+    /// `true` when the token comes from a first-party Atlas/xAI account —
+    /// either an OIDC login against the default Atlas issuer (or loopback /
+    /// legacy auth.x.ai), or an external auth provider that declared a
+    /// recognised first-party issuer for its token.
     ///
     /// The issuer is a client-side hint, not a trust assertion: everything
     /// it unlocks still authenticates the actual token server-side, and it

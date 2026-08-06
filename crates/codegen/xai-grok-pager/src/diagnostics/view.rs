@@ -264,14 +264,14 @@ fn clipboard_facts(
         ClipboardDelivery::Unverified | ClipboardDelivery::Failed
             if snapshot.common.terminal.is_ssh =>
         {
-            Some("grok wrap <ssh command> or /minimal")
+            Some("atlas wrap <ssh command> or /minimal")
         }
         ClipboardDelivery::Unverified | ClipboardDelivery::Failed
             if snapshot.container_no_display =>
         {
-            Some("grok wrap <command> or /minimal")
+            Some("atlas wrap <command> or /minimal")
         }
-        ClipboardDelivery::Unverified => Some("grok wrap or /minimal"),
+        ClipboardDelivery::Unverified => Some("atlas wrap or /minimal"),
         ClipboardDelivery::Failed => Some("/minimal"),
     };
 

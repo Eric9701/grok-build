@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atlas · Managed Models</title>
+  <style>
+    :root {
+      --bg: #f3f1ec; --elev: #fffcf7; --ink: #1c1b19; --muted: #6b6860;
+      --line: #ddd8ce; --accent: #0f766e; --err: #b42318; --ok: #1f7a4c;
+      --font: "Segoe UI", "PingFang SC", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--ink); }
+    header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--line); background: var(--elev); }
+    h1 { margin: 0; font-size: 1.35rem; }
+    p.sub { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.9rem; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1.25rem 1.5rem 3rem; display: grid; gap: 1.25rem; }
+    section { background: var(--elev); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; }
+    h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.45rem 0.4rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    input, select, textarea, button {
+      font: inherit; padding: 0.4rem 0.55rem; border-radius: 8px; border: 1px solid var(--line); background: #fff; color: var(--ink);
+    }
+    button { cursor: pointer; background: var(--accent); color: #fff; border-color: var(--accent); }
+    button.secondary { background: transparent; color: var(--ink); }
+    button.danger { background: var(--err); border-color: var(--err); }
+    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; margin-bottom: 0.6rem; }
+    .field { display: flex; flex-direction: column; gap: 0.2rem; min-width: 140px; flex: 1; }
+    .field label { font-size: 0.75rem; color: var(--muted); }
+    .msg { font-size: 0.85rem; color: var(--muted); min-height: 1.2em; }
+    .msg.ok { color: var(--ok); }
+    .msg.err { color: var(--err); }
+    .checks { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; max-height: 160px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 0.5rem; }
+    code { font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Managed Models</h1>
+    <p class="sub">云端模型配置 · API Key 加密入库 · 按用户分配 · <a href="/atlas/admin/task-reports">Task Reports</a></p>
+  </header>
+  <main>
+    <section>
+      <h2>模型列表</h2>
+      <div class="msg" id="listMsg"></div>
+      <table>
+        <thead><tr><th>ID</th><th>Model</th><th>Base URL</th><th>Backend</th><th>Key</th><th>Enabled</th><th></th></tr></thead>
+        <tbody id="modelRows"></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>新增 / 更新模型</h2>
+      <div class="row">
+        <div class="field"><label>id</label><input id="mId" placeholder="cmsgroup-kimi2.7" /></div>
+        <div class="field"><label>model（上游名）</label><input id="mModel" placeholder="kimi-for-coding" /></div>
+        <div class="field"><label>name</label><input id="mName" placeholder="display name" /></div>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:2"><label>base_url</label><input id="mBase" placeholder="https://api.example/v1" /></div>
+        <div class="field"><label>api_backend</label>
+          <select id="mBackend"><option>messages</option><option>chat_completions</option><option>responses</option></select>
+        </div>
+        <div class="field"><label>context_window</label><input id="mCtx" type="number" value="200000" /></div>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:2"><label>api_key（明文或 ENC(...)；更新时可留空保留原值）</label><input id="mKey" type="password" autocomplete="off" /></div>
+        <div class="field"><label>enabled</label>
+          <select id="mEnabled"><option value="1">true</option><option value="0">false</option></select>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:2"><label>description</label><input id="mDesc" /></div>
+        <button type="button" id="btnSave">保存</button>
+        <button type="button" class="secondary" id="btnEncrypt">加密预览</button>
+      </div>
+      <div class="msg" id="saveMsg"></div>
+      <pre id="encPreview" style="white-space:pre-wrap;word-break:break-all;font-size:0.8rem;color:var(--muted)"></pre>
+    </section>
+
+    <section>
+      <h2>分配到用户</h2>
+      <div class="row">
+        <div class="field"><label>用户</label><select id="userSelect"></select></div>
+        <div class="field"><label>默认模型 id（可选）</label><input id="userDefault" placeholder="cmsgroup-kimi2.7" /></div>
+        <button type="button" id="btnAssign">保存分配</button>
+      </div>
+      <div class="checks" id="assignChecks"></div>
+      <div class="msg" id="assignMsg"></div>
+    </section>
+  </main>
+  <script>
+    const API = "/atlas/admin/api";
+    const $ = (id) => document.getElementById(id);
+    function setMsg(el, text, ok) {
+      el.textContent = text || "";
+      el.className = "msg" + (ok === true ? " ok" : ok === false ? " err" : "");
+    }
+    async function api(path, opts) {
+      const r = await fetch(API + path, opts);
+      const t = await r.text();
+      let j; try { j = JSON.parse(t); } catch { j = { raw: t }; }
+      if (!r.ok) throw new Error(j.error || j.message || t || r.statusText);
+      return j;
+    }
+    let models = [];
+    async function loadModels() {
+      const j = await api("/managed-models");
+      models = j.models || [];
+      const tb = $("modelRows");
+      tb.innerHTML = "";
+      for (const m of models) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td><code>${esc(m.id)}</code></td><td>${esc(m.model)}</td><td>${esc(m.base_url)}</td>
+          <td>${esc(m.api_backend)}</td><td>${esc(m.api_key_masked || (m.has_key ? "ENC(…)" : ""))}</td>
+          <td>${m.enabled}</td>
+          <td><button class="secondary" data-edit="${esc(m.id)}">编辑</button>
+              <button class="danger" data-del="${esc(m.id)}">删</button></td>`;
+        tb.appendChild(tr);
+      }
+      renderAssignChecks();
+      setMsg($("listMsg"), `共 ${models.length} 条`, true);
+    }
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+    }
+    function renderAssignChecks() {
+      const box = $("assignChecks");
+      box.innerHTML = models.map(m =>
+        `<label><input type="checkbox" value="${esc(m.id)}" /> <code>${esc(m.id)}</code></label>`
+      ).join("");
+    }
+    async function loadUsers() {
+      const j = await api("/users");
+      const sel = $("userSelect");
+      sel.innerHTML = (j.users || []).map(u =>
+        `<option value="${esc(u.userId)}">${esc(u.email)} (${esc(u.userId)})</option>`
+      ).join("");
+      if (sel.value) await loadUserAssign(sel.value);
+    }
+    async function loadUserAssign(userId) {
+      const j = await api(`/users/${encodeURIComponent(userId)}/models`);
+      const set = new Set(j.model_ids || []);
+      $("assignChecks").querySelectorAll("input[type=checkbox]").forEach(cb => {
+        cb.checked = set.has(cb.value);
+      });
+      $("userDefault").value = j.default_model || "";
+    }
+    $("modelRows").addEventListener("click", async (e) => {
+      const edit = e.target.getAttribute("data-edit");
+      const del = e.target.getAttribute("data-del");
+      if (edit) {
+        const m = models.find(x => x.id === edit);
+        if (!m) return;
+        $("mId").value = m.id;
+        $("mModel").value = m.model;
+        $("mName").value = m.name || "";
+        $("mBase").value = m.base_url || "";
+        $("mBackend").value = m.api_backend || "messages";
+        $("mCtx").value = m.context_window || 200000;
+        $("mDesc").value = m.description || "";
+        $("mEnabled").value = m.enabled ? "1" : "0";
+        $("mKey").value = "";
+      }
+      if (del) {
+        if (!confirm("删除 " + del + " ?")) return;
+        try {
+          await api("/managed-models/" + encodeURIComponent(del), { method: "DELETE" });
+          await loadModels();
+        } catch (err) { setMsg($("listMsg"), err.message, false); }
+      }
+    });
+    $("btnSave").onclick = async () => {
+      const body = {
+        id: $("mId").value.trim(),
+        model: $("mModel").value.trim(),
+        name: $("mName").value.trim() || $("mId").value.trim(),
+        base_url: $("mBase").value.trim(),
+        api_backend: $("mBackend").value,
+        context_window: Number($("mCtx").value) || 200000,
+        description: $("mDesc").value.trim(),
+        enabled: $("mEnabled").value === "1",
+      };
+      const key = $("mKey").value.trim();
+      if (key) body.api_key = key;
+      try {
+        await api("/managed-models", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        setMsg($("saveMsg"), "已保存", true);
+        $("mKey").value = "";
+        await loadModels();
+      } catch (err) { setMsg($("saveMsg"), err.message, false); }
+    };
+    $("btnEncrypt").onclick = async () => {
+      const plaintext = $("mKey").value.trim();
+      if (!plaintext) { setMsg($("saveMsg"), "先输入 api_key", false); return; }
+      try {
+        const j = await api("/crypto/encrypt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plaintext }),
+        });
+        $("encPreview").textContent = j.enc || "";
+        setMsg($("saveMsg"), "加密预览已生成（未自动保存）", true);
+      } catch (err) { setMsg($("saveMsg"), err.message, false); }
+    };
+    $("userSelect").onchange = () => loadUserAssign($("userSelect").value);
+    $("btnAssign").onclick = async () => {
+      const userId = $("userSelect").value;
+      const model_ids = [...$("assignChecks").querySelectorAll("input:checked")].map(cb => cb.value);
+      try {
+        await api(`/users/${encodeURIComponent(userId)}/models`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model_ids, default_model: $("userDefault").value.trim() }),
+        });
+        setMsg($("assignMsg"), "分配已保存", true);
+      } catch (err) { setMsg($("assignMsg"), err.message, false); }
+    };
+    (async () => {
+      try { await loadModels(); await loadUsers(); }
+      catch (err) { setMsg($("listMsg"), err.message, false); }
+    })();
+  </script>
+</body>
+</html>

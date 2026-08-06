@@ -1,0 +1,5 @@
+{
+  // Zoom for the Grok chat panel only (percent, 100 = default). Bump this to
+  // 150 / 200 to test issue #14 without rescaling the rest of VS Code.
+  "grok.chatFontScale": 100
+}

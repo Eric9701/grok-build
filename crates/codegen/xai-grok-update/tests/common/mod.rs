@@ -119,6 +119,7 @@ pub fn make_update_config(channel: &str) -> xai_grok_update::UpdateConfig {
         alpha_test_key: None,
         channel: channel.to_string(),
         npm_registry: None,
+        cli_base_urls: vec!["http://127.0.0.1:9/cli".to_string()],
     }
 }
 

@@ -804,6 +804,11 @@ pub(crate) async fn handle_subagent_request(
     let parent_traceparent = xai_file_utils::trace_context::current_traceparent();
     let tracker_child_cwd = child_session_info.cwd.clone();
     let tracker_model_id = effective_model_id.0.to_string();
+    // Captured for the task/agent/artifact report built at completion, since
+    // the originals are moved into the coordinator tracker / prompt command.
+    let report_child_cwd = tracker_child_cwd.clone();
+    let report_model_id = tracker_model_id.clone();
+    let report_prompt = task_prompt_text.clone();
     let initial_child_tokens = xai_chat_state::estimate_conversation_tokens(
         &forked_conversation,
     );
@@ -1549,6 +1554,7 @@ pub(crate) async fn handle_subagent_request(
                             .as_ref()
                             .map(|p| p.to_string_lossy().to_string()),
                         backgrounded: false,
+                        artifacts: Vec::new(),
                     }
                 }
                 Ok(
@@ -1589,6 +1595,7 @@ pub(crate) async fn handle_subagent_request(
                             .as_ref()
                             .map(|p| p.to_string_lossy().to_string()),
                         backgrounded: false,
+                        artifacts: Vec::new(),
                     }
                 }
                 Ok(
@@ -1707,6 +1714,12 @@ pub(crate) async fn handle_subagent_request(
             }
         }
     };
+    result.artifacts = child_handle
+        .signals_handle
+        .snapshot()
+        .await
+        .map(|s| s.artifacts_written)
+        .unwrap_or_default();
     if let Some(trace_gcs_config) = gcs_upload_ctx
         .upload_method
         .as_ref()
@@ -1995,6 +2008,72 @@ pub(crate) async fn handle_subagent_request(
         tool_calls: result.tool_calls,
         tokens_used: if telemetry_tokens > 0 { Some(telemetry_tokens) } else { None },
     });
+    // Best-effort structured task/agent/artifact report to atlas-server. Fire
+    // and forget: never blocks or fails subagent completion.
+    //
+    // Logs go through unified_log (not tracing) so they appear in
+    // ~/.atlas/logs/unified.jsonl next to "subagent completed".
+    if result.backgrounded {
+        xai_grok_telemetry::unified_log::debug(
+            "skip task report: interim auto-backgrounded result",
+            Some(request.parent_session_id.as_str()),
+            Some(serde_json::json!({ "subagent_id": &request.id })),
+        );
+    } else if !crate::task_report::task_reporting_enabled() {
+        xai_grok_telemetry::unified_log::info(
+            "skip task report: GROK_DISABLE_TASK_REPORT is set",
+            Some(request.parent_session_id.as_str()),
+            Some(serde_json::json!({ "subagent_id": &request.id })),
+        );
+    } else {
+        let (base_url, deployment_key) = match ctx.agent_config.as_ref() {
+            Some(c) => (
+                c.endpoints.proxy_url(),
+                c.endpoints.deployment_key.clone(),
+            ),
+            None => (String::new(), None),
+        };
+        let status = if result.success {
+            "completed"
+        } else if result.cancelled {
+            "cancelled"
+        } else {
+            "error"
+        };
+        let prompt = {
+            let p = crate::task_report::truncate_on_boundary(report_prompt.clone(), 4096);
+            (!p.is_empty()).then_some(p)
+        };
+        let report = crate::remote::TaskReport {
+            subagent_id: request.id.clone(),
+            parent_session_id: request.parent_session_id.clone(),
+            child_session_id: result.child_session_id.clone(),
+            subagent_type: request.subagent_type.clone(),
+            model: (!report_model_id.is_empty()).then(|| report_model_id.clone()),
+            description: request.description.clone(),
+            prompt,
+            status: status.to_string(),
+            success: result.success,
+            duration_ms: result.duration_ms,
+            tool_calls: result.tool_calls,
+            turns: result.turns,
+            tokens_used: result.tokens_used,
+            artifact_count: result.artifacts.len(),
+            artifacts: result.artifacts.clone(),
+            cwd: (!report_child_cwd.is_empty()).then(|| report_child_cwd.clone()),
+            worktree_path: result.worktree_path.clone(),
+            error: result.error.clone(),
+            started_at: turn_started_at.clone(),
+            completed_at: chrono::Utc::now().to_rfc3339(),
+        };
+        crate::task_report::spawn_task_report(
+            base_url,
+            Some(ctx.auth_manager.clone()),
+            deployment_key,
+            ctx.alpha_test_key.clone(),
+            report,
+        );
+    }
     match (&ctx.parent_terminal_backend, &ctx.parent_notification_handle) {
         (Some(parent_tb), Some(parent_notif_handle)) => {
             if !request.surface_completion {

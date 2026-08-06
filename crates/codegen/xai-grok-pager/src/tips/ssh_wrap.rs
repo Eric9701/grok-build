@@ -48,7 +48,7 @@ pub fn ssh_wrap_tip() -> EphemeralTip {
             SSH_WRAP_TIP_KEY,
             Line::from(vec![
                 Span::styled("Over SSH? Run ", dim),
-                Span::styled("grok wrap ssh <host>", command),
+                Span::styled("atlas wrap ssh <host>", command),
                 Span::styled(" locally for clipboard + terminal restore", dim),
             ]),
         )
@@ -76,7 +76,7 @@ mod tests {
         let text: String = tip.line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(
             text,
-            "Over SSH? Run grok wrap ssh <host> locally for clipboard + terminal restore"
+            "Over SSH? Run atlas wrap ssh <host> locally for clipboard + terminal restore"
         );
     }
 

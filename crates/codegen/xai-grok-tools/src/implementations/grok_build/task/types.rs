@@ -371,6 +371,10 @@ pub struct SubagentResult {
     /// `get_command_or_subagent_output`), so the tool returns a `task_id` notice
     /// instead of a completion. Never set for natively backgrounded subagents.
     pub backgrounded: bool,
+    /// Relative/absolute paths of files this subagent wrote or edited
+    /// (dedup, order-preserving), gathered from the child session's
+    /// write/edit tool calls. Used for task/agent/artifact reporting.
+    pub artifacts: Vec<String>,
 }
 
 impl Default for SubagentResult {
@@ -391,6 +395,7 @@ impl Default for SubagentResult {
             output_usage_incomplete: false,
             worktree_path: None,
             backgrounded: false,
+            artifacts: Vec::new(),
         }
     }
 }

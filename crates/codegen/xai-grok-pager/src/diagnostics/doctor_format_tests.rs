@@ -269,9 +269,9 @@ fn unwrapped_ssh_recommendation_with_no_issues_output_is_stable() {
             "\n",
             "Recommendation\n",
             "\n",
-            "  Running over SSH without `grok wrap` -- clipboard copies depend on the terminal's escape-sequence support, and a dropped connection can leave your local terminal in a bad state\n",
-            "      Automatic setup: `grok doctor fix ssh-wrap`\n",
-            "      One-off: `grok wrap ssh <host>`\n",
+            "  Running over SSH without `atlas wrap` -- clipboard copies depend on the terminal's escape-sequence support, and a dropped connection can leave your local terminal in a bad state\n",
+            "      Automatic setup: `atlas doctor fix ssh-wrap`\n",
+            "      One-off: `atlas wrap ssh <host>`\n",
             "      Note: Run it on your local machine in place of plain `ssh` -- it forwards clipboard copies to your local system and restores terminal modes if the connection drops.\n",
         )
     );

@@ -724,6 +724,8 @@ impl SessionActor {
             ))
             .await;
         let prompt_text_for_hook = user_message.clone();
+        let report_prompt_text = prompt_text_for_hook.clone();
+        let turn_started_at = chrono::Utc::now().to_rfc3339();
         {
             if trace_gcs_config.is_some() {
                 self.chat_state_handle.begin_turn_capture();
@@ -822,6 +824,7 @@ impl SessionActor {
         let turn_scope_guard =
             TurnSubagentScopeGuard::new(self.current_prompt_id.clone(), prompt_id.to_string());
         let turn_model_id = self.current_model_id().await;
+        let turn_model_id_for_report = turn_model_id.clone();
         let doom_event_model = turn_model_id.clone();
         let turn_timer = std::time::Instant::now();
         let result = {
@@ -1069,6 +1072,18 @@ impl SessionActor {
                 turn_number: current_prompt_index as u64,
             },
         );
+        self.maybe_post_main_turn_task_report(
+            prompt_id,
+            &origin,
+            &report_prompt_text,
+            &result,
+            turn_duration_ms,
+            turn_tool_count,
+            &turn_model_id_for_report,
+            current_prompt_index as u64,
+            &turn_started_at,
+        )
+        .await;
         let doom_tally = std::mem::take(&mut *self.doom_loop_turn_tally.lock());
         if doom_tally.fired() {
             xai_grok_telemetry::session_ctx::log_session_event(
@@ -1718,6 +1733,154 @@ impl SessionActor {
                 },
             ));
         StructuredOutputStep::Complete(validated)
+    }
+}
+/// Whether a main-session turn should POST a task report for this origin.
+///
+/// [`PromptOrigin::User`] always qualifies. [`PromptOrigin::PlanResume`] also
+/// qualifies (real model turn after plan approve/revise) even though it is
+/// synthetic for prompt-history purposes. Other synthetic origins (task
+/// completed, goal summary, …) stay out of task-report analytics.
+pub(super) fn should_post_main_turn_task_report(origin: &super::super::PromptOrigin) -> bool {
+    matches!(
+        origin,
+        super::super::PromptOrigin::User | super::super::PromptOrigin::PlanResume
+    )
+}
+/// Admin-facing `subagentType` for a main-session turn. Plan Mode appends
+/// `:plan` so aggregates stay distinct from the real `plan` subagent type and
+/// from the same agent running in Agent mode.
+pub(super) fn main_turn_task_report_subagent_type(
+    agent_name: &str,
+    mode: crate::session::plan_mode::PromptMode,
+) -> String {
+    if mode == crate::session::plan_mode::PromptMode::Plan {
+        format!("{agent_name}:plan")
+    } else {
+        agent_name.to_string()
+    }
+}
+impl SessionActor {
+    /// Best-effort structured task/agent/artifact report for a primary-session
+    /// user turn. Subagent child sessions already report on completion; skip
+    /// those (`subagent_depth > 0`) and synthetic auto-wake prompts — except
+    /// [`PromptOrigin::PlanResume`], which is a real model turn after plan
+    /// approval / revise.
+    async fn maybe_post_main_turn_task_report(
+        &self,
+        prompt_id: &str,
+        origin: &super::super::PromptOrigin,
+        prompt_text: &str,
+        result: &Result<TurnOutcome, acp::Error>,
+        turn_duration_ms: u64,
+        turn_tool_count: u32,
+        turn_model_id: &str,
+        turn_number: u64,
+        turn_started_at: &str,
+    ) {
+        if self.tool_context.subagent_depth > 0 {
+            return;
+        }
+        if !should_post_main_turn_task_report(origin) {
+            return;
+        }
+        if !crate::task_report::task_reporting_enabled() {
+            xai_grok_telemetry::unified_log::info(
+                "skip task report: GROK_DISABLE_TASK_REPORT is set",
+                Some(&self.session_info.id.0),
+                Some(serde_json::json!({ "prompt_id": prompt_id })),
+            );
+            return;
+        }
+
+        let (status, success, error, mut artifacts, tokens_used) = match result {
+            Ok(TurnOutcome::Completed { snapshot, .. }) => {
+                let snap = snapshot.as_ref().as_ref();
+                let arts = snap
+                    .map(|s| s.delta.artifacts_this_turn.clone())
+                    .unwrap_or_default();
+                let tokens = snap
+                    .map(|s| s.turn_input_tokens.saturating_add(s.turn_output_tokens))
+                    .unwrap_or(0);
+                ("completed", true, None, arts, tokens)
+            }
+            Ok(TurnOutcome::Cancelled { .. }) => {
+                let arts = self.signals_handle().take_artifacts_this_turn().await;
+                ("cancelled", false, None, arts, 0)
+            }
+            Ok(TurnOutcome::MaxTurnsReached { limit }) => {
+                let arts = self.signals_handle().take_artifacts_this_turn().await;
+                (
+                    "cancelled",
+                    false,
+                    Some(format!("max turns reached ({limit})")),
+                    arts,
+                    0,
+                )
+            }
+            Err(err) => {
+                let arts = self.signals_handle().take_artifacts_this_turn().await;
+                ("error", false, Some(err.to_string()), arts, 0)
+            }
+        };
+        artifacts.sort();
+        artifacts.dedup();
+
+        let endpoints = crate::agent::config::EndpointsConfig::from_effective_config();
+        let base_url = endpoints.proxy_url();
+        let deployment_key = crate::managed_config::resolve_deployment_key()
+            .or_else(|| endpoints.deployment_key.clone());
+        let alpha_test_key = None;
+        let agent_name = self.agent.borrow().name().to_string();
+        let subagent_type = main_turn_task_report_subagent_type(
+            &agent_name,
+            *self.turn_prompt_mode.lock(),
+        );
+        let description = {
+            let first_line = prompt_text
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("main session turn")
+                .trim();
+            crate::task_report::truncate_on_boundary(first_line.to_string(), 256)
+        };
+        let prompt = {
+            let p = crate::task_report::truncate_on_boundary(prompt_text.to_string(), 4096);
+            (!p.is_empty()).then_some(p)
+        };
+        let session_id = self.session_info.id.0.to_string();
+        let cwd = self.tool_context.cwd.as_str().to_owned();
+        let report = crate::remote::TaskReport {
+            // Prefix distinguishes main-session turns from Task-tool subagents
+            // in admin queries / aggregates.
+            subagent_id: format!("main-turn-{turn_number}-{prompt_id}"),
+            parent_session_id: session_id.clone(),
+            child_session_id: session_id,
+            subagent_type,
+            model: (!turn_model_id.is_empty()).then(|| turn_model_id.to_string()),
+            description,
+            prompt,
+            status: status.to_string(),
+            success,
+            duration_ms: turn_duration_ms,
+            tool_calls: turn_tool_count,
+            turns: 1,
+            tokens_used,
+            artifact_count: artifacts.len(),
+            artifacts,
+            cwd: (!cwd.is_empty()).then_some(cwd),
+            worktree_path: None,
+            error,
+            started_at: turn_started_at.to_string(),
+            completed_at: chrono::Utc::now().to_rfc3339(),
+        };
+        crate::task_report::spawn_task_report(
+            base_url,
+            self.auth_manager.clone(),
+            deployment_key,
+            alpha_test_key,
+            report,
+        );
     }
     /// Shared turn-completion bookkeeping (plan cleanup, signals snapshot +
     /// persistence, BigQuery turn delta, feedback prompt). Runs identically for
@@ -2576,5 +2739,61 @@ mod structured_output_validation_tests {
         let bad: Result<jsonschema::Validator, String> = Err("invalid output schema: boom".into());
         let err = validate_structured_output(&bad, r#"{"name":"alice","age":1}"#).unwrap_err();
         assert_eq!(err, "invalid output schema: boom");
+    }
+}
+#[cfg(test)]
+mod main_turn_task_report_gate_tests {
+    use super::{main_turn_task_report_subagent_type, should_post_main_turn_task_report};
+    use crate::session::PromptOrigin;
+    use crate::session::plan_mode::PromptMode;
+
+    #[test]
+    fn user_and_plan_resume_post_task_report() {
+        assert!(should_post_main_turn_task_report(&PromptOrigin::User));
+        assert!(should_post_main_turn_task_report(&PromptOrigin::PlanResume));
+        assert!(should_post_main_turn_task_report(
+            &PromptOrigin::from_prompt_id("plan-resume-1730000000000")
+        ));
+    }
+
+    #[test]
+    fn other_synthetic_origins_skip_task_report() {
+        assert!(!should_post_main_turn_task_report(
+            &PromptOrigin::from_prompt_id("task-completed-abc")
+        ));
+        assert!(!should_post_main_turn_task_report(
+            &PromptOrigin::from_prompt_id("subagent-completed-xyz")
+        ));
+        assert!(!should_post_main_turn_task_report(
+            &PromptOrigin::from_prompt_id("goal-summary-019e2d3e")
+        ));
+        assert!(!should_post_main_turn_task_report(
+            &PromptOrigin::from_prompt_id("goal-classifier-nudge-019e2d3e")
+        ));
+        assert!(!should_post_main_turn_task_report(
+            &PromptOrigin::from_prompt_id("scheduler-fired-019e51a3")
+        ));
+        assert!(!should_post_main_turn_task_report(
+            &PromptOrigin::from_prompt_id("notifications-019e0000-0000-7000-8000-0000000000aa")
+        ));
+        assert!(!should_post_main_turn_task_report(
+            &PromptOrigin::from_prompt_id("workflow-completed-wf-1")
+        ));
+    }
+
+    #[test]
+    fn plan_mode_suffixes_subagent_type() {
+        assert_eq!(
+            main_turn_task_report_subagent_type("grok-build", PromptMode::Plan),
+            "grok-build:plan"
+        );
+        assert_eq!(
+            main_turn_task_report_subagent_type("grok-build", PromptMode::Agent),
+            "grok-build"
+        );
+        assert_eq!(
+            main_turn_task_report_subagent_type("grok-build", PromptMode::Ask),
+            "grok-build"
+        );
     }
 }

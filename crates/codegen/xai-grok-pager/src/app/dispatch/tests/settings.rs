@@ -3087,8 +3087,8 @@ fn set_theme_toast_format_uses_display_name() {
             "toast must contain label, got: {toast:?}",
         );
         assert!(
-            toast.contains("Grok Day"),
-            "toast must use display name `Grok Day`, not canonical `grokday`, got: {toast:?}",
+            toast.contains("Atlas Day"),
+            "toast must use display name `Atlas Day`, not canonical `grokday`, got: {toast:?}",
         );
         assert!(toast.contains('\u{2713}'), "toast must contain the ✓ glyph");
     });
@@ -3100,7 +3100,7 @@ fn set_auto_dark_theme_toast_format_uses_display_name() {
         let _ = dispatch(Action::SetAutoDarkTheme("grokday".into()), &mut app);
         let toast = read_toast(&app);
         assert!(toast.contains("Auto dark theme"));
-        assert!(toast.contains("Grok Day"));
+        assert!(toast.contains("Atlas Day"));
         assert!(toast.contains('\u{2713}'));
     });
 }
@@ -3111,7 +3111,7 @@ fn set_auto_light_theme_toast_format_uses_display_name() {
         let _ = dispatch(Action::SetAutoLightTheme("groknight".into()), &mut app);
         let toast = read_toast(&app);
         assert!(toast.contains("Auto light theme"));
-        assert!(toast.contains("Grok Night"));
+        assert!(toast.contains("Atlas Night"));
     });
 }
 /// `apply_setting_rollback` for theme keys: a failed persist

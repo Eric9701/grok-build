@@ -1,0 +1,33 @@
+---
+description: Atlas 云端托管模型（ENC、按人下发、落盘离线）实现约定
+alwaysApply: true
+---
+
+# Atlas 云端托管模型
+
+## 数据与 Admin
+
+- 表：`managed_models`、`user_models`（MySQL Migrate 在 `services/atlas-server/internal/store`）
+- Admin UI：`/atlas/admin/models`；API：`/atlas/admin/api/managed-models`、用户分配、`/crypto/encrypt|decrypt`
+- 明文入库时服务端自动 `ENC(...)`；密钥默认 `atlas-managed-model-secret-v1`，可用 `ATLAS_MODEL_SECRET_KEY` 覆盖
+
+## ListModels
+
+- `GET /atlas/v1/models`：有用户分配 → 只返回托管条目；无分配 → probe / upstream / builtin
+- 托管条目字段：`managed: true`；**`id` 与 `model`（路由名）下发前 AES-GCM 加密为 `ENC(...)`**；`api_key` 同样为 `ENC(...)`
+- DB 仍存明文 id/model；加密仅在 ListModels 响应侧
+
+## 客户端（xai-grok-shell）
+
+- 依赖：`ring` 必须在 **`[dependencies]`**（勿只放 dev-dependencies，否则 release 编不过）
+- 解密：`util/model_secret.rs`；客户端密钥 `GROK_MODEL_SECRET_KEY` > 内置默认（与服务端同常量）
+- **托管条目强制 ENC**：`id`/`model` 非 ENC 或解密失败 → 丢弃该模型（防篡改）
+- 落盘：`config/managed_models.rs` → `~/.atlas/config.toml` 的 `[model.<明文id>]`，`model`/`api_key` 保持 ENC，`managed = true`
+- 不覆盖无 `managed` 的用户手写段；取消分配后删除托管段
+- 合并优先级：本地 `[model.*]`（含托管落盘）> prefetch > builtin
+- `/model` Online 刷新会 invalidate models 缓存后再拉网并同步 toml
+
+## MySQL 注意
+
+- 新建表 collation 须对齐已有 `users.user_id`（常见 `utf8mb4_unicode_ci` vs MySQL8 默认 `utf8mb4_0900_ai_ci`），否则 FK `Error 1215`
+- `migrateManagedModels()` 按 `users.user_id` 的 collation 建表/ALTER

@@ -1,0 +1,39 @@
+---
+description: Atlas 遥测门控、task-reports、构建与 models 拉取时机
+alwaysApply: true
+---
+
+# Atlas 遥测 / 运维约定
+
+## 遥测开关（易混淆）
+
+`trace_upload_enabled=false` **只关** harness/GCS/S3/proxy **会话 trace 产物上传**，不是总开关。
+
+| 通道 | 路径示例 | 门控 |
+|------|----------|------|
+| Trace 产物 | GCS/S3/proxy upload | `trace_upload_enabled` / `[telemetry] trace_upload` |
+| Session signals | `POST …/sessions/{id}/signals` | `telemetry_enabled` |
+| Events | `…/events` | `telemetry_enabled` |
+| Task reports | `POST …/task-reports` | **默认开**；仅 `GROK_DISABLE_TASK_REPORT=1` 可关 |
+
+Remote settings：`download/probe_settings.json` → `GET /atlas/v1/settings`。文档见 `services/atlas-server/docs/settings.md`。
+
+要尽量停上报：`telemetry_enabled=false` + `trace_upload_enabled=false` + `GROK_DISABLE_TASK_REPORT=1`。
+
+## Task Reports Admin
+
+- 页：`/atlas/admin/task-reports`
+- 整体汇总含 `agents`、`models`、`users`、`summary.uniqueModels`
+- 个人 `aggregate=1` 返回 agents + models；明细表含 Model 列
+
+## CLI 何时打 `/models`
+
+会请求：启动预取（缓存未命中）、鉴权变化、`on_auth_changed`、ETag 变化、Online 刷新。  
+通常不请求：缓存新鲜、`remote_fetch=false`、仅打开 `/model` 选择器（多用内存 catalog）。
+
+## 构建
+
+- Windows server：`services/atlas-server` 下 `go build -o atlas-server.exe ./cmd/server`（`CGO_ENABLED=0`）
+- Linux：`scripts/build-linux.sh`
+- Rust Windows 需 `PROTOC=bin/protoc-win64/bin/protoc.exe`
+- Proxy 示例：`http://10.218.220.237:22255/atlas`

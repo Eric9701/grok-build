@@ -5,11 +5,11 @@ use crate::diagnostics::{
 };
 use crate::host::{DisplayServer, HostOs};
 
-const LIVE_TUI_PROBE_CTA: &str = "Run /doctor inside Grok.";
+const LIVE_TUI_PROBE_CTA: &str = "Run /doctor inside Atlas.";
 
 pub(super) fn format(report: &DiagnosticReport) -> String {
     let facts = &report.facts;
-    let mut out = String::from("Grok Doctor\n\nTerminal\n");
+    let mut out = String::from("Atlas Doctor\n\nTerminal\n");
 
     fact(&mut out, "terminal", &facts.terminal.to_string());
     match &facts.xtversion {

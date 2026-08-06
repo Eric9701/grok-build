@@ -46,12 +46,12 @@ const THEME_CHOICES: &[EnumChoice] = &[
     },
     EnumChoice {
         canonical: "groknight",
-        display: "Grok Night",
+        display: "Atlas Night",
         description: "Neutral dark with magenta accent.",
     },
     EnumChoice {
         canonical: "grokday",
-        display: "Grok Day",
+        display: "Atlas Day",
         description: "Light theme for bright environments.",
     },
     EnumChoice {
@@ -304,12 +304,12 @@ const SCREEN_MODE_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "fullscreen",
         display: "Fullscreen",
-        description: "Open plain grok in the standard fullscreen TUI. Default when unset.",
+        description: "Open plain atlas in the standard fullscreen TUI. Default when unset.",
     },
     EnumChoice {
         canonical: "minimal",
         display: "Minimal",
-        description: "Open plain grok in scrollback-native (minimal) mode.",
+        description: "Open plain atlas in scrollback-native (minimal) mode.",
     },
 ];
 
@@ -476,12 +476,12 @@ const VOICE_STT_LANGUAGE_CHOICES: &[EnumChoice] = &[
 const CONCRETE_THEME_CHOICES: &[EnumChoice] = &[
     EnumChoice {
         canonical: "groknight",
-        display: "Grok Night",
+        display: "Atlas Night",
         description: "Neutral dark with magenta accent.",
     },
     EnumChoice {
         canonical: "grokday",
-        display: "Grok Day",
+        display: "Atlas Day",
         description: "Light theme for bright environments.",
     },
     EnumChoice {
@@ -544,7 +544,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shell,
             label: "Default screen mode",
-            description: "How plain grok opens next time: Fullscreen (default when unset) or \
+            description: "How plain atlas opens next time: Fullscreen (default when unset) or \
                           Minimal. Writes [ui] screen_mode in config.toml. Restart required. \
                           Switch this session only with /minimal or /fullscreen.",
             keywords: &[
@@ -1393,7 +1393,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
             category: SettingCategory::Editor,
             owner: SettingOwner::Shell,
             label: "Voice language",
-            description: "Speech-to-text language for voice dictation (Grok STT). \
+            description: "Speech-to-text language for voice dictation (Atlas STT). \
                           English by default; System uses your locale when supported. \
                           Sets formatting language for numbers and currencies.",
             keywords: &["voice", "language", "locale", "dictation", "stt", "speech"],
@@ -1514,7 +1514,7 @@ pub fn default_settings() -> Vec<SettingMeta> {
             category: SettingCategory::Advanced,
             owner: SettingOwner::Shell,
             label: "SSH wrap",
-            description: "At session load over SSH, recommend `grok wrap ssh` for \
+            description: "At session load over SSH, recommend `atlas wrap ssh` for \
                           clipboard forwarding and terminal restore.",
             keywords: &[
                 "ssh",

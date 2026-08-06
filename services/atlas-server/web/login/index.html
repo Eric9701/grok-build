@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{if .Register}}Atlas Register{{else}}Atlas Login{{end}}</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { max-width: 28rem; margin: 4rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.5rem; }
+    .box { border: 1px solid #8884; border-radius: 8px; padding: 1.25rem; }
+    label { display: block; margin: 0.75rem 0 0.35rem; }
+    input[type=text], input[type=email], input[type=password] {
+      width: 100%; box-sizing: border-box; padding: 0.6rem 0.75rem; font-size: 1rem;
+    }
+    button { margin-top: 1rem; padding: 0.55rem 1rem; cursor: pointer; }
+    .err { color: #c33; margin-top: 1rem; }
+    .hint { color: #666; font-size: 0.9rem; margin-top: 1rem; }
+    a { color: inherit; }
+  </style>
+</head>
+<body>
+  <h1>{{if .Register}}Create Atlas account{{else}}Sign in to Atlas{{end}}</h1>
+  <p>{{if .Register}}Register to receive a machine code for CLI authorization.{{else}}You must sign in before approving a device code.{{end}}</p>
+  <div class="box">
+    <form method="post" action="{{if .Register}}/atlas/register{{else}}/atlas/login{{end}}">
+      <input type="hidden" name="next" value="{{.Next}}" />
+      {{if .Register}}
+      <label for="first_name">First name</label>
+      <input id="first_name" name="first_name" type="text" autocomplete="given-name" />
+      <label for="last_name">Last name</label>
+      <input id="last_name" name="last_name" type="text" autocomplete="family-name" />
+      {{end}}
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" required />
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="{{if .Register}}new-password{{else}}current-password{{end}}" required />
+      <button type="submit">{{if .Register}}Register{{else}}Sign in{{end}}</button>
+    </form>
+    {{if .Error}}<p class="err">{{.Error}}</p>{{end}}
+    <p class="hint">
+      {{if .Register}}
+        Already have an account? <a href="/atlas/login{{if .Next}}?next={{.Next}}{{end}}">Sign in</a>
+      {{else}}
+        Need an account? <a href="/atlas/register{{if .Next}}?next={{.Next}}{{end}}">Register</a>
+      {{end}}
+    </p>
+  </div>
+</body>
+</html>

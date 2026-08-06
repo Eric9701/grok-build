@@ -1,0 +1,38 @@
+.vscode/**
+.gitignore
+.env
+.claude/**
+mcps/**
+research/**
+test/**
+src/**
+integration/**
+out-integration/**
+.vscode-test.mjs
+.vscode-test/**
+tsconfig.json
+# ALLOWLIST — this excludes every dependency and re-includes them one by one.
+# out/ is plain tsc output, not a bundle, so anything `require`d at runtime must
+# be named here or the extension installs and then fails to load. Adding a
+# runtime dependency means adding a line here too; nothing warns you.
+node_modules/**
+!node_modules/ws/**
+!node_modules/jpeg-js/**
+.git/**
+**/*.map
+**/*.ts
+!out/**/*.js
+grok-session-preview.html
+# Private/untracked working docs (git-excluded via .gitignore / .git/info/exclude)
+# must never ship in the public vsix — vsce doesn't read those files.
+manual-test/**
+CLAUDE.local.md
+docs/backlog.md
+docs/POST_NOTES.md
+docs/issue-37-diagrams.md
+docs/codex-style-analysis.md
+
+# Runtime terminal artifacts (never ship)
+terminals/**
+.verification/**
+.grok/**

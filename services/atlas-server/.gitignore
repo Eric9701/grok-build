@@ -1,0 +1,11 @@
+/atlas-server
+/atlas-server.exe
+*.exe
+*.exe.bak
+*~
+/download/
+/downloads/
+/releases/*
+!/releases/.gitkeep
+atlas-server.toml*
+!atlas-server.toml.example
