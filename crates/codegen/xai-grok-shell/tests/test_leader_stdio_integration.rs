@@ -582,8 +582,7 @@ async fn test_runtime_profile_start_status_stop_across_clients() {
         };
         assert!(matches!(
             started,
-            ControlPayload::CpuProfileStarted { svg_path, .. }
-if svg_path == output_path
+            ControlPayload::CpuProfileStarted { svg_path, .. } if svg_path == output_path
         ));
 
         let status = client_b
@@ -603,8 +602,7 @@ if svg_path == output_path
                 svg_path: Some(path),
                 frequency_hz: Some(200),
                 ..
-            }
-if path == output_path
+            } if path == output_path
         ));
 
         let stopped = client_b
@@ -614,8 +612,7 @@ if path == output_path
             .unwrap();
         assert!(matches!(
             stopped,
-            ControlPayload::CpuProfileStopped { svg_path, .. }
-if svg_path == output_path
+            ControlPayload::CpuProfileStopped { svg_path, .. } if svg_path == output_path
         ));
         assert!(output_path.exists());
     } else {
@@ -730,8 +727,7 @@ async fn test_runtime_profile_creates_missing_parent_directory_end_to_end() {
         };
         assert!(matches!(
             started,
-            ControlPayload::CpuProfileStarted { svg_path, .. }
-if svg_path == nested_output
+            ControlPayload::CpuProfileStarted { svg_path, .. } if svg_path == nested_output
         ));
 
         let stopped = client
@@ -741,8 +737,7 @@ if svg_path == nested_output
             .unwrap();
         assert!(matches!(
             stopped,
-            ControlPayload::CpuProfileStopped { svg_path, .. }
-if svg_path == nested_output
+            ControlPayload::CpuProfileStopped { svg_path, .. } if svg_path == nested_output
         ));
         assert!(nested_output.exists());
     } else {
@@ -1801,7 +1796,7 @@ async fn test_session_ownership_cleanup_on_disconnect() {
     // in sync. Also verifies the eviction was actually sent.
     let eviction = acp_rx.recv().await.unwrap();
     let eviction_json: serde_json::Value = serde_json::from_str(&eviction).unwrap();
-    assert_eq!(eviction_json["method"], "x.ai/internal/evict_sessions");
+    assert_eq!(eviction_json["method"], "_x.ai/internal/evict_sessions");
 
     // Connect a NEW client — server should still be running
     let mut client2 = LeaderClient::connect(
@@ -3221,7 +3216,7 @@ async fn test_sever_mid_rpc_orphans_response_and_replay_recovers() {
     // signal that the server processed the disconnect.
     let evict = acp_rx.recv().await.unwrap();
     let evict_json: serde_json::Value = serde_json::from_str(&evict).unwrap();
-    assert_eq!(evict_json["method"], "x.ai/internal/evict_sessions");
+    assert_eq!(evict_json["method"], "_x.ai/internal/evict_sessions");
 
     // The agent completes the turn anyway: durable terminal notification plus
     // the RPC response addressed to the dead client.

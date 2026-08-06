@@ -19,7 +19,9 @@ pub enum ProtocolError {
     ConnectionClosed,
 }
 
-pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>, ProtocolError> {
+pub(crate) async fn read_frame<R: AsyncRead + Unpin>(
+    reader: &mut R,
+) -> Result<Vec<u8>, ProtocolError> {
     let mut len_buf = [0u8; 4];
     match reader.read_exact(&mut len_buf).await {
         Ok(_) => {}
@@ -39,7 +41,7 @@ pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>,
     Ok(buf)
 }
 
-pub async fn write_frame<W: AsyncWrite + Unpin>(
+pub(crate) async fn write_frame<W: AsyncWrite + Unpin>(
     writer: &mut W,
     data: &[u8],
 ) -> Result<(), ProtocolError> {
@@ -391,6 +393,71 @@ pub enum ServerMessage {
     LeaderReady,
 }
 
+/// Extension methods injected into the agent, named as the agent matches them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::EnumIter)]
+pub(crate) enum InternalMethod {
+    AuthCleared,
+    EvictSessions,
+    ReloadAllMcpServers,
+    ReloadModels,
+    ReloadModelsCache,
+    ReloadProjectMcpServers,
+    ReloadSkills,
+    ReloadWorkflows,
+}
+
+impl InternalMethod {
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::AuthCleared => "x.ai/internal/auth_cleared",
+            Self::EvictSessions => "x.ai/internal/evict_sessions",
+            Self::ReloadAllMcpServers => "x.ai/internal/reload_all_mcp_servers",
+            Self::ReloadModels => "x.ai/internal/reload_models",
+            Self::ReloadModelsCache => "x.ai/internal/reload_models_cache",
+            Self::ReloadProjectMcpServers => "x.ai/internal/reload_project_mcp_servers",
+            Self::ReloadSkills => "x.ai/internal/reload_skills",
+            Self::ReloadWorkflows => "x.ai/internal/reload_workflows",
+        }
+    }
+
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        use strum::IntoEnumIterator;
+
+        Self::iter().find(|method| method.name() == name)
+    }
+
+    /// The decoder routes a custom method to `ext_method` / `ext_notification`
+    /// only when it carries the `_` prefix, and rejects the bare name.
+    fn wire_name(self) -> String {
+        format!("_{}", self.name())
+    }
+}
+
+/// Not newline-terminated: the `acp_tx` forwarding loop appends the terminator.
+pub(crate) fn internal_notification(method: InternalMethod, params: serde_json::Value) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method.wire_name(),
+        "params": params,
+    })
+    .to_string()
+}
+
+/// Newline-terminated for direct injection.
+pub(crate) fn internal_request_line(
+    id: &str,
+    method: InternalMethod,
+    params: serde_json::Value,
+) -> String {
+    let msg = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method.wire_name(),
+        "params": params,
+    });
+    format!("{msg}\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,8 +519,7 @@ mod tests {
                     output: Some(output),
                     frequency_hz: Some(250),
                 },
-            }
-if request_id == "req-1" && output == "/tmp/profile.folded"
+            } if request_id == "req-1" && output == "/tmp/profile.folded"
         ));
     }
 
@@ -553,8 +619,7 @@ if request_id == "req-1" && output == "/tmp/profile.folded"
                     workspace_exposure: true,
                     relaunch_v1: true,
                 }),
-            }
-if profile_formats == vec![ProfileArtifactFormat::Svg]
+            } if profile_formats == vec![ProfileArtifactFormat::Svg]
         ));
     }
 
@@ -643,8 +708,7 @@ if profile_formats == vec![ProfileArtifactFormat::Svg]
             ClientMessage::Control {
                 request_id,
                 command: ControlCommand::WorkspaceStart { hub_url: Some(url), cwd },
-            }
-if request_id == "ws-1"
+            } if request_id == "ws-1"
                 && url == "wss://hub.example/v1/tools"
                 && cwd == "/home/u/proj"
         ));
@@ -679,8 +743,7 @@ if request_id == "ws-1"
                 cwd: None,
                 sessions,
                 ..
-            }
-if state == "none" && sessions.is_empty()
+            } if state == "none" && sessions.is_empty()
         ));
     }
 
@@ -717,6 +780,25 @@ if state == "none" && sessions.is_empty()
                 assert_eq!(delay_ms, 2000);
             }
             _ => panic!("Expected ShuttingDown, got {:?}", received),
+        }
+    }
+
+    #[test]
+    fn every_internal_method_carries_the_routable_prefix() {
+        use strum::IntoEnumIterator;
+
+        for method in InternalMethod::iter() {
+            for line in [
+                internal_notification(method, serde_json::json!({})),
+                internal_request_line("id", method, serde_json::json!({})),
+            ] {
+                let json: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+                assert_eq!(
+                    json["method"].as_str().and_then(|m| m.strip_prefix('_')),
+                    Some(method.name()),
+                    "unroutable wire method: {line}"
+                );
+            }
         }
     }
 

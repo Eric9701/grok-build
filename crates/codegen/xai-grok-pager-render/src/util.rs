@@ -17,8 +17,12 @@ pub fn pager_toml_path() -> PathBuf {
 /// Derived from resolved [`grok_home()`] vs `xai_grok_config::default_grok_home()`,
 /// not from whether `GROK_HOME` is set in the environment.
 pub fn display_grok_home_prefix() -> String {
-    if grok_home() == xai_grok_config::default_grok_home() {
-        if grok_home().file_name().and_then(|n| n.to_str()) == Some(".grok") {
+    display_grok_home_prefix_for(&grok_home())
+}
+
+fn display_grok_home_prefix_for(home: &Path) -> String {
+    if home == xai_grok_config::default_grok_home() {
+        if home.file_name().and_then(|n| n.to_str()) == Some(".grok") {
             "~/.grok".to_string()
         } else {
             "~/.atlas".to_string()
@@ -30,8 +34,12 @@ pub fn display_grok_home_prefix() -> String {
 
 /// User-facing path under [`grok_home()`], e.g. ``~/.atlas/config.toml``.
 pub fn display_user_grok_path(relative: impl AsRef<Path>) -> String {
+    display_user_grok_path_for(&grok_home(), relative)
+}
+
+fn display_user_grok_path_for(home: &Path, relative: impl AsRef<Path>) -> String {
     let rel = relative.as_ref();
-    let prefix = display_grok_home_prefix();
+    let prefix = display_grok_home_prefix_for(home);
     if rel.as_os_str().is_empty() {
         return prefix;
     }
@@ -434,6 +442,19 @@ mod tests {
         let path = display_user_grok_path("config.toml");
         assert!(path.ends_with("/config.toml") || path.ends_with("\\config.toml"));
         assert!(path.contains(".atlas") || path.contains(".grok") || path.contains("$GROK_HOME"));
+    }
+
+    #[test]
+    fn display_user_grok_path_for_custom_home_uses_override_label() {
+        let custom = std::env::temp_dir().join("grok-home-display-regression");
+        assert_eq!(
+            display_user_grok_path_for(&custom, "config.toml"),
+            "$GROK_HOME/config.toml"
+        );
+        assert_eq!(
+            display_user_grok_path_for(&custom, "sandbox.toml"),
+            "$GROK_HOME/sandbox.toml"
+        );
     }
 
     #[test]

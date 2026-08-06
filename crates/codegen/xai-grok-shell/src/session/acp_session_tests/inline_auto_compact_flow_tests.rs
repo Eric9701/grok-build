@@ -41,6 +41,7 @@ async fn create_test_actor(
         pending_notifications: Vec::new(),
         notifications_suppressed: false,
         rewindable: false,
+        front_message_committed: false,
         nudges_used_this_session: 0,
     });
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -54,6 +55,8 @@ async fn create_test_actor(
             top_p: None,
             api_backend: Default::default(),
             extra_headers: Default::default(),
+            query_params: Default::default(),
+            env_http_headers: Default::default(),
             context_window: std::num::NonZeroU64::new(context_window)
                 .expect("test context_window must be non-zero"),
             reasoning_effort: None,
@@ -74,11 +77,13 @@ async fn create_test_actor(
         model_auth_memo: std::cell::RefCell::new(None),
         attribution_callback: None,
         auth_manager: None,
+        is_chat_kind: false,
         state,
         notifications: NotificationSender {
             gateway: GatewaySender::new(gateway_tx),
             gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             persistence_tx,
+            disk_full: crate::session::notifications::idle_disk_full_rx(),
         },
         permissions: PermissionHandle::allow_all(),
         tool_context,
@@ -96,6 +101,8 @@ async fn create_test_actor(
         turn_prompt_mode: Arc::new(parking_lot::Mutex::new(PromptMode::Agent)),
         telemetry_enabled: false,
         supports_backend_search: std::cell::Cell::new(false),
+        tool_overrides: std::cell::RefCell::new(None),
+        resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
         compactions_remaining: std::cell::Cell::new(None),
         compaction_at_tokens: std::cell::Cell::new(None),
         doom_loop_recovery: None,
@@ -116,6 +123,7 @@ async fn create_test_actor(
             tool_choice: crate::util::config::CompactionToolChoice::Auto,
             prefire: crate::session::compaction_config::PrefireState::default(),
             prefix_released: std::sync::atomic::AtomicBool::new(false),
+            cancel: Default::default(),
         },
         memory: crate::session::memory_state::SessionMemory {
             flush_config: crate::config::MemoryFlushConfig::default(),
@@ -213,6 +221,7 @@ async fn create_test_actor(
         deferred_prefix: TaskSlot::new(),
         extension_registry: xai_agent_lifecycle::LocalExtensionRegistry::default(),
         last_announced_local_date: std::cell::Cell::new(chrono::Local::now().date_naive()),
+        prefix_carries_fallback_date: std::cell::Cell::new(false),
         last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
         last_api_request_at: std::sync::atomic::AtomicI64::new(0),
         hook_registry: std::cell::RefCell::new(None),
@@ -228,6 +237,9 @@ async fn create_test_actor(
         last_recap_main_turn: std::cell::Cell::new(0),
         recap_in_flight: std::cell::Cell::new(false),
         recap_epoch: std::cell::Cell::new(0),
+        turn_summary_task: std::cell::RefCell::new(None),
+        turn_summary_generation: std::cell::Cell::new(0),
+        turn_summary_enabled: false,
         session_turn_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         streaming_turn_capture: parking_lot::Mutex::new(StreamingTurnCapture::default()),
         turn_stream_drained: parking_lot::Mutex::new(None),
@@ -475,6 +487,7 @@ async fn create_test_actor_with_memory(
         pending_notifications: Vec::new(),
         notifications_suppressed: false,
         rewindable: false,
+        front_message_committed: false,
         nudges_used_this_session: 0,
     });
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -488,6 +501,8 @@ async fn create_test_actor_with_memory(
             top_p: None,
             api_backend: Default::default(),
             extra_headers: Default::default(),
+            query_params: Default::default(),
+            env_http_headers: Default::default(),
             context_window: std::num::NonZeroU64::new(context_window)
                 .expect("test context_window must be non-zero"),
             reasoning_effort: None,
@@ -512,11 +527,13 @@ async fn create_test_actor_with_memory(
         model_auth_memo: std::cell::RefCell::new(None),
         attribution_callback: None,
         auth_manager: None,
+        is_chat_kind: false,
         state,
         notifications: NotificationSender {
             gateway: GatewaySender::new(gateway_tx),
             gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             persistence_tx,
+            disk_full: crate::session::notifications::idle_disk_full_rx(),
         },
         permissions: PermissionHandle::allow_all(),
         tool_context,
@@ -531,6 +548,8 @@ async fn create_test_actor_with_memory(
         )),
         telemetry_enabled: false,
         supports_backend_search: std::cell::Cell::new(false),
+        tool_overrides: std::cell::RefCell::new(None),
+        resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
         compactions_remaining: std::cell::Cell::new(None),
         compaction_at_tokens: std::cell::Cell::new(None),
         doom_loop_recovery: None,
@@ -551,6 +570,7 @@ async fn create_test_actor_with_memory(
             tool_choice: crate::util::config::CompactionToolChoice::Auto,
             prefire: crate::session::compaction_config::PrefireState::default(),
             prefix_released: std::sync::atomic::AtomicBool::new(false),
+            cancel: Default::default(),
         },
         memory: crate::session::memory_state::SessionMemory {
             flush_config: memory_config
@@ -661,6 +681,7 @@ async fn create_test_actor_with_memory(
         deferred_prefix: TaskSlot::new(),
         extension_registry: xai_agent_lifecycle::LocalExtensionRegistry::default(),
         last_announced_local_date: std::cell::Cell::new(chrono::Local::now().date_naive()),
+        prefix_carries_fallback_date: std::cell::Cell::new(false),
         last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
         last_api_request_at: std::sync::atomic::AtomicI64::new(0),
         hook_registry: std::cell::RefCell::new(None),
@@ -676,6 +697,9 @@ async fn create_test_actor_with_memory(
         last_recap_main_turn: std::cell::Cell::new(0),
         recap_in_flight: std::cell::Cell::new(false),
         recap_epoch: std::cell::Cell::new(0),
+        turn_summary_task: std::cell::RefCell::new(None),
+        turn_summary_generation: std::cell::Cell::new(0),
+        turn_summary_enabled: false,
         session_turn_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         streaming_turn_capture: parking_lot::Mutex::new(StreamingTurnCapture::default()),
         turn_stream_drained: parking_lot::Mutex::new(None),
@@ -1138,6 +1162,7 @@ fn api_error_with_context_window(context_window: u64) -> xai_grok_sampler::Sampl
         message: "prompt is too long".into(),
         is_retryable: false,
         retry_after_secs: None,
+        should_retry: None,
         model_metadata: Some(crate::sampling::ResponseModelMetadata {
             context_window: Some(context_window),
             max_completion_tokens: None,
@@ -1146,6 +1171,7 @@ fn api_error_with_context_window(context_window: u64) -> xai_grok_sampler::Sampl
         empty_response_context: None,
         doom_loop_triggers: None,
         doom_loop_aborted_at_chunk: None,
+        credential: xai_grok_sampling_types::SentCredential::Unknown,
     }
 }
 /// Primary scenario: remote settings shrinks the context window mid-session.
@@ -1193,11 +1219,15 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
             let app = axum::Router::new().route(
                 "/v1/models-v2",
                 get(|| async {
-                    axum::Json(serde_json::json!(
-                        { "data" : [{ "model" : "test-model", "name" : "Test Model",
-                        "context_window" : 300_000, "max_completion_tokens" : 16384,
-                        "base_url" : "http://localhost/v1" }] }
-                    ))
+                    axum::Json(serde_json::json!({
+                        "data": [{
+                            "model": "test-model",
+                            "name": "Test Model",
+                            "context_window": 300_000,
+                            "max_completion_tokens": 16384,
+                            "base_url": "http://localhost/v1"
+                        }]
+                    }))
                 }),
             );
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1231,6 +1261,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 pending_notifications: Vec::new(),
                 notifications_suppressed: false,
                 rewindable: false,
+                front_message_committed: false,
                 nudges_used_this_session: 0,
             });
             let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
@@ -1244,6 +1275,8 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     top_p: None,
                     api_backend: Default::default(),
                     extra_headers: Default::default(),
+                    query_params: Default::default(),
+                    env_http_headers: Default::default(),
                     context_window: std::num::NonZeroU64::new(200_000).unwrap(),
                     reasoning_effort: None,
                     stream_tool_calls: None,
@@ -1282,11 +1315,13 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     std::mem::forget(dir);
                     Some(mgr)
                 },
+                is_chat_kind: false,
                 state,
                 notifications: NotificationSender {
                     gateway: GatewaySender::new(gateway_tx),
                     gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
                     persistence_tx,
+                    disk_full: crate::session::notifications::idle_disk_full_rx(),
                 },
                 permissions: xai_grok_workspace::permission::PermissionHandle::allow_all(),
                 tool_context,
@@ -1304,6 +1339,8 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 turn_prompt_mode: Arc::new(parking_lot::Mutex::new(PromptMode::Agent)),
                 telemetry_enabled: false,
                 supports_backend_search: std::cell::Cell::new(false),
+                tool_overrides: std::cell::RefCell::new(None),
+                resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
                 compactions_remaining: std::cell::Cell::new(None),
                 compaction_at_tokens: std::cell::Cell::new(None),
                 doom_loop_recovery: None,
@@ -1324,6 +1361,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     tool_choice: crate::util::config::CompactionToolChoice::Auto,
                     prefire: crate::session::compaction_config::PrefireState::default(),
                     prefix_released: std::sync::atomic::AtomicBool::new(false),
+                    cancel: Default::default(),
                 },
                 memory: crate::session::memory_state::SessionMemory {
                     flush_config: crate::config::MemoryFlushConfig::default(),
@@ -1427,6 +1465,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 deferred_prefix: TaskSlot::new(),
                 extension_registry: xai_agent_lifecycle::LocalExtensionRegistry::default(),
                 last_announced_local_date: std::cell::Cell::new(chrono::Local::now().date_naive()),
+                prefix_carries_fallback_date: std::cell::Cell::new(false),
                 last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
                 last_api_request_at: std::sync::atomic::AtomicI64::new(0),
                 hook_registry: std::cell::RefCell::new(None),
@@ -1442,6 +1481,9 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 last_recap_main_turn: std::cell::Cell::new(0),
                 recap_in_flight: std::cell::Cell::new(false),
                 recap_epoch: std::cell::Cell::new(0),
+                turn_summary_task: std::cell::RefCell::new(None),
+                turn_summary_generation: std::cell::Cell::new(0),
+                turn_summary_enabled: false,
                 session_turn_active: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 streaming_turn_capture: parking_lot::Mutex::new(StreamingTurnCapture::default()),
                 turn_stream_drained: parking_lot::Mutex::new(None),
@@ -1520,10 +1562,12 @@ async fn test_compact_on_error_noop_without_model_metadata() {
                 message: "prompt is too long".into(),
                 is_retryable: false,
                 retry_after_secs: None,
+                should_retry: None,
                 model_metadata: None,
                 empty_response_context: None,
                 doom_loop_triggers: None,
                 doom_loop_aborted_at_chunk: None,
+                credential: xai_grok_sampling_types::SentCredential::Unknown,
             };
             assert!(!actor.should_compact_on_error(&err).await);
         })

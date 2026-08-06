@@ -497,7 +497,7 @@ pub(super) fn default_actions(
             hint_key_display: None,
             requires_confirmation: false,
             long_help: Some(
-                "Moves focus from the prompt to the scrollback so you can navigate the transcript.\nTab works in both simple and vim scrollback modes.\nEsc is reserved for clear / rewind (idle) policy, not focus.",
+                "Moves focus from the prompt to the scrollback so you can navigate the transcript.\nTab works in both simple and vim scrollback modes.\nEsc is reserved for the cancel / clear / rewind policy, not focus.",
             ),
         },
         ActionDef {
@@ -512,7 +512,7 @@ pub(super) fn default_actions(
             hint_key_display: None,
             requires_confirmation: false,
             long_help: Some(
-                "Interrupts the agent's current turn and stops generation, keeping the session open.\nCtrl+C cancels when the prompt is empty; with a non-empty draft it clears the prompt first and leaves the turn running.\nIt stops the turn, not the app; use the quit shortcut to exit.",
+                "Interrupts the agent's current turn and stops generation, keeping the session open.\nEsc cancels immediately while a turn is running in minimal mode or when vim scrollback mode is off (prompt or scrollback focused, even with a draft).\nCtrl+C cancels when the prompt is empty; with a non-empty draft it clears the prompt first and leaves the turn running.\nIt stops the turn, not the app; use the quit shortcut to exit.",
             ),
         },
         ActionDef {
@@ -963,8 +963,8 @@ pub(super) fn default_actions(
         },
         ActionDef {
             id: ActionId::DashboardStop,
-            label: "stop",
-            description: "Stop / Close agent",
+            label: "delete",
+            description: "Stop / Delete agent",
             default_key: key!('x', CONTROL),
             alt_keys: vec![],
             category: Category::Dashboard,
@@ -973,7 +973,7 @@ pub(super) fn default_actions(
             hint_key_display: None,
             requires_confirmation: false,
             long_help: Some(
-                "Stops the selected agent and removes its row from the dashboard; a running turn is interrupted first.\nUse it to clear finished or unwanted agents without attaching to them.\nThe in-overlay equivalent (Ctrl+X) confirms before stopping.",
+                "On a busy top-level row, Ctrl+X cancels the running turn. Once the row is idle, press Ctrl+X again within 2s to permanently delete the session.\nOn a subagent row, Ctrl+X kills the subagent.",
             ),
         },
         ActionDef {
