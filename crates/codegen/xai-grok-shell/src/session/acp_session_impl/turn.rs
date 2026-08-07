@@ -1891,7 +1891,8 @@ impl SessionActor {
         }
 
         let (status, success, error, mut artifacts, tokens_used) = match result {
-            Ok(TurnOutcome::Completed { snapshot, .. }) => {
+            Ok(TurnOutcome::Completed { snapshot, .. })
+            | Ok(TurnOutcome::StationarityEnded { snapshot, .. }) => {
                 let snap = snapshot.as_ref().as_ref();
                 let arts = snap
                     .map(|s| s.delta.artifacts_this_turn.clone())
