@@ -412,11 +412,12 @@ fn collect_repo_config_kinds(cwd: &Path, first_only: bool) -> Vec<&'static str> 
     if !xai_grok_agent::plugins::project_plugin_dirs_in(&chain.dirs).is_empty() {
         hit!("plugins");
     }
-    // Project AGENT dirs (`.grok/agents` / `.claude/agents`): a project agent
-    // definition can carry an inline `hooks:` block (repo-controlled code-exec)
-    // AND can SHADOW a built-in subagent by name, so an agents-only clone must
-    // still be gated. Uses the shared SSOT walk (cwd→git root) so detection
-    // can't drift from agent discovery — same pattern as the plugin line above.
+    // Project AGENT dirs (`.atlas/agents` / `.grok/agents` / `.claude/agents`):
+    // a project agent definition can carry an inline `hooks:` block
+    // (repo-controlled code-exec) AND can SHADOW a built-in subagent by name,
+    // so an agents-only clone must still be gated. Uses the shared SSOT walk
+    // (cwd→git root) so detection can't drift from agent discovery — same
+    // pattern as the plugin line above.
     if !xai_grok_agent::discovery::project_agent_dirs_in(&chain.dirs).is_empty() {
         hit!("agents");
     }
@@ -627,6 +628,13 @@ mod tests {
         // subagent by name.
         let tmp = repo_tmp();
         std::fs::create_dir_all(tmp.path().join(".grok").join("agents")).unwrap();
+        assert!(repo_configs_present(tmp.path()));
+    }
+
+    #[test]
+    fn repo_configs_present_detects_atlas_agents() {
+        let tmp = repo_tmp();
+        std::fs::create_dir_all(tmp.path().join(".atlas").join("agents")).unwrap();
         assert!(repo_configs_present(tmp.path()));
     }
 

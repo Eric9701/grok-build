@@ -5,6 +5,7 @@
 //! construction.
 pub mod always_approve;
 pub mod announcements;
+pub mod atlas_sdd;
 pub mod auto;
 pub mod btw;
 pub mod cd;
@@ -119,6 +120,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(remember::RememberCommand),
         Arc::new(plan::PlanCommand),
         Arc::new(view_plan::ViewPlanCommand),
+        Arc::new(atlas_sdd::AtlasSddCommand),
         Arc::new(resume::ResumeCommand),
         Arc::new(mcps::McpsCommand),
         Arc::new(workflows::WorkflowsCommand),
@@ -625,6 +627,12 @@ mod tests {
             reg.get("tasks").is_some(),
             "/tasks should be registered in builtins"
         );
+    }
+    #[test]
+    fn atlas_sdd_registered_with_sdd_alias() {
+        let reg = CommandRegistry::new(builtin_commands());
+        assert_eq!(reg.get("atlas-sdd").expect("/atlas-sdd").name(), "atlas-sdd");
+        assert_eq!(reg.get("sdd").expect("/sdd").name(), "atlas-sdd");
     }
     #[test]
     fn cost_aliases_usage() {

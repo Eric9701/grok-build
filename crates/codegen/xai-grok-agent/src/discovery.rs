@@ -1,8 +1,8 @@
 //! Agent definition file discovery.
 //!
-//! Searches `.grok/agents/` and `.claude/agents/` from cwd to repo root,
-//! then `~/.grok/agents/`, then `~/.claude/agents/`. Name-based dedup keeps
-//! highest priority.
+//! Searches `.atlas/agents/`, `.grok/agents/`, and `.claude/agents/` from cwd
+//! to repo root, then user home agents dirs. Name-based dedup keeps highest
+//! priority.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -14,11 +14,11 @@ use crate::config::{AgentDefinition, AgentScope, BuiltinAgentName};
 use crate::error::AgentBuildError;
 use crate::prompt::context::TemplateOverride;
 
-/// Project-level agent directories to scan (`.grok/agents/` + `.claude/agents/` compat).
-const PROJECT_AGENT_SUBDIRS: &[&str] = &[".grok/agents", ".claude/agents"];
+/// Project-level agent directories to scan (Atlas + Grok + Claude Code compat).
+const PROJECT_AGENT_SUBDIRS: &[&str] = &[".atlas/agents", ".grok/agents", ".claude/agents"];
 
-/// Existing project-level agent dirs (`.grok/agents` / `.claude/agents`), walked
-/// from `cwd` up to the git worktree root (inclusive). Returns
+/// Existing project-level agent dirs (`.atlas` / `.grok` / `.claude` agents),
+/// walked from `cwd` up to the git worktree root (inclusive). Returns
 /// `(existing dirs, git_root)`. Mirrors [`crate::plugins::project_plugin_dirs`].
 pub fn project_agent_dirs(cwd: Option<&Path>) -> (Vec<PathBuf>, Option<PathBuf>) {
     let Some(cwd) = cwd else {
@@ -28,12 +28,12 @@ pub fn project_agent_dirs(cwd: Option<&Path>) -> (Vec<PathBuf>, Option<PathBuf>)
     (project_agent_dirs_in(&chain.dirs), chain.git_root)
 }
 
-/// Existing project agent dirs (`.grok/agents` / `.claude/agents`) under each
-/// dir of a precomputed cwd→git-root chain ([`crate::repo::RepoDirChain`]).
+/// Existing project agent dirs under each dir of a precomputed cwd→git-root
+/// chain ([`crate::repo::RepoDirChain`]).
 ///
 /// Single source of the `PROJECT_AGENT_SUBDIRS` walk: the folder-trust detector
 /// (`repo_configs_present`) reuses its one shared chain here so detection can
-/// never drift from discovery (adding a third project-agent dir updates both at
+/// never drift from discovery (adding another project-agent dir updates both at
 /// once).
 pub fn project_agent_dirs_in(chain_dirs: &[PathBuf]) -> Vec<PathBuf> {
     crate::repo::existing_subdirs_along(chain_dirs, PROJECT_AGENT_SUBDIRS)
@@ -571,8 +571,8 @@ fn substitute_plugin_vars(def: &mut AgentDefinition, plugin: &crate::plugins::Lo
     }
 }
 
-/// Load project agent definitions from every `.grok/agents` / `.claude/agents`
-/// dir along the cwd→git-root walk, via the shared [`project_agent_dirs`] SSOT.
+/// Load project agent definitions from every `.atlas` / `.grok` / `.claude`
+/// `agents/` dir along the cwd→git-root walk, via the shared [`project_agent_dirs`] SSOT.
 fn load_project_definitions(
     cwd: &Path,
     definitions: &mut Vec<AgentDefinition>,
@@ -1010,6 +1010,23 @@ mod tests {
                 .unwrap();
         assert_eq!(def.scope, AgentScope::Project);
         assert_eq!(def.description, "Project reviewer");
+    }
+
+    #[test]
+    fn test_by_name_in_cwd_atlas_project_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let agents_dir = tmp.path().join(".atlas").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        write_agent_file(
+            &agents_dir,
+            "sdd-reviewer.md",
+            "sdd-reviewer",
+            "Atlas project agent",
+        );
+
+        let def = by_name_in_cwd("sdd-reviewer", tmp.path()).unwrap();
+        assert_eq!(def.scope, AgentScope::Project);
+        assert_eq!(def.description, "Atlas project agent");
     }
 
     #[test]

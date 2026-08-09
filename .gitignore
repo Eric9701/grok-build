@@ -47,3 +47,10 @@ node_modules/
 !/services/atlas-server/releases/.gitkeep
 /services/atlas-server/atlas-server.toml*
 !/services/atlas-server/atlas-server.toml.example
+
+# Nested publish repo for GitLab marketplace (content tracked; .git is separate)
+/services/atlas-plugins/.git/
+
+# Compat junction -> services/atlas-plugins/plugins/atlas-sdd (do not duplicate)
+/services/sdd/
+
