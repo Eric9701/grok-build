@@ -51,7 +51,7 @@ use xai_grok_update::version::installed_on_disk_version;
 /// binary, actually runs, and has exactly the expected content (the content
 /// check is what catches a cross-racer temp-file corruption).
 fn assert_active_binary(home: &Path, version: &str, platform: &str, expected_content: &[u8]) {
-    let link = home.join("bin").join("grok");
+    let link = home.join("bin").join("atlas");
     assert!(link.is_symlink(), "grok must be a symlink");
     let resolved = dunce::canonicalize(&link)
         .unwrap_or_else(|e| panic!("active grok symlink does not resolve: {e}"));
@@ -95,7 +95,7 @@ fn fake_managed_install(version: &str) {
     .unwrap();
     std::os::unix::fs::symlink(
         std::path::Path::new("../downloads").join(&name),
-        bin.join("grok"),
+        bin.join("atlas"),
     )
     .unwrap();
 }
@@ -493,7 +493,7 @@ async fn concurrent_different_version_installs_do_not_corrupt_each_other() {
 
     // The active symlink points at whichever racer swapped last; it must
     // resolve and run regardless.
-    let resolved = dunce::canonicalize(home.join("bin").join("grok")).unwrap();
+    let resolved = dunce::canonicalize(home.join("bin").join("atlas")).unwrap();
     assert_eq!(std::fs::read(&resolved).unwrap(), artifact);
     let name = resolved.file_name().unwrap().to_string_lossy().to_string();
     assert!(

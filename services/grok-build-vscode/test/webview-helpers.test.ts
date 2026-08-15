@@ -466,37 +466,37 @@ describe("nextMicState", () => {
 });
 
 describe("trailingSendPhrase", () => {
-  it("locates a trailing 'grok send' (returns its range)", () => {
-    expect(trailingSendPhrase("fix the bug grok send", "grok send")).toEqual({ index: 12, length: 9 });
+  it("locates a trailing 'atlas send' (returns its range)", () => {
+    expect(trailingSendPhrase("fix the bug atlas send", "atlas send")).toEqual({ index: 12, length: 10 });
   });
 
   it("is case-insensitive and highlights only the phrase, not trailing punctuation", () => {
-    const r = trailingSendPhrase("Refactor this Grok Send!", "grok send");
+    const r = trailingSendPhrase("Refactor this Atlas Send!", "atlas send");
     expect(r).not.toBeNull();
     // The "!" stays part of the message, so it is NOT inside the highlighted span.
-    expect("Refactor this Grok Send!".slice(r!.index, r!.index + r!.length)).toBe("Grok Send");
+    expect("Refactor this Atlas Send!".slice(r!.index, r!.index + r!.length)).toBe("Atlas Send");
   });
 
   it("does NOT match a non-trailing or partial occurrence", () => {
-    expect(trailingSendPhrase("explain grok send to me", "grok send")).toBeNull();
-    expect(trailingSendPhrase("press send", "grok send")).toBeNull();
+    expect(trailingSendPhrase("explain atlas send to me", "atlas send")).toBeNull();
+    expect(trailingSendPhrase("press send", "atlas send")).toBeNull();
   });
 
-  it("also highlights the 'grok sent' STT variant", () => {
-    const r = trailingSendPhrase("add a button grok sent", "grok send");
+  it("also highlights the 'atlas sent' STT variant", () => {
+    const r = trailingSendPhrase("add a button atlas sent", "atlas send");
     expect(r).not.toBeNull();
-    expect("add a button grok sent".slice(r!.index, r!.index + r!.length)).toBe("grok sent");
+    expect("add a button atlas sent".slice(r!.index, r!.index + r!.length)).toBe("atlas sent");
   });
 
   it("does NOT match a bare 'sent' without 'grok' before it", () => {
-    expect(trailingSendPhrase("the file was sent", "grok send")).toBeNull();
-    expect(trailingSendPhrase("make sure it gets sent", "grok send")).toBeNull();
+    expect(trailingSendPhrase("the file was sent", "atlas send")).toBeNull();
+    expect(trailingSendPhrase("make sure it gets sent", "atlas send")).toBeNull();
   });
 
   it("returns null for empty text or empty phrase", () => {
-    expect(trailingSendPhrase("", "grok send")).toBeNull();
-    expect(trailingSendPhrase("grok send", "")).toBeNull();
-    expect(trailingSendPhrase(null as unknown as string, "grok send")).toBeNull();
+    expect(trailingSendPhrase("", "atlas send")).toBeNull();
+    expect(trailingSendPhrase("atlas send", "")).toBeNull();
+    expect(trailingSendPhrase(null as unknown as string, "atlas send")).toBeNull();
   });
 
   it("supports a custom phrase", () => {

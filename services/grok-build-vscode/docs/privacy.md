@@ -10,7 +10,7 @@ The event carries:
 
 | Field | Example | Why |
 |---|---|---|
-| Anonymous **install id** | a random GUID generated once on your machine | count distinct installs — **not** your account, email, or grok login |
+| Anonymous **install id** | a random GUID generated once on your machine | count distinct installs — **not** your account, email, or atlas login |
 | **mode / model / effort** | `agent` / `grok-build` / `high` | which features are used |
 | **Local UI preferences** | `showThinking: false`, `expandToolDetails: false`, `steerByDefault: true`, `chatFontScale: 100`, `readRepliesAloud: false`, `soundNotifications: false` | whether the webview defaults we picked are the ones people keep |
 | **AFK Pilot UI preferences** (when reported by a connected browser) | `remoteFontScale: 140`, `remoteReadRepliesAloud: true` | whether remote users adjust text size or enable spoken replies; omitted when no browser reports them |
@@ -26,7 +26,7 @@ Country is the only thing derived from your IP, and the **IP itself is discarded
 - **No message content** — nothing you type, and nothing grok replies.
 - **No code** — not a single line, ever.
 - **No file names or paths**, no workspace name, no repo/branch.
-- **No personal identity** — no account, email, grok login, machine name, or any way to tie the install id back to you.
+- **No personal identity** — no account, email, atlas login, machine name, or any way to tie the install id back to you.
 
 There is no SDK and no third-party tracker — just one small, dependency-free HTTPS POST that is fire-and-forget (it can never slow down, surface to, or break a turn).
 
@@ -35,7 +35,7 @@ There is no SDK and no third-party tracker — just one small, dependency-free H
 Telemetry sends **only when both** of these are on:
 
 1. VS Code's global telemetry setting — `telemetry.telemetryLevel` (anything other than `off`), and
-2. the extension's own `grok.telemetry.enabled` (default `true`).
+2. the extension's own `atlas.telemetry.enabled` (default `true`).
 
 Either one set to off stops **all** sending.
 
@@ -45,7 +45,7 @@ Either one set to off stops **all** sending.
 
 Do **either** of the following:
 
-- Set `grok.telemetry.enabled` to `false` in VS Code settings, **or**
+- Set `atlas.telemetry.enabled` to `false` in VS Code settings, **or**
 - Disable VS Code's global telemetry: set `telemetry.telemetryLevel` to `off`.
 
 Either change takes effect immediately — no reload needed.
@@ -55,17 +55,17 @@ Either change takes effect immediately — no reload needed.
 Separate from telemetry: **voice input** sends data to xAI, but only when you use it. It is **opt-in per use** — nothing is captured until you click the microphone button. In VS Code, ffmpeg captures locally in the extension host. In AFK Pilot, the browser sends ephemeral raw PCM through the linked relay connection to that same host; it is never persisted or content-logged. The host then sends the following to **xAI's Speech-to-Text endpoint** (`api.x.ai/v1/stt`) to produce the transcript:
 
 - your **audio** (the recording, streamed live or as a clip);
-- an **STT credential** — the dedicated key you configured (`grok.voiceApiKey` / `GROK_VOICE_API_KEY` / `XAI_API_KEY`) if set, otherwise the token from your `grok login` (`~/.grok/auth.json`), reused so voice works without a separate key;
-- for streaming voice, the configured **language code** (`grok.voiceLanguage`), when set; and
-- for streaming voice, the **recognition keyterms**: the send phrase, `Grok`, and entries from `grok.voiceKeyterms`. These can include project vocabulary, so treat the setting as data sent to xAI.
+- an **STT credential** — the dedicated key you configured (`atlas.voiceApiKey` / `GROK_VOICE_API_KEY` / `XAI_API_KEY`) if set, otherwise the token from your `atlas login` (`~/.atlas/auth.json`), reused so voice works without a separate key;
+- for streaming voice, the configured **language code** (`atlas.voiceLanguage`), when set; and
+- for streaming voice, the **recognition keyterms**: the send phrase, `Atlas`, and entries from `atlas.voiceKeyterms`. These can include project vocabulary, so treat the setting as data sent to xAI.
 
-The STT credential stays in the extension host and is never sent to AFK Pilot or the browser. Remote microphone audio necessarily crosses AFK Pilot on its way back to your linked host; the host-to-xAI STT request is otherwise the same as local voice. Voice connection diagnostics log the endpoint and query-parameter names, but redact all query values. If you never use voice, none of this happens. To avoid sending your login token to xAI specifically, set a dedicated `grok.voiceApiKey`. Setup + details: [docs/voice-setup.md](voice-setup.md).
+The STT credential stays in the extension host and is never sent to AFK Pilot or the browser. Remote microphone audio necessarily crosses AFK Pilot on its way back to your linked host; the host-to-xAI STT request is otherwise the same as local voice. Voice connection diagnostics log the endpoint and query-parameter names, but redact all query values. If you never use voice, none of this happens. To avoid sending your login token to xAI specifically, set a dedicated `atlas.voiceApiKey`. Setup + details: [docs/voice-setup.md](voice-setup.md).
 
 ## Read simplified summaries
 
 Separate from both telemetry and Voice input: **Read simplified summaries** is on by default. VS Code and each AFK Pilot browser keep independent preferences; AFK Pilot stores its choice in that browser's local storage. The switch is disabled and forced off whenever that device's **Read replies aloud** switch is off. When both are enabled, the extension sends only the already-cleaned spoken text (after thinking and fenced code have been removed) to xAI's Responses API. Each spoken reply costs an extra xAI call and adds network delay; xAI returns a short, speech-friendly version, and the visible chat reply is never changed.
 
-Each spoken reply costs an extra billed xAI API call and adds network delay. The request uses `grok-4.3` with reasoning disabled and server-side response storage disabled (`store: false`). It reuses the Voice credential order (`grok.voiceApiKey` → `GROK_VOICE_API_KEY` → `XAI_API_KEY` → the token from `grok login`); the key remains in the extension host and is never sent to the webview or AFK Pilot. For AFK Pilot, the browser sends the cleaned reply through the linked relay to the host, and only the shortened text returns to that requesting browser. Its preference follows the browser tab across conversation switches. With no usable key, or on timeout, refusal, unsupported-host, network, rate-limit, or response failure, the browser speaks the retained original cleaned text instead and ignores any summary that arrives after that fallback.
+Each spoken reply costs an extra billed xAI API call and adds network delay. The request uses `grok-4.3` with reasoning disabled and server-side response storage disabled (`store: false`). It reuses the Voice credential order (`atlas.voiceApiKey` → `GROK_VOICE_API_KEY` → `XAI_API_KEY` → the token from `atlas login`); the key remains in the extension host and is never sent to the webview or AFK Pilot. For AFK Pilot, the browser sends the cleaned reply through the linked relay to the host, and only the shortened text returns to that requesting browser. Its preference follows the browser tab across conversation switches. With no usable key, or on timeout, refusal, unsupported-host, network, rate-limit, or response failure, the browser speaks the retained original cleaned text instead and ignores any summary that arrives after that fallback.
 
 ## Remote Control (AFK Pilot)
 

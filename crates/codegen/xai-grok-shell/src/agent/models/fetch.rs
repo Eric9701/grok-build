@@ -62,6 +62,35 @@ pub(crate) fn build_prefetched_map(
     map
 }
 
+/// Rewrite managed entries so disk cache keeps wire ENC on `api_key` and `info.model`.
+/// Catalog id (map key / `info.id`) stays plaintext.
+pub(crate) fn overlay_at_rest_secrets(
+    map: &IndexMap<String, ModelEntry>,
+    wire: &[config::ModelEntryConfig],
+) -> IndexMap<String, ModelEntry> {
+    let mut out = map.clone();
+    for m in wire {
+        if m.managed != Some(true) {
+            continue;
+        }
+        let key = match m.id.as_deref() {
+            Some(id) => match crate::util::model_secret::require_decrypt_managed(id, "id") {
+                Ok(plain) => plain,
+                Err(_) => continue,
+            },
+            None => match crate::util::model_secret::require_decrypt_managed(&m.model, "model") {
+                Ok(plain) => plain,
+                Err(_) => continue,
+            },
+        };
+        if let Some(entry) = out.get_mut(&key) {
+            entry.info.model = m.model.clone();
+            entry.api_key = m.api_key.clone();
+        }
+    }
+    out
+}
+
 /// Fetch remote models. Checks disk cache first; persists after fetch.
 pub(crate) fn prefetch_models_blocking(
     endpoints: &config::EndpointsConfig,
@@ -146,10 +175,22 @@ fn prefetch_models_blocking_gated(
             {
                 tracing::warn!(error = %e, "failed to persist managed models to config.toml");
             }
-            let map = build_prefetched_map(models, api_base_url_override);
+            let map = build_prefetched_map(models.clone(), api_base_url_override);
+            let managed_catalog = models.iter().any(|m| m.managed == Some(true));
+            let persist_map = if managed_catalog {
+                overlay_at_rest_secrets(&map, &models)
+            } else {
+                map.clone()
+            };
 
             tracing::info!(count = map.len(), etag = ?etag, "Prefetched models");
-            cache.persist(&map, etag.as_deref(), cache_auth, &cache_origin);
+            cache.persist_catalog(
+                &persist_map,
+                etag.as_deref(),
+                cache_auth,
+                &cache_origin,
+                managed_catalog,
+            );
             Some(map)
         }
         Ok(FetchModelsResult { .. }) => {

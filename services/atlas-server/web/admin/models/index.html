@@ -40,7 +40,7 @@
 <body>
   <header>
     <h1>Managed Models</h1>
-    <p class="sub">云端模型配置 · API Key 加密入库 · 按用户分配 · <a href="/atlas/admin/task-reports">Task Reports</a></p>
+    <p class="sub">云端模型配置 · API Key 加密入库 · 按用户直接分配 · <a href="/atlas/admin/groups">用户组</a> · <a href="/atlas/admin/task-reports">Task Reports</a></p>
   </header>
   <main>
     <section>
@@ -82,14 +82,18 @@
     </section>
 
     <section>
-      <h2>分配到用户</h2>
+      <h2>分配到用户（Direct Assignment）</h2>
+      <p class="sub" style="margin:0 0 0.6rem">仅编辑用户直接模型；组内模型在 <a href="/atlas/admin/groups">用户组</a> 管理。下方为有效并集只读预览。</p>
       <div class="row">
         <div class="field"><label>用户</label><select id="userSelect"></select></div>
         <div class="field"><label>默认模型 id（可选）</label><input id="userDefault" placeholder="cmsgroup-kimi2.7" /></div>
-        <button type="button" id="btnAssign">保存分配</button>
+        <button type="button" id="btnAssign">保存直接分配</button>
       </div>
       <div class="checks" id="assignChecks"></div>
       <div class="msg" id="assignMsg"></div>
+      <h2 style="margin-top:1rem">有效并集预览</h2>
+      <div class="msg" id="effectiveMsg"></div>
+      <pre id="effectivePreview" style="white-space:pre-wrap;word-break:break-all;font-size:0.8rem;color:var(--muted);margin:0"></pre>
     </section>
   </main>
   <script>
@@ -148,6 +152,29 @@
         cb.checked = set.has(cb.value);
       });
       $("userDefault").value = j.default_model || "";
+      await loadEffective(userId);
+    }
+    async function loadEffective(userId) {
+      if (!userId) {
+        $("effectivePreview").textContent = "";
+        setMsg($("effectiveMsg"), "");
+        return;
+      }
+      try {
+        const j = await api(`/users/${encodeURIComponent(userId)}/effective-models`);
+        const lines = (j.sources || []).map(s => {
+          if (s.via === "direct") return `${s.model_id} ← direct`;
+          return `${s.model_id} ← group ${s.group_name || s.group_id}`;
+        });
+        $("effectivePreview").textContent =
+          `model_ids (${(j.model_ids || []).length}): ${(j.model_ids || []).join(", ") || "(empty → fallback upstream)"}\n` +
+          `default_model: ${j.default_model || "(none)"}\n` +
+          (lines.length ? lines.join("\n") : "(no sources)");
+        setMsg($("effectiveMsg"), "只读 · Effective Model Set", true);
+      } catch (err) {
+        $("effectivePreview").textContent = "";
+        setMsg($("effectiveMsg"), err.message, false);
+      }
     }
     $("modelRows").addEventListener("click", async (e) => {
       const edit = e.target.getAttribute("data-edit");
@@ -220,7 +247,8 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model_ids, default_model: $("userDefault").value.trim() }),
         });
-        setMsg($("assignMsg"), "分配已保存", true);
+        setMsg($("assignMsg"), "直接分配已保存", true);
+        await loadEffective(userId);
       } catch (err) { setMsg($("assignMsg"), err.message, false); }
     };
     (async () => {

@@ -100,7 +100,7 @@ async fn install_internal_pinned_version_writes_binary_and_symlink() {
     assert!(downloaded.exists(), "binary downloaded: {downloaded:?}");
     assert_eq!(std::fs::read(&downloaded).unwrap(), b"#!/bin/sh\nexit 0\n");
 
-    let symlink = home.join("bin").join("grok");
+    let symlink = home.join("bin").join("atlas");
     assert!(symlink.is_symlink(), "grok symlink created");
     let target = std::fs::read_link(&symlink).unwrap();
     assert_eq!(
@@ -137,7 +137,7 @@ async fn install_internal_updates_stale_agent_symlink_to_new_version() {
     let rel_old = std::path::Path::new("..")
         .join("downloads")
         .join(format!("grok-0.1.180-{platform}"));
-    std::os::unix::fs::symlink(&rel_old, bin_dir.join("grok")).unwrap();
+    std::os::unix::fs::symlink(&rel_old, bin_dir.join("atlas")).unwrap();
     std::os::unix::fs::symlink(&rel_old, bin_dir.join("agent")).unwrap();
 
     install_internal_from_base(Some("0.1.181"), &cfg, &server.uri())
@@ -174,7 +174,7 @@ async fn install_internal_rolls_back_grok_when_agent_swap_fails() {
     let rel_old = std::path::Path::new("..")
         .join("downloads")
         .join(format!("grok-0.1.180-{platform}"));
-    std::os::unix::fs::symlink(&rel_old, bin_dir.join("grok")).unwrap();
+    std::os::unix::fs::symlink(&rel_old, bin_dir.join("atlas")).unwrap();
 
     // Sabotage the agent swap: non-empty directory → rename fails with EISDIR.
     let agent_dir = bin_dir.join("agent");
@@ -187,7 +187,7 @@ async fn install_internal_rolls_back_grok_when_agent_swap_fails() {
     drop(err);
 
     // grok must be rolled back to the prior version.
-    let grok_target = std::fs::read_link(bin_dir.join("grok")).unwrap();
+    let grok_target = std::fs::read_link(bin_dir.join("atlas")).unwrap();
     assert_eq!(
         grok_target.file_name().unwrap(),
         format!("grok-0.1.180-{platform}").as_str(),
@@ -216,7 +216,7 @@ async fn install_internal_rollback_removes_absent_prior_grok_link() {
     std::fs::create_dir(&agent_dir).unwrap();
     std::fs::write(agent_dir.join("blocker"), b"x").unwrap();
     assert!(
-        !bin_dir.join("grok").exists() && !bin_dir.join("grok").is_symlink(),
+        !bin_dir.join("atlas").exists() && !bin_dir.join("atlas").is_symlink(),
         "precondition: grok must not exist before install",
     );
 
@@ -225,7 +225,7 @@ async fn install_internal_rollback_removes_absent_prior_grok_link() {
         .expect_err("agent swap must fail when target is a non-empty dir");
     drop(err);
 
-    let grok_path = bin_dir.join("grok");
+    let grok_path = bin_dir.join("atlas");
     assert!(
         !grok_path.is_symlink() && !grok_path.exists(),
         "grok must be removed on rollback when there was no prior link",
@@ -457,7 +457,7 @@ async fn install_internal_cleans_up_old_versions_keeping_n_minus_one() {
     );
 
     // Symlink updated to latest.
-    let target = std::fs::read_link(home.join("bin").join("grok")).unwrap();
+    let target = std::fs::read_link(home.join("bin").join("atlas")).unwrap();
     assert!(
         target
             .file_name()
@@ -500,7 +500,7 @@ async fn install_internal_idempotent_for_same_version() {
     .unwrap();
 
     assert_eq!(first, second);
-    let target = std::fs::read_link(test_home().join("bin").join("grok")).unwrap();
+    let target = std::fs::read_link(test_home().join("bin").join("atlas")).unwrap();
     assert!(target.to_string_lossy().contains("0.1.181"));
 }
 

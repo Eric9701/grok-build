@@ -1748,7 +1748,16 @@ impl Default for Config {
             auto_mode: AutoModeConfig::default(),
             config_models: IndexMap::new(),
             config_warnings: Vec::new(),
-            grok_com_config: GrokComConfig::default(),
+            grok_com_config: {
+                let mut gc = GrokComConfig::default();
+                // Unit tests construct agents without an OAuth session; keep the
+                // process-start gate off unless a test opts in explicitly.
+                #[cfg(test)]
+                {
+                    gc.require_session_at_startup = Some(false);
+                }
+                gc
+            },
             auth_providers: IndexMap::new(),
             model_providers: IndexMap::new(),
             hints: None,

@@ -402,7 +402,7 @@ describe("response builders", () => {
       id: 43,
       error: {
         code: -32000,
-        message: "Plan mode is unavailable for this Grok CLI version",
+        message: "Plan mode is unavailable for this Atlas CLI version",
       },
     });
   });
@@ -471,7 +471,7 @@ describe("isIncompatibleAgentError", () => {
   });
 
   it("does not match unrelated errors", () => {
-    expect(isIncompatibleAgentError({ code: -32000, message: "Grok process exited (code 1)" })).toBe(false);
+    expect(isIncompatibleAgentError({ code: -32000, message: "Atlas process exited (code 1)" })).toBe(false);
     expect(isIncompatibleAgentError({ data: { code: "SOMETHING_ELSE" } })).toBe(false);
     expect(isIncompatibleAgentError(undefined)).toBe(false);
     expect(isIncompatibleAgentError(new Error("network timeout"))).toBe(false);
@@ -502,7 +502,7 @@ describe("isAuthErrorText (expired-token auto-recovery gate)", () => {
   it("does NOT match ordinary faults (no pointless reload)", () => {
     expect(isAuthErrorText("network timeout")).toBe(false);
     expect(isAuthErrorText("Tool call failed: file not found")).toBe(false);
-    expect(isAuthErrorText("Grok process exited (code 1)")).toBe(false);
+    expect(isAuthErrorText("Atlas process exited (code 1)")).toBe(false);
     expect(isAuthErrorText("the payload was too large")).toBe(false); // 'payload' must not trip 'pay'
     expect(isAuthErrorText("")).toBe(false);
     expect(isAuthErrorText(null)).toBe(false);
@@ -630,7 +630,7 @@ describe("credential vs entitlement classification (#58 — a missing subscripti
   it("entitlementNoticeText: not-a-sign-in lead + no-access diagnosis + the CLI's verbatim advice", () => {
     const notice = entitlementNoticeText({ code: -32603, data: SUBSCRIPTION_403_WITH_KEY_HINT });
     expect(notice).toMatch(/not a sign-in issue/i);
-    expect(notice).toMatch(/doesn't have Grok Build access/);
+    expect(notice).toMatch(/doesn't have Atlas access/);
     expect(notice).toContain(SUBSCRIPTION_403);
     expect(notice).toContain("grok logout"); // the shadowed-key hint must survive verbatim
   });
@@ -638,7 +638,7 @@ describe("credential vs entitlement classification (#58 — a missing subscripti
   it("entitlementNoticeText: generic billing wording is not over-diagnosed as missing access", () => {
     const notice = entitlementNoticeText({ code: -32603, data: "Your account has an unpaid balance." });
     expect(notice).toMatch(/not a sign-in issue/i);
-    expect(notice).not.toMatch(/doesn't have Grok Build access/);
+    expect(notice).not.toMatch(/doesn't have Atlas access/);
     expect(notice).toContain("Your account has an unpaid balance.");
   });
 

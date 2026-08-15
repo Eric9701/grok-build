@@ -5,11 +5,12 @@
 # the install logic so changes to the stable installer cannot break enterprise.
 #
 # Auth: GROK_DEPLOYMENT_KEY env var (takes precedence) or ~/.atlas/auth.json from `atlas login`.
-# Env: GROK_BIN_DIR, GROK_PROXY_URL, GROK_CLI_BASE_URL
+# Env: GROK_BIN_DIR, GROK_PROXY_URL, GROK_CLI_BASE_URL, GROK_ATLAS_SERVER,
+#      GROK_PLUGIN_MARKETPLACE, GROK_SKIP_ATLAS_SDD=1, GROK_SKIP_ATLAS_SKILLS=1
 #
 # Usage:
-#   irm http://127.0.0.1:22255/cli/install-enterprise.ps1 | iex
-#   & ([scriptblock]::Create((irm http://127.0.0.1:22255/cli/install-enterprise.ps1))) -Version 0.2.110
+#   irm http://10.218.220.237:22255/atlas/cli/install-enterprise.ps1 | iex
+#   & ([scriptblock]::Create((irm http://10.218.220.237:22255/atlas/cli/install-enterprise.ps1))) -Version 0.2.120
 #
 
 param(
@@ -151,7 +152,8 @@ $platform = "windows-$arch"
 $BaseUrl = if ($env:GROK_CLI_BASE_URL) {
     $env:GROK_CLI_BASE_URL.TrimEnd('/')
 } else {
-    'http://127.0.0.1:22255/cli'
+    $server = if ($env:GROK_ATLAS_SERVER) { $env:GROK_ATLAS_SERVER.TrimEnd('/') } else { 'http://10.218.220.237:22255' }
+    "$server/atlas/cli"
 }
 $DownloadDir = Join-Path $GrokDir 'downloads'
 $BinDir = if ($env:GROK_BIN_DIR) { $env:GROK_BIN_DIR } else { Join-Path $GrokDir 'bin' }
@@ -272,7 +274,12 @@ if (-not (Test-Path $ConfigFile)) {
 # --- Fetch deployment config (deployment key only) ---
 
 if ($env:GROK_DEPLOYMENT_KEY) {
-    $ProxyUrl = if ($env:GROK_PROXY_URL) { $env:GROK_PROXY_URL } else { 'http://127.0.0.1:22255/v1' }
+    $ProxyUrl = if ($env:GROK_PROXY_URL) {
+        $env:GROK_PROXY_URL
+    } else {
+        $server = if ($env:GROK_ATLAS_SERVER) { $env:GROK_ATLAS_SERVER.TrimEnd('/') } else { 'http://10.218.220.237:22255' }
+        "$server/atlas/v1"
+    }
     Write-Host '  Fetching deployment config...' -ForegroundColor DarkGray
     try {
         $headers = @{ 'Authorization' = "Bearer $($env:GROK_DEPLOYMENT_KEY)" }
@@ -307,7 +314,7 @@ if ($env:GROK_DEPLOYMENT_KEY) {
 
 Write-Host "Atlas $resolvedVersion installed to $BinDir\atlas.exe" -ForegroundColor Green
 
-# --- Ensure grok is on PATH ---
+# --- Ensure atlas is on PATH ---
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $pathEntries = if ($userPath) { $userPath -split ';' | Where-Object { $_ -ne '' } } else { @() }
@@ -315,11 +322,52 @@ if ($pathEntries -notcontains $BinDir) {
     $newPath = (@($BinDir) + $pathEntries) -join ';'
     [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
     Write-Host "  Added $BinDir to your User PATH." -ForegroundColor DarkGray
-    # Update current session so grok works immediately.
     if ($env:Path -notlike "*$BinDir*") {
         $env:Path = "$BinDir;$env:Path"
     }
 }
 
+$skipSdd = $env:GROK_SKIP_ATLAS_SDD -and ($env:GROK_SKIP_ATLAS_SDD -match '^(1|true|yes)$')
+$skipSkills = $env:GROK_SKIP_ATLAS_SKILLS -and ($env:GROK_SKIP_ATLAS_SKILLS -match '^(1|true|yes)$')
+if (-not $skipSdd -or -not $skipSkills) {
+    $Marketplace = if ($env:GROK_PLUGIN_MARKETPLACE) {
+        $env:GROK_PLUGIN_MARKETPLACE.Trim()
+    } else {
+        'https://gitlab.imyai.cn/zhangyufeng/atlas-plugins.git'
+    }
+    $atlasExe = Join-Path $BinDir 'atlas.exe'
+    Write-Host "Adding plugin marketplace $Marketplace..." -ForegroundColor Cyan
+    try { & $atlasExe plugin marketplace add $Marketplace 2>&1 | Out-Host } catch {
+        Write-Host "  Warning: marketplace add failed: $_" -ForegroundColor Yellow
+    }
+
+    function Install-AtlasMarketplacePlugin {
+        param([string]$Name)
+        try {
+            & $atlasExe plugin install "$Name@atlas-plugins" --trust 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                & $atlasExe plugin install "$Name@git/atlas-plugins" --trust 2>&1 | Out-Host
+            }
+            Write-Host "  $Name plugin install attempted (new session required to load)." -ForegroundColor DarkGray
+        } catch {
+            Write-Host "  Warning: $Name install failed: $_" -ForegroundColor Yellow
+        }
+    }
+
+    if (-not $skipSdd) {
+        Write-Host 'Installing atlas-sdd plugin...' -ForegroundColor Cyan
+        Install-AtlasMarketplacePlugin -Name 'atlas-sdd'
+    } else {
+        Write-Host '  Skipped atlas-sdd (GROK_SKIP_ATLAS_SDD set).' -ForegroundColor DarkGray
+    }
+
+    if (-not $skipSkills) {
+        Write-Host 'Installing atlas-skills plugin...' -ForegroundColor Cyan
+        Install-AtlasMarketplacePlugin -Name 'atlas-skills'
+    } else {
+        Write-Host '  Skipped atlas-skills (GROK_SKIP_ATLAS_SKILLS set).' -ForegroundColor DarkGray
+    }
+}
+
 Write-Host ''
-Write-Host "Run 'grok' or 'agent' to get started!" -ForegroundColor Cyan
+Write-Host "Run 'atlas' or 'agent' to get started!" -ForegroundColor Cyan

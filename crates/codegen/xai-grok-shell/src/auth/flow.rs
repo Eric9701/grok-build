@@ -91,7 +91,7 @@ fn config_login_device_flow(effective: Option<&toml::Value>) -> Option<bool> {
     effective.and_then(|cfg| cfg.get("auth")?.get("login_device_flow")?.as_bool())
 }
 
-/// Device-flow precedence: CLI > env > config > remote feature flag > loopback.
+/// Device-flow precedence: CLI > env > config > remote feature flag > device.
 /// Returns the deciding tier so the caller can log which one chose the transport.
 fn resolve_device_flow(
     login_override: LoginTransportOverride,
@@ -102,7 +102,10 @@ fn resolve_device_flow(
         .cli(login_override.as_cli_bool())
         .config(config)
         .feature_flag(remote)
-        .default(false)
+        // Atlas enterprise default: machine-code (RFC 8628 device) login.
+        // Loopback authorize is opt-out via --oauth / GROK_LOGIN_DEVICE_FLOW=0 /
+        // [auth] login_device_flow = false.
+        .default(true)
         .resolve()
 }
 
@@ -119,7 +122,8 @@ async fn cli_should_use_device(
 /// Whether interactive xAI OAuth2 login uses the RFC 8628 device flow (vs loopback).
 ///
 /// Precedence: CLI (`--oauth`/`--device-auth`) > `GROK_LOGIN_DEVICE_FLOW` env >
-/// `[auth] login_device_flow` config > `grok_build_login_device_flow` remote feature flag > loopback.
+/// `[auth] login_device_flow` config > `grok_build_login_device_flow` remote feature flag >
+/// **device (default)**.
 async fn should_use_device_flow(login_override: LoginTransportOverride) -> bool {
     // Already resolved (and logged) upstream — honor it without re-resolving or
     // emitting a second transport log.
@@ -688,9 +692,9 @@ async fn run_auth_flow_steps(
     let mut channels = code_rx.map(|code_rx| AuthChannels { url_tx, code_rx });
 
     // Enterprise OIDC keeps loopback (customer IdPs may lack a device endpoint).
-    // xAI OAuth2 also defaults to loopback; the device flow (robust on
-    // remote/SSH where the loopback redirect can't reach the CLI) is opt-in via
-    // --device-auth / GROK_LOGIN_DEVICE_FLOW / [auth] login_device_flow.
+    // Atlas OAuth2 defaults to the device / machine-code flow (opens
+    // /oauth2/device). Loopback authorize is opt-out via --oauth /
+    // GROK_LOGIN_DEVICE_FLOW=0 / [auth] login_device_flow = false.
     if crate::auth::oidc::is_configured(grok_com_config) {
         return crate::auth::oidc::run_login_flow(grok_com_config, auth_manager, channels).await;
     }
@@ -1696,13 +1700,13 @@ mod tests {
 
     #[test]
     fn device_flow_precedence_config_then_default() {
-        // No CLI flag, no env: config decides; absent everything → loopback.
+        // No CLI flag, no env: config decides; absent everything → device.
         with_device_flow_env(None, || {
             assert!(!resolve_device_flow(LoginTransportOverride::None, Some(false), None).value);
             assert!(resolve_device_flow(LoginTransportOverride::None, Some(true), None).value);
             assert!(
-                !resolve_device_flow(LoginTransportOverride::None, None, None).value,
-                "default is loopback"
+                resolve_device_flow(LoginTransportOverride::None, None, None).value,
+                "default is device / machine-code login"
             );
         });
     }
@@ -1719,10 +1723,10 @@ mod tests {
                 !resolve_device_flow(LoginTransportOverride::None, None, Some(false)).value,
                 "remote=loopback keeps loopback when nothing local is set"
             );
-            // remote settings unavailable / flag unset → None → hardcoded loopback default.
+            // remote settings unavailable / flag unset → None → device default.
             assert!(
-                !resolve_device_flow(LoginTransportOverride::None, None, None).value,
-                "remote settings unavailable falls back to the loopback default"
+                resolve_device_flow(LoginTransportOverride::None, None, None).value,
+                "remote settings unavailable falls back to the device default"
             );
         });
     }

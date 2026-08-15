@@ -23,6 +23,7 @@ alwaysApply: true
 - 解密：`util/model_secret.rs`；客户端密钥 `GROK_MODEL_SECRET_KEY` > 内置默认（与服务端同常量）
 - **托管条目强制 ENC**：`id`/`model` 非 ENC 或解密失败 → 丢弃该模型（防篡改）
 - 落盘：`config/managed_models.rs` → `~/.atlas/config.toml` 的 `[model.<明文id>]`，`model`/`api_key` 保持 ENC，`managed = true`
+- `models_cache.json`：Managed Catalog Mode 时文件级 `managed: true`，**`api_key` 与 `info.model` 保持 At-Rest ENC**；catalog id（JSON map key / `info.id`）明文。加载时解密进内存；非 ENC 则整文件作废。Fallback catalog 仍明文。Unix 写入 `0o600`。
 - 不覆盖无 `managed` 的用户手写段；取消分配后删除托管段
 - 合并优先级：本地 `[model.*]`（含托管落盘）> prefetch > builtin
 - `/model` Online 刷新会 invalidate models 缓存后再拉网并同步 toml

@@ -2669,6 +2669,96 @@ fn build_agent_with_api_key_auth_disabled() -> MvpAgent {
     cfg.grok_com_config.disable_api_key_auth = Some(true);
     MvpAgent::new(gateway, &cfg, auth_manager, None).expect("valid test config")
 }
+
+fn build_agent_with_require_session_at_startup() -> MvpAgent {
+    use crate::agent::config::Config as AgentConfig;
+    use crate::auth::{AuthManager, GrokComConfig};
+    let temp_dir = tempfile::tempdir().unwrap();
+    let auth_manager =
+        std::sync::Arc::new(AuthManager::new(temp_dir.path(), GrokComConfig::default()));
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let gateway = GatewaySender::new(tx);
+    let mut cfg = AgentConfig::default();
+    // Opt into the production default (on). AgentConfig::default() under
+    // `cfg(test)` forces false so other tests stay session-less.
+    cfg.grok_com_config.require_session_at_startup = None;
+    MvpAgent::new(gateway, &cfg, auth_manager, None).expect("valid test config")
+}
+
+/// Flag off: no session + BYOK-capable process remains usable (gate inactive).
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn require_session_gate_inactive_when_flag_off() {
+    use xai_grok_test_support::EnvGuard;
+    let _env = EnvGuard::unset("GROK_REQUIRE_SESSION_AT_STARTUP");
+    use crate::agent::config::Config as AgentConfig;
+    use crate::auth::{AuthManager, GrokComConfig};
+    let temp_dir = tempfile::tempdir().unwrap();
+    let auth_manager =
+        std::sync::Arc::new(AuthManager::new(temp_dir.path(), GrokComConfig::default()));
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let gateway = GatewaySender::new(tx);
+    let mut cfg = AgentConfig::default();
+    cfg.grok_com_config.require_session_at_startup = Some(false);
+    let agent = MvpAgent::new(gateway, &cfg, auth_manager, None).expect("valid test config");
+    assert!(!agent.startup_session_gate_active());
+    assert!(agent.ensure_startup_session_or_auth_required().is_ok());
+}
+
+/// Default on + no auth.json session: gate blocks session/prompt until login.
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn require_session_gate_blocks_without_oauth_session() {
+    use xai_grok_test_support::EnvGuard;
+    let _env = EnvGuard::unset("GROK_REQUIRE_SESSION_AT_STARTUP");
+    let agent = build_agent_with_require_session_at_startup();
+    assert!(agent.startup_session_gate_active());
+    let err = agent
+        .ensure_startup_session_or_auth_required()
+        .expect_err("must require auth");
+    assert_eq!(err.code, acp::Error::auth_required().code);
+    agent.mark_startup_session_satisfied();
+    assert!(!agent.startup_session_gate_active());
+    assert!(agent.ensure_startup_session_or_auth_required().is_ok());
+}
+
+/// Flag on but an OIDC session already loaded: gate starts satisfied.
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn require_session_gate_satisfied_when_session_present_at_construction() {
+    use crate::agent::config::Config as AgentConfig;
+    use crate::auth::{AuthManager, AuthMode, GrokAuth, GrokComConfig};
+    use chrono::Utc;
+    use xai_grok_test_support::EnvGuard;
+    let _env = EnvGuard::unset("GROK_REQUIRE_SESSION_AT_STARTUP");
+    let temp_dir = tempfile::tempdir().unwrap();
+    let auth_manager =
+        std::sync::Arc::new(AuthManager::new(temp_dir.path(), GrokComConfig::default()));
+    auth_manager.hot_swap(GrokAuth {
+        key: "session-token".into(),
+        auth_mode: AuthMode::Oidc,
+        create_time: Utc::now(),
+        user_id: "u1".into(),
+        email: Some("u@example.com".into()),
+        expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
+        refresh_token: Some("rt".into()),
+        oidc_issuer: Some(crate::auth::XAI_OAUTH2_ISSUER.to_owned()),
+        oidc_client_id: Some("client".into()),
+        ..GrokAuth::default()
+    });
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let gateway = GatewaySender::new(tx);
+    let mut cfg = AgentConfig::default();
+    // Production default is on when the field is absent (None).
+    cfg.grok_com_config.require_session_at_startup = None;
+    let agent = MvpAgent::new(gateway, &cfg, auth_manager, None).expect("valid test config");
+    assert!(
+        !agent.startup_session_gate_active(),
+        "existing OIDC session must satisfy the latch at construction"
+    );
+    assert!(agent.ensure_startup_session_or_auth_required().is_ok());
+}
+
 /// Deployment-key / managed-config user: `XAI_API_KEY` resolves and the kill
 /// switch is off, so a dead `cached_token` MUST fall through to `xai.api_key`
 /// (no browser). This is the exact regression the fallthrough fixes.

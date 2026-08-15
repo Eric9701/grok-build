@@ -564,7 +564,7 @@ describe("mode picker (the plan-gate entry path)", () => {
 
   it("disables only Plan with the host's version reason, then re-enables it", () => {
     const { window, posted, doc } = bootWebview();
-    const reason = "Plan mode requires Grok CLI 0.2.117 or newer.";
+    const reason = "Plan mode requires Atlas CLI 0.2.117 or newer.";
     dispatch(window, { type: "planModeAvailability", available: false, reason });
 
     const modeBtn = $(doc, "mode-btn") as HTMLButtonElement;

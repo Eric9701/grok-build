@@ -664,6 +664,49 @@ impl MvpAgent {
     pub(crate) fn current_auth(&self) -> Option<crate::auth::GrokAuth> {
         self.auth_manager.current()
     }
+    /// `true` when `[auth] require_session_at_startup` (or env) is on and this
+    /// process has not yet satisfied the OAuth-session latch.
+    pub(crate) fn startup_session_gate_active(&self) -> bool {
+        self.cfg.borrow().grok_com_config.require_session_at_startup()
+            && !self.startup_session_satisfied.get()
+    }
+    /// Mark the process-start session latch satisfied after a successful
+    /// OAuth/OIDC authenticate (or after a silent refresh recovers a session).
+    pub(crate) fn mark_startup_session_satisfied(&self) {
+        if !self.startup_session_satisfied.get() {
+            xai_grok_telemetry::unified_log::info(
+                "auth: require_session_at_startup satisfied",
+                None,
+                None,
+            );
+        }
+        self.startup_session_satisfied.set(true);
+    }
+    /// Re-evaluate from the live AuthManager (e.g. after silent refresh during
+    /// `initialize`) and mark satisfied when a session credential is present.
+    pub(crate) fn refresh_startup_session_latch_from_auth_manager(&self) {
+        if !self.cfg.borrow().grok_com_config.require_session_at_startup() {
+            self.startup_session_satisfied.set(true);
+            return;
+        }
+        if self
+            .auth_manager
+            .current_or_expired()
+            .is_some_and(|a| a.is_session_auth())
+        {
+            self.mark_startup_session_satisfied();
+        }
+    }
+    /// Block session/prompt entry while the process-start OAuth gate is open.
+    pub(crate) fn ensure_startup_session_or_auth_required(&self) -> Result<(), acp::Error> {
+        if self.startup_session_gate_active() {
+            return Err(acp::Error::auth_required().data(
+                "Sign in required before use (require_session_at_startup). \
+                 Authenticate with OAuth/OIDC, or run `atlas login` / `grok login`.",
+            ));
+        }
+        Ok(())
+    }
     /// Shared plugin registry handle used by extensions for snapshot/reload.
     pub(crate) fn plugin_registry_handle(
         &self,
@@ -2414,6 +2457,22 @@ impl MvpAgent {
         }
         let (subagent_event_tx, subagent_event_rx) = tokio::sync::mpsc::unbounded_channel();
         let activity = crate::agent::activity::AgentActivity::default();
+        let require_session = cfg.grok_com_config.require_session_at_startup();
+        let has_startup_session = auth_manager
+            .current_or_expired()
+            .is_some_and(|a| a.is_session_auth());
+        let startup_session_satisfied = !require_session || has_startup_session;
+        if require_session {
+            xai_grok_telemetry::unified_log::info(
+                "auth: require_session_at_startup gate",
+                None,
+                Some(serde_json::json!({
+                    "required": true,
+                    "has_session": has_startup_session,
+                    "satisfied": startup_session_satisfied,
+                })),
+            );
+        }
         let instance = Self {
             activity,
             session_registry: SessionRegistry::default(),
@@ -2442,6 +2501,7 @@ impl MvpAgent {
             auth_method_id: crate::agent::auth_method::new_shared_auth_method_id(None),
             sampling_config: RefCell::new(sampling_config),
             auth_manager,
+            startup_session_satisfied: std::cell::Cell::new(startup_session_satisfied),
             interactive_auth: Default::default(),
             client_type: RefCell::new(ClientType::default()),
             code_nav_enabled: std::cell::Cell::new(false),

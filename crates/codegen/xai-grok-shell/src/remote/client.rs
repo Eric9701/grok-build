@@ -159,6 +159,15 @@ pub struct TaskReport {
     /// RFC3339 timestamps.
     pub started_at: String,
     pub completed_at: String,
+    /// Report User: session `user_id` when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    /// Report User: session email when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    /// Compiled CLI Client Version (`GROK_VERSION` / `--version`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_version: Option<String>,
 }
 /// Post a [`TaskReport`] to the backend `POST /v1/task-reports` endpoint.
 ///

@@ -267,7 +267,7 @@ export class AcpClient extends EventEmitter {
       for (const [id, p] of this.pending) {
         this.pending.delete(id);
         if (p.timer) clearTimeout(p.timer);
-        p.reject(new Error(`Grok process exited (code ${code})`));
+        p.reject(new Error(`Atlas process exited (code ${code})`));
       }
       this.emit("exit", code);
     });
@@ -776,7 +776,7 @@ export class AcpClient extends EventEmitter {
       this.pending.set(id, entry);
       if (!this.writeLine(makeRequest(id, method, params))) {
         this.pending.delete(id);
-        reject(new Error(`Grok process is not running (${method})`));
+        reject(new Error(`Atlas process is not running (${method})`));
         return;
       }
       const timeoutMs = method === "session/prompt" ? 1_800_000 : 120_000;

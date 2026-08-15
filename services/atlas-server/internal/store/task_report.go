@@ -41,6 +41,7 @@ type TaskReportRecord struct {
 	StartedAt       string
 	CompletedAt     string
 	ClientIP        string
+	ClientVersion   string
 	CreatedAt       time.Time
 }
 
@@ -178,8 +179,8 @@ func (m *MySQLStore) InsertTaskReport(r TaskReportRecord) (int64, error) {
 			(user_id, email, team_id, subagent_id, parent_session_id, child_session_id,
 			 subagent_type, model, description, prompt, status, success, duration_ms,
 			 tool_calls, turns, tokens_used, artifacts, artifact_count, cwd, worktree_path,
-			 error, started_at, completed_at, client_ip)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 error, started_at, completed_at, client_ip, client_version)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nullIfEmpty(r.UserID),
 		nullIfEmpty(r.Email),
 		nullIfEmpty(r.TeamID),
@@ -204,6 +205,7 @@ func (m *MySQLStore) InsertTaskReport(r TaskReportRecord) (int64, error) {
 		nullIfEmpty(r.StartedAt),
 		nullIfEmpty(r.CompletedAt),
 		nullIfEmpty(r.ClientIP),
+		nullIfEmpty(r.ClientVersion),
 	)
 	if err != nil {
 		return 0, err
@@ -226,7 +228,7 @@ func (m *MySQLStore) ListTaskReportsByUser(userID string, limit int, fromDay, to
 		        status, success, duration_ms, tool_calls, turns, tokens_used,
 		        IFNULL(artifacts,'[]'), artifact_count, IFNULL(cwd,''), IFNULL(worktree_path,''),
 		        IFNULL(error,''), IFNULL(started_at,''), IFNULL(completed_at,''),
-		        IFNULL(client_ip,''), created_at
+		        IFNULL(client_ip,''), IFNULL(client_version,''), created_at
 		 FROM task_reports
 		 WHERE user_id = ?` + dateClause + `
 		 ORDER BY id DESC LIMIT ?`
@@ -250,7 +252,7 @@ func (m *MySQLStore) ListTaskReportsByUser(userID string, limit int, fromDay, to
 			&r.Status, &r.Success, &r.DurationMs, &r.ToolCalls, &r.Turns, &r.TokensUsed,
 			&artifactsJSON, &r.ArtifactCount, &r.Cwd, &r.WorktreePath,
 			&r.Error, &r.StartedAt, &r.CompletedAt,
-			&r.ClientIP, &r.CreatedAt,
+			&r.ClientIP, &r.ClientVersion, &r.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

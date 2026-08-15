@@ -59,6 +59,17 @@ func (h *Handler) Discovery(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Authorize redirects legacy /authorize (authorization-code) browser hits to the
+// machine-code device login page. Atlas CLI login uses the device flow by
+// default; this keeps bookmarks and discovery authorization_endpoint links useful.
+func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
+	target := config.Path("/oauth2/device")
+	if userCode := r.URL.Query().Get("user_code"); userCode != "" {
+		target += "?user_code=" + userCode
+	}
+	http.Redirect(w, r, target, http.StatusFound)
+}
+
 // RequestDeviceCode handles POST /oauth2/device/code.
 func (h *Handler) RequestDeviceCode(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {

@@ -754,6 +754,13 @@ pub struct MvpAgent {
     /// is resolved at session creation time in `new_session` / `load_session`.
     pub(crate) sampling_config: RefCell<SamplingConfig>,
     pub(crate) auth_manager: Arc<AuthManager>,
+    /// Process-start latch for `[auth] require_session_at_startup`.
+    ///
+    /// Computed once at construction: `true` when the flag is off, or when an
+    /// OAuth/OIDC session already exists. Mid-session `auth.json` loss does
+    /// **not** flip this back to `false` (so in-flight turns are not killed).
+    /// Set to `true` after a successful session `authenticate` in this process.
+    pub(crate) startup_session_satisfied: std::cell::Cell<bool>,
     pub(crate) models_manager: crate::agent::models::ModelsManager,
     /// grok.com chat-product catalog (`/rest/modes`) for chat sessions; distinct
     /// from `models_manager` (the build `/v1/models` catalog).

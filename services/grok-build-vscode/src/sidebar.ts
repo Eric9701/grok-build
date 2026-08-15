@@ -511,7 +511,7 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       void this.onMessage(m, "local").catch((e) => {
         const msg = (e as Error)?.message ?? String(e);
         this.output.appendLine(`[webview] ${m.type} failed: ${msg}`);
-        void vscode.window.showErrorMessage(`Grok: ${m.type} failed — ${msg}`);
+        void vscode.window.showErrorMessage(`Atlas: ${m.type} failed — ${msg}`);
       });
     });
     this.watchActiveEditor();
@@ -623,7 +623,7 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
         void this.trackAttach(this.pickFileFromComputer());
       } else {
         void vscode.window.showInformationMessage(
-          "Grok: open a file in the editor first, then run this command.",
+          "Atlas: open a file in the editor first, then run this command.",
         );
       }
       return;
@@ -657,7 +657,7 @@ export class GrokSidebar implements vscode.WebviewViewProvider {
       modelId: m.modelId,
     }));
     const picked = await vscode.window.showQuickPick(items, {
-      placeHolder: "Pick a Grok model",
+      placeHolder: "Pick an Atlas model",
     });
     if (picked) await this.switchModel(picked.modelId);
   }
@@ -861,7 +861,7 @@ See design doc for the full state machine diagram.`;
       this.reportRequester(
         requester,
         "warning",
-        session.planModeUnavailableReason ?? "Plan mode is unavailable for this Grok CLI version.",
+        session.planModeUnavailableReason ?? "Plan mode is unavailable for this Atlas CLI version.",
       );
       return;
     }
@@ -1096,7 +1096,7 @@ See design doc for the full state machine diagram.`;
     this.emit(session, {
       type: "planNotice",
       text:
-        `${session.planModeUnavailableReason ?? "Plan mode is unavailable for this Grok CLI version."} ` +
+        `${session.planModeUnavailableReason ?? "Plan mode is unavailable for this Atlas CLI version."} ` +
         "Returning to Agent mode; write and terminal actions remain blocked until the planning turn stops and Agent mode is confirmed.",
     });
 
@@ -1531,14 +1531,14 @@ See design doc for the full state machine diagram.`;
           `[rewind] map mismatch: ${userFacingRewindPoints(points).length} wire points vs ${totalUserBubbles} visible messages`,
         );
         return void vscode.window.showWarningMessage(
-          "Grok's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
+          "Atlas's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
         );
       }
       const target = resolveEditRewindTarget(points, userBubbleIndex);
       if (!target) {
         const copy = "Copy text to composer";
         const pick = await vscode.window.showInformationMessage(
-          "Grok has no restore point for this message, so it can't be rolled back. You can still copy the text and send it again.",
+          "Atlas has no restore point for this message, so it can't be rolled back. You can still copy the text and send it again.",
           copy,
         );
         if (pick === copy) this.emit(session, { type: "restoreComposer", text });
@@ -1621,7 +1621,7 @@ See design doc for the full state machine diagram.`;
           `[rewind] map mismatch: ${userFacingRewindPoints(points).length} wire points vs ${totalUserBubbles} visible messages`,
         );
         return void vscode.window.showWarningMessage(
-          "Grok's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
+          "Atlas's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
         );
       }
       let target: ReturnType<typeof resolveUserBubbleRewind> = null;
@@ -1825,7 +1825,7 @@ See design doc for the full state machine diagram.`;
           // otherwise spin a short-lived ACP client just for the create RPC.
           const creator = await this.clientForWorktreeCreate(sourcePath);
           if (!creator) {
-            return void vscode.window.showErrorMessage("Could not start Grok to create a worktree.");
+            return void vscode.window.showErrorMessage("Could not start Atlas to create a worktree.");
           }
           const { client, disposeAfter } = creator;
           let created;
@@ -1967,7 +1967,7 @@ See design doc for the full state machine diagram.`;
     const wt = session.worktree;
     if (!wt) {
       return void vscode.window.showInformationMessage(
-        "This session is not in a worktree. Start one with Grok: New Worktree Session.",
+        "This session is not in a worktree. Start one with Atlas: New Worktree Session.",
       );
     }
     if (!session.client?.sessionId) {
@@ -2038,7 +2038,7 @@ See design doc for the full state machine diagram.`;
       if (!client) {
         const tmp = await this.clientForWorktreeCreate(this.workspaceRoot());
         if (!tmp) {
-          return void vscode.window.showErrorMessage("Could not start Grok to remove the worktree.");
+          return void vscode.window.showErrorMessage("Could not start Atlas to remove the worktree.");
         }
         client = tmp.client;
         disposeAfter = tmp.disposeAfter;
@@ -2607,7 +2607,7 @@ See design doc for the full state machine diagram.`;
       return;
     }
     const choice = await vscode.window.showWarningMessage(
-      "Sign out of Grok? This clears the CLI's cached credentials.",
+      "Sign out of Atlas? This clears the CLI's cached credentials.",
       { modal: true },
       "Sign Out",
     );
@@ -2705,24 +2705,24 @@ See design doc for the full state machine diagram.`;
     const versionOutput = await this.readGrokVersion(cliPath);
     const installed = parseGrokVersion(versionOutput)?.join(".");
     if (!installed) {
-      const message = `Could not verify the grok CLI version; this extension requires grok ${GROK_REQUIRED_VERSION} or newer.`;
+      const message = `Could not verify the Atlas CLI version; this extension requires Atlas ${GROK_REQUIRED_VERSION} or newer.`;
       this.output.appendLine(`${message} Continuing best-effort with the current binary.`);
       void vscode.window.showWarningMessage(message);
       return {
         planModeAvailable: false,
         planModeUnavailableReason:
-          `Plan mode requires Grok CLI ${GROK_REQUIRED_VERSION} or newer; ` +
+          `Plan mode requires Atlas CLI ${GROK_REQUIRED_VERSION} or newer; ` +
           "the installed version could not be verified.",
       };
     }
     if (isGrokVersionBelowRequired(versionOutput)) {
-      const message = `grok CLI ${installed} is below required version ${GROK_REQUIRED_VERSION}; Plan mode is unavailable.`;
+      const message = `Atlas CLI ${installed} is below required version ${GROK_REQUIRED_VERSION}; Plan mode is unavailable.`;
       this.output.appendLine(message);
       void vscode.window.showWarningMessage(message);
       return {
         planModeAvailable: false,
         planModeUnavailableReason:
-          `Plan mode requires Grok CLI ${GROK_REQUIRED_VERSION} or newer; installed version is ${installed}.`,
+          `Plan mode requires Atlas CLI ${GROK_REQUIRED_VERSION} or newer; installed version is ${installed}.`,
       };
     }
     return { planModeAvailable: true };
@@ -2766,8 +2766,8 @@ See design doc for the full state machine diagram.`;
       if (stdout?.trim()) this.output.appendLine(stdout.trim());
       if (stderr?.trim()) this.output.appendLine(stderr.trim());
       const detail = reason === "proactive"
-        ? `Grok CLI ${fromVersion} has a known Windows startup issue (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET}.`
-        : `Grok CLI ${fromVersion} failed to start a session (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET} and retrying.`;
+        ? `Atlas CLI ${fromVersion} has a known Windows startup issue (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET}.`
+        : `Atlas CLI ${fromVersion} failed to start a session (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET} and retrying.`;
       void vscode.window.showInformationMessage(detail);
       return true;
     } catch (e) {
@@ -2834,7 +2834,7 @@ See design doc for the full state machine diagram.`;
     const policy = grokUpdatePolicy(await this.readGrokVersion(cliPath), process.platform);
     if (!policy.allow) {
       void vscode.window.showInformationMessage(
-        policy.note ?? "Grok CLI updates are paused for compatibility.",
+        policy.note ?? "Atlas CLI updates are paused for compatibility.",
       );
       return;
     }
@@ -3311,7 +3311,7 @@ See design doc for the full state machine diagram.`;
       const exit = snap.exit_code ?? snap.exitCode ?? snap.status?.exitCode;
       const ok = exit == null || exit === 0;
       const label = summarizeBackgroundCommand(cmd);
-      const text = `Grok background task ${ok ? "completed" : `exited (code ${exit})`}${label ? `: ${label}` : ""}`;
+      const text = `Atlas background task ${ok ? "completed" : `exited (code ${exit})`}${label ? `: ${label}` : ""}`;
       this.output.appendLine(`[task] ${text}`);
       void vscode.window.showInformationMessage(text, "Show Logs").then((choice) => {
         if (choice === "Show Logs") this.output.show();
@@ -3719,12 +3719,12 @@ See design doc for the full state machine diagram.`;
         this.emit(session, {
           type: "error",
           text:
-            `Failed to start Grok: ${msg}. This matches the Grok CLI 0.2.61–0.2.70 stdio ` +
+            `Failed to start Atlas: ${msg}. This matches the Atlas CLI 0.2.61–0.2.70 stdio ` +
             `regression (issue #22, fixed after 0.2.70). Workaround: run ` +
-            `\`grok update --version ${GROK_STDIO_DOWNGRADE_TARGET}\` in a terminal, then start a new session.`,
+            `\`atlas update --version ${GROK_STDIO_DOWNGRADE_TARGET}\` in a terminal, then start a new session.`,
         });
       } else {
-        this.emit(session, { type: "error", text: `Failed to start Grok: ${msg}` });
+        this.emit(session, { type: "error", text: `Failed to start Atlas: ${msg}` });
       }
       return undefined;
     }
@@ -4169,7 +4169,7 @@ See design doc for the full state machine diagram.`;
         const globalCfg = path.join(home, ".grok", "config.toml");
         if (!fs.existsSync(globalCfg)) {
           fs.mkdirSync(path.dirname(globalCfg), { recursive: true });
-          fs.writeFileSync(globalCfg, "# Grok global configuration\n");
+          fs.writeFileSync(globalCfg, "# Atlas global configuration\n");
         }
         await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(globalCfg));
         break;
@@ -4179,7 +4179,7 @@ See design doc for the full state machine diagram.`;
         const projCfg = path.join(cwd2, ".grok", "config.toml");
         if (!fs.existsSync(projCfg)) {
           fs.mkdirSync(path.dirname(projCfg), { recursive: true });
-          fs.writeFileSync(projCfg, "# Grok project configuration\n# MCP servers here apply to this workspace only.\n");
+          fs.writeFileSync(projCfg, "# Atlas project configuration\n# MCP servers here apply to this workspace only.\n");
         }
         await vscode.commands.executeCommand("vscode.open", vscode.Uri.file(projCfg));
         break;
@@ -4196,8 +4196,8 @@ See design doc for the full state machine diagram.`;
         );
         const mcpCwd = this.sessionCwd(session);
         const term = mcpCli
-          ? vscode.window.createTerminal({ name: "Grok MCP", shellPath: mcpCli, shellArgs: ["mcp", "list"], cwd: mcpCwd })
-          : vscode.window.createTerminal("Grok MCP");
+          ? vscode.window.createTerminal({ name: "Atlas MCP", shellPath: mcpCli, shellArgs: ["mcp", "list"], cwd: mcpCwd })
+          : vscode.window.createTerminal("Atlas MCP");
         term.show();
         if (!mcpCli) term.sendText("grok mcp list");
         break;
@@ -4283,7 +4283,12 @@ See design doc for the full state machine diagram.`;
         }
         // shellPath/shellArgs, not sendText — a quoted path typed into
         // PowerShell is a parser error (see runMcpList).
-        const term = vscode.window.createTerminal({ name: "Atlas Login", shellPath: cliPath, shellArgs: ["login"] });
+        // Device-auth is the enterprise default (RFC 8628); display copy mirrors this.
+        const term = vscode.window.createTerminal({
+          name: "Atlas Login",
+          shellPath: cliPath,
+          shellArgs: ["login", "--device-auth"],
+        });
         term.show();
         break;
       }
@@ -5197,7 +5202,7 @@ See design doc for the full state machine diagram.`;
       } catch (e) {
         // Per-file: one unreadable pick must not abort the rest of a multi-select.
         this.output.appendLine(`[image] could not attach ${uri.fsPath}: ${(e as Error).message}`);
-        void vscode.window.showErrorMessage(`Grok: could not attach ${path.basename(uri.fsPath)} — ${(e as Error).message}`);
+        void vscode.window.showErrorMessage(`Atlas: could not attach ${path.basename(uri.fsPath)} — ${(e as Error).message}`);
       }
     }
     this.revealAndFocusComposer();
@@ -5454,12 +5459,12 @@ See design doc for the full state machine diagram.`;
   /** Show actionable guidance for setting up the voice API key. */
   private async promptVoiceKeySetup(): Promise<void> {
     const pick = await vscode.window.showErrorMessage(
-      "Voice control needs an xAI Speech-to-Text key. Sign in with `atlas login` and it reuses that token automatically — or set grok.voiceApiKey, or GROK_VOICE_API_KEY / XAI_API_KEY in your workspace .env for a dedicated console.x.ai key.",
+      "Voice control needs an xAI Speech-to-Text key. Sign in with `atlas login` and it reuses that token automatically — or set atlas.voiceApiKey, or GROK_VOICE_API_KEY / XAI_API_KEY in your workspace .env for a dedicated console.x.ai key.",
       "Open Settings",
       "Get a Key",
     );
     if (pick === "Open Settings") {
-      await vscode.commands.executeCommand("workbench.action.openSettings", "grok.voiceApiKey");
+      await vscode.commands.executeCommand("workbench.action.openSettings", "atlas.voiceApiKey");
     } else if (pick === "Get a Key") {
       await vscode.env.openExternal(vscode.Uri.parse("https://console.x.ai"));
     }
@@ -5615,7 +5620,7 @@ See design doc for the full state machine diagram.`;
       if (!this.voiceFinalizing) {
         if (/\b(401|403)\b|rejected/i.test(e.message)) {
           void vscode.window.showErrorMessage(e.message, "Open Settings").then((pick) => {
-            if (pick === "Open Settings") void vscode.commands.executeCommand("workbench.action.openSettings", "grok.voiceApiKey");
+            if (pick === "Open Settings") void vscode.commands.executeCommand("workbench.action.openSettings", "atlas.voiceApiKey");
           });
         } else {
           vscode.window.showErrorMessage(`Voice transcription failed: ${e.message}`);
@@ -5656,7 +5661,7 @@ See design doc for the full state machine diagram.`;
         // (re-login or set a dedicated key); offer the settings shortcut.
         const pick = await vscode.window.showErrorMessage(msg, "Open Settings");
         if (pick === "Open Settings") {
-          await vscode.commands.executeCommand("workbench.action.openSettings", "grok.voiceApiKey");
+          await vscode.commands.executeCommand("workbench.action.openSettings", "atlas.voiceApiKey");
         }
       } else {
         vscode.window.showErrorMessage(msg);
@@ -6034,7 +6039,7 @@ See design doc for the full state machine diagram.`;
       "vscode.diff",
       left,
       right,
-      `Grok proposed: ${base}`,
+      `Atlas proposed: ${base}`,
       {
         preview: true,
         preserveFocus: true,
@@ -6433,20 +6438,20 @@ See design doc for the full state machine diagram.`;
   ): Promise<void> {
     try {
       if (!isVisionMime(mimeType)) {
-        this.reportRequester(requester, "error", `Grok: unsupported image type ${mimeType} — use PNG, JPEG, GIF, or WebP.`);
+        this.reportRequester(requester, "error", `Atlas: unsupported image type ${mimeType} — use PNG, JPEG, GIF, or WebP.`);
         return;
       }
       const bytes = Buffer.from(base64, "base64");
       if (bytes.length === 0) return;
       if (bytes.length > MAX_VISION_IMAGE_BYTES) {
-        this.reportRequester(requester, "error", "Grok: pasted image exceeds the 20 MiB vision limit.");
+        this.reportRequester(requester, "error", "Atlas: pasted image exceeds the 20 MiB vision limit.");
         return;
       }
       const session = await this.stageImageAttachment(bytes, mimeType, undefined, owner, previewId);
       if (session === this.focused) this.revealAndFocusComposer();
     } catch (e) {
       this.output.appendLine(`[image] paste failed: ${(e as Error).message}`);
-      this.reportRequester(requester, "error", `Grok: could not attach the pasted image — ${(e as Error).message}`);
+      this.reportRequester(requester, "error", `Atlas: could not attach the pasted image — ${(e as Error).message}`);
     }
   }
 
@@ -6614,7 +6619,7 @@ See design doc for the full state machine diagram.`;
     if (bare) {
       this.emit(session, {
         type: "error",
-        text: "Grok is mid-turn — that command was not run. Try again when the turn finishes.",
+        text: "Atlas is mid-turn — that command was not run. Try again when the turn finishes.",
       });
       return;
     }
@@ -8489,7 +8494,7 @@ See design doc for the full state machine diagram.`;
     this.oauthShadowWarningShown = true;
     void this.state.update(OAUTH_SHADOW_WARNING_KEY, true);
     void vscode.window.showWarningMessage(
-      "Grok is using its cached OAuth session, so XAI_API_KEY is currently ignored. To use the API key, run `atlas logout`, then start a new session.",
+      "Atlas is using its cached OAuth session, so XAI_API_KEY is currently ignored. To use the API key, run `atlas logout`, then start a new session.",
     );
   }
 
@@ -8665,7 +8670,7 @@ See design doc for the full state machine diagram.`;
         this.output.appendLine(`[remote] ${m.type} failed: ${detail}`);
         this.sendRemoteRequester(requester, {
           type: "error",
-          text: `Grok: ${m.type} failed — ${detail}`,
+          text: `Atlas: ${m.type} failed — ${detail}`,
         });
       });
     } catch (e) {

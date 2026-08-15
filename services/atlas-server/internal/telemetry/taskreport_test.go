@@ -194,6 +194,9 @@ func TestTaskReportsRoundTrip(t *testing.T) {
 	h := NewHandler(nil, nil, reports, nil, nil)
 
 	body := `{
+		"userId":"atlas-test-user",
+		"email":"atlas@example.com",
+		"clientVersion":"0.2.121",
 		"subagentId":"sa-1",
 		"parentSessionId":"parent-1",
 		"childSessionId":"child-1",
@@ -215,7 +218,7 @@ func TestTaskReportsRoundTrip(t *testing.T) {
 	}`
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/task-reports", strings.NewReader(body))
-	req.Header.Set("x-userid", "atlas-test-user")
+	req.Header.Set("x-userid", "header-must-be-ignored")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.TaskReports(rec, req)
@@ -229,6 +232,12 @@ func TestTaskReportsRoundTrip(t *testing.T) {
 	got := reports.inserted[0]
 	if got.UserID != "atlas-test-user" {
 		t.Errorf("UserID = %q, want atlas-test-user", got.UserID)
+	}
+	if got.Email != "atlas@example.com" {
+		t.Errorf("Email = %q, want atlas@example.com", got.Email)
+	}
+	if got.ClientVersion != "0.2.121" {
+		t.Errorf("ClientVersion = %q, want 0.2.121", got.ClientVersion)
 	}
 	if got.ArtifactCount != 3 || len(got.Artifacts) != 3 {
 		t.Fatalf("artifact count = %d / %d, want 3", got.ArtifactCount, len(got.Artifacts))
@@ -298,6 +307,55 @@ func TestTaskReportsNoStore(t *testing.T) {
 	}
 }
 
+func TestTaskReportsIdentityFromBodyNotHeader(t *testing.T) {
+	reports := &fakeReportStore{}
+	h := NewHandler(nil, nil, reports, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/task-reports", strings.NewReader(
+		`{"subagentType":"explore","userId":"body-user","email":"body@atlas.local","clientVersion":"1.0.1"}`,
+	))
+	req.Header.Set("x-userid", "header-user")
+	rec := httptest.NewRecorder()
+	h.TaskReports(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if len(reports.inserted) != 1 {
+		t.Fatalf("inserted = %d, want 1", len(reports.inserted))
+	}
+	got := reports.inserted[0]
+	if got.UserID != "body-user" {
+		t.Errorf("UserID = %q, want body-user (header must not win)", got.UserID)
+	}
+	if got.Email != "body@atlas.local" {
+		t.Errorf("Email = %q, want body@atlas.local", got.Email)
+	}
+	if got.ClientVersion != "1.0.1" {
+		t.Errorf("ClientVersion = %q, want 1.0.1", got.ClientVersion)
+	}
+}
+
+func TestTaskReportsAnonymousWhenBodyHasNoUser(t *testing.T) {
+	reports := &fakeReportStore{}
+	h := NewHandler(nil, nil, reports, nil, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/task-reports", strings.NewReader(
+		`{"subagentType":"explore"}`,
+	))
+	req.Header.Set("x-userid", "header-user")
+	rec := httptest.NewRecorder()
+	h.TaskReports(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if len(reports.inserted) != 1 {
+		t.Fatalf("inserted = %d, want 1", len(reports.inserted))
+	}
+	if reports.inserted[0].UserID != "anonymous" {
+		t.Errorf("UserID = %q, want anonymous when body has no userId", reports.inserted[0].UserID)
+	}
+}
+
 func TestClassifyArtifacts(t *testing.T) {
 	got := store.ClassifyArtifacts([]string{
 		"docs/readme.md",
@@ -316,6 +374,8 @@ func TestTaskReportsOverall(t *testing.T) {
 
 	seed := func(userID, email, agent, status string, success bool, artifacts int) {
 		body := `{
+			"userId":"` + userID + `",
+			"email":"` + email + `",
 			"subagentType":"` + agent + `",
 			"status":"` + status + `",
 			"success":` + boolJSON(success) + `,
@@ -324,7 +384,6 @@ func TestTaskReportsOverall(t *testing.T) {
 			"artifactCount":` + itoa(artifacts) + `
 		}`
 		req := httptest.NewRequest(http.MethodPost, "/v1/task-reports", strings.NewReader(body))
-		req.Header.Set("x-userid", userID)
 		rec := httptest.NewRecorder()
 		h.TaskReports(rec, req)
 		if rec.Code != http.StatusAccepted {

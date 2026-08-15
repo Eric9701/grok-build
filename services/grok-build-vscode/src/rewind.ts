@@ -363,8 +363,8 @@ export function editRewindConfirmMessage(target: RewindPoint, hasFileChanges: bo
     `Edit your last message?\n\n` +
     `It will be removed from the conversation and put back in the composer so you can change it and send again.\n\n` +
     (hasFileChanges
-      ? "Grok's reply to it will be discarded and any files it changed in that turn will be restored.\n"
-      : "Grok's reply to it will be discarded. Earlier messages are untouched.\n") +
+      ? "Atlas's reply to it will be discarded and any files it changed in that turn will be restored.\n"
+      : "Atlas's reply to it will be discarded. Earlier messages are untouched.\n") +
     `This cannot be undone (unless you have the changes in git).`
   );
 }

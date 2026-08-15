@@ -17,6 +17,9 @@ pub(crate) struct ModelsCache {
     pub(crate) origin: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) etag: Option<String>,
+    /// When true, `api_key` and `info.model` on disk must be At-Rest ENC.
+    #[serde(default)]
+    pub(crate) managed: bool,
     pub(crate) models: IndexMap<String, ModelEntry>,
 }
 
@@ -54,7 +57,7 @@ impl ModelsCacheManager {
         expected_origin: &str,
     ) -> Option<CacheResult> {
         let data = std::fs::read(&self.path).ok()?;
-        let cache: ModelsCache = serde_json::from_slice(&data).ok()?;
+        let mut cache: ModelsCache = serde_json::from_slice(&data).ok()?;
         if cache.grok_version.as_deref() != Some(xai_grok_version::VERSION) {
             tracing::debug!("models cache version mismatch");
             return None;
@@ -75,6 +78,22 @@ impl ModelsCacheManager {
             tracing::debug!("models cache is stale");
             return None;
         }
+        if cache.managed {
+            if !at_rest_enc_valid(&cache.models) {
+                tracing::info!("managed models cache missing At-Rest ENC; invalidating");
+                self.invalidate();
+                return None;
+            }
+            if decrypt_at_rest_fields(&mut cache.models).is_err() {
+                tracing::info!("managed models cache decrypt failed; invalidating");
+                self.invalidate();
+                return None;
+            }
+        } else if has_plaintext_api_key(&cache.models) {
+            tracing::info!("models cache has plaintext api_key; invalidating");
+            self.invalidate();
+            return None;
+        }
         tracing::debug!(count = cache.models.len(), "loaded models from disk cache");
         Some(CacheResult {
             models: cache.models,
@@ -89,12 +108,24 @@ impl ModelsCacheManager {
         auth_method: CacheAuthMethod,
         origin: &str,
     ) {
+        self.persist_catalog(models, etag, auth_method, origin, false);
+    }
+
+    pub(crate) fn persist_catalog(
+        &self,
+        models: &IndexMap<String, ModelEntry>,
+        etag: Option<&str>,
+        auth_method: CacheAuthMethod,
+        origin: &str,
+        managed: bool,
+    ) {
         let cache = ModelsCache {
             fetched_at: Utc::now(),
             grok_version: Some(xai_grok_version::VERSION.to_string()),
             auth_method: Some(auth_method),
             origin: Some(origin.to_string()),
             etag: etag.map(|s| s.to_string()),
+            managed,
             models: models.clone(),
         };
         self.atomic_write(&cache);
@@ -183,8 +214,11 @@ impl ModelsCacheManager {
         };
         let tmp = self.unique_tmp_path();
         if std::fs::write(&tmp, &json).is_ok() {
+            restrict_owner_rw(&tmp);
             if std::fs::rename(&tmp, &self.path).is_err() {
                 let _ = std::fs::remove_file(&tmp);
+            } else {
+                restrict_owner_rw(&self.path);
             }
         } else {
             let _ = std::fs::remove_file(&tmp);
@@ -201,11 +235,56 @@ impl ModelsCacheManager {
         };
         let tmp = self.unique_tmp_path();
         if tokio::fs::write(&tmp, &json).await.is_ok() {
+            restrict_owner_rw(&tmp);
             if tokio::fs::rename(&tmp, &self.path).await.is_err() {
                 let _ = tokio::fs::remove_file(&tmp).await;
+            } else {
+                restrict_owner_rw(&self.path);
             }
         } else {
             let _ = tokio::fs::remove_file(&tmp).await;
         }
     }
+}
+
+fn has_plaintext_api_key(models: &IndexMap<String, ModelEntry>) -> bool {
+    models.values().any(|entry| {
+        entry.api_key.as_deref().is_some_and(|k| {
+            !k.trim().is_empty() && !crate::util::model_secret::is_enc(k)
+        })
+    })
+}
+
+fn at_rest_enc_valid(models: &IndexMap<String, ModelEntry>) -> bool {
+    models.values().all(|entry| {
+        crate::util::model_secret::is_enc(&entry.info.model)
+            && entry
+                .api_key
+                .as_deref()
+                .map(crate::util::model_secret::is_enc)
+                .unwrap_or(true)
+    })
+}
+
+fn decrypt_at_rest_fields(models: &mut IndexMap<String, ModelEntry>) -> Result<(), String> {
+    for entry in models.values_mut() {
+        entry.info.model =
+            crate::util::model_secret::require_decrypt_managed(&entry.info.model, "model")?;
+        if let Some(ref key) = entry.api_key {
+            entry.api_key = Some(crate::util::model_secret::require_decrypt_managed(
+                key, "api_key",
+            )?);
+        }
+    }
+    Ok(())
+}
+
+fn restrict_owner_rw(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }

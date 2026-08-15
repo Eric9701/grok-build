@@ -244,58 +244,58 @@ describe("cleanTranscript", () => {
 });
 
 describe("parseVoiceCommand", () => {
-  it("default phrase is 'grok send'", () => {
-    expect(DEFAULT_SEND_PHRASE).toBe("grok send");
+  it("default phrase is 'atlas send'", () => {
+    expect(DEFAULT_SEND_PHRASE).toBe("atlas send");
   });
 
-  it("strips a trailing 'grok send' and flags send", () => {
-    expect(parseVoiceCommand("fix the bug grok send")).toEqual({ text: "fix the bug", send: true });
+  it("strips a trailing 'atlas send' and flags send", () => {
+    expect(parseVoiceCommand("fix the bug atlas send")).toEqual({ text: "fix the bug", send: true });
   });
 
   it("is case-insensitive and tolerates a comma between words", () => {
-    expect(parseVoiceCommand("Fix the bug, Grok send")).toEqual({ text: "Fix the bug", send: true });
+    expect(parseVoiceCommand("Fix the bug, Atlas send")).toEqual({ text: "Fix the bug", send: true });
   });
 
   it("keeps trailing punctuation on the message (strips only the command)", () => {
-    expect(parseVoiceCommand("what's the weather today grok send?")).toEqual({
+    expect(parseVoiceCommand("what's the weather today atlas send?")).toEqual({
       text: "what's the weather today?",
       send: true,
     });
-    expect(parseVoiceCommand("fix the bug grok send.")).toEqual({ text: "fix the bug.", send: true });
-    expect(parseVoiceCommand("refactor this Grok Send!")).toEqual({ text: "refactor this!", send: true });
-    expect(parseVoiceCommand("Fix the bug, Grok send.")).toEqual({ text: "Fix the bug.", send: true });
+    expect(parseVoiceCommand("fix the bug atlas send.")).toEqual({ text: "fix the bug.", send: true });
+    expect(parseVoiceCommand("refactor this Atlas Send!")).toEqual({ text: "refactor this!", send: true });
+    expect(parseVoiceCommand("Fix the bug, Atlas send.")).toEqual({ text: "Fix the bug.", send: true });
   });
 
   it("does not double the trailing mark — keeps the message's own, drops the command's", () => {
     // Real-world reports: "…mate.." and "…not sure.?"
-    expect(parseVoiceCommand("Wow, thanks! I love you, mate. grok send.")).toEqual({
+    expect(parseVoiceCommand("Wow, thanks! I love you, mate. atlas send.")).toEqual({
       text: "Wow, thanks! I love you, mate.",
       send: true,
     });
-    expect(parseVoiceCommand("Wow, thanks! I love you, mate. grok sent.")).toEqual({
+    expect(parseVoiceCommand("Wow, thanks! I love you, mate. atlas sent.")).toEqual({
       text: "Wow, thanks! I love you, mate.",
       send: true,
     });
-    expect(parseVoiceCommand("What is this solution about? I'm not sure. grok send?")).toEqual({
+    expect(parseVoiceCommand("What is this solution about? I'm not sure. atlas send?")).toEqual({
       text: "What is this solution about? I'm not sure.",
       send: true,
     });
     // every doubled combo the user listed collapses to the message's own mark
-    expect(parseVoiceCommand("really? grok send.")).toEqual({ text: "really?", send: true });
-    expect(parseVoiceCommand("done! grok send?")).toEqual({ text: "done!", send: true });
-    expect(parseVoiceCommand("wait. grok send.")).toEqual({ text: "wait.", send: true });
+    expect(parseVoiceCommand("really? atlas send.")).toEqual({ text: "really?", send: true });
+    expect(parseVoiceCommand("done! atlas send?")).toEqual({ text: "done!", send: true });
+    expect(parseVoiceCommand("wait. atlas send.")).toEqual({ text: "wait.", send: true });
   });
 
-  it("treats a bare 'grok send' as send with empty text", () => {
-    expect(parseVoiceCommand("grok send")).toEqual({ text: "", send: true });
+  it("treats a bare 'atlas send' as send with empty text", () => {
+    expect(parseVoiceCommand("atlas send")).toEqual({ text: "", send: true });
   });
 
   it("tolerates the 'send' → 'sent' STT confusion", () => {
-    expect(parseVoiceCommand("fix the bug grok sent")).toEqual({ text: "fix the bug", send: true });
-    expect(parseVoiceCommand("Refactor this, Grok Sent.")).toEqual({ text: "Refactor this.", send: true });
+    expect(parseVoiceCommand("fix the bug atlas sent")).toEqual({ text: "fix the bug", send: true });
+    expect(parseVoiceCommand("Refactor this, Atlas Sent.")).toEqual({ text: "Refactor this.", send: true });
   });
 
-  it("the 'sent' tolerance ONLY applies after 'grok' — never on a bare 'sent'", () => {
+  it("the 'sent' tolerance ONLY applies after 'atlas' — never on a bare 'sent'", () => {
     expect(parseVoiceCommand("the email was sent")).toEqual({ text: "the email was sent", send: false });
     expect(parseVoiceCommand("tell grok the report was already sent")).toEqual({
       text: "tell grok the report was already sent",
@@ -313,19 +313,19 @@ describe("parseVoiceCommand", () => {
   });
 
   it("only matches the phrase at the end, not mid-sentence", () => {
-    expect(parseVoiceCommand("grok send me the file and fix it")).toEqual({
-      text: "grok send me the file and fix it",
+    expect(parseVoiceCommand("atlas send me the file and fix it")).toEqual({
+      text: "atlas send me the file and fix it",
       send: false,
     });
   });
 
   it("supports a custom phrase", () => {
     expect(parseVoiceCommand("do it now go", "go")).toEqual({ text: "do it now", send: true });
-    expect(parseVoiceCommand("do it now go", "grok send")).toEqual({ text: "do it now go", send: false });
+    expect(parseVoiceCommand("do it now go", "atlas send")).toEqual({ text: "do it now go", send: false });
   });
 
   it("an empty phrase disables detection", () => {
-    expect(parseVoiceCommand("fix the bug grok send", "")).toEqual({ text: "fix the bug grok send", send: false });
+    expect(parseVoiceCommand("fix the bug atlas send", "")).toEqual({ text: "fix the bug atlas send", send: false });
   });
 });
 
@@ -339,10 +339,10 @@ describe("buildSttStreamUrl", () => {
   });
 
   it("appends each keyterm (repeatable) for biasing", () => {
-    const url = buildSttStreamUrl({ keyterms: ["grok send", "Grok"] });
+    const url = buildSttStreamUrl({ keyterms: ["atlas send", "Atlas"] });
     // URLSearchParams encodes spaces as '+'
-    expect(url).toContain("keyterm=grok+send");
-    expect(url).toContain("keyterm=Grok");
+    expect(url).toContain("keyterm=atlas+send");
+    expect(url).toContain("keyterm=Atlas");
     expect((url.match(/keyterm=/g) || []).length).toBe(2);
   });
 
@@ -380,21 +380,21 @@ describe("buildSttStreamUrl", () => {
 });
 
 describe("buildSttKeyterms", () => {
-  it("puts the send phrase and Grok ahead of trimmed, deduplicated user terms", () => {
-    expect(buildSttKeyterms(" grok send ", [" useEffect ", "Grok", "", "useEffect"]))
-      .toEqual(["grok send", "Grok", "useEffect"]);
+  it("puts the send phrase and Atlas ahead of trimmed, deduplicated user terms", () => {
+    expect(buildSttKeyterms(" atlas send ", [" useEffect ", "Atlas", "", "useEffect"]))
+      .toEqual(["atlas send", "Atlas", "useEffect"]);
   });
 
-  it("reserves the send phrase and Grok when user terms fill the 100-term cap", () => {
+  it("reserves the send phrase and Atlas when user terms fill the 100-term cap", () => {
     const userTerms = Array.from({ length: 100 }, (_, i) => `term${i}`);
-    const terms = buildSttKeyterms("grok send", userTerms);
+    const terms = buildSttKeyterms("atlas send", userTerms);
     const url = buildSttStreamUrl({ keyterms: terms });
 
     expect(terms).toHaveLength(100);
-    expect(terms.slice(0, 3)).toEqual(["grok send", "Grok", "term0"]);
+    expect(terms.slice(0, 3)).toEqual(["atlas send", "Atlas", "term0"]);
     expect(terms.at(-1)).toBe("term97");
-    expect(url).toContain("keyterm=grok+send");
-    expect(url).toContain("keyterm=Grok");
+    expect(url).toContain("keyterm=atlas+send");
+    expect(url).toContain("keyterm=Atlas");
     expect(url).toContain("keyterm=term97");
     expect(url).not.toContain("keyterm=term98");
   });
@@ -404,7 +404,7 @@ describe("buildSttKeyterms", () => {
     const terms = buildSttKeyterms("", userTerms);
 
     expect(terms).toHaveLength(100);
-    expect(terms[0]).toBe("Grok");
+    expect(terms[0]).toBe("Atlas");
     expect(terms.at(-1)).toBe("term98");
   });
 });

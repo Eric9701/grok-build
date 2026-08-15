@@ -238,7 +238,7 @@ export function voiceSettingForRepo<T>(
  *  behavior-critical, and the built-in product term preserves existing bias;
  *  user vocabulary fills the remaining service-supported slots. */
 export function buildSttKeyterms(sendPhrase: string, userTerms: readonly string[] = []): string[] {
-  const terms = [sendPhrase, "Grok", ...userTerms]
+  const terms = [sendPhrase, "Atlas", ...userTerms]
     .map((term) => (term || "").trim())
     .filter(Boolean);
   return [...new Set(terms)].slice(0, MAX_STT_KEYTERMS);
@@ -305,7 +305,7 @@ export function parseSttResponse(json: any): SttResult {
 /** Map an STT HTTP failure to a message worth showing the user. */
 export function classifySttError(status: number, body?: string): string {
   if (status === 401 || status === 403) {
-    return "Voice transcription was rejected (401/403): the xAI key is missing, invalid, or expired. If you're relying on your `grok login`, try signing in again (`grok logout` then `grok login`); or set grok.voiceApiKey, or GROK_VOICE_API_KEY / XAI_API_KEY in your workspace .env (get a key at console.x.ai).";
+    return "Voice transcription was rejected (401/403): the xAI key is missing, invalid, or expired. If you're relying on your `atlas login`, try signing in again (`atlas logout` then `atlas login`); or set atlas.voiceApiKey, or GROK_VOICE_API_KEY / XAI_API_KEY in your workspace .env (get a key at console.x.ai).";
   }
   if (status === 429) return "Voice transcription is rate-limited (429). Wait a moment and try again.";
   if (status === 413) return "The recording is too large to transcribe (413). Record a shorter message.";
@@ -322,7 +322,7 @@ export function cleanTranscript(text: string): string {
   return (text || "").replace(/\s+/g, " ").trim();
 }
 
-export const DEFAULT_SEND_PHRASE = "grok send";
+export const DEFAULT_SEND_PHRASE = "atlas send";
 
 export interface VoiceCommandResult {
   /** The transcript with a trailing send-phrase stripped off. */

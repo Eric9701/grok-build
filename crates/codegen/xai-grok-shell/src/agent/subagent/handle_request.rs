@@ -1507,6 +1507,9 @@ pub(crate) async fn run_shell_child(
             error: result.error.clone(),
             started_at: turn_started_at.clone(),
             completed_at: chrono::Utc::now().to_rfc3339(),
+            user_id: None,
+            email: None,
+            client_version: None,
         };
         crate::task_report::spawn_task_report(
             base_url,

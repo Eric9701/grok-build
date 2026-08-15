@@ -105,6 +105,7 @@ func (m *MySQLStore) Migrate() error {
 			started_at VARCHAR(40) NULL,
 			completed_at VARCHAR(40) NULL,
 			client_ip VARCHAR(64) NULL,
+			client_version VARCHAR(64) NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			INDEX idx_reports_user_created (user_id, created_at),
 			INDEX idx_reports_email_created (email, created_at),
@@ -139,7 +140,25 @@ func (m *MySQLStore) Migrate() error {
 	if err := m.migrateManagedModels(); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	if err := m.migrateUserGroups(); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	if err := m.migrateTaskReportClientVersion(); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
 	return nil
+}
+
+func (m *MySQLStore) migrateTaskReportClientVersion() error {
+	_, err := m.db.Exec(`ALTER TABLE task_reports ADD COLUMN client_version VARCHAR(64) NULL`)
+	if err == nil {
+		return nil
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "duplicate column") || strings.Contains(msg, "1060") {
+		return nil
+	}
+	return err
 }
 
 // migrateManagedModels creates managed_models / user_models with the same
@@ -199,6 +218,65 @@ func (m *MySQLStore) migrateManagedModels() error {
 			CONSTRAINT fk_user_models_model FOREIGN KEY (model_id) REFERENCES managed_models(id) ON DELETE CASCADE
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=%s`, collation)
 	if _, err := m.db.Exec(createUserModels); err != nil {
+		return err
+	}
+	return nil
+}
+
+// migrateUserGroups creates user_groups / group_members / group_models with the
+// same collation as users.user_id (see migrateManagedModels).
+func (m *MySQLStore) migrateUserGroups() error {
+	collation := "utf8mb4_unicode_ci"
+	var detected sql.NullString
+	_ = m.db.QueryRow(`
+		SELECT COLLATION_NAME
+		FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE()
+		  AND TABLE_NAME = 'users'
+		  AND COLUMN_NAME = 'user_id'
+	`).Scan(&detected)
+	if detected.Valid && detected.String != "" {
+		collation = detected.String
+	}
+	if err := validateMySQLCollation(collation); err != nil {
+		return err
+	}
+
+	createGroups := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS user_groups (
+			group_id VARCHAR(64) NOT NULL,
+			name VARCHAR(255) NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY (group_id),
+			UNIQUE KEY uk_user_groups_name (name)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=%s`, collation)
+	if _, err := m.db.Exec(createGroups); err != nil {
+		return err
+	}
+
+	createMembers := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS group_members (
+			group_id VARCHAR(64) NOT NULL,
+			user_id VARCHAR(64) NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (group_id, user_id),
+			INDEX idx_group_members_user (user_id),
+			CONSTRAINT fk_group_members_group FOREIGN KEY (group_id) REFERENCES user_groups(group_id) ON DELETE CASCADE,
+			CONSTRAINT fk_group_members_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=%s`, collation)
+	if _, err := m.db.Exec(createMembers); err != nil {
+		return err
+	}
+
+	createGroupModels := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS group_models (
+			group_id VARCHAR(64) NOT NULL,
+			model_id VARCHAR(128) NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (group_id, model_id),
+			INDEX idx_group_models_model (model_id),
+			CONSTRAINT fk_group_models_group FOREIGN KEY (group_id) REFERENCES user_groups(group_id) ON DELETE CASCADE,
+			CONSTRAINT fk_group_models_model FOREIGN KEY (model_id) REFERENCES managed_models(id) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=%s`, collation)
+	if _, err := m.db.Exec(createGroupModels); err != nil {
 		return err
 	}
 	return nil

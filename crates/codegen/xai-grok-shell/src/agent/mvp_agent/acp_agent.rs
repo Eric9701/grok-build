@@ -316,6 +316,9 @@ impl acp::Agent for MvpAgent {
                 SilentRefresh::Failed(remedy) => remedy.is_self_healing(),
             };
         }
+        // Silent refresh may have restored a session after construction-time
+        // latch evaluation; re-check once here (still process-start, not mid-turn).
+        self.refresh_startup_session_latch_from_auth_manager();
         let (
             login_label,
             has_auth_provider,
@@ -354,14 +357,37 @@ impl acp::Agent for MvpAgent {
             );
         }
         let preferred_method = preferred_method_early;
-        let has_external_api_key = match preferred_method {
+        // When the process-start session gate is open, hide BYOK/API-key as a
+        // usable default so ACP clients derive needs_login and show the login
+        // flow. Interactive OIDC/grok.com methods remain advertised.
+        let gate_blocks_byok = self.startup_session_gate_active();
+        // `preferred_method=api_key` would otherwise advertise an empty list once
+        // BYOK is suppressed; coerce to OIDC advertise so login remains possible.
+        let preferred_for_advertise = if gate_blocks_byok
+            && matches!(
+                preferred_method,
+                Some(crate::auth::PreferredAuthMethod::ApiKey)
+            ) {
+            Some(crate::auth::PreferredAuthMethod::Oidc)
+        } else {
+            preferred_method
+        };
+        let has_external_api_key = match preferred_for_advertise {
             Some(crate::auth::PreferredAuthMethod::Oidc) => false,
+            _ if gate_blocks_byok => false,
             _ => has_external_api_key,
         };
-        let has_cached_token = match preferred_method {
+        let has_cached_token = match preferred_for_advertise {
             Some(crate::auth::PreferredAuthMethod::ApiKey) => false,
             _ => has_cached_token,
         };
+        if gate_blocks_byok {
+            xai_grok_telemetry::unified_log::info(
+                "auth: require_session_at_startup suppressing api_key advertise until login",
+                None,
+                None,
+            );
+        }
         let built = auth_method::build_auth_methods(auth_method::AuthMethodsBuildInputs {
             has_external_api_key,
             has_cached_token,
@@ -369,7 +395,7 @@ impl acp::Agent for MvpAgent {
             enterprise_oidc_issuer: enterprise_oidc_issuer.as_deref(),
             login_label: login_label.as_deref(),
             has_auth_provider_command: has_auth_provider,
-            preferred_method,
+            preferred_method: preferred_for_advertise,
         });
         let auth_methods = built.methods;
         xai_grok_telemetry::unified_log::info(
@@ -532,17 +558,27 @@ impl acp::Agent for MvpAgent {
         );
         if let Some(preferred) = self.cfg.borrow().grok_com_config.preferred_method {
             let kind = auth_method::AuthMethodKind::from_id(&arguments.method_id);
-            let allowed = match preferred {
-                crate::auth::PreferredAuthMethod::ApiKey => kind.is_api_key(),
-                crate::auth::PreferredAuthMethod::Oidc => kind.is_session_based(),
+            // While the startup session gate is open, only session-based login
+            // can satisfy it — even if preferred_method pins api_key.
+            let allowed = if self.startup_session_gate_active() {
+                kind.is_session_based()
+            } else {
+                match preferred {
+                    crate::auth::PreferredAuthMethod::ApiKey => kind.is_api_key(),
+                    crate::auth::PreferredAuthMethod::Oidc => kind.is_session_based(),
+                }
             };
             if !allowed {
-                let msg = match preferred {
-                    crate::auth::PreferredAuthMethod::ApiKey => {
-                        auth_method::PREFERRED_API_KEY_UNAVAILABLE
-                    }
-                    crate::auth::PreferredAuthMethod::Oidc => {
-                        "preferred_method=oidc; API-key auth is not allowed."
+                let msg = if self.startup_session_gate_active() {
+                    "Sign in required before use (require_session_at_startup)."
+                } else {
+                    match preferred {
+                        crate::auth::PreferredAuthMethod::ApiKey => {
+                            auth_method::PREFERRED_API_KEY_UNAVAILABLE
+                        }
+                        crate::auth::PreferredAuthMethod::Oidc => {
+                            "preferred_method=oidc; API-key auth is not allowed."
+                        }
                     }
                 };
                 emit_login_span(
@@ -556,6 +592,13 @@ impl acp::Agent for MvpAgent {
         }
         match arguments.method_id.0.as_ref() {
             auth_method::XAI_API_KEY_METHOD_ID => {
+                if self.startup_session_gate_active() {
+                    emit_login_span(false, "api_key", None, Some("require_session_at_startup"));
+                    return Err(acp::Error::auth_required().data(
+                        "Sign in required before use (require_session_at_startup). \
+                         API-key / managed-model credentials alone are not enough.",
+                    ));
+                }
                 if self.cfg.borrow().grok_com_config.api_key_auth_disabled() {
                     emit_login_span(false, "api_key", None, Some("disabled_by_admin"));
                     return Err(
@@ -760,6 +803,7 @@ impl acp::Agent for MvpAgent {
                     auth_method: "cached_token".to_string(),
                     user_id: uid,
                 });
+                self.mark_startup_session_satisfied();
                 self.spawn_post_auth_settings(auth_for_settings);
                 Ok(self.auth_response_with_meta())
             }
@@ -904,6 +948,7 @@ impl acp::Agent for MvpAgent {
                     auth_method: arguments.method_id.0.as_ref().to_string(),
                     user_id: Some(auth.user_id.clone()),
                 });
+                self.mark_startup_session_satisfied();
                 self.spawn_post_auth_settings(auth);
                 Ok(self.auth_response_with_meta())
             }
@@ -924,12 +969,14 @@ impl acp::Agent for MvpAgent {
         &self,
         arguments: acp::NewSessionRequest,
     ) -> Result<acp::NewSessionResponse, acp::Error> {
+        self.ensure_startup_session_or_auth_required()?;
         self.new_session_inner(arguments).await
     }
     async fn load_session(
         &self,
         arguments: acp::LoadSessionRequest,
     ) -> Result<acp::LoadSessionResponse, acp::Error> {
+        self.ensure_startup_session_or_auth_required()?;
         self.load_session_inner(arguments).await
     }
     async fn list_sessions(
@@ -942,6 +989,7 @@ impl acp::Agent for MvpAgent {
         &self,
         args: acp::ResumeSessionRequest,
     ) -> Result<acp::ResumeSessionResponse, acp::Error> {
+        self.ensure_startup_session_or_auth_required()?;
         self.resume_session_inner(args).await
     }
     async fn close_session(
@@ -961,6 +1009,7 @@ impl acp::Agent for MvpAgent {
         mut arguments: acp::PromptRequest,
     ) -> Result<acp::PromptResponse, acp::Error> {
         use crate::session::plan_mode::PromptMode;
+        self.ensure_startup_session_or_auth_required()?;
         if let Some(meta) = arguments.meta.as_ref() {
             xai_file_utils::trace_context::link_current_span_to_meta(
                 &serde_json::Value::Object(meta.clone()),

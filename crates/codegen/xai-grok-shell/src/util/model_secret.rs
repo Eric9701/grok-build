@@ -38,6 +38,35 @@ fn derive_key(secret: &str) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+/// Encrypt plaintext to `ENC(<base64(nonce||ciphertext||tag)>)`.
+pub fn encrypt_field(plaintext: &str, secret: &str) -> Result<String, String> {
+    use ring::rand::{SecureRandom, SystemRandom};
+
+    let key = LessSafeKey::new(
+        UnboundKey::new(&AES_256_GCM, &derive_key(secret))
+            .map_err(|_| "invalid AES key".to_string())?,
+    );
+    let rng = SystemRandom::new();
+    let mut nonce_bytes = [0u8; NONCE_LEN];
+    rng.fill(&mut nonce_bytes)
+        .map_err(|_| "failed to generate nonce".to_string())?;
+    let nonce = Nonce::assume_unique_for_key(nonce_bytes);
+    let mut in_out = plaintext.as_bytes().to_vec();
+    key.seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out)
+        .map_err(|_| "encrypt failed".to_string())?;
+    let mut packed = nonce_bytes.to_vec();
+    packed.extend_from_slice(&in_out);
+    Ok(format!(
+        "{ENC_PREFIX}{}{ENC_SUFFIX}",
+        base64::engine::general_purpose::STANDARD.encode(packed)
+    ))
+}
+
+/// Encrypt with the process model secret (`GROK_MODEL_SECRET_KEY` or default).
+pub fn encrypt_managed(plaintext: &str) -> Result<String, String> {
+    encrypt_field(plaintext, &resolve_model_secret(None))
+}
+
 /// Decrypt `ENC(...)` or return plaintext unchanged.
 pub fn decrypt_field(enc_or_plain: &str, secret: &str) -> Result<String, String> {
     let s = enc_or_plain.trim();
@@ -128,29 +157,10 @@ pub fn resolve_catalog_string(raw: &str, require_enc: bool, field: &str) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
-    use ring::rand::{SecureRandom, SystemRandom};
-
-    fn encrypt_like_server(plaintext: &str, secret: &str) -> String {
-        let key = LessSafeKey::new(UnboundKey::new(&AES_256_GCM, &derive_key(secret)).unwrap());
-        let rng = SystemRandom::new();
-        let mut nonce_bytes = [0u8; NONCE_LEN];
-        rng.fill(&mut nonce_bytes).unwrap();
-        let nonce = Nonce::assume_unique_for_key(nonce_bytes);
-        let mut in_out = plaintext.as_bytes().to_vec();
-        key.seal_in_place_append_tag(nonce, Aad::empty(), &mut in_out)
-            .unwrap();
-        let mut packed = nonce_bytes.to_vec();
-        packed.extend_from_slice(&in_out);
-        format!(
-            "ENC({})",
-            base64::engine::general_purpose::STANDARD.encode(packed)
-        )
-    }
 
     #[test]
     fn decrypt_roundtrip_matches_server_format() {
-        let enc = encrypt_like_server("sk-test", DEFAULT_MODEL_SECRET);
+        let enc = encrypt_field("sk-test", DEFAULT_MODEL_SECRET).unwrap();
         assert!(is_enc(&enc));
         let plain = decrypt_api_key(&enc, DEFAULT_MODEL_SECRET).unwrap();
         assert_eq!(plain, "sk-test");
@@ -167,7 +177,7 @@ mod tests {
     #[test]
     fn managed_model_id_requires_enc() {
         assert!(require_decrypt_managed("kimi-for-coding", "model").is_err());
-        let enc = encrypt_like_server("kimi-for-coding", DEFAULT_MODEL_SECRET);
+        let enc = encrypt_field("kimi-for-coding", DEFAULT_MODEL_SECRET).unwrap();
         assert_eq!(
             require_decrypt_managed(&enc, "model").unwrap(),
             "kimi-for-coding"

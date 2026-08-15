@@ -268,7 +268,7 @@
             "xhigh"
           ],
           "enumDescriptions": [
-            "CLI default (no flag passed to grok agent stdio)",
+            "CLI default (no flag passed to atlas agent stdio)",
             "None",
             "Minimal",
             "Low — faster, lighter reasoning",
@@ -277,7 +277,7 @@
             "XHigh — deepest reasoning, slowest"
           ],
           "default": "",
-          "description": "Reasoning effort passed as --reasoning-effort to grok agent stdio. Values match the grok CLI's accepted set (none, minimal, low, medium, high, xhigh). Applies live on recent CLIs (grok 0.2.101+); older CLIs, and resetting to the model default, restart the session."
+          "description": "Reasoning effort passed as --reasoning-effort to atlas agent stdio. Values match the Atlas CLI's accepted set (none, minimal, low, medium, high, xhigh). Applies live on recent CLIs (Atlas 0.2.101+); older CLIs, and resetting to the model default, restart the session."
         },
         "atlas.useCtrlEnterToSend": {
           "type": "boolean",
@@ -291,16 +291,16 @@
             "cmd"
           ],
           "enumDescriptions": [
-            "PowerShell on Windows (pwsh, then Windows PowerShell 5.1) — matches the standalone Grok CLI",
+            "PowerShell on Windows (pwsh, then Windows PowerShell 5.1) — matches the standalone Atlas CLI",
             "Force cmd.exe on Windows (legacy)"
           ],
           "default": "auto",
-          "markdownDescription": "Which shell runs the agent's commands **on Windows**. `auto` (default) uses PowerShell — `pwsh.exe` if installed, else Windows PowerShell 5.1 — so your PowerShell profile functions and pipelines work like they do in the standalone Grok CLI (#46). `cmd` forces `cmd.exe` (the pre-1.5.13 behavior) if the PowerShell host causes trouble. **Tip: install PowerShell 7 (`pwsh`)** — the 5.1 fallback rejects `&&` chains and reports every failing command's exit code as 1. No effect on macOS/Linux (always `/bin/sh`)."
+          "markdownDescription": "Which shell runs the agent's commands **on Windows**. `auto` (default) uses PowerShell — `pwsh.exe` if installed, else Windows PowerShell 5.1 — so your PowerShell profile functions and pipelines work like they do in the standalone Atlas CLI (#46). `cmd` forces `cmd.exe` (the pre-1.5.13 behavior) if the PowerShell host causes trouble. **Tip: install PowerShell 7 (`pwsh`)** — the 5.1 fallback rejects `&&` chains and reports every failing command's exit code as 1. No effect on macOS/Linux (always `/bin/sh`)."
         },
         "atlas.showThinking": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Show Grok's reasoning (thinking) traces in chat. Off by default — a lightweight \"Thinking…\" indicator stands in while Grok reasons. Also toggleable live from the gear menu → **Config & debug → Show thinking traces** (applies to already-loaded sessions too)."
+          "markdownDescription": "Show Atlas's reasoning (thinking) traces in chat. Off by default — a lightweight \"Thinking…\" indicator stands in while Atlas reasons. Also toggleable live from the gear menu → **Config & debug → Show thinking traces** (applies to already-loaded sessions too)."
         },
         "atlas.expandCommandOutputs": {
           "type": "boolean",
@@ -310,27 +310,27 @@
         "atlas.steerByDefault": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Send straight into Grok's running turn instead of queueing it. Off (default): a message you send while Grok is working waits, and is sent as one prompt when the turn ends — you can still steer it on demand with the **Steer** button on the pending message. On: sending while Grok works **skips the queue** and injects the message into the turn immediately, so Grok changes course mid-answer. Steering never cancels the turn and never discards in-flight tool work — it is not a Stop. It carries plain text only: no attached files, no editor context, and no `/commands`. Needs a recent Grok Build CLI; where it's unsupported, messages fall back to the queue. Also toggleable live from the gear menu → **Config & debug → Steer by default**."
+          "markdownDescription": "Send straight into Atlas's running turn instead of queueing it. Off (default): a message you send while Atlas is working waits, and is sent as one prompt when the turn ends — you can still steer it on demand with the **Steer** button on the pending message. On: sending while Atlas works **skips the queue** and injects the message into the turn immediately, so Atlas changes course mid-answer. Steering never cancels the turn and never discards in-flight tool work — it is not a Stop. It carries plain text only: no attached files, no editor context, and no `/commands`. Needs a recent Atlas CLI; where it's unsupported, messages fall back to the queue. Also toggleable live from the gear menu → **Config & debug → Steer by default**."
         },
         "atlas.soundNotifications": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Play a short sound when Grok finishes a turn or hits an error — a rising chime on completion, a lower tone on error. Off by default. Plays **only when the Grok panel isn't focused** (you've switched to the editor or another window), so it notifies you when you've stepped away without beeping while you watch. Also toggleable live from the gear menu → **Config & debug → Sound notifications**."
+          "markdownDescription": "Play a short sound when Atlas finishes a turn or hits an error — a rising chime on completion, a lower tone on error. Off by default. Plays **only when the Atlas panel isn't focused** (you've switched to the editor or another window), so it notifies you when you've stepped away without beeping while you watch. Also toggleable live from the gear menu → **Config & debug → Sound notifications**."
         },
         "atlas.processingSound": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Play a quiet repeating sound while Grok is still working. The first cue waits seven seconds, then repeats every eight seconds until the turn ends. Off by default and separate from the completion/error sound. Also toggleable live from the gear menu → **Config & debug → Still-processing sound**."
+          "markdownDescription": "Play a quiet repeating sound while Atlas is still working. The first cue waits seven seconds, then repeats every eight seconds until the turn ends. Off by default and separate from the completion/error sound. Also toggleable live from the gear menu → **Config & debug → Still-processing sound**."
         },
         "atlas.readRepliesAloud": {
           "type": "boolean",
           "default": false,
-          "description": "Read completed Grok replies aloud in the VS Code chat. Code blocks are skipped."
+          "description": "Read completed Atlas replies aloud in the VS Code chat. Code blocks are skipped."
         },
         "atlas.summarizeRepliesAloud": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Read simplified summaries of spoken Grok replies. Each reply costs an extra xAI call and adds network delay; the full reply is used if summarization fails. Uses the same credential resolution as Voice input. AFK Pilot keeps its own per-device browser preference."
+          "markdownDescription": "Read simplified summaries of spoken Atlas replies. Each reply costs an extra xAI call and adds network delay; the full reply is used if summarization fails. Uses the same credential resolution as Voice input. AFK Pilot keeps its own per-device browser preference."
         },
         "atlas.remote.keepAwake": {
           "type": "boolean",
@@ -347,12 +347,12 @@
           "default": 100,
           "minimum": 60,
           "maximum": 300,
-          "markdownDescription": "Zoom for the Grok chat panel only, as a percent (100 = default). Scales the whole chat UI — text, icons, spacing — without affecting the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live, no reload needed. Supports User (global) and Workspace (local) scope."
+          "markdownDescription": "Zoom for the Atlas chat panel only, as a percent (100 = default). Scales the whole chat UI — text, icons, spacing — without affecting the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live, no reload needed. Supports User (global) and Workspace (local) scope."
         },
         "atlas.voiceApiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional override key for voice Speech-to-Text (`api.x.ai/v1/stt`). **Leave empty and it just works** — the extension reuses your `grok login` token automatically. Set this (or `GROK_VOICE_API_KEY` / `XAI_API_KEY` in your workspace `.env`) only to use a dedicated [console.x.ai](https://console.x.ai) developer key instead. Setup + costs: [docs/voice-setup.md](https://github.com/PawelHuryn/grok-vscode/blob/main/docs/voice-setup.md)."
+          "markdownDescription": "Optional override key for voice Speech-to-Text (`api.x.ai/v1/stt`). **Leave empty and it just works** — the extension reuses your `atlas login` token automatically. Set this (or `GROK_VOICE_API_KEY` / `XAI_API_KEY` in your workspace `.env`) only to use a dedicated [console.x.ai](https://console.x.ai) developer key instead. Setup + costs: [docs/voice-setup.md](https://github.com/PawelHuryn/grok-vscode/blob/main/docs/voice-setup.md)."
         },
         "atlas.ffmpegPath": {
           "type": "string",
@@ -367,7 +367,7 @@
         "atlas.voiceSendPhrase": {
           "type": "string",
           "default": "atlas send",
-          "description": "Spoken phrase that auto-submits the message when it ends a voice transcription (e.g. say \"…fix the bug, grok send\"). The phrase is stripped before sending. Leave empty to disable hands-free sending."
+          "description": "Spoken phrase that auto-submits the message when it ends a voice transcription (e.g. say \"…fix the bug, atlas send\"). The phrase is stripped before sending. Leave empty to disable hands-free sending."
         },
         "atlas.voiceKeyterms": {
           "type": "array",
@@ -375,7 +375,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Words or phrases to help streaming voice recognition spell code and project vocabulary correctly (for example, \"Get-ChildItem\", \"useEffect\", or an internal package name). Put the most important terms first. xAI accepts at most 100 terms of 50 characters each; the send phrase and \"Grok\" are kept first, then user terms fill the remaining slots. Supports User and Workspace scope."
+          "description": "Words or phrases to help streaming voice recognition spell code and project vocabulary correctly (for example, \"Get-ChildItem\", \"useEffect\", or an internal package name). Put the most important terms first. xAI accepts at most 100 terms of 50 characters each; the send phrase and \"Atlas\" are kept first, then user terms fill the remaining slots. Supports User and Workspace scope."
         },
         "atlas.voiceLanguage": {
           "type": "string",
@@ -385,7 +385,7 @@
         "atlas.voiceStreaming": {
           "type": "boolean",
           "default": true,
-          "description": "Stream voice transcription live as you speak (words appear in the composer in real time, and \"grok send\" can submit without a second click). Disable to use one-shot batch mode (click to start, click to stop, then transcribe). Streaming costs $0.20/hr of audio vs $0.10/hr batch."
+          "description": "Stream voice transcription live as you speak (words appear in the composer in real time, and \"atlas send\" can submit without a second click). Disable to use one-shot batch mode (click to start, click to stop, then transcribe). Streaming costs $0.20/hr of audio vs $0.10/hr batch."
         }
       }
     }

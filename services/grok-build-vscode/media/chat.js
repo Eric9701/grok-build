@@ -297,7 +297,7 @@
     // until the next mic start.
     voiceDiscarded: false,
     // The configured send phrase (for highlighting it in the composer).
-    voiceSendPhrase: "grok send",
+    voiceSendPhrase: "atlas send",
     remoteFontScale: IS_REMOTE ? storedNumber(REMOTE_FONT_SCALE_KEY, 1) : 1,
     hostFontScale: Number(document.body.style.getPropertyValue("--chat-zoom")) || 1,
     remoteTts: storedRemoteTts,
@@ -647,17 +647,17 @@
     agent: {
       icon: ICON.bot,
       label: "Agent mode",
-      desc: "Grok acts directly, asking approval only for changes it judges sensitive",
+      desc: "Atlas acts directly, asking approval only for changes it judges sensitive",
     },
     plan: {
       icon: ICON.listTree,
       label: "Plan mode",
-      desc: "Grok explores and proposes a plan; file writes and commands are blocked until you approve it",
+      desc: "Atlas explores and proposes a plan; file writes and commands are blocked until you approve it",
     },
     yolo: {
       icon: ICON.zap,
       label: "Auto accept",
-      desc: "Grok automatically approves all permission requests (YOLO)",
+      desc: "Atlas automatically approves all permission requests (YOLO)",
     },
   };
 
@@ -1967,7 +1967,7 @@
 
     const nameBtn = document.createElement("button");
     nameBtn.className = "toolbar-btn model-name-btn" + (settingsLocked || !modelLoaded ? " disabled" : "");
-    const modelName = modelLoaded ? (modelDisplayName(state.currentModelId, state.availableModels) || "Grok Build") : "Loading…";
+    const modelName = modelLoaded ? (modelDisplayName(state.currentModelId, state.availableModels) || "Atlas") : "Loading…";
     nameBtn.innerHTML = `<span class="btn-label">${escapeHtml(truncate(modelName, 16))}</span>`;
     nameBtn.disabled = settingsLocked || !modelLoaded;
     nameBtn.title = !modelLoaded
@@ -2185,7 +2185,7 @@
     fine.textContent =
       "Unofficial · community-built · MIT | " +
       "A VS Code UI for xAI’s Atlas CLI - not affiliated with or endorsed by xAI. " +
-      "Grok, Grok Build, and xAI are trademarks of xAI; this project uses those names only to describe what it’s compatible with.";
+      "Atlas CLI UI for enterprise deployments; not affiliated with or endorsed by xAI. Compatible with Atlas CLI / GROK_* env vars.";
     gearPopover.appendChild(fine);
 
     // ── Repository link (bottom) ─────────────────────────────────────────
@@ -2212,7 +2212,7 @@
     // Show thinking traces (#26) — a switcher; off by default keeps grok's
     // reasoning out of the way, on reveals it (incl. on already-loaded sessions).
     addGearItem(
-      `<span title="Show Grok's reasoning (thinking) traces in chat, including on already-loaded sessions. Off by default — a lightweight &quot;Thinking…&quot; indicator stands in while Grok reasons.">Show thinking traces</span><span class="popover-switch${state.showThinking ? " on" : ""}" role="switch" aria-checked="${state.showThinking}"><span class="popover-switch-knob"></span></span>`,
+      `<span title="Show Atlas's reasoning (thinking) traces in chat, including on already-loaded sessions. Off by default — a lightweight &quot;Thinking…&quot; indicator stands in while Atlas reasons.">Show thinking traces</span><span class="popover-switch${state.showThinking ? " on" : ""}" role="switch" aria-checked="${state.showThinking}"><span class="popover-switch-knob"></span></span>`,
       () => {
         state.showThinking = !state.showThinking;
         applyThinkingVisibility();
@@ -2262,7 +2262,7 @@
     // nothing is worse than not offering it.
     if (state.steerSupported) {
       addGearItem(
-        `<span title="Send straight into Grok's running turn instead of queueing until it finishes. Steering does not cancel the turn or discard work in progress. Plain text only — no attached files, editor context, or /commands.">Steer by default</span><span class="popover-switch${state.steerByDefault ? " on" : ""}" role="switch" aria-checked="${state.steerByDefault}"><span class="popover-switch-knob"></span></span>`,
+        `<span title="Send straight into Atlas's running turn instead of queueing until it finishes. Steering does not cancel the turn or discard work in progress. Plain text only — no attached files, editor context, or /commands.">Steer by default</span><span class="popover-switch${state.steerByDefault ? " on" : ""}" role="switch" aria-checked="${state.steerByDefault}"><span class="popover-switch-knob"></span></span>`,
         () => {
           state.steerByDefault = !state.steerByDefault;
           vscode.postMessage({ type: "setSteerByDefault", value: state.steerByDefault });
@@ -2273,7 +2273,7 @@
     // Sound notifications (#59) — a short tone on turn completion / error, played
     // only when the Grok panel isn't focused (notify me when I've stepped away).
     addGearItem(
-      `<span title="Play a short sound when Grok finishes or errors — only when the Grok panel isn't focused. A rising chime for done, a lower tone for errors.">Sound notifications</span><span class="popover-switch${state.soundNotifications ? " on" : ""}" role="switch" aria-checked="${state.soundNotifications}"><span class="popover-switch-knob"></span></span>`,
+      `<span title="Play a short sound when Atlas finishes or errors — only when the Atlas panel isn't focused. A rising chime for done, a lower tone for errors.">Sound notifications</span><span class="popover-switch${state.soundNotifications ? " on" : ""}" role="switch" aria-checked="${state.soundNotifications}"><span class="popover-switch-knob"></span></span>`,
       () => {
         state.soundNotifications = !state.soundNotifications;
         vscode.postMessage({ type: "setSoundNotifications", value: state.soundNotifications });
@@ -2284,7 +2284,7 @@
       },
     );
     addGearItem(
-      `<span title="Play a quiet reminder while Grok is still working. Starts after seven seconds and repeats every eight seconds until the turn ends.">Still-processing sound</span><span class="popover-switch${state.processingSound ? " on" : ""}" role="switch" aria-checked="${state.processingSound}"><span class="popover-switch-knob"></span></span>`,
+      `<span title="Play a quiet reminder while Atlas is still working. Starts after seven seconds and repeats every eight seconds until the turn ends.">Still-processing sound</span><span class="popover-switch${state.processingSound ? " on" : ""}" role="switch" aria-checked="${state.processingSound}"><span class="popover-switch-knob"></span></span>`,
       () => {
         state.processingSound = !state.processingSound;
         vscode.postMessage({ type: "setProcessingSound", value: state.processingSound });
@@ -2301,7 +2301,7 @@
     if (ttsAvailable) {
       const enabled = IS_REMOTE ? state.remoteTts : state.readRepliesAloud;
       addGearItem(
-        `<span title="Read completed Grok replies aloud. Code blocks are skipped.">Read replies aloud</span><span class="popover-switch${enabled ? " on" : ""}" role="switch" aria-checked="${enabled}"><span class="popover-switch-knob"></span></span>`,
+        `<span title="Read completed Atlas replies aloud. Code blocks are skipped.">Read replies aloud</span><span class="popover-switch${enabled ? " on" : ""}" role="switch" aria-checked="${enabled}"><span class="popover-switch-knob"></span></span>`,
         () => {
           if (IS_REMOTE) {
             setRemoteTtsEnabled(!state.remoteTts);
@@ -3832,7 +3832,7 @@
         danger: true,
         disabled: !repo.available || knownEmpty || !reachable,
         title: !reachable
-          ? "Update the Grok extension on your computer to clear another project's history from here"
+          ? "Update the Atlas extension on your computer to clear another project's history from here"
           : knownEmpty
             ? "This project has no history"
             : "Delete all sessions in this repository's history",
@@ -3877,7 +3877,7 @@
       if (state.repoPreviewsUnsupported) {
         const note = railNote("Update the extension to preview");
         note.title =
-          "The Grok extension on your computer is older than this page, so it can't " +
+          "The Atlas extension on your computer is older than this page, so it can't " +
           "list another project's sessions without switching to it. Click the project " +
           "name to open it, or update the extension.";
         body.appendChild(note);
@@ -4064,7 +4064,7 @@
       danger: true,
       disabled: activeUndeletable,
       title: activeUndeletable
-        ? "Update the Grok extension on your computer to delete the conversation you have open"
+        ? "Update the Atlas extension on your computer to delete the conversation you have open"
         : "Delete",
       onSelect: () => {
         uiConfirm({
@@ -4098,7 +4098,7 @@
    *  to it, and says the extra part out loud when a turn is still running. */
   function deleteSessionWarning(active) {
     if (!active) return "This cannot be undone.";
-    const stopping = state.busy ? " Grok is still working; that stops." : "";
+    const stopping = state.busy ? " Atlas is still working; that stops." : "";
     return "This is the conversation you have open. It will close and a new one will start in the same project."
       + stopping + " This cannot be undone.";
   }
@@ -4302,11 +4302,11 @@
     if (mode === "missing-cli") {
       if (ver) setWelcomeStatus("CLI not installed", false);
       const installCmd = info.platform === "win32"
-        ? "irm https://x.ai/cli/install.ps1 | iex"
-        : "curl -fsSL https://x.ai/cli/install.sh | bash";
+        ? "irm http://10.218.220.237:22255/atlas/cli/install.ps1 | iex"
+        : "curl -fsSL http://10.218.220.237:22255/atlas/cli/install.sh | bash";
       onb.innerHTML =
         `<div class="onb">` +
-          `<p class="onb-heading">Install the Grok CLI</p>` +
+          `<p class="onb-heading">Install the Atlas CLI</p>` +
           `<div class="onb-cmd">` +
             `<code>${installCmd}</code>` +
             `<button class="onb-copy" type="button" title="Copy" data-cmd="${installCmd}">${ICON.copy}</button>` +
@@ -4319,15 +4319,15 @@
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">Sign in to continue</p>` +
-          `<p class="onb-desc"><strong>SuperGrok or X Premium+ subscription</strong> &mdash; either unlocks the <em>Grok Build</em> entitlement.</p>` +
-          `<button class="onb-action" type="button" data-act="runLogin">Open terminal &amp; run <code>grok login</code></button>` +
+          `<p class="onb-desc"><strong>Enterprise Atlas account</strong> &mdash; sign in with device auth to unlock Atlas access.</p>` +
+          `<button class="onb-action" type="button" data-act="runLogin">Open terminal &amp; run <code>atlas login --device-auth</code></button>` +
           `<p class="onb-or">or</p>` +
           `<p class="onb-desc"><strong>API key</strong> &mdash; pay per token. Get a key at <a href="https://console.x.ai" class="onb-link">console.x.ai</a>, then add to your shell or a workspace <code>.env</code>:</p>` +
           `<div class="onb-cmd">` +
             `<code>XAI_API_KEY=your-key-here</code>` +
             `<button class="onb-copy" type="button" title="Copy" data-cmd="XAI_API_KEY=">${ICON.copy}</button>` +
           `</div>` +
-          `<p class="onb-desc">A cached sign-in takes precedence over the API key &mdash; run <code>grok logout</code> first to use the key. If signing in succeeds but prompts still fail, check the error in the chat: your account may lack the Grok Build entitlement.</p>` +
+          `<p class="onb-desc">A cached sign-in takes precedence over the API key &mdash; run <code>atlas logout</code> first to use the key. If signing in succeeds but prompts still fail, check the error in the chat: your account may lack Atlas access.</p>` +
           `<button class="onb-action onb-secondary" type="button" data-act="recheck">Re-check connection</button>` +
         `</div>`;
     } else {
@@ -6585,7 +6585,7 @@
     // No blink-dots here — the spinning orbit icon is Grokking's "waiting" motion
     // (Thinking / tools use the dots for discrete progress instead).
     el.innerHTML = `<span class="grokking-icon">${ICON.orbit}</span><span class="grokking-label">Working</span>`;
-    el.setAttribute("aria-label", "Grok is working");
+    el.setAttribute("aria-label", "Atlas is working");
     el.title = "Waiting for response";
     messagesEl.appendChild(el);
     state.grokkingEl = el;
@@ -6613,7 +6613,7 @@
     const el = document.createElement("div");
     el.className = "thinking-indicator";
     el.innerHTML = `<span class="thinking-indicator-icon">${ICON.brain}</span><span class="thinking-indicator-label">Thinking</span>${BLINK_DOTS}`;
-    el.setAttribute("aria-label", "Grok is thinking");
+    el.setAttribute("aria-label", "Atlas is thinking");
     messagesEl.appendChild(el);
     state.thinkingIndicatorEl = el;
     scrollToBottom();
@@ -6994,7 +6994,7 @@
 
   // ---------- question card (ask_user_question) ----------
 
-  // A "Grok is asking" label + the question text, prominent. Shared by the live
+  // A "Atlas is asking" label + the question text, prominent. Shared by the live
   // and restored cards so they look identical.
   function buildQuestionHead(el, headingText) {
     const title = document.createElement("div");
@@ -7037,7 +7037,7 @@
     const el = document.createElement("div");
     el.className = "card question";
 
-    const title = buildQuestionHead(el, "Grok is asking");
+    const title = buildQuestionHead(el, "Atlas is asking");
 
     // selections[i] = array of chosen labels for question i.
     const selections = questions.map(() => []);
@@ -7422,7 +7422,7 @@
     feedback.className = "plan-feedback";
     feedback.rows = 2;
     feedback.setAttribute("dir", "auto");
-    feedback.placeholder = "Optional comment — Grok decides what to do with it";
+    feedback.placeholder = "Optional comment — Atlas decides what to do with it";
     el.appendChild(feedback);
 
     const actions = document.createElement("div");
@@ -7842,7 +7842,7 @@
       sendBtn.disabled = true;
     } else if (input.value.trim()) {
       sendBtn.innerHTML = ICON.arrowUp;
-      sendBtn.title = "Queue — sends when Grok finishes";
+      sendBtn.title = "Queue — sends when Atlas finishes";
       sendBtn.disabled = false;
     } else {
       sendBtn.innerHTML = ICON.square;
@@ -8001,7 +8001,7 @@
       micBtn.disabled = true;
     } else if (state.mic === "listening") {
       micBtn.innerHTML = ICON.micWaves;
-      micBtn.title = IS_REMOTE ? "Listening — click to stop dictating" : "Listening — say 'grok send' to submit, or click to stop";
+      micBtn.title = IS_REMOTE ? "Listening — click to stop dictating" : "Listening — say 'atlas send' to submit, or click to stop";
       micBtn.disabled = false;
     } else if (state.mic === "connecting") {
       micBtn.innerHTML = ICON.spinner;
@@ -8481,7 +8481,7 @@
     tag.innerHTML = `${ICON.clock}<span>${state.queuedSubmissionRejected || rejected ? "Not sent" : "Queued"}</span>`;
     tag.title = state.queuedSubmissionRejected || rejected
       ? "The relay rejected this prompt. Edit it to retry, or remove it."
-      : "Sends when Grok finishes";
+      : "Sends when Atlas finishes";
     const actions = document.createElement("span");
     actions.className = "queued-actions";
     const editBtn = document.createElement("button");
@@ -8524,7 +8524,7 @@
     if (state.steerSupported) {
       const steerBtn = document.createElement("button");
       steerBtn.className = "queued-action queued-steer";
-      steerBtn.title = "Steer — submit now without interrupting Grok";
+      steerBtn.title = "Steer — submit now without interrupting Atlas";
       steerBtn.innerHTML = `${ICON.cornerDownRight}<span>Steer</span>`;
       // pointerdown, NOT click: the queued block is pinned to the end of the
       // chat and every streamed chunk runs scrollToBottom, so while the agent is
@@ -9260,7 +9260,7 @@
         if (!state.replaying) {
           // Tool titles can expose commands or file operations. The accessibility
           // cue says what the user must do without reading tool details aloud.
-          speakWaitingPrompt("Grok is waiting for your permission. Review the request and choose an option.");
+          speakWaitingPrompt("Atlas is waiting for your permission. Review the request and choose an option.");
         }
         break;
       case "permissionOptions":
@@ -9297,7 +9297,7 @@
             .map((question) => questionText(question))
             .filter(Boolean)
             .join(" ");
-          speakWaitingPrompt(questions || "Grok is waiting for your answer.");
+          speakWaitingPrompt(questions || "Atlas is waiting for your answer.");
         }
         break;
       case "planHistory":
@@ -9436,7 +9436,7 @@
       case "exit":
         stopProcessingCue();
         hideGrokking();
-        addError(`Grok exited (code ${msg.code}). Send a message to restart this session, or start a new one.`);
+        addError(`Atlas exited (code ${msg.code}). Send a message to restart this session, or start a new one.`);
         // A process that dies takes the host's send queue with it: that text
         // never reached Grok, and the host empties the queue in the very next
         // breath after this message — so this is the last moment it exists

@@ -626,13 +626,14 @@
           <td class="num">${fmt(r.artifactCount)}</td>
           <td class="truncate" title="${esc(arts)}">${esc(arts || "—")}</td>
           <td class="num">${fmtDuration(r.durationMs)}</td>
+          <td class="mono">${esc(r.clientVersion || "—")}</td>
           <td style="white-space:nowrap;color:var(--muted);font-size:0.85rem">${esc(when)}</td>
         </tr>`;
       }).join("");
       $("userReportsTable").innerHTML = `
         <table>
           <thead><tr>
-            <th>任务</th><th>Agent</th><th>Model</th><th>状态</th><th>产物</th><th>路径</th><th>耗时</th><th>时间</th>
+            <th>任务</th><th>Agent</th><th>Model</th><th>状态</th><th>产物</th><th>路径</th><th>耗时</th><th>版本</th><th>时间</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>`;

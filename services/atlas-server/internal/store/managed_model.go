@@ -36,7 +36,7 @@ var (
 	ErrManagedModelExists   = errors.New("managed model already exists")
 )
 
-// ManagedModelStore persists cloud model catalog + per-user assignments.
+// ManagedModelStore persists cloud model catalog, Direct Assignment, and User Groups.
 type ManagedModelStore interface {
 	ListManagedModels() ([]ManagedModel, error)
 	GetManagedModel(id string) (*ManagedModel, error)
@@ -48,6 +48,17 @@ type ManagedModelStore interface {
 	SetUserModels(userID string, modelIDs []string, defaultID string) error
 
 	ListUsersBrief() ([]UserBrief, error)
+
+	CreateUserGroup(name string) (*UserGroup, error)
+	UpdateUserGroup(groupID, name string) (*UserGroup, error)
+	GetUserGroup(groupID string) (*UserGroup, error)
+	DeleteUserGroup(groupID string) error
+	ListUserGroups() ([]UserGroupBrief, error)
+	ListGroupMemberIDs(groupID string) ([]string, error)
+	SetGroupMembers(groupID string, userIDs []string) error
+	ListGroupModelIDs(groupID string) ([]string, error)
+	SetGroupModels(groupID string, modelIDs []string) error
+	ListEffectiveModels(userID string) (*EffectiveModels, error)
 }
 
 // UserBrief is a minimal user row for admin assignment UI.
@@ -128,13 +139,26 @@ func (m *MySQLStore) DeleteManagedModel(id string) error {
 	return nil
 }
 
+// ListModelsForUser returns the Effective Model Set: Direct Assignment ∪ Group
+// Assignments for enabled catalog entries. Direct is_default sorts first.
 func (m *MySQLStore) ListModelsForUser(userID string) ([]ManagedModel, error) {
-	rows, err := m.db.Query(`SELECT mm.id, mm.model, mm.name, mm.description, mm.base_url, mm.api_backend, mm.api_key_enc,
-		mm.context_window, mm.owned_by, mm.enabled, IFNULL(mm.extra_json,''), mm.created_at, mm.updated_at
+	rows, err := m.db.Query(`
+		SELECT mm.id, mm.model, mm.name, mm.description, mm.base_url, mm.api_backend, mm.api_key_enc,
+			mm.context_window, mm.owned_by, mm.enabled, IFNULL(mm.extra_json,''), mm.created_at, mm.updated_at
 		FROM managed_models mm
-		INNER JOIN user_models um ON um.model_id = mm.id
-		WHERE um.user_id = ? AND mm.enabled = 1
-		ORDER BY um.is_default DESC, mm.id`, userID)
+		INNER JOIN (
+			SELECT model_id, MAX(is_default) AS is_default FROM (
+				SELECT model_id, is_default FROM user_models WHERE user_id = ?
+				UNION ALL
+				SELECT gmod.model_id, 0 AS is_default
+				FROM group_members gm
+				INNER JOIN group_models gmod ON gmod.group_id = gm.group_id
+				WHERE gm.user_id = ?
+			) assigned
+			GROUP BY model_id
+		) t ON t.model_id = mm.id
+		WHERE mm.enabled = 1
+		ORDER BY t.is_default DESC, mm.id`, userID, userID)
 	if err != nil {
 		return nil, err
 	}

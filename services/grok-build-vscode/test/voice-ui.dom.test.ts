@@ -70,7 +70,7 @@ describe("voice control mic button", () => {
     expect(mic.classList.contains("listening")).toBe(false);
   });
 
-  it("auto-submits when the host flags a 'grok send' command", () => {
+  it("auto-submits when the host flags a 'atlas send' command", () => {
     const { window, posted, doc } = bootWebview();
     const mic = $(doc, "mic-btn");
     const input = $(doc, "input") as HTMLTextAreaElement;
@@ -229,7 +229,7 @@ describe("voice control: live streaming transcription", () => {
     expect(mic.classList.contains("listening")).toBe(false);
   });
 
-  it("auto-submits the live transcript when send is flagged (hands-free 'grok send')", () => {
+  it("auto-submits the live transcript when send is flagged (hands-free 'atlas send')", () => {
     const { window, posted, doc } = bootWebview();
     const mic = $(doc, "mic-btn");
     click(window, mic);
@@ -259,7 +259,7 @@ describe("voice control: continuous listening + queue (hands-free)", () => {
     const input = $(doc, "input") as HTMLTextAreaElement;
     click(window, mic);
     dispatch(window, { type: "voiceState", status: "listening" });
-    dispatch(window, { type: "voicePartial", text: "add a logout button grok send" });
+    dispatch(window, { type: "voicePartial", text: "add a logout button atlas send" });
 
     dispatch(window, { type: "voiceSubmit", text: "add a logout button" });
 
@@ -340,19 +340,19 @@ describe("voice control: continuous listening + queue (hands-free)", () => {
   });
 });
 
-describe("voice control: 'grok send' command highlight", () => {
+describe("voice control: 'atlas send' command highlight", () => {
   it("wraps a trailing send phrase in an accent pill on the backdrop", () => {
     const { window, doc } = bootWebview();
     const mic = $(doc, "mic-btn");
     const hl = $(doc, "input-highlight");
     click(window, mic);
 
-    dispatch(window, { type: "voicePartial", text: "add a logout button grok send" });
+    dispatch(window, { type: "voicePartial", text: "add a logout button atlas send" });
 
     expect(hl.innerHTML).toContain('class="cmd-token"');
-    expect(hl.textContent).toContain("grok send");
+    expect(hl.textContent).toContain("atlas send");
     // the highlighted token is exactly the command
-    expect(hl.querySelector(".cmd-token")?.textContent).toBe("grok send");
+    expect(hl.querySelector(".cmd-token")?.textContent).toBe("atlas send");
   });
 
   it("does not highlight when there is no trailing command", () => {
@@ -441,15 +441,15 @@ describe("composer marks provisional dictation apart from the send command", () 
     const { window, doc } = bootWebview();
     const input = $(doc, "input") as HTMLTextAreaElement;
     input.value = "";
-    dispatch(window, { type: "voiceConfigured", value: true, sendPhrase: "grok send" });
+    dispatch(window, { type: "voiceConfigured", value: true, sendPhrase: "atlas send" });
     click(window, $(doc, "mic-btn"));
 
-    dispatch(window, { type: "voicePartial", text: "ship it grok send" });
+    dispatch(window, { type: "voicePartial", text: "ship it atlas send" });
 
     const cmd = doc.querySelectorAll("#input-highlight .cmd-token");
     const live = doc.querySelectorAll("#input-highlight .voice-token");
     expect(cmd).toHaveLength(1);
-    expect(cmd[0].textContent).toBe("grok send");
+    expect(cmd[0].textContent).toBe("atlas send");
     expect(live).toHaveLength(1);
     expect(live[0].textContent).toBe("ship it "); // stops where the command starts
   });

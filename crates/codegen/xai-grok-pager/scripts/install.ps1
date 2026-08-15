@@ -1,13 +1,16 @@
 #
-# Atlas CLI installer for PowerShell — served from atlas-server /cli/install.ps1
+# Atlas CLI installer for PowerShell — served from atlas-server /atlas/cli/install.ps1
 #
 # Auth: GROK_DEPLOYMENT_KEY env var (takes precedence) or ~/.atlas/auth.json from `atlas login`.
 # Env: GROK_CHANNEL (stable|alpha|enterprise, default: stable), GROK_BIN_DIR, GROK_PROXY_URL,
-#      GROK_CLI_BASE_URL (default: http://127.0.0.1:22255/cli)
+#      GROK_CLI_BASE_URL (default: http://10.218.220.237:22255/atlas/cli),
+#      GROK_ATLAS_SERVER (default: http://10.218.220.237:22255),
+#      GROK_PLUGIN_MARKETPLACE (default: https://gitlab.imyai.cn/zhangyufeng/atlas-plugins.git),
+#      GROK_SKIP_ATLAS_SDD=1 / GROK_SKIP_ATLAS_SKILLS=1 to skip marketplace plugins.
 #
 # Usage:
-#   $env:GROK_CLI_BASE_URL="http://127.0.0.1:22255/cli"; irm "$env:GROK_CLI_BASE_URL/install.ps1" | iex
-#   & ([scriptblock]::Create((irm http://127.0.0.1:22255/cli/install.ps1))) -Version 0.2.110
+#   irm http://10.218.220.237:22255/atlas/cli/install.ps1 | iex
+#   & ([scriptblock]::Create((irm http://10.218.220.237:22255/atlas/cli/install.ps1))) -Version 0.2.120
 #
 
 param(
@@ -146,11 +149,17 @@ $platform = "windows-$arch"
 
 # --- Resolve version and channel ---
 
+$AtlasServer = if ($env:GROK_ATLAS_SERVER) {
+    $env:GROK_ATLAS_SERVER.TrimEnd('/')
+} else {
+    'http://10.218.220.237:22255'
+}
 $BaseUrl = if ($env:GROK_CLI_BASE_URL) {
     $env:GROK_CLI_BASE_URL.TrimEnd('/')
 } else {
-    'http://127.0.0.1:22255/cli'
+    "$AtlasServer/atlas/cli"
 }
+$ProxyUrlDefault = "$AtlasServer/atlas/v1"
 $DownloadDir = Join-Path $GrokDir 'downloads'
 $BinDir = if ($env:GROK_BIN_DIR) { $env:GROK_BIN_DIR } else { Join-Path $GrokDir 'bin' }
 
@@ -239,41 +248,52 @@ $cliLines = @('installer = "internal"')
 if ($Channel -ne 'stable') {
     $cliLines += "channel = `"$Channel`""
 }
+$endpointLines = @(
+    "cli_chat_proxy_base_url = `"$ProxyUrlDefault`"",
+    "cli_update_base_url = `"$BaseUrl`""
+)
 
-if (-not (Test-Path $ConfigFile)) {
-    New-Item -ItemType Directory -Path (Split-Path $ConfigFile) -Force | Out-Null
-    $content = "[cli]`r`n" + ($cliLines -join "`r`n") + "`r`n"
-    [System.IO.File]::WriteAllText($ConfigFile, $content, [System.Text.Encoding]::UTF8)
-} elseif ((Get-Content -Raw $ConfigFile) -match '(?m)^\[cli\]') {
-    # Section-aware: only replace installer/channel under [cli], not other sections.
-    $existingLines = Get-Content $ConfigFile
+function Upsert-TomlSection([string]$Path, [string]$Section, [string[]]$KeysToReplace, [string[]]$NewLines) {
+    if (-not (Test-Path $Path)) {
+        New-Item -ItemType Directory -Path (Split-Path $Path) -Force | Out-Null
+        $content = "[$Section]`r`n" + ($NewLines -join "`r`n") + "`r`n"
+        [System.IO.File]::WriteAllText($Path, $content, [System.Text.Encoding]::UTF8)
+        return
+    }
+    $raw = Get-Content -Raw $Path
+    if ($raw -notmatch "(?m)^\[$([regex]::Escape($Section))\]") {
+        Add-Content -Path $Path -Value "`r`n[$Section]`r`n$($NewLines -join "`r`n")`r`n"
+        return
+    }
+    $existingLines = Get-Content $Path
     $output = [System.Collections.ArrayList]::new()
-    $inCli = $false
-
+    $inSection = $false
+    $keyPattern = '^\s*(' + ($KeysToReplace -join '|') + ')\s*='
     foreach ($line in $existingLines) {
-        if ($line -match '^\[cli\]\s*(#.*)?$') {
+        if ($line -match "^\[$([regex]::Escape($Section))\]\s*(#.*)?$") {
             [void]$output.Add($line)
-            foreach ($cl in $cliLines) { [void]$output.Add($cl) }
-            $inCli = $true
+            foreach ($nl in $NewLines) { [void]$output.Add($nl) }
+            $inSection = $true
             continue
         }
         if ($line -match '^\[.+\]\s*(#.*)?$') {
-            $inCli = $false
+            $inSection = $false
         }
-        if ($inCli -and $line -match '^\s*(installer|channel)\s*=') {
+        if ($inSection -and $line -match $keyPattern) {
             continue
         }
         [void]$output.Add($line)
     }
-    [System.IO.File]::WriteAllLines($ConfigFile, [string[]]$output.ToArray(), [System.Text.Encoding]::UTF8)
-} else {
-    Add-Content -Path $ConfigFile -Value "`r`n[cli]`r`n$($cliLines -join "`r`n")`r`n"
+    [System.IO.File]::WriteAllLines($Path, [string[]]$output.ToArray(), [System.Text.Encoding]::UTF8)
 }
+
+Upsert-TomlSection $ConfigFile 'cli' @('installer', 'channel') $cliLines
+Upsert-TomlSection $ConfigFile 'endpoints' @('cli_chat_proxy_base_url', 'cli_update_base_url') $endpointLines
 
 # --- Fetch deployment config (deployment key only) ---
 
 if ($env:GROK_DEPLOYMENT_KEY) {
-    $ProxyUrl = if ($env:GROK_PROXY_URL) { $env:GROK_PROXY_URL } else { 'http://127.0.0.1:22255/v1' }
+    $ProxyUrl = if ($env:GROK_PROXY_URL) { $env:GROK_PROXY_URL } else { $ProxyUrlDefault }
     Write-Host '  Fetching deployment config...' -ForegroundColor DarkGray
     try {
         $headers = @{ 'Authorization' = "Bearer $($env:GROK_DEPLOYMENT_KEY)" }
@@ -308,7 +328,7 @@ if ($env:GROK_DEPLOYMENT_KEY) {
 
 Write-Host "Atlas $resolvedVersion installed to $BinDir\atlas.exe" -ForegroundColor Green
 
-# --- Ensure grok is on PATH ---
+# --- Ensure atlas is on PATH ---
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $pathEntries = if ($userPath) { $userPath -split ';' | Where-Object { $_ -ne '' } } else { @() }
@@ -316,11 +336,61 @@ if ($pathEntries -notcontains $BinDir) {
     $newPath = (@($BinDir) + $pathEntries) -join ';'
     [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
     Write-Host "  Added $BinDir to your User PATH." -ForegroundColor DarkGray
-    # Update current session so grok works immediately.
+    # Update current session so atlas works immediately.
     if ($env:Path -notlike "*$BinDir*") {
         $env:Path = "$BinDir;$env:Path"
     }
 }
 
+# --- Install atlas-sdd + atlas-skills plugins (best-effort) ---
+
+$skipSdd = $env:GROK_SKIP_ATLAS_SDD -and ($env:GROK_SKIP_ATLAS_SDD -match '^(1|true|yes)$')
+$skipSkills = $env:GROK_SKIP_ATLAS_SKILLS -and ($env:GROK_SKIP_ATLAS_SKILLS -match '^(1|true|yes)$')
+if (-not $skipSdd -or -not $skipSkills) {
+    $Marketplace = if ($env:GROK_PLUGIN_MARKETPLACE) {
+        $env:GROK_PLUGIN_MARKETPLACE.Trim()
+    } else {
+        'https://gitlab.imyai.cn/zhangyufeng/atlas-plugins.git'
+    }
+    $atlasExe = Join-Path $BinDir 'atlas.exe'
+    Write-Host "Adding plugin marketplace $Marketplace..." -ForegroundColor Cyan
+    try {
+        & $atlasExe plugin marketplace add $Marketplace 2>&1 | Out-Host
+    } catch {
+        Write-Host "  Warning: marketplace add failed: $_" -ForegroundColor Yellow
+    }
+
+    function Install-AtlasMarketplacePlugin {
+        param([string]$Name)
+        try {
+            & $atlasExe plugin install "$Name@atlas-plugins" --trust 2>&1 | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                & $atlasExe plugin install "$Name@git/atlas-plugins" --trust 2>&1 | Out-Host
+            }
+            Write-Host "  $Name plugin install attempted (new session required to load)." -ForegroundColor DarkGray
+        } catch {
+            Write-Host "  Warning: $Name install failed: $_. Later: atlas plugin install $Name --trust" -ForegroundColor Yellow
+        }
+    }
+
+    if (-not $skipSdd) {
+        Write-Host 'Installing atlas-sdd plugin...' -ForegroundColor Cyan
+        Install-AtlasMarketplacePlugin -Name 'atlas-sdd'
+    } else {
+        Write-Host '  Skipped atlas-sdd (GROK_SKIP_ATLAS_SDD set).' -ForegroundColor DarkGray
+    }
+
+    if (-not $skipSkills) {
+        Write-Host 'Installing atlas-skills plugin...' -ForegroundColor Cyan
+        Install-AtlasMarketplacePlugin -Name 'atlas-skills'
+    } else {
+        Write-Host '  Skipped atlas-skills (GROK_SKIP_ATLAS_SKILLS set).' -ForegroundColor DarkGray
+    }
+} else {
+    Write-Host '  Skipped marketplace plugins (GROK_SKIP_ATLAS_SDD and GROK_SKIP_ATLAS_SKILLS set).' -ForegroundColor DarkGray
+}
+
 Write-Host ''
-Write-Host "Run 'grok' or 'agent' to get started!" -ForegroundColor Cyan
+Write-Host "Run 'atlas' or 'agent' to get started!" -ForegroundColor Cyan
+Write-Host "Update base: $BaseUrl" -ForegroundColor DarkGray
+Write-Host "Chat proxy:  $ProxyUrlDefault" -ForegroundColor DarkGray

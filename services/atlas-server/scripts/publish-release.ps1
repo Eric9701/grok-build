@@ -3,6 +3,7 @@
 # Usage (from repo root or services/atlas-server):
 #   .\scripts\publish-release.ps1 -Binary ..\..\target\release\xai-grok-pager.exe -Version 0.2.110
 #   .\scripts\publish-release.ps1 -Binary D:\atlas\atlas.exe -Version 0.2.110 -Channel alpha
+#   .\scripts\publish-release.ps1 -Binary .\atlas -Version 0.2.110 -Os linux -Arch x86_64
 #
 # Then restart/reload is not required — files are served from disk immediately.
 # Point the CLI at this server:
@@ -23,6 +24,9 @@ param(
     [string]$Channel = 'stable',
 
     [string]$ReleasesDir = '',
+
+    [ValidateSet('windows', 'linux', 'macos')]
+    [string]$Os = '',
 
     [ValidateSet('x86_64', 'aarch64')]
     [string]$Arch = ''
@@ -46,32 +50,54 @@ if (-not $ReleasesDir) {
 $ReleasesDir = [System.IO.Path]::GetFullPath($ReleasesDir)
 New-Item -ItemType Directory -Path $ReleasesDir -Force | Out-Null
 
+if (-not $Os) {
+    $ext = [System.IO.Path]::GetExtension($Binary)
+    if ($ext -eq '.exe') {
+        $Os = 'windows'
+    } elseif ($IsLinux) {
+        $Os = 'linux'
+    } elseif ($IsMacOS) {
+        $Os = 'macos'
+    } else {
+        $Os = 'windows'
+    }
+}
+
 if (-not $Arch) {
     switch ($env:PROCESSOR_ARCHITECTURE) {
         'AMD64' { $Arch = 'x86_64' }
         'ARM64' { $Arch = 'aarch64' }
-        default { Write-Error "Unsupported PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"; exit 1 }
+        default {
+            $unameM = ''
+            try { $unameM = (uname -m 2>$null) } catch { }
+            switch -Regex ($unameM) {
+                '^(x86_64|amd64)$' { $Arch = 'x86_64' }
+                '^(arm64|aarch64)$' { $Arch = 'aarch64' }
+                default {
+                    Write-Error "Unsupported PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE; pass -Arch x86_64 or aarch64"
+                    exit 1
+                }
+            }
+        }
     }
 }
 
-$platform = "windows-$Arch"
-$artifact = "grok-$Version-$platform.exe"
+$platform = "$Os-$Arch"
+$artifact = if ($Os -eq 'windows') { "grok-$Version-$platform.exe" } else { "grok-$Version-$platform" }
 $dest = Join-Path $ReleasesDir $artifact
 $channelFile = Join-Path $ReleasesDir $Channel
 
 Copy-Item -LiteralPath $Binary -Destination $dest -Force
 Set-Content -LiteralPath $channelFile -Value $Version.Trim() -NoNewline -Encoding ascii
 
-# Also publish install.ps1 from the pager scripts if present.
-$installSrc = Join-Path $PSScriptRoot '..\..\..\crates\codegen\xai-grok-pager\scripts\install.ps1'
-if (Test-Path -LiteralPath $installSrc) {
-    Copy-Item -LiteralPath $installSrc -Destination (Join-Path $ReleasesDir 'install.ps1') -Force
+$pagerScripts = Join-Path $PSScriptRoot '..\..\..\crates\codegen\xai-grok-pager\scripts'
+foreach ($name in @('install.ps1', 'install-enterprise.ps1', 'install.sh', 'install-enterprise.sh')) {
+    $src = Join-Path $pagerScripts $name
+    if (Test-Path -LiteralPath $src) {
+        Copy-Item -LiteralPath $src -Destination (Join-Path $ReleasesDir $name) -Force
+    }
 }
 
 Write-Host "Published $artifact" -ForegroundColor Green
 Write-Host "Channel $Channel -> $Version" -ForegroundColor Green
 Write-Host "Dir: $ReleasesDir"
-Write-Host ""
-Write-Host "Smoke check:"
-Write-Host "  curl http://127.0.0.1:22255/cli/$Channel"
-Write-Host "  curl -OJ http://127.0.0.1:22255/cli/$artifact"

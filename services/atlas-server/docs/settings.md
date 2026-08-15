@@ -197,6 +197,23 @@ atlas-server 返回前会强制：
 | `grok_oauth_enabled` | 文档意图：远程开默认 xAI OAuth；实际多靠 CLI/env |
 | `oauth2_issuer` / `oauth2_client_id` | 自定义 OAuth2；当前解析后未接线 |
 
+### 本地强制会话（非 remote settings）
+
+`require_session_at_startup` **不是** remote settings 字段。**默认开启**（不必写进 config.toml）。
+
+关闭方式：
+
+```toml
+[auth]
+require_session_at_startup = false
+```
+
+或环境变量 `GROK_REQUIRE_SESSION_AT_STARTUP=0`（env 一旦设置则覆盖 config）。
+
+语义：新进程启动时必须有 OAuth/OIDC 会话（`auth.json`）；仅托管模型 / BYOK `api_key` 不够。无会话则进入登录流程，authenticate 成功后本进程可用。已在跑的进程不因中途清凭证而强杀 turn。
+
+登录默认走机器码（device）流程，打开 `/atlas/oauth2/device`；浏览器访问 `/atlas/authorize` 会重定向到该页。若需回退 loopback authorize，可设 `[auth] login_device_flow = false` 或 `--oauth`。
+
 ---
 
 ## 十、子代理相关
@@ -230,7 +247,7 @@ atlas-server 返回前会强制：
 2. **模型**：设好 `default_model`
 3. **上报**：按需打开 `telemetry_enabled` / `trace_upload_enabled`（对齐 atlas 的 `/atlas/v1/traces`、`/atlas/v1/task-reports`）
 4. **能力**：`goal_*`、`web_fetch_enabled`、`voice_mode_enabled` 等按产品需要
-5. **公告**：`announcements` / `tips` 中的公网升级链接建议改成你们自己的地址或清空
+5. **公告**：server 在 `writePatchedSettings` 中**强制清空** `announcements` / `tips`，避免上游 promo CTA（如 TUI 上的 `[Click here to upgrade]`）进入企业端。若要自建公告，需改该补丁逻辑后再下发。
 6. **子代理**：不要依赖 remote 的 `subagents_enabled`，改本地 `config.toml` 的 `[subagents]`
 
 示例最小可用片段：

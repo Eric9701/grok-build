@@ -92,6 +92,15 @@ pub struct GrokComConfig {
     /// multi-method fallthrough. Config.toml only (`[auth] preferred_method`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_method: Option<PreferredAuthMethod>,
+    /// When `Some(true)`, a new process must have an OAuth/OIDC session before
+    /// it becomes usable. Managed-model / BYOK `api_key` alone is not enough.
+    /// Checked once at process start (not mid-turn).
+    ///
+    /// **Default is on** when unset. Set `require_session_at_startup = false`
+    /// (or env `GROK_REQUIRE_SESSION_AT_STARTUP=0`) to disable. Env, when set,
+    /// wins over config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_session_at_startup: Option<bool>,
 }
 /// Team login restriction. TOML string or array; an empty array fails closed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -213,6 +222,18 @@ impl GrokComConfig {
             || self.force_login_team_uuid.is_some()
             || env_lockdown_forced()
     }
+    /// Whether new processes must present an OAuth/OIDC session before use.
+    ///
+    /// Default **on**. Precedence:
+    /// 1. Env `GROK_REQUIRE_SESSION_AT_STARTUP` when set (truthy/falsy)
+    /// 2. Config `require_session_at_startup = false` disables; `true` keeps on
+    /// 3. Absent → enabled
+    pub(crate) fn require_session_at_startup(&self) -> bool {
+        if let Ok(v) = std::env::var("GROK_REQUIRE_SESSION_AT_STARTUP") {
+            return env_flag_enabled(&v);
+        }
+        self.require_session_at_startup != Some(false)
+    }
     /// When `preferred_method = api_key`, automatic OIDC paths (devbox mint,
     /// interactive browser login, external auth provider) must not run — the
     /// pin is fail-closed. Explicit `grok login --devbox` / `--api-key` bypass
@@ -309,6 +330,9 @@ impl Default for GrokComConfig {
                 .map(|v| env_flag_enabled(&v)),
             force_login_team_uuid: None,
             preferred_method: None,
+            // None = default-on via [`Self::require_session_at_startup`]; do not
+            // seed from env here (helper reads env live so falsy env can disable).
+            require_session_at_startup: None,
         }
     }
 }

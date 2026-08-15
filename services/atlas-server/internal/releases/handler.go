@@ -17,7 +17,7 @@ import (
 //
 //	stable | alpha | enterprise   — plain-text semver
 //	grok-{version}-{platform}[.exe]
-//	install.ps1 / install.sh      — optional bootstrap scripts
+//	install.ps1 / install.sh / install-enterprise.* — optional bootstrap scripts
 type Handler struct {
 	Dir string
 }

@@ -1334,6 +1334,14 @@ async fn remove_stale_models_cache() {
     }
 }
 
+/// Remove leftover `grok` / `grok.exe` after Atlas became the managed entrypoint.
+async fn remove_stale_legacy_grok_bin(bin_dir: &std::path::Path) {
+    let link = bin_dir.join(legacy_grok_bin_name());
+    if link.exists() || link.is_symlink() {
+        let _ = tokio::fs::remove_file(&link).await;
+    }
+}
+
 /// Remove the stale `grok-pager` symlink/binary from `~/.grok/bin/` left by
 /// older installations that shipped a separate pager binary.
 async fn remove_stale_pager(bin_dir: &std::path::Path) {
@@ -1623,10 +1631,11 @@ async fn activate_verified_download(download: &VerifiedDownload) -> Result<()> {
     let bin_dir = grok_home.join("bin");
     tokio::fs::create_dir_all(&bin_dir).await?;
 
-    // Atomic swap of ~/.grok/bin/{grok,agent} -> downloaded binary.
+    // Atomic swap of ~/.atlas/bin/{atlas,agent} -> downloaded binary.
     let link_path = swap_managed_bin_links(&download.binary_path, &bin_dir).await?;
 
     remove_stale_pager(&bin_dir).await;
+    remove_stale_legacy_grok_bin(&bin_dir).await;
 
     eprintln!();
 
@@ -1660,9 +1669,9 @@ async fn regenerate_completions(binary: &std::path::Path, grok_home: &std::path:
     let user_home = std::env::home_dir().unwrap_or_default();
 
     let completions: &[(&str, std::path::PathBuf)] = &[
-        ("bash", grok_home.join("completions/bash/grok.bash")),
-        ("zsh", grok_home.join("completions/zsh/_grok")),
-        ("fish", user_home.join(".config/fish/completions/grok.fish")),
+        ("bash", grok_home.join("completions/bash/atlas.bash")),
+        ("zsh", grok_home.join("completions/zsh/_atlas")),
+        ("fish", user_home.join(".config/fish/completions/atlas.fish")),
     ];
 
     for (shell, dest) in completions {
@@ -1716,12 +1725,24 @@ fn relative_symlink_target(target: &std::path::Path, link: &std::path::Path) -> 
     target.to_path_buf()
 }
 
-/// Swap `~/.grok/bin/{grok,agent}` to point at `binary_path`. Returns the
-/// `grok` link path (for [`regenerate_completions`]).
+fn managed_cli_bin_name() -> &'static str {
+    if cfg!(windows) { "atlas.exe" } else { "atlas" }
+}
+
+fn legacy_grok_bin_name() -> &'static str {
+    if cfg!(windows) { "grok.exe" } else { "grok" }
+}
+
+fn managed_agent_bin_name() -> &'static str {
+    if cfg!(windows) { "agent.exe" } else { "agent" }
+}
+
+/// Swap `~/.atlas/bin/{atlas,agent}` to point at `binary_path`. Returns the
+/// `atlas` link path (for [`regenerate_completions`]).
 ///
-/// `grok` and `agent` are first-class entry points that the bootstrap
+/// `atlas` and `agent` are first-class entry points that the bootstrap
 /// installers (`install.sh`, `install.ps1`, `install-enterprise.sh`)
-/// maintain in lockstep, and so must the updater — otherwise `grok update`
+/// maintain in lockstep, and so must the updater — otherwise `atlas update`
 /// leaves `agent` pinned at the previous version.
 ///
 /// Unix: atomic symlink swap with relative target (survives Docker
@@ -1738,8 +1759,8 @@ async fn swap_managed_bin_links(
     binary_path: &std::path::Path,
     bin_dir: &std::path::Path,
 ) -> Result<std::path::PathBuf> {
-    let grok_name = if cfg!(windows) { "grok.exe" } else { "grok" };
-    let agent_name = if cfg!(windows) { "agent.exe" } else { "agent" };
+    let grok_name = managed_cli_bin_name();
+    let agent_name = managed_agent_bin_name();
     let grok_link = bin_dir.join(grok_name);
     let agent_link = bin_dir.join(agent_name);
     let link_paths: [std::path::PathBuf; 2] = [grok_link.clone(), agent_link];
@@ -2267,17 +2288,48 @@ async fn heal_managed_install(installer: &str) {
         let bin_dir = grok_home().join("bin");
 
         #[cfg(unix)]
-        reconcile_agent_to_grok(&bin_dir).await;
+        {
+            promote_legacy_grok_to_atlas(&bin_dir).await;
+            reconcile_agent_to_grok(&bin_dir).await;
+        }
 
         #[cfg(windows)]
-        reconcile_agent_exe_to_grok(&bin_dir).await;
+        {
+            promote_legacy_grok_exe_to_atlas(&bin_dir).await;
+            reconcile_agent_exe_to_grok(&bin_dir).await;
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn promote_legacy_grok_to_atlas(bin_dir: &std::path::Path) {
+    let grok_link = bin_dir.join(legacy_grok_bin_name());
+    let atlas_link = bin_dir.join(managed_cli_bin_name());
+    let Ok(grok_target) = tokio::fs::read_link(&grok_link).await else {
+        return;
+    };
+    if tokio::fs::metadata(&grok_link).await.is_err() {
+        return;
+    }
+    if let Ok(atlas_target) = tokio::fs::read_link(&atlas_link).await
+        && atlas_target == grok_target
+    {
+        let _ = tokio::fs::remove_file(&grok_link).await;
+        return;
+    }
+    match atomic_symlink_swap(&grok_target, &atlas_link).await {
+        Ok(()) => {
+            tracing::info!("promoted grok bin symlink to atlas");
+            let _ = tokio::fs::remove_file(&grok_link).await;
+        }
+        Err(e) => tracing::warn!("failed to promote grok bin symlink to atlas: {e:#}"),
     }
 }
 
 #[cfg(unix)]
 async fn reconcile_agent_to_grok(bin_dir: &std::path::Path) {
-    let grok_link = bin_dir.join("grok");
-    let agent_link = bin_dir.join("agent");
+    let grok_link = bin_dir.join(managed_cli_bin_name());
+    let agent_link = bin_dir.join(managed_agent_bin_name());
 
     let Ok(grok_target) = tokio::fs::read_link(&grok_link).await else {
         return;
@@ -2300,9 +2352,33 @@ async fn reconcile_agent_to_grok(bin_dir: &std::path::Path) {
 }
 
 #[cfg(windows)]
+async fn promote_legacy_grok_exe_to_atlas(bin_dir: &std::path::Path) {
+    let grok_exe = bin_dir.join(legacy_grok_bin_name());
+    let atlas_exe = bin_dir.join(managed_cli_bin_name());
+    if tokio::fs::metadata(&grok_exe).await.is_err() {
+        return;
+    }
+    match agent_exe_differs(&grok_exe, &atlas_exe).await {
+        Ok(false) => {
+            let _ = tokio::fs::remove_file(&grok_exe).await;
+            return;
+        }
+        Ok(true) => {}
+        Err(e) => tracing::debug!("grok.exe promote: compare failed: {e:#}"),
+    }
+    match windows_replace_exe(&grok_exe, &atlas_exe).await {
+        Ok(()) => {
+            tracing::info!("promoted grok.exe to atlas.exe");
+            let _ = tokio::fs::remove_file(&grok_exe).await;
+        }
+        Err(e) => tracing::warn!("failed to promote grok.exe to atlas.exe: {e:#}"),
+    }
+}
+
+#[cfg(windows)]
 async fn reconcile_agent_exe_to_grok(bin_dir: &std::path::Path) {
-    let grok_exe = bin_dir.join("grok.exe");
-    let agent_exe = bin_dir.join("agent.exe");
+    let grok_exe = bin_dir.join(managed_cli_bin_name());
+    let agent_exe = bin_dir.join(managed_agent_bin_name());
 
     if tokio::fs::metadata(&grok_exe).await.is_err() {
         return;
@@ -2316,8 +2392,8 @@ async fn reconcile_agent_exe_to_grok(bin_dir: &std::path::Path) {
         }
     }
     match windows_replace_exe(&grok_exe, &agent_exe).await {
-        Ok(()) => tracing::info!("reconciled agent.exe to grok.exe"),
-        Err(e) => tracing::warn!("failed to reconcile agent.exe to grok.exe: {e:#}"),
+        Ok(()) => tracing::info!("reconciled agent.exe to atlas.exe"),
+        Err(e) => tracing::warn!("failed to reconcile agent.exe to atlas.exe: {e:#}"),
     }
 }
 
@@ -2433,8 +2509,9 @@ async fn install_gh_release(target: Option<&str>) -> Result<()> {
         tokio::fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(0o755)).await?;
     }
 
-    // Atomic swap of ~/.grok/bin/{grok,agent} -> downloaded binary.
+    // Atomic swap of ~/.atlas/bin/{atlas,agent} -> downloaded binary.
     swap_managed_bin_links(&binary_path, &bin_dir).await?;
+    remove_stale_legacy_grok_bin(&bin_dir).await;
 
     // Update grok-latest -> versioned binary so any existing symlinks that route
     // through it (e.g. /usr/local/bin/grok -> ~/.grok/downloads/grok-latest)

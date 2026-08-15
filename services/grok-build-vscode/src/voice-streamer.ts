@@ -229,7 +229,7 @@ export class VoiceStreamer extends EventEmitter {
     if (process.platform === "win32" && !device) {
       device = await resolveWindowsAudioDevice(opts.ffmpegPath, opts.log);
       if (!device) {
-        throw new Error("No microphone (DirectShow audio device) was found. Set grok.voiceInputDevice to its name.");
+        throw new Error("No microphone (DirectShow audio device) was found. Set atlas.voiceInputDevice to its name.");
       }
     }
     const args = buildFfmpegStreamArgs(process.platform, { device });
@@ -245,7 +245,7 @@ export class VoiceStreamer extends EventEmitter {
         if (settled) return;
         settled = true;
         reject(e.code === "ENOENT"
-          ? new Error("ffmpeg was not found. Install ffmpeg (https://ffmpeg.org) or set grok.ffmpegPath.")
+          ? new Error("ffmpeg was not found. Install ffmpeg (https://ffmpeg.org) or set atlas.ffmpegPath.")
           : e);
       });
       setTimeout(() => { if (!settled) { settled = true; resolve(); } }, 200);

@@ -67,6 +67,9 @@ type taskReportPayload struct {
 	Error           string   `json:"error"`
 	StartedAt       string   `json:"startedAt"`
 	CompletedAt     string   `json:"completedAt"`
+	UserID          string   `json:"userId"`
+	Email           string   `json:"email"`
+	ClientVersion   string   `json:"clientVersion"`
 }
 
 // TaskReports stores a per-subagent-task report attributed to the user.
@@ -88,7 +91,11 @@ func (h *Handler) TaskReports(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, email := h.resolveUser(r)
+	userID := strings.TrimSpace(p.UserID)
+	email := strings.TrimSpace(p.Email)
+	if userID == "" {
+		userID = "anonymous"
+	}
 	teamID := strings.TrimSpace(r.Header.Get("x-teamid"))
 
 	if h.reports == nil {
@@ -122,6 +129,7 @@ func (h *Handler) TaskReports(w http.ResponseWriter, r *http.Request) {
 		StartedAt:       p.StartedAt,
 		CompletedAt:     p.CompletedAt,
 		ClientIP:        clientIP(r),
+		ClientVersion:   strings.TrimSpace(p.ClientVersion),
 	}
 	if rec.ArtifactCount == 0 {
 		rec.ArtifactCount = len(rec.Artifacts)
@@ -258,6 +266,7 @@ func (h *Handler) ListTaskReports(w http.ResponseWriter, r *http.Request) {
 		StartedAt       string           `json:"startedAt,omitempty"`
 		CompletedAt     string           `json:"completedAt,omitempty"`
 		ClientIP        string           `json:"clientIp,omitempty"`
+		ClientVersion   string           `json:"clientVersion,omitempty"`
 		CreatedAt       string           `json:"createdAt"`
 	}
 	out := make([]item, 0, len(rows))
@@ -292,6 +301,7 @@ func (h *Handler) ListTaskReports(w http.ResponseWriter, r *http.Request) {
 			StartedAt:       row.StartedAt,
 			CompletedAt:     row.CompletedAt,
 			ClientIP:        row.ClientIP,
+			ClientVersion:   row.ClientVersion,
 			CreatedAt:       row.CreatedAt.UTC().Format(timeRFC3339),
 		})
 	}

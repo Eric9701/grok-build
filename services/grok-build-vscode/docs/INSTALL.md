@@ -1,5 +1,7 @@
 # Advanced install (Atlas)
 
+面向终端用户的中文安装与命令说明见仓库根目录 **[atlas-runtime 安装与使用手册](../../../docs/atlas-runtime-安装手册.md)**。
+
 The extension is an ACP client for the **Atlas CLI** (`atlas`). Prefer installing the CLI with the enterprise scripts from this monorepo, then point the extension at it if needed.
 
 ## Install the Atlas CLI (enterprise)

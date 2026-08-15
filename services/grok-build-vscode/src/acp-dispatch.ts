@@ -541,7 +541,7 @@ export function makeExitPlanUnavailableResponse(id: number | string) {
     id,
     error: {
       code: -32000,
-      message: "Plan mode is unavailable for this Grok CLI version",
+      message: "Plan mode is unavailable for this Atlas CLI version",
     },
   };
 }
@@ -742,7 +742,7 @@ export function rateLimitNoticeText(err: unknown): string {
 export function entitlementNoticeText(err: unknown): string {
   const detail = errorDetail(err).trim();
   const noAccess = /\bsubscription\b|\bentitl/i.test(detail)
-    ? "This account doesn't have Grok Build access (it needs SuperGrok or X Premium+ — or sign out to use an XAI_API_KEY instead). "
+    ? "This account doesn't have Atlas access (check with your administrator — or sign out to use an XAI_API_KEY instead). "
     : "";
   return `Not a sign-in issue \u{2014} signing in again won't fix this. ${noAccess}${detail}`;
 }

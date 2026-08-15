@@ -70,7 +70,7 @@ export class VoiceRecorder {
       device = await resolveWindowsAudioDevice(opts.ffmpegPath, opts.log);
       if (!device) {
         throw new Error(
-          "No microphone (DirectShow audio device) was found. Plug one in, or set grok.voiceInputDevice to its name.",
+          "No microphone (DirectShow audio device) was found. Plug one in, or set atlas.voiceInputDevice to its name.",
         );
       }
     }
@@ -92,7 +92,7 @@ export class VoiceRecorder {
         settled = true;
         reject(
           err.code === "ENOENT"
-            ? new Error("ffmpeg was not found. Install ffmpeg (https://ffmpeg.org) or set grok.ffmpegPath.")
+            ? new Error("ffmpeg was not found. Install ffmpeg (https://ffmpeg.org) or set atlas.ffmpegPath.")
             : err,
         );
       });

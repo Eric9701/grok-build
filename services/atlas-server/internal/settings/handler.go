@@ -58,6 +58,10 @@ func writePatchedSettings(w http.ResponseWriter, raw []byte) {
 	if _, ok := m["default_model"]; !ok {
 		m["default_model"] = "grok-4.5"
 	}
+	// Enterprise: drop upstream promo / upgrade CTAs (e.g. "[Click here to upgrade]")
+	// that otherwise paint in the TUI welcome hero and session header.
+	m["announcements"] = []any{}
+	m["tips"] = []any{}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(m)
 }

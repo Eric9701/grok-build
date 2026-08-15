@@ -1,14 +1,16 @@
 #!/bin/bash
 #
-# Atlas CLI installer — served from atlas-server /cli/install.sh
+# Atlas CLI installer — served from atlas-server /atlas/cli/install.sh
 #
 # Auth: GROK_DEPLOYMENT_KEY (takes precedence) or ~/.atlas/auth.json from `atlas login`.
-# Env: GROK_CHANNEL, GROK_BIN_DIR, GROK_PROXY_URL, GROK_CLI_BASE_URL
-#      (default base: http://127.0.0.1:22255/cli)
+# Env: GROK_CHANNEL, GROK_BIN_DIR, GROK_PROXY_URL, GROK_CLI_BASE_URL,
+#      GROK_ATLAS_SERVER (default: http://10.218.220.237:22255),
+#      GROK_PLUGIN_MARKETPLACE, GROK_SKIP_ATLAS_SDD=1, GROK_SKIP_ATLAS_SKILLS=1
+#      (default CLI base: ${GROK_ATLAS_SERVER}/atlas/cli)
 #
 # Usage:
-#   curl -fsSL http://127.0.0.1:22255/cli/install.sh | bash
-#   curl -fsSL http://127.0.0.1:22255/cli/install.sh | bash -s 0.2.110
+#   curl -fsSL http://10.218.220.237:22255/atlas/cli/install.sh | bash
+#   curl -fsSL http://10.218.220.237:22255/atlas/cli/install.sh | bash -s 0.2.120
 #
 # Windows: run under Git for Windows / MSYS2 Bash (same curl | bash flow); WSL
 # uses the Linux binary.
@@ -164,8 +166,11 @@ if [ "$os" = "macos" ] && [ "$arch" = "x86_64" ]; then
     fi
 fi
 
-BASE_URL="${GROK_CLI_BASE_URL:-http://127.0.0.1:22255/cli}"
+ATLAS_SERVER="${GROK_ATLAS_SERVER:-http://10.218.220.237:22255}"
+ATLAS_SERVER="${ATLAS_SERVER%/}"
+BASE_URL="${GROK_CLI_BASE_URL:-${ATLAS_SERVER}/atlas/cli}"
 BASE_URL="${BASE_URL%/}"
+PROXY_URL_DEFAULT="${ATLAS_SERVER}/atlas/v1"
 DOWNLOAD_DIR="$HOME/.atlas/downloads"
 BIN_DIR="${GROK_BIN_DIR:-$HOME/.atlas/bin}"
 mkdir -p "$DOWNLOAD_DIR" "$BIN_DIR"
@@ -234,7 +239,7 @@ if [ "$os" = "windows" ]; then
     mv -f "$binary_tmp" "$binary_path"
     # Symlinks require Developer Mode on Windows; copy instead.
     # If the exe is locked by a running process, rename it aside then retry.
-    for bin_name in grok.exe agent.exe; do
+    for bin_name in atlas.exe agent.exe; do
         rm -f "$BIN_DIR/$bin_name.old" 2>/dev/null || true  # stale backup from prior update
         if ! cp -f "$binary_path" "$BIN_DIR/$bin_name" 2>/dev/null; then
             mv -f "$BIN_DIR/$bin_name" "$BIN_DIR/$bin_name.old" 2>/dev/null || true
@@ -277,29 +282,41 @@ if mkdir -p "$HOME/.config/fish/completions" 2>/dev/null; then
     "$BIN_DIR/atlas" completions fish > "$HOME/.config/fish/completions/atlas.fish" 2>/dev/null || true
 fi
 
-# Persist installer source and channel to config
+# Persist installer source, channel, and enterprise endpoints
 CONFIG_FILE="$HOME/.atlas/config.toml"
 CLI_BLOCK="installer = \"internal\""
 if [ "$CHANNEL" != "stable" ]; then
     CLI_BLOCK="${CLI_BLOCK}\nchannel = \"${CHANNEL}\""
 fi
-if [ ! -f "$CONFIG_FILE" ]; then
-    printf '[cli]\n%b\n' "$CLI_BLOCK" > "$CONFIG_FILE"
-elif grep -q '^\[cli\]' "$CONFIG_FILE"; then
-    tmp="$CONFIG_FILE.tmp.$$"
-    awk -v block="$CLI_BLOCK" '
-        /^\[cli\][[:space:]]*(#.*)?$/ { print; printf "%s\n", block; in_cli=1; next }
-        /^\[.*\][[:space:]]*(#.*)?$/  { in_cli=0 }
-        in_cli && /^[[:space:]]*(installer|channel)[[:space:]]*=/ { next }
+ENDPOINTS_BLOCK="cli_chat_proxy_base_url = \"${PROXY_URL_DEFAULT}\"\ncli_update_base_url = \"${BASE_URL}\""
+
+upsert_toml_section() {
+    local file="$1" section="$2" keys_regex="$3" block="$4"
+    if [ ! -f "$file" ]; then
+        printf '[%s]\n%b\n' "$section" "$block" > "$file"
+        return
+    fi
+    if ! grep -q "^\[${section}\]" "$file"; then
+        printf '\n[%s]\n%b\n' "$section" "$block" >> "$file"
+        return
+    fi
+    local tmp="$file.tmp.$$"
+    awk -v section="$section" -v block="$block" -v keys_regex="$keys_regex" '
+        $0 ~ "^\\[" section "\\][[:space:]]*(#.*)?$" {
+            print; printf "%s\n", block; in_sec=1; next
+        }
+        /^\[.*\][[:space:]]*(#.*)?$/ { in_sec=0 }
+        in_sec && $0 ~ "^[[:space:]]*(" keys_regex ")[[:space:]]*=" { next }
         { print }
-    ' "$CONFIG_FILE" > "$tmp" && mv "$tmp" "$CONFIG_FILE"
-else
-    printf '\n[cli]\n%b\n' "$CLI_BLOCK" >> "$CONFIG_FILE"
-fi
+    ' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
+upsert_toml_section "$CONFIG_FILE" "cli" "installer|channel" "$CLI_BLOCK"
+upsert_toml_section "$CONFIG_FILE" "endpoints" "cli_chat_proxy_base_url|cli_update_base_url" "$ENDPOINTS_BLOCK"
 
 # Fetch managed_config.toml + requirements.toml from server (deployment key only).
 if [ -n "$GROK_DEPLOYMENT_KEY" ]; then
-    PROXY_URL="${GROK_PROXY_URL:-http://127.0.0.1:22255/v1}"
+    PROXY_URL="${GROK_PROXY_URL:-$PROXY_URL_DEFAULT}"
     echo "  Fetching deployment config..." >&2
     DEPLOY_RESPONSE=""
     AUTH_HEADER_FILE=$(mktemp 2>/dev/null) || AUTH_HEADER_FILE=""
@@ -435,12 +452,52 @@ export PATH="$HOME/.atlas/bin:$PATH"
 fi
 
 echo "" >&2
+
+# Install atlas-sdd + atlas-skills plugins (best-effort)
+install_atlas_marketplace_plugin() {
+    local name="$1"
+    if ! "$ATLAS_BIN" plugin install "$name" --trust; then
+        "$ATLAS_BIN" plugin install "${name}@git/atlas-plugins" --trust || \
+            echo "  Warning: ${name} install failed. Later: atlas plugin install ${name} --trust" >&2
+    fi
+    echo "  ${name} plugin install attempted (new session required to load)." >&2
+}
+
+SKIP_SDD=0
+SKIP_SKILLS=0
+case "${GROK_SKIP_ATLAS_SDD:-}" in 1|true|yes|YES|True) SKIP_SDD=1 ;; esac
+case "${GROK_SKIP_ATLAS_SKILLS:-}" in 1|true|yes|YES|True) SKIP_SKILLS=1 ;; esac
+
+if [ "$SKIP_SDD" -eq 0 ] || [ "$SKIP_SKILLS" -eq 0 ]; then
+    MARKETPLACE="${GROK_PLUGIN_MARKETPLACE:-https://gitlab.imyai.cn/zhangyufeng/atlas-plugins.git}"
+    ATLAS_BIN="$BIN_DIR/atlas"
+    [ "$os" = "windows" ] && ATLAS_BIN="$BIN_DIR/atlas.exe"
+    echo "Adding plugin marketplace ${MARKETPLACE}..." >&2
+    "$ATLAS_BIN" plugin marketplace add "$MARKETPLACE" >/dev/null 2>&1 || \
+        echo "  Warning: marketplace add failed (may already exist)." >&2
+    if [ "$SKIP_SDD" -eq 0 ]; then
+        echo "Installing atlas-sdd plugin..." >&2
+        install_atlas_marketplace_plugin atlas-sdd
+    else
+        echo "  Skipped atlas-sdd (GROK_SKIP_ATLAS_SDD set)." >&2
+    fi
+    if [ "$SKIP_SKILLS" -eq 0 ]; then
+        echo "Installing atlas-skills plugin..." >&2
+        install_atlas_marketplace_plugin atlas-skills
+    else
+        echo "  Skipped atlas-skills (GROK_SKIP_ATLAS_SKILLS set)." >&2
+    fi
+fi
+
+echo "Update base: ${BASE_URL}" >&2
+echo "Chat proxy:  ${PROXY_URL_DEFAULT}" >&2
+
 if path_has_dir "$BIN_DIR" || [ -n "$SYMLINK_CREATED" ]; then
-    echo "Run 'grok' or 'agent' to get started!" >&2
+    echo "Run 'atlas' or 'agent' to get started!" >&2
 elif [ -n "$config_file" ]; then
-    echo "Restart your terminal, then run 'grok' or 'agent' to get started!" >&2
+    echo "Restart your terminal, then run 'atlas' or 'agent' to get started!" >&2
 else
-    echo "Add $BIN_DIR to your PATH, then run 'grok' or 'agent' to get started:" >&2
+    echo "Add $BIN_DIR to your PATH, then run 'atlas' or 'agent' to get started:" >&2
     echo '  export PATH="$HOME/.atlas/bin:$PATH"' >&2
 fi
 

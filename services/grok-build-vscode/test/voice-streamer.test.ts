@@ -65,7 +65,7 @@ describe("PcmVoiceStreamer startup", () => {
     const started = streamer.start({
       apiKey: "test",
       language: "pl",
-      keyterms: ["grok send", "Get-ChildItem"],
+      keyterms: ["atlas send", "Get-ChildItem"],
       log: (message) => logs.push(message),
     });
     wsMock.sockets[0].emit("message", Buffer.from(JSON.stringify({ type: "transcript.created" })), false);

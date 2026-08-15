@@ -157,6 +157,7 @@ Remote settings field reference: **[docs/settings.md](docs/settings.md)**
 
 ```powershell
 .\scripts\publish-release.ps1 -Binary path\to\xai-grok-pager.exe -Version 0.2.110
+# Linux / macOS 产物加 -Os linux|macos（无 .exe）
 ```
 
 CLI clients should set:

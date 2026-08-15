@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS telemetry_traces (
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS task_reports (
     id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    user_id           VARCHAR(64)     NULL COMMENT 'From JWT sub or x-userid',
+    user_id           VARCHAR(64)     NULL COMMENT 'Report User from JSON body (userId)',
     email             VARCHAR(255)    NULL,
     team_id           VARCHAR(64)     NULL COMMENT 'From x-teamid header',
     subagent_id       VARCHAR(128)    NULL,
@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS task_reports (
     started_at        VARCHAR(40)     NULL COMMENT 'RFC3339',
     completed_at      VARCHAR(40)     NULL COMMENT 'RFC3339',
     client_ip         VARCHAR(64)     NULL,
+    client_version    VARCHAR(64)     NULL COMMENT 'Compiled CLI version from report body',
     created_at        TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     PRIMARY KEY (id),
@@ -164,6 +165,39 @@ CREATE TABLE IF NOT EXISTS user_models (
     KEY idx_user_models_model (model_id),
     CONSTRAINT fk_user_models_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     CONSTRAINT fk_user_models_model FOREIGN KEY (model_id) REFERENCES managed_models(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
+-- user_groups: named sets for Group Assignment of managed models
+-- name UNIQUE under utf8mb4_unicode_ci ⇒ case-insensitive
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_groups (
+    group_id    VARCHAR(64)  NOT NULL,
+    name        VARCHAR(255) NOT NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id),
+    UNIQUE KEY uk_user_groups_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS group_members (
+    group_id    VARCHAR(64)  NOT NULL,
+    user_id     VARCHAR(64)  NOT NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id, user_id),
+    KEY idx_group_members_user (user_id),
+    CONSTRAINT fk_group_members_group FOREIGN KEY (group_id) REFERENCES user_groups(group_id) ON DELETE CASCADE,
+    CONSTRAINT fk_group_members_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS group_models (
+    group_id    VARCHAR(64)  NOT NULL,
+    model_id    VARCHAR(128) NOT NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id, model_id),
+    KEY idx_group_models_model (model_id),
+    CONSTRAINT fk_group_models_group FOREIGN KEY (group_id) REFERENCES user_groups(group_id) ON DELETE CASCADE,
+    CONSTRAINT fk_group_models_model FOREIGN KEY (model_id) REFERENCES managed_models(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------

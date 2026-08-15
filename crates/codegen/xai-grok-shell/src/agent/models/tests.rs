@@ -1546,6 +1546,7 @@ fn reload_from_disk_cache_ignores_stale_cache() {
         auth_method: Some(auth_method),
         origin: Some(mgr.cache_origin()),
         etag: Some("etag-stale".into()),
+        managed: false,
         models: make_prefetched(&["grok-stale"]),
     };
     cache.atomic_write(&stale);
@@ -1610,6 +1611,7 @@ fn reload_from_disk_cache_ignores_legacy_cache_without_origin() {
         auth_method: Some(auth_method),
         origin: None,
         etag: Some("etag-legacy".into()),
+        managed: false,
         models: make_prefetched(&["grok-legacy"]),
     };
     cache.atomic_write(&legacy);
@@ -1617,6 +1619,182 @@ fn reload_from_disk_cache_ignores_legacy_cache_without_origin() {
     mgr.reload_from_cache_manager(&cache);
 
     assert!(!mgr.models().contains_key("grok-legacy"));
+}
+
+fn enc(plain: &str) -> String {
+    crate::util::model_secret::encrypt_managed(plain).expect("encrypt")
+}
+
+fn managed_cache_entry(catalog_id: &str, routing: &str, api_key: &str) -> ModelEntry {
+    let mut info = config::ModelInfo::fallback(catalog_id);
+    info.id = Some(catalog_id.to_string());
+    info.model = enc(routing);
+    ModelEntry {
+        info,
+        api_key: Some(enc(api_key)),
+        env_key: None,
+        auth_provider: None,
+        api_base_url: None,
+    }
+}
+
+#[test]
+fn managed_cache_keeps_api_key_and_info_model_enc_on_disk() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cache = test_cache_manager(tmp.path());
+    let origin = "https://atlas.test/v1/models";
+    let mut models = IndexMap::new();
+    models.insert(
+        "kimi-id".to_string(),
+        managed_cache_entry("kimi-id", "kimi-for-coding", "sk-secret-key"),
+    );
+
+    cache.persist_catalog(&models, Some("etag-m"), CacheAuthMethod::Session, origin, true);
+
+    let raw = std::fs::read_to_string(tmp.path().join(MODELS_CACHE_FILE)).unwrap();
+    assert!(
+        raw.contains("ENC("),
+        "managed cache must store ENC form"
+    );
+    assert!(
+        !raw.contains("sk-secret-key"),
+        "api_key must not appear as plaintext"
+    );
+    assert!(
+        !raw.contains("kimi-for-coding"),
+        "info.model routing name must not appear as plaintext"
+    );
+    assert!(
+        raw.contains("kimi-id"),
+        "catalog id stays the plaintext map key"
+    );
+
+    let loaded = cache
+        .load_fresh(&CacheAuthMethod::Session, origin)
+        .expect("managed ENC cache should load");
+    let entry = &loaded.models["kimi-id"];
+    assert_eq!(entry.info.model, "kimi-for-coding");
+    assert_eq!(entry.api_key.as_deref(), Some("sk-secret-key"));
+    assert_eq!(entry.info.id.as_deref(), Some("kimi-id"));
+}
+
+#[test]
+fn managed_cache_with_plaintext_secrets_is_a_miss_and_is_deleted() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cache = test_cache_manager(tmp.path());
+    let origin = "https://atlas.test/v1/models";
+    let mut models = IndexMap::new();
+    let mut info = config::ModelInfo::fallback("kimi-id");
+    info.id = Some("kimi-id".into());
+    info.model = "kimi-for-coding".into();
+    models.insert(
+        "kimi-id".to_string(),
+        ModelEntry {
+            info,
+            api_key: Some("sk-secret-key".into()),
+            env_key: None,
+            auth_provider: None,
+            api_base_url: None,
+        },
+    );
+
+    cache.persist_catalog(&models, None, CacheAuthMethod::Session, origin, true);
+
+    assert!(
+        cache.load_fresh(&CacheAuthMethod::Session, origin).is_none(),
+        "plaintext managed cache must miss"
+    );
+    assert!(
+        !tmp.path().join(MODELS_CACHE_FILE).exists(),
+        "plaintext managed cache file must be deleted"
+    );
+}
+
+#[test]
+fn unmanaged_cache_still_stores_plaintext_model() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cache = test_cache_manager(tmp.path());
+    let origin = "https://atlas.test/v1/models";
+    cache.persist(
+        &make_prefetched(&["grok-4.5"]),
+        None,
+        CacheAuthMethod::Session,
+        origin,
+    );
+
+    let raw = std::fs::read_to_string(tmp.path().join(MODELS_CACHE_FILE)).unwrap();
+    assert!(raw.contains("grok-4.5"));
+    assert!(!raw.contains("ENC("));
+
+    let loaded = cache
+        .load_fresh(&CacheAuthMethod::Session, origin)
+        .expect("unmanaged cache should load");
+    assert_eq!(loaded.models["grok-4.5"].info.model, "grok-4.5");
+}
+
+#[test]
+fn legacy_plaintext_api_key_cache_is_invalidated() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cache = test_cache_manager(tmp.path());
+    let origin = "https://atlas.test/v1/models";
+    let mut models = IndexMap::new();
+    let mut info = config::ModelInfo::fallback("kimi-id");
+    info.model = "kimi-for-coding".into();
+    models.insert(
+        "kimi-id".to_string(),
+        ModelEntry {
+            info,
+            api_key: Some("sk-secret-key".into()),
+            env_key: None,
+            auth_provider: None,
+            api_base_url: None,
+        },
+    );
+    cache.persist(&models, None, CacheAuthMethod::Session, origin);
+
+    assert!(cache.load_fresh(&CacheAuthMethod::Session, origin).is_none());
+    assert!(!tmp.path().join(MODELS_CACHE_FILE).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn cache_file_is_owner_rw_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cache = test_cache_manager(tmp.path());
+    cache.persist(
+        &make_prefetched(&["grok-4.5"]),
+        None,
+        CacheAuthMethod::Session,
+        "https://atlas.test/v1/models",
+    );
+    let mode = std::fs::metadata(tmp.path().join(MODELS_CACHE_FILE))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600);
+}
+
+#[test]
+fn overlay_at_rest_secrets_rewrites_api_key_and_info_model() {
+    let enc_id = enc("kimi-id");
+    let enc_model = enc("kimi-for-coding");
+    let enc_key = enc("sk-secret-key");
+    let mut wire = make_entry_config_with_id(Some(&enc_id), &enc_model, Some("Kimi"));
+    wire.managed = Some(true);
+    wire.api_key = Some(enc_key.clone());
+
+    let map = build_prefetched_map(vec![wire.clone()], None);
+    assert_eq!(map["kimi-id"].info.model, "kimi-for-coding");
+    assert_eq!(map["kimi-id"].api_key.as_deref(), Some("sk-secret-key"));
+
+    let at_rest = overlay_at_rest_secrets(&map, &[wire]);
+    assert!(crate::util::model_secret::is_enc(&at_rest["kimi-id"].info.model));
+    assert_eq!(at_rest["kimi-id"].info.model, enc_model);
+    assert_eq!(at_rest["kimi-id"].api_key.as_deref(), Some(enc_key.as_str()));
+    assert_eq!(at_rest["kimi-id"].info.id.as_deref(), Some("kimi-id"));
 }
 
 // ── clear() resets has_fetched_real_catalog ──────────────────────
@@ -2014,6 +2192,7 @@ fn make_entry_config_with_id(
         show_model_fingerprint: false,
         stream_tool_calls: None,
         laziness_detector: config::LazinessDetectorPerModelConfig::default(),
+        managed: None,
     }
 }
 

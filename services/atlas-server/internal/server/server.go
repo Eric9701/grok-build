@@ -88,6 +88,8 @@ func New(cfg config.Config, st store.Store, users store.UserStore, pages Pages) 
 	r.Get("/admin/task-reports/", redirectToPathPrefix)
 	r.Get("/admin/models", redirectToPathPrefix)
 	r.Get("/admin/models/", redirectToPathPrefix)
+	r.Get("/admin/groups", redirectToPathPrefix)
+	r.Get("/admin/groups/", redirectToPathPrefix)
 
 	r.Route(config.PathPrefix, func(r chi.Router) {
 		r.Get("/healthz", healthz)
@@ -121,6 +123,8 @@ func New(cfg config.Config, st store.Store, users store.UserStore, pages Pages) 
 		r.Get("/api/auth/me", accountH.Me)
 
 		r.Get("/.well-known/openid-configuration", authH.Discovery)
+		// Browser authorize URL → machine-code (device) login page.
+		r.Get("/authorize", authH.Authorize)
 		r.Post("/oauth2/device/code", authH.RequestDeviceCode)
 		r.Get("/oauth2/device", authH.DevicePage)
 		r.Post("/oauth2/device", authH.DevicePage)
@@ -157,6 +161,17 @@ func New(cfg config.Config, st store.Store, users store.UserStore, pages Pages) 
 			r.Get("/users", modelsAdminH.ListUsers)
 			r.Get("/users/{userId}/models", modelsAdminH.GetUserModels)
 			r.Put("/users/{userId}/models", modelsAdminH.SetUserModels)
+			r.Get("/users/{userId}/effective-models", modelsAdminH.GetEffectiveModels)
+
+			r.Get("/groups", modelsAdminH.ListUserGroups)
+			r.Post("/groups", modelsAdminH.CreateUserGroup)
+			r.Put("/groups/{groupId}", modelsAdminH.UpdateUserGroup)
+			r.Delete("/groups/{groupId}", modelsAdminH.DeleteUserGroup)
+			r.Get("/groups/{groupId}/members", modelsAdminH.GetGroupMembers)
+			r.Put("/groups/{groupId}/members", modelsAdminH.SetGroupMembers)
+			r.Get("/groups/{groupId}/models", modelsAdminH.GetGroupModels)
+			r.Put("/groups/{groupId}/models", modelsAdminH.SetGroupModels)
+
 			r.Post("/crypto/encrypt", modelsAdminH.Encrypt)
 			r.Post("/crypto/decrypt", modelsAdminH.Decrypt)
 		})
@@ -165,6 +180,8 @@ func New(cfg config.Config, st store.Store, users store.UserStore, pages Pages) 
 		r.Get("/admin/task-reports/", serveTaskReportsPage)
 		r.Get("/admin/models", serveModelsPage)
 		r.Get("/admin/models/", serveModelsPage)
+		r.Get("/admin/groups", serveGroupsPage)
+		r.Get("/admin/groups/", serveGroupsPage)
 	})
 
 	return r
@@ -177,6 +194,11 @@ func serveTaskReportsPage(w http.ResponseWriter, r *http.Request) {
 
 func serveModelsPage(w http.ResponseWriter, r *http.Request) {
 	path := resolveWebPath("web/admin/models/index.html")
+	http.ServeFile(w, r, path)
+}
+
+func serveGroupsPage(w http.ResponseWriter, r *http.Request) {
+	path := resolveWebPath("web/admin/groups/index.html")
 	http.ServeFile(w, r, path)
 }
 

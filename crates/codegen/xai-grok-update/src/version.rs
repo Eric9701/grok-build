@@ -19,40 +19,6 @@ pub const DEFAULT_CLI_BASE_URL: &str = "http://10.218.220.237:22255/atlas/cli";
 /// Env override for CLI artifact base URL(s). Comma-separated; first success wins.
 pub const CLI_BASE_URL_ENV: &str = "GROK_CLI_BASE_URL";
 
-/// [`CLI_BASE_URLS`] with a test seam: `GROK_CLI_BASE_URL` points fetches
-/// and downloads at one base (env-seam family of `GROK_INSTALLER`).
-/// Loopback-only: downloads are verified by a smoke test, not a checksum,
-/// so an arbitrary redirect base would be an install-hijack vector.
-pub(crate) fn cli_base_urls() -> Vec<String> {
-    if let Ok(base) = std::env::var("GROK_CLI_BASE_URL") {
-        let base = base.trim();
-        if is_loopback_base(base) {
-            return vec![base.to_owned()];
-        }
-        if !base.is_empty() {
-            tracing::warn!("GROK_CLI_BASE_URL ignored: only loopback bases are honored");
-        }
-    }
-    CLI_BASE_URLS.iter().map(|s| (*s).to_owned()).collect()
-}
-
-/// Parsed, not prefix-matched: `http://127.0.0.1:9@evil.com` starts with a
-/// loopback prefix but its host is `evil.com` (userinfo trick).
-fn is_loopback_base(base: &str) -> bool {
-    let Ok(u) = url::Url::parse(base) else {
-        return false;
-    };
-    if u.scheme() != "http" || !u.username().is_empty() || u.password().is_some() {
-        return false;
-    }
-    match u.host() {
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        Some(url::Host::Domain(d)) => d == "localhost",
-        None => false,
-    }
-}
-
 /// Minimal configuration the update system needs from the environment.
 ///
 /// Constructed once from `GrokBuildEnvironment` at startup and threaded through the
@@ -666,20 +632,6 @@ pub fn channel_label() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn loopback_base_rejects_userinfo_and_non_loopback() {
-        use super::is_loopback_base;
-        assert!(is_loopback_base("http://127.0.0.1:8971"));
-        assert!(is_loopback_base("http://localhost:8971"));
-        assert!(is_loopback_base("http://[::1]:8971"));
-        // Prefix-check bypass vectors.
-        assert!(!is_loopback_base("http://127.0.0.1:9@evil.com"));
-        assert!(!is_loopback_base("http://localhost.evil.com:80"));
-        assert!(!is_loopback_base("https://x.ai/cli"));
-        assert!(!is_loopback_base("http://192.168.1.1:80"));
-        assert!(!is_loopback_base(""));
-    }
-
     use super::*;
 
     /// Verifies that a future `checked_at` timestamp (e.g. from clock skew or
