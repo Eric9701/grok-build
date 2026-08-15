@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atlas · User Groups</title>
+  <style>
+    :root {
+      --bg: #f3f1ec; --elev: #fffcf7; --ink: #1c1b19; --muted: #6b6860;
+      --line: #ddd8ce; --accent: #0f766e; --err: #b42318; --ok: #1f7a4c;
+      --font: "Segoe UI", "PingFang SC", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: var(--font); background: var(--bg); color: var(--ink); }
+    header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--line); background: var(--elev); }
+    h1 { margin: 0; font-size: 1.35rem; }
+    p.sub { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.9rem; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1.25rem 1.5rem 3rem; display: grid; gap: 1.25rem; }
+    section { background: var(--elev); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; }
+    h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.45rem 0.4rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    input, select, button {
+      font: inherit; padding: 0.4rem 0.55rem; border-radius: 8px; border: 1px solid var(--line); background: #fff; color: var(--ink);
+    }
+    button { cursor: pointer; background: var(--accent); color: #fff; border-color: var(--accent); }
+    button.secondary { background: transparent; color: var(--ink); }
+    button.danger { background: var(--err); border-color: var(--err); }
+    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; margin-bottom: 0.6rem; }
+    .field { display: flex; flex-direction: column; gap: 0.2rem; min-width: 140px; flex: 1; }
+    .field label { font-size: 0.75rem; color: var(--muted); }
+    .msg { font-size: 0.85rem; color: var(--muted); min-height: 1.2em; }
+    .msg.ok { color: var(--ok); }
+    .msg.err { color: var(--err); }
+    .checks { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; max-height: 200px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; padding: 0.5rem; }
+    code { font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>User Groups</h1>
+    <p class="sub">用户组 · 成员 · 组模型分配 · 有效模型 = 直接分配 ∪ 各组模型 · <a href="/atlas/admin/models">Managed Models</a></p>
+  </header>
+  <main>
+    <section>
+      <h2>组列表</h2>
+      <div class="row">
+        <div class="field"><label>新组名称</label><input id="newName" placeholder="engineering" /></div>
+        <button type="button" id="btnCreate">创建</button>
+      </div>
+      <div class="msg" id="listMsg"></div>
+      <table>
+        <thead><tr><th>Name</th><th>ID</th><th>成员</th><th>模型</th><th></th></tr></thead>
+        <tbody id="groupRows"></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>编辑选中组</h2>
+      <div class="row">
+        <div class="field"><label>当前组</label><select id="groupSelect"></select></div>
+        <div class="field"><label>重命名</label><input id="renameName" /></div>
+        <button type="button" id="btnRename">保存名称</button>
+        <button type="button" class="danger" id="btnDelete">删除组</button>
+      </div>
+      <div class="msg" id="editMsg"></div>
+
+      <h2 style="margin-top:1rem">成员（全量替换）</h2>
+      <div class="checks" id="memberChecks"></div>
+      <div class="row" style="margin-top:0.5rem">
+        <button type="button" id="btnSaveMembers">保存成员</button>
+      </div>
+      <div class="msg" id="memberMsg"></div>
+
+      <h2 style="margin-top:1rem">组模型（全量替换）</h2>
+      <div class="checks" id="modelChecks"></div>
+      <div class="row" style="margin-top:0.5rem">
+        <button type="button" id="btnSaveModels">保存组模型</button>
+      </div>
+      <div class="msg" id="modelMsg"></div>
+    </section>
+  </main>
+  <script>
+    const API = "/atlas/admin/api";
+    const $ = (id) => document.getElementById(id);
+    function setMsg(el, text, ok) {
+      el.textContent = text || "";
+      el.className = "msg" + (ok === true ? " ok" : ok === false ? " err" : "");
+    }
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+    }
+    async function api(path, opts) {
+      const r = await fetch(API + path, opts);
+      const t = await r.text();
+      let j; try { j = JSON.parse(t); } catch { j = { raw: t }; }
+      if (!r.ok) throw new Error(j.error || j.message || t || r.statusText);
+      return j;
+    }
+
+    let groups = [];
+    let users = [];
+    let models = [];
+
+    async function loadGroups() {
+      const j = await api("/groups");
+      groups = j.groups || [];
+      const tb = $("groupRows");
+      tb.innerHTML = "";
+      const sel = $("groupSelect");
+      const prev = sel.value;
+      sel.innerHTML = groups.map(g =>
+        `<option value="${esc(g.group_id)}">${esc(g.name)}</option>`
+      ).join("");
+      for (const g of groups) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${esc(g.name)}</td><td><code>${esc(g.group_id)}</code></td>
+          <td>${g.member_count}</td><td>${g.model_count}</td>
+          <td><button class="secondary" data-pick="${esc(g.group_id)}">编辑</button></td>`;
+        tb.appendChild(tr);
+      }
+      if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+      setMsg($("listMsg"), `共 ${groups.length} 组`, true);
+      if (sel.value) await loadGroupDetail(sel.value);
+    }
+
+    async function loadUsersAndModels() {
+      const [uj, mj] = await Promise.all([api("/users"), api("/managed-models")]);
+      users = uj.users || [];
+      models = mj.models || [];
+      $("memberChecks").innerHTML = users.map(u =>
+        `<label><input type="checkbox" value="${esc(u.userId)}" /> ${esc(u.email)} <code>${esc(u.userId)}</code></label>`
+      ).join("") || "<span class='msg'>暂无用户</span>";
+      $("modelChecks").innerHTML = models.map(m =>
+        `<label><input type="checkbox" value="${esc(m.id)}" /> <code>${esc(m.id)}</code>${m.enabled ? "" : " (disabled)"}</label>`
+      ).join("") || "<span class='msg'>暂无模型</span>";
+    }
+
+    async function loadGroupDetail(groupId) {
+      if (!groupId) return;
+      const g = groups.find(x => x.group_id === groupId);
+      $("renameName").value = g ? g.name : "";
+      $("groupSelect").value = groupId;
+      const [mem, mod] = await Promise.all([
+        api(`/groups/${encodeURIComponent(groupId)}/members`),
+        api(`/groups/${encodeURIComponent(groupId)}/models`),
+      ]);
+      const memSet = new Set(mem.user_ids || []);
+      const modSet = new Set(mod.model_ids || []);
+      $("memberChecks").querySelectorAll("input[type=checkbox]").forEach(cb => { cb.checked = memSet.has(cb.value); });
+      $("modelChecks").querySelectorAll("input[type=checkbox]").forEach(cb => { cb.checked = modSet.has(cb.value); });
+    }
+
+    $("groupRows").addEventListener("click", (e) => {
+      const id = e.target.getAttribute("data-pick");
+      if (id) loadGroupDetail(id).catch(err => setMsg($("editMsg"), err.message, false));
+    });
+    $("groupSelect").onchange = () => loadGroupDetail($("groupSelect").value);
+
+    $("btnCreate").onclick = async () => {
+      try {
+        const j = await api("/groups", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: $("newName").value.trim() }),
+        });
+        $("newName").value = "";
+        await loadGroups();
+        if (j.group && j.group.group_id) await loadGroupDetail(j.group.group_id);
+        setMsg($("listMsg"), "已创建", true);
+      } catch (err) { setMsg($("listMsg"), err.message, false); }
+    };
+
+    $("btnRename").onclick = async () => {
+      const id = $("groupSelect").value;
+      try {
+        await api(`/groups/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: $("renameName").value.trim() }),
+        });
+        await loadGroups();
+        setMsg($("editMsg"), "名称已更新", true);
+      } catch (err) { setMsg($("editMsg"), err.message, false); }
+    };
+
+    $("btnDelete").onclick = async () => {
+      const id = $("groupSelect").value;
+      if (!id || !confirm("删除该组？成员关系与组模型会一并清除；用户直接分配不受影响。")) return;
+      try {
+        await api(`/groups/${encodeURIComponent(id)}`, { method: "DELETE" });
+        await loadGroups();
+        setMsg($("editMsg"), "已删除", true);
+      } catch (err) { setMsg($("editMsg"), err.message, false); }
+    };
+
+    $("btnSaveMembers").onclick = async () => {
+      const id = $("groupSelect").value;
+      const user_ids = [...$("memberChecks").querySelectorAll("input:checked")].map(cb => cb.value);
+      try {
+        await api(`/groups/${encodeURIComponent(id)}/members`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_ids }),
+        });
+        await loadGroups();
+        setMsg($("memberMsg"), "成员已保存", true);
+      } catch (err) { setMsg($("memberMsg"), err.message, false); }
+    };
+
+    $("btnSaveModels").onclick = async () => {
+      const id = $("groupSelect").value;
+      const model_ids = [...$("modelChecks").querySelectorAll("input:checked")].map(cb => cb.value);
+      try {
+        await api(`/groups/${encodeURIComponent(id)}/models`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model_ids }),
+        });
+        await loadGroups();
+        setMsg($("modelMsg"), "组模型已保存", true);
+      } catch (err) { setMsg($("modelMsg"), err.message, false); }
+    };
+
+    (async () => {
+      try {
+        await loadUsersAndModels();
+        await loadGroups();
+      } catch (err) { setMsg($("listMsg"), err.message, false); }
+    })();
+  </script>
+</body>
+</html>

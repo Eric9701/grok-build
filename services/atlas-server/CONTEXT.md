@@ -1,0 +1,49 @@
+# Atlas Server Access
+
+Enterprise atlas-server domain for accounts, User Groups, and which managed models a user may see.
+
+## Language
+
+**User Group**:
+A named set of users used to grant managed-model access. Flat (no nesting). Distinct from telemetry `team_id`.
+_Avoid_: Team, Org, Model Entitlement Group
+
+**Direct Assignment**:
+Models attached to a single user via `user_models`. May mark one model as that user's default.
+_Avoid_: Personal entitlement (unless contrasting with group), override
+
+**Group Assignment**:
+Models attached to a User Group. Contributes to availability only; does not set a user's default model.
+_Avoid_: Group default, inherited default
+
+**Effective Model Set**:
+The deduplicated union of a user's Direct Assignment and all Group Assignments from User Groups they belong to (enabled catalog entries only).
+_Avoid_: Allowlist (ambiguous with upstream fallback), entitlements bundle
+
+**Managed Catalog Mode**:
+When the Effective Model Set is non-empty, `/v1/models` returns that managed set (encrypted). When empty, the server falls back to probe / upstream / builtin — same as today's "no user_models" behavior.
+_Avoid_: Open mode, unrestricted (implies no gates at all)
+
+**At-Rest ENC**:
+The `ENC(...)` form of a managed model's routing name (`model`) and `api_key` on client disk — both the Managed Config Segment and the models cache (`api_key` + `info.model`). Catalog id stays the map/section key in plaintext.
+_Avoid_: Whole-file cache encryption; treating the models cache as a plaintext dump of memory
+
+**Managed Config Segment**:
+A client `config.toml` `[model.<catalog-id>]` table with `managed = true`. Routing name and `api_key` stay in At-Rest ENC; catalog id is the section name.
+_Avoid_: User-authored `[model.*]` without `managed` (not overwritten by catalog sync)
+
+**Group Membership**:
+The many-to-many link between a user and a User Group. A user may belong to many groups; membership is identity-only (no per-membership model list).
+_Avoid_: Role in group, group seat
+
+**Task Report**:
+A per-task usage record the client posts after a main-session turn or subagent finishes. Attributed by Report User and Client Version carried in the report body.
+_Avoid_: Trace, session signal, telemetry event
+
+**Report User**:
+The user identity on a Task Report: `userId` and `email` from the report body. Not derived from the access token.
+_Avoid_: JWT subject, Bearer user, x-userid
+
+**Client Version**:
+The compiled CLI version of the process that posted the Task Report (`GROK_VERSION` / `--version`).
+_Avoid_: Protocol version, agent version, model version
