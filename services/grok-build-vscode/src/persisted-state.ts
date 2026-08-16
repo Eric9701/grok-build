@@ -2,7 +2,7 @@
 //
 // Session names, pins, archives and the install id used to live in VS Code's
 // `globalState`, which nothing outside a VS Code window can read. They move to
-// `~/.atlas/client-state/` so that a second client of the same machine (the
+// `~/.grok/client-state/` so that a second client of the same machine (the
 // planned desktop app) shows the same names, pins and archives — and so the
 // install id, which the relay keys device de-duplication on, identifies the
 // MACHINE rather than one editor profile.
@@ -19,7 +19,7 @@
 //      is not a stale read — it is an empty read followed by a write, which
 //      would persist the emptiness and destroy the user's names and pins.
 //   3. **Every migrated key is also written to `globalState`.** The shadow copy
-//      costs one extra write and means an unwritable `~/.atlas` is not data
+//      costs one extra write and means an unwritable `~/.grok` is not data
 //      loss, and that downgrading to an older build still finds its data. Disk
 //      wins on read — unless its last write failed, in which case that key
 //      falls back to the shadow for the rest of the session.
@@ -58,15 +58,11 @@ export const DISK_KEYS: Readonly<Record<string, string>> = {
   "atlas.sessionMeta": "session-meta.json",
   "atlas.repoPins": "repo-pins.json",
   "atlas.repoArchives": "repo-archives.json",
+  "atlas.repoColors": "repo-colors.json",
   "atlas.installId": "install-id.json",
-};
-
-/** Legacy globalState keys from the Grok-era extension; read as fallback. */
-const LEGACY_DISK_KEYS: Readonly<Record<string, string>> = {
-  "atlas.sessionMeta": "grok.sessionMeta",
-  "atlas.repoPins": "grok.repoPins",
-  "atlas.repoArchives": "grok.repoArchives",
-  "atlas.installId": "grok.installId",
+  // Global progressive-disclosure preference ("knowledge" | "coding"). String
+  // scalar like installId — not a record map. See src/app-purpose.ts.
+  "atlas.appPurpose": "app-purpose.json",
 };
 
 export class PersistedState {
@@ -95,17 +91,17 @@ export class PersistedState {
   }
 
   private validValue(key: string, value: unknown): boolean {
-    if (key === "atlas.installId") return typeof value === "string";
+    // Scalar string keys (install id + app purpose). Everything else is a
+    // record-of-records map (session meta, pins, archives).
+    if (key === "atlas.installId" || key === "atlas.appPurpose") {
+      return typeof value === "string";
+    }
     return isRecordMap(value);
   }
 
   private shadowValue(key: string): unknown {
     const value = this.memento.get(key);
-    if (this.validValue(key, value)) return value;
-    const legacy = LEGACY_DISK_KEYS[key];
-    if (!legacy) return undefined;
-    const legacyValue = this.memento.get(legacy);
-    return this.validValue(key, legacyValue) ? legacyValue : undefined;
+    return this.validValue(key, value) ? value : undefined;
   }
 
   private diskStamp(key: string): DiskStamp {

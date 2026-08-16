@@ -29,9 +29,32 @@ export interface SessionListEntry {
   /** When the user pinned this conversation, from `SessionMetaOverride`. Drives
    *  the projects rail's Pinned group; absent means unpinned. */
   pinnedAt?: number;
+  /** Agent that owns this immutable session. Absent means Grok for compatibility. */
+  provider?: "grok" | "codex";
 }
 
 export interface SessionMetaOverride {
+  /** Agent that owns the session. Existing records omit it and therefore mean Grok. */
+  provider?: "grok" | "codex";
+  /** Provider-reported cwd for stores that are not laid out under the Grok home. */
+  providerCwd?: string;
+  /**
+   * "This conversation was used just now", asserted by the host rather than
+   * read off disk.
+   *
+   * Ordering is by transcript mtime, and measured against the real CLI that
+   * file is written about **2.1 seconds** after a send (the turn itself ended
+   * at 4.5s). So between sending and that write, the row you just typed into
+   * sits wherever it was — and a brand-new conversation is not in the list at
+   * all. Waiting is the wrong answer to "I just used this".
+   *
+   * Set when a message is sent and when a session is created. It is a FLOOR,
+   * never a ceiling: the transcript wins the moment it is newer, which it will
+   * be within seconds — which is also why persisting it alongside the other
+   * overrides is harmless rather than a lie that outlives the run. By the time
+   * anything reads it again the real file has overtaken it.
+   */
+  activeAt?: number;
   customName?: string;
   /** The extension's own title, taken from the first user message when a session's
    *  first turn completes. Deliberately NOT stored as `customName`: a name the
@@ -92,6 +115,13 @@ export interface SessionMetaOverride {
   /** Documents uploaded from a remote browser and staged in extension storage.
    *  Retained until the last session/fork referencing each path is deleted. */
   uploadedFiles?: string[];
+  /** A composer draft the host rescued when this conversation was disposed out
+   *  from under it (provider sign-out). The conversation is the draft's durable
+   *  home: broadcasting the text instead is both lossable and audience-wrong,
+   *  because the notice goes to whoever is focused rather than to the person who
+   *  typed it. Restored into the composer the next time the conversation starts,
+   *  and cleared in the same write so a reopen cannot append it twice. */
+  queuedDraft?: string;
 }
 export type SessionMetaOverrides = Record<string, SessionMetaOverride>;
 
@@ -126,6 +156,151 @@ export interface RepoArchiveChoice {
 }
 export type RepoArchives = Record<string, RepoArchiveChoice>;
 
+/**
+ * A cwd a remote may be allowed to name, and the project it belongs to.
+ *
+ * Provenance travels with the cwd because the alternative is re-deriving it in
+ * the fence, and the fence runs on every inbound AND outbound remote message.
+ * The trusted-set builder already knows which project each cwd came from — it
+ * expanded the project to get there — so carrying the answer out costs nothing
+ * and turns the archive check into a map lookup.
+ */
+export interface TrustedSessionCwd {
+  cwd: string;
+  /** The project this cwd belongs to: itself, or the project owning a worktree. */
+  repoCwd: string;
+}
+
+/**
+ * Archive choices that newer work has already made moot.
+ *
+ * `RepoArchiveChoice` has always said a choice holds "only until the project is
+ * worked in again", and the renderer implemented that as a timestamp comparison
+ * re-derived on every paint. Once the host began fencing remotes on the stored
+ * flag, the two sides could disagree about the same project: the desk showed it
+ * in Projects while the phone could not reach it, and no refresh helped.
+ *
+ * Resolving the expiry in the STORE — rather than at every read — is what keeps
+ * the fence itself a cheap lookup, and what makes both sides read one answer.
+ *
+ * ## The part that took four review rounds
+ *
+ * Two earlier attempts deleted the choice from a session lifecycle event, and
+ * both handed a remote back a project the user had archived. Session start
+ * includes a reconnecting phone's recovery restart, which bypasses inbound
+ * authorization by design; "a completed turn" was no better, because a plain
+ * CLI exit reports `error` down the same status path.
+ *
+ * Fixing the trigger was the wrong instinct. What made those reachable was the
+ * EVIDENCE: session-directory mtimes move when a conversation is merely loaded,
+ * so a remote could manufacture the proof. `newestActivityAt` must therefore be
+ * the TRANSCRIPT and nothing else — see {@link newestTranscriptMtime}, which
+ * deliberately does not fall back to `summary.json` the way `indexSessions`
+ * does. A remote cannot move a transcript without running a turn, and it cannot
+ * run a turn in a project it is fenced out of. With evidence that cannot be
+ * forged, it stops mattering which event asks the question.
+ */
+export function expiredArchiveChoiceKeys(opts: {
+  archives: RepoArchives;
+  /** Newest TRANSCRIPT mtime across the project and its worktrees, ms. */
+  newestActivityAt: (repoCwd: string) => number;
+  platform?: NodeJS.Platform;
+}): string[] {
+  const platform = opts.platform ?? process.platform;
+  const out: string[] = [];
+  for (const [storedKey, choice] of Object.entries(opts.archives ?? {})) {
+    // `archived: false` is a real stored answer — "keep showing me this one" —
+    // and expires the same way, so both are considered.
+    if (!choice?.cwd) continue;
+    const newest = opts.newestActivityAt(choice.cwd) || 0;
+    if (newest > 0 && newest > choice.at) {
+      out.push(storedKey || normalizeRepoPath(choice.cwd, platform));
+    }
+  }
+  return out;
+}
+
+/**
+ * Projects that are archived, as normalised keys.
+ *
+ * Assumes {@link expiredArchiveChoiceKeys} has already retired the stale ones,
+ * which is what lets this stay a plain read of the store on a hot path.
+ *
+ * A project the host has OPEN is never archived here, matching the rail's own
+ * rule. Opening a project does not clear its flag, and fencing one the desk is
+ * working in would blind the phone to the conversation on screen.
+ */
+export function archivedProjectKeys(opts: {
+  archives: RepoArchives;
+  openCwds: readonly string[];
+  platform?: NodeJS.Platform;
+}): Set<string> {
+  const platform = opts.platform ?? process.platform;
+  const key = (c: string) => normalizeRepoPath(c, platform);
+  const open = new Set(opts.openCwds.filter(Boolean).map(key));
+  const out = new Set<string>();
+  for (const choice of Object.values(opts.archives ?? {})) {
+    if (!choice?.archived || !choice.cwd) continue;
+    const k = key(choice.cwd);
+    if (k && !open.has(k)) out.add(k);
+  }
+  return out;
+}
+
+/**
+ * The host's trusted cwds, minus everything belonging to an archived project.
+ *
+ * A REMOTE-only narrowing. On the desk, archiving means "fold this away" — the
+ * project is one keystroke from being worked in — so subtracting it locally
+ * would break the thing archiving is for. From a phone it should mean what it
+ * looks like: out of reach.
+ *
+ * Filters by each cwd's OWNING PROJECT, not by the cwd itself. A worktree is
+ * not something you archive separately, and matching only exact cwds let a
+ * worktree the host learned about after the fence was built walk straight
+ * through it — the project is the unit, so the project is what is checked.
+ *
+ * Note what `archived` does NOT include: a project the rail merely hides for
+ * being 30 days idle is still reachable here. That rule lives in the renderer
+ * and moves on its own, so binding a capability to it would revoke a phone's
+ * access with nobody having done anything, mid-conversation included.
+ */
+export function remoteAuthorizedCwds(opts: {
+  trusted: readonly TrustedSessionCwd[];
+  archivedProjects: ReadonlySet<string>;
+  platform?: NodeJS.Platform;
+}): string[] {
+  if (!opts.archivedProjects.size) return opts.trusted.map((t) => t.cwd);
+  const platform = opts.platform ?? process.platform;
+  return opts.trusted
+    .filter((t) => !opts.archivedProjects.has(normalizeRepoPath(t.repoCwd, platform)))
+    .map((t) => t.cwd);
+}
+
+/**
+ * Project-folder colour ids the rail understands. Empty string is "none"
+ * (default): the host still puts `color: ""` on every catalog row so the client
+ * can tell "no colour" from "this host cannot colour" without a version check.
+ * Non-empty values map 1:1 to CSS `--repo-color-*` custom properties.
+ */
+export const REPO_COLOR_IDS = ["blue", "teal", "green", "amber", "coral", "purple"] as const;
+export type RepoColorId = (typeof REPO_COLOR_IDS)[number];
+/** Wire value: one of {@link REPO_COLOR_IDS}, or `""` for none. */
+export type RepoColor = RepoColorId | "";
+
+export function isRepoColor(value: unknown): value is RepoColor {
+  if (value === "") return true;
+  return typeof value === "string" && (REPO_COLOR_IDS as readonly string[]).includes(value);
+}
+
+/** Stored folder colour for one project. Absent entry ≡ none; the wire still
+ *  emits `color: ""` so capability detection stays field-presence based. */
+export interface RepoColorChoice {
+  cwd: string;
+  color: RepoColorId;
+}
+export type RepoColors = Record<string, RepoColorChoice>;
+
 export interface RepoListEntry {
   cwd: string;
   label: string;
@@ -133,14 +308,43 @@ export interface RepoListEntry {
   pinned: boolean;
   pinnedAt?: number;
   updatedAt: number;
+  /** Provider a fresh conversation in this project will use. Optional so older
+   * hosts keep rendering their existing provider-neutral New-session row. */
+  defaultProvider?: "grok" | "codex";
   worktreeLabel?: string;
-  /** The stored choice above, flattened for the wire. Always present — a host
-   *  that knows about archiving says so on every row, which is how the browser
-   *  client tells "nothing archived" from "this host cannot archive" without
-   *  asking a version number. Ordering here deliberately ignores both: the VS
-   *  Code repo picker reads this same list and must not change. */
-  archived: boolean;
-  archivedAt: number;
+  /**
+   * Archive choice flattened for the wire. **Present when the host supports
+   * archiving** (VS Code / discovered list) — even when nothing is archived,
+   * which is how the client tells "nothing archived" from "this host cannot
+   * archive" without a version number. **Omitted** when the host's project
+   * list is curated open/close (desktop): close already removes a row, so
+   * archive would be a second weaker mechanism. Ordering in
+   * {@link discoverRepos} deliberately ignores these fields.
+   */
+  archived?: boolean;
+  archivedAt?: number;
+  /**
+   * This row exists because the user added the folder by hand, not because Grok
+   * has ever run there. Set by the host (VS Code only — see
+   * EXTRA_PROJECT_FOLDERS_KEY in `sidebar.ts`), never by {@link discoverRepos},
+   * which knows nothing about it.
+   *
+   * The client uses it to offer removal, and removal is the point: every other
+   * row is here because of work that happened, and stops being listed when that
+   * stops being true. A hand-added folder has no such expiry, and it is
+   * remotely browsable and editable like any other project — so the only way it
+   * is honest is if it can be taken back out.
+   */
+  added?: boolean;
+  /**
+   * Folder-icon colour id flattened for the wire. **Present when the host
+   * supports project colours** — even when unset (`""`), which is how the client
+   * tells "no colour" from "this host cannot colour" without a version number
+   * (same capability rule as {@link RepoListEntry.archived}). One of
+   * {@link REPO_COLOR_IDS}, or empty for none. Ordering in {@link discoverRepos}
+   * deliberately ignores this field.
+   */
+  color?: RepoColor;
 }
 
 /** Move a renamed session's `customName` from one id to another and drop the source entry. Used when
@@ -186,7 +390,11 @@ export interface FsLike {
   readdirSync(p: string): string[];
   readFileSync(p: string, encoding: "utf8"): string;
   statSync(p: string): { isDirectory(): boolean; mtimeMs: number };
-  rmSync?(p: string, opts?: { recursive?: boolean; force?: boolean }): void;
+  /** `maxRetries`/`retryDelay` are load-bearing on Windows — see RM_RETRY. */
+  rmSync?(
+    p: string,
+    opts?: { recursive?: boolean; force?: boolean; maxRetries?: number; retryDelay?: number },
+  ): void;
   rmdirSync(p: string, opts?: { recursive?: boolean }): void;
 }
 
@@ -195,22 +403,26 @@ export interface ListDeps {
   grokHome: string;
   cwd: string;
   overrides: SessionMetaOverrides;
+  platform?: NodeJS.Platform;
   now?: () => number;
   log?: (msg: string) => void;
 }
 
-export interface DeleteDeps {
-  fs: FsLike;
-  grokHome: string;
-  cwd: string;
-  id: string;
+/**
+ * Percent-encoded leaf under `sessions/` for a given cwd string.
+ * Mirrors grok's URL-encoded layout exactly — casing of `cwd` is preserved,
+ * so `c:\…` and `C:\…` become distinct leaves on disk.
+ */
+export function encodeSessionCatalogLeaf(cwd: string): string {
+  const encoded = encodeURIComponent(cwd);
+  return encoded === "" ? "%00" : encoded === "." ? "%2E" : encoded === ".." ? "%2E%2E" : encoded;
 }
 
-/** Build the directory grok uses for sessions rooted at `cwd`. Mirrors grok's URL-encoded layout. */
+/** Build the directory grok uses for sessions rooted at `cwd`. Exact cwd encode
+ *  (CLI write path). Prefer {@link sessionCatalogDirs} / {@link sessionDirFor}
+ *  with `fs` when *reading* history — those merge case-aliases on Windows. */
 export function sessionsDirFor(grokHome: string, cwd: string): string {
-  const encoded = encodeURIComponent(cwd);
-  const safeCatalog = encoded === "" ? "%00" : encoded === "." ? "%2E" : encoded === ".." ? "%2E%2E" : encoded;
-  return path.join(grokHome, "sessions", safeCatalog);
+  return path.join(grokHome, "sessions", encodeSessionCatalogLeaf(cwd));
 }
 
 const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -224,17 +436,159 @@ export function isValidSessionId(id: unknown): id is string {
     id !== "constructor";
 }
 
+/** True when `candidate` is a direct child of `base` (no `..` escape). */
+export function isSessionDirChild(
+  base: string,
+  candidate: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  const b = path.normalize(base);
+  const parent = path.dirname(path.normalize(candidate));
+  return platform === "win32"
+    ? parent.toLowerCase() === b.toLowerCase()
+    : parent === b;
+}
+
+/** Injectable realpath for layout-identity checks (tests simulate junctions). */
+export type PathRealpathFn = (p: string) => string;
+
+/**
+ * True when `child`'s **canonical** form is a direct child of the **canonical**
+ * `parent` **and** keeps the same leaf basename as the given `child` path.
+ *
+ * Fences the class of unsafe shapes where a layout directory is a junction or
+ * symlink onto another directory of the same kind: leaf-only is not enough
+ * (same name relocated under a different parent), and parent containment alone
+ * is not enough (sibling under the same parent with a different leaf). A
+ * symlinked ancestor that remaps parent and child together still passes.
+ * Case-insensitive leaf compare on win32 for case-aliases of the same segment.
+ */
+export function keepsCanonicalDirectChildIdentity(
+  child: string,
+  parent: string,
+  realpath: PathRealpathFn,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  try {
+    const givenLeaf = path.basename(path.resolve(child));
+    if (!givenLeaf) return false;
+    const realChild = path.normalize(realpath(child));
+    const realLeaf = path.basename(realChild);
+    if (!realLeaf) return false;
+    const leafOk =
+      platform === "win32"
+        ? givenLeaf.toLowerCase() === realLeaf.toLowerCase()
+        : givenLeaf === realLeaf;
+    if (!leafOk) return false;
+    const realParent = path.normalize(realpath(parent));
+    return isSessionDirChild(realParent, realChild, platform);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Every on-disk `sessions/<urlencoded-cwd>` directory that is the **same project**
+ * as `cwd` under {@link normalizeRepoPath} (case-insensitive on Windows, exact
+ * elsewhere). Exact encode of `cwd` is listed first when present.
+ *
+ * Indexes already split across drive-letter casings (real machines) are merged
+ * at read time — we do not rename or delete either leaf. New sessions still land
+ * under whatever casing the live CLI process uses.
+ */
+export function sessionCatalogDirs(deps: {
+  fs: Pick<FsLike, "existsSync" | "readdirSync">;
+  grokHome: string;
+  cwd: string;
+  platform?: NodeJS.Platform;
+}): string[] {
+  const platform = deps.platform ?? process.platform;
+  const targetKey = normalizeRepoPath(deps.cwd, platform);
+  if (!targetKey) return [];
+
+  const sessionsRoot = path.join(deps.grokHome, "sessions");
+  const exact = path.normalize(sessionsDirFor(deps.grokHome, deps.cwd));
+  const out: string[] = [];
+  // Case-sensitive on the *path string*: catalog leaves that differ only by
+  // encoded drive-letter case (`c%3A…` vs `C%3A…`) must both be scanned. Folding
+  // the full path would collapse them and hide one side of a split index.
+  // (On NTFS those leaves usually can't coexist as siblings — scanning the same
+  // physical dir twice is fine; session ids are de-duped by the caller.)
+  const seen = new Set<string>();
+  const add = (dir: string) => {
+    const n = path.normalize(dir);
+    if (seen.has(n)) return;
+    seen.add(n);
+    out.push(n);
+  };
+
+  // Prefer the exact encode of the live cwd first (CLI write path for new sessions).
+  try {
+    if (deps.fs.existsSync(exact)) add(exact);
+  } catch {
+    /* best-effort */
+  }
+
+  try {
+    if (!deps.fs.existsSync(sessionsRoot)) return out;
+    for (const name of deps.fs.readdirSync(sessionsRoot)) {
+      let decoded = "";
+      try {
+        decoded = decodeURIComponent(name).trim();
+      } catch {
+        continue;
+      }
+      if (!decoded || normalizeRepoPath(decoded, platform) !== targetKey) continue;
+      // Use the *readdir* leaf name so we open the on-disk casing, not a
+      // reconstructed encode that can miss a case-sensitive store.
+      add(path.join(sessionsRoot, name));
+    }
+  } catch {
+    /* readdir failed — exact alone is still useful when present */
+  }
+  return out;
+}
+
+export interface SessionDirOpts {
+  /** When set, prefer an existing id under any case-alias of `cwd`. */
+  fs?: Pick<FsLike, "existsSync" | "readdirSync">;
+  platform?: NodeJS.Platform;
+}
+
 /** Resolve one session directory and independently prove it is a direct child
- * of the cwd's sessions directory. Undefined means the caller must not touch
- * the filesystem for the supplied id. */
-export function sessionDirFor(grokHome: string, cwd: string, id: unknown): string | undefined {
+ * of a catalog directory for `cwd`. With `opts.fs`, searches every case-alias
+ * so a session stored under `c:\…` is found when the workspace is `C:\…`.
+ * Without a hit (or without `fs`), returns the exact-encode path for `cwd`
+ * (CLI write layout). Undefined means the caller must not touch the filesystem. */
+export function sessionDirFor(
+  grokHome: string,
+  cwd: string,
+  id: unknown,
+  opts?: SessionDirOpts,
+): string | undefined {
   if (!isValidSessionId(id)) return undefined;
+  const platform = opts?.platform ?? process.platform;
+
+  if (opts?.fs) {
+    for (const base of sessionCatalogDirs({
+      fs: opts.fs,
+      grokHome,
+      cwd,
+      platform,
+    })) {
+      const candidate = path.join(base, id);
+      if (!isSessionDirChild(base, candidate, platform)) continue;
+      try {
+        if (opts.fs.existsSync(candidate)) return candidate;
+      } catch {
+        /* try next alias */
+      }
+    }
+  }
+
   const base = path.normalize(sessionsDirFor(grokHome, cwd));
   const candidate = path.join(base, id);
-  const same = process.platform === "win32"
-    ? path.dirname(candidate).toLowerCase() === base.toLowerCase()
-    : path.dirname(candidate) === base;
-  return same ? candidate : undefined;
+  return isSessionDirChild(base, candidate, platform) ? candidate : undefined;
 }
 
 /** Stable repo identity for globalState and remote-policy comparisons. */
@@ -243,6 +597,48 @@ export function normalizeRepoPath(cwd: string, platform = process.platform): str
   if (normalized !== path.parse(normalized).root) normalized = normalized.replace(/[\\/]+$/, "");
   if (platform === "win32") normalized = normalized.toLowerCase();
   return normalized;
+}
+
+/**
+ * `absPath` expressed relative to `root`, or undefined when it is not inside it.
+ *
+ * Exists because "is this file part of this conversation's project?" became a
+ * real question. VS Code history follows the rail's selection now, so the active
+ * editor can be showing project A while the focused conversation belongs to
+ * project B — and attaching A's file, or worse A's selected source text, to B's
+ * prompt is content crossing projects.
+ *
+ * Compared on {@link normalizeRepoPath} keys, which is what makes it right in
+ * the two places a naive prefix test is wrong: Windows treats `C:\Repo` and
+ * `c:/repo` as one directory, and `/work/app-two` must not read as inside
+ * `/work/app`. The result uses forward slashes on every platform — it is a
+ * display and prompt path, not a filesystem one.
+ */
+export function relativePathWithin(
+  root: string,
+  absPath: string,
+  platform: NodeJS.Platform = process.platform,
+): string | undefined {
+  if (!root || !absPath) return undefined;
+  // The platform's OWN path module, not the process's. `normalizeRepoPath` uses
+  // the native one, which is right for its callers (real paths on the machine
+  // they are on) and wrong here: this takes `platform` as an argument, so it has
+  // to answer for that platform on any host. Otherwise a Windows case decided on
+  // Linux CI compares `c:\work\app` against `c:/work/app` and says "outside" —
+  // the tests would pass on the author's machine and fail on the runner.
+  const p = platform === "win32" ? path.win32 : path.posix;
+  const key = (value: string): string => {
+    let n = p.normalize((value || "").trim());
+    if (n !== p.parse(n).root) n = n.replace(/[\\/]+$/, "");
+    return platform === "win32" ? n.toLowerCase() : n;
+  };
+  const rootKey = key(root);
+  const fileKey = key(absPath);
+  if (!rootKey || !fileKey || fileKey === rootKey) return undefined;
+  // Separator-terminated, so a sibling that merely shares a name prefix cannot
+  // match: `/work/app-two` is not inside `/work/app`.
+  if (!fileKey.startsWith(rootKey.replace(/[\\/]+$/, "") + p.sep)) return undefined;
+  return p.relative(root, absPath).split(/[\\/]/).join("/");
 }
 
 function pathSegments(cwd: string): string[] {
@@ -282,6 +678,9 @@ export interface DiscoverReposDeps {
   /** Remote-rail archive choices. Reported on every row and acted on by nobody
    *  here — see RepoListEntry.archived. */
   archives?: RepoArchives;
+  /** Project folder colours. Always flattened onto every row as `color` (empty
+   *  string when unset) so the client can capability-probe without a version. */
+  colors?: RepoColors;
   tmpDir: string;
   platform?: NodeJS.Platform;
   /** Host-known roots that remain selectable before Grok creates a catalog.
@@ -317,6 +716,12 @@ export function discoverRepos(deps: DiscoverReposDeps): RepoListEntry[] {
     const choice = deps.archives?.[key];
     return { archived: !!choice?.archived, archivedAt: choice?.at ?? 0 };
   };
+  // Always emit `color` (possibly "") — field presence is the capability signal.
+  // Stored choices are non-empty palette ids; anything else collapses to none.
+  const colorOf = (key: string): RepoColor => {
+    const raw = deps.colors?.[key]?.color;
+    return raw && (REPO_COLOR_IDS as readonly string[]).includes(raw) ? raw : "";
+  };
   for (const name of encoded) {
     let cwd = "";
     try { cwd = decodeURIComponent(name).trim(); } catch { continue; }
@@ -327,12 +732,19 @@ export function discoverRepos(deps: DiscoverReposDeps): RepoListEntry[] {
       isManagedWorktree(cwd)
     ) continue;
     const key = normalizeRepoPath(cwd, platform);
-    if (!key || byKey.has(key)) continue;
+    if (!key) continue;
     let available = false;
     try { available = deps.fs.statSync(cwd).isDirectory(); } catch { /* unavailable */ }
     if (!available) continue;
     let updatedAt = 0;
     try { updatedAt = deps.fs.statSync(path.join(sessionsRoot, name)).mtimeMs; } catch { /* best effort */ }
+    const existing = byKey.get(key);
+    if (existing) {
+      // Same project under a different cwd casing (Windows drive letter, etc.):
+      // keep one row, take the freshest catalog mtime so neither side is lost.
+      existing.updatedAt = Math.max(existing.updatedAt, updatedAt);
+      continue;
+    }
     const pin = deps.pins[key];
     byKey.set(key, {
       cwd,
@@ -341,6 +753,7 @@ export function discoverRepos(deps: DiscoverReposDeps): RepoListEntry[] {
       pinnedAt: pin?.pinnedAt,
       updatedAt,
       worktreeLabel: deps.worktreeLabels?.get(key),
+      color: colorOf(key),
       ...archiveOf(key),
     });
   }
@@ -360,6 +773,7 @@ export function discoverRepos(deps: DiscoverReposDeps): RepoListEntry[] {
       pinnedAt: pin?.pinnedAt,
       updatedAt: 0,
       worktreeLabel: deps.worktreeLabels?.get(key),
+      color: colorOf(key),
       ...archiveOf(key),
     });
   }
@@ -383,6 +797,7 @@ export function discoverRepos(deps: DiscoverReposDeps): RepoListEntry[] {
       pinnedAt: pin.pinnedAt,
       updatedAt: 0,
       worktreeLabel: deps.worktreeLabels?.get(key),
+      color: colorOf(key),
       ...archiveOf(key),
     });
   }
@@ -444,11 +859,24 @@ function buildEntry(
   cwd: string,
   overrides: SessionMetaOverrides,
   fallbackNow: number,
+  /** Transcript mtime — last time the conversation actually MOVED. Preferred
+   *  over `updated_at`, which the CLI restamps on a mere open. */
+  activityAt?: number,
 ): SessionListEntry {
   const id = (raw?.info?.id as string) ?? dirName;
   const sessCwd = (raw?.info?.cwd as string) ?? cwd;
   const rawSummary = typeof raw?.session_summary === "string" ? raw.session_summary : "";
-  const updatedAt = parseTimestamp(raw?.updated_at, fallbackNow);
+  const fromDisk = typeof activityAt === "number" && activityAt > 0
+    ? activityAt
+    : parseTimestamp(raw?.updated_at, fallbackNow);
+  // The host's "used just now" is a floor under the file's own timestamp, so a
+  // send or a new conversation ranks immediately and the transcript takes over
+  // as soon as it is written. Max, not override: a stale in-memory value must
+  // never hold a row above a conversation that really is newer.
+  const liveActivity = overrides[(raw?.info?.id as string) ?? dirName]?.activeAt;
+  const updatedAt = typeof liveActivity === "number" && liveActivity > fromDisk
+    ? liveActivity
+    : fromDisk;
   const createdAt = parseTimestamp(raw?.created_at, updatedAt);
   const numMessages = typeof raw?.num_messages === "number" ? raw.num_messages : 0;
   const modelId = typeof raw?.current_model_id === "string" ? raw.current_model_id : undefined;
@@ -463,7 +891,20 @@ function buildEntry(
   const displayName = customName || fallbackName(cliSessionTitle(rawSummary, generatedTitle) || autoName, updatedAt);
   const kind = raw?.session_kind === "subagent" ? ("subagent" as const) : undefined;
   const pinnedAt = typeof override?.pinnedAt === "number" ? override.pinnedAt : undefined;
-  return { id, cwd: sessCwd, displayName, rawSummary, customName, updatedAt, createdAt, numMessages, modelId, kind, pinnedAt };
+  return {
+    id,
+    cwd: sessCwd,
+    displayName,
+    rawSummary,
+    customName,
+    updatedAt,
+    createdAt,
+    numMessages,
+    modelId,
+    kind,
+    pinnedAt,
+    ...(override?.provider ? { provider: override.provider } : {}),
+  };
 }
 
 export interface SessionIndexEntry {
@@ -478,40 +919,246 @@ export interface IndexDeps {
   fs: FsLike;
   grokHome: string;
   cwd: string;
+  /** Defaults to process.platform — inject `win32` in tests for case-fold merge. */
+  platform?: NodeJS.Platform;
   log?: (msg: string) => void;
+}
+
+/**
+ * Order of directories to search when resuming a session by id.
+ *
+ * A renderer may *name* a session id and optionally suggest a cwd (history-row
+ * convenience). Host-owned inputs (`metaWorktreePath`, `cachedCwd`, every
+ * entry of `trustedCwds`) are the only directories that may ever appear.
+ * `messageCwd` is included **only** when it already equals a trusted catalog
+ * cwd — never as an unauthenticated process root.
+ */
+export function orderedResumeCwdCandidates(opts: {
+  messageCwd?: string;
+  trustedCwds: readonly string[];
+  metaWorktreePath?: string;
+  cachedCwd?: string;
+  sameCwd?: (a: string, b: string) => boolean;
+}): string[] {
+  const same = opts.sameCwd ?? ((a, b) => normalizeRepoPath(a) === normalizeRepoPath(b));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (cwd: string | undefined) => {
+    if (!cwd || typeof cwd !== "string") return;
+    const key = normalizeRepoPath(cwd);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(cwd);
+  };
+  // UI convenience: look first where the row claimed, but only if host-trusted.
+  if (
+    opts.messageCwd &&
+    opts.trustedCwds.some((t) => same(t, opts.messageCwd!))
+  ) {
+    add(opts.messageCwd);
+  }
+  add(opts.metaWorktreePath);
+  add(opts.cachedCwd);
+  for (const t of opts.trustedCwds) add(t);
+  return out;
+}
+
+/**
+ * Resolve the process cwd for a resume by finding which **catalog** directory
+ * actually holds `id` on disk. Returns undefined when no candidate contains
+ * the session — callers must not fall back to a renderer-supplied path.
+ */
+export function findSessionCatalogCwd(deps: {
+  fs: Pick<FsLike, "existsSync" | "readdirSync">;
+  grokHome: string;
+  id: string;
+  candidates: readonly string[];
+  platform?: NodeJS.Platform;
+}): string | undefined {
+  const { fs, grokHome, id, candidates } = deps;
+  const platform = deps.platform ?? process.platform;
+  if (!isValidSessionId(id)) return undefined;
+  const seen = new Set<string>();
+  for (const cwd of candidates) {
+    if (!cwd || typeof cwd !== "string") continue;
+    const key = normalizeRepoPath(cwd, platform);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    // Alias-aware lookup: session may live under a differently-cased catalog leaf.
+    const dir = sessionDirFor(grokHome, cwd, id, { fs, platform });
+    if (!dir) continue;
+    try {
+      if (fs.existsSync(path.join(dir, "summary.json"))) return cwd;
+    } catch {
+      /* try next candidate */
+    }
+  }
+  return undefined;
 }
 
 /** Cheap ordering pass: every session id newest-first by `summary.json` mtime, WITHOUT reading or
  *  parsing any summary content. One `stat` per dir instead of a `stat` + `read` + `JSON.parse`, so
  *  it stays fast even with thousands of sessions. The caller reads (via `readSessionEntries`) only
  *  the window it actually shows. mtime is an approximate sort key; the exact `updated_at` order is
- *  re-applied within the loaded page after reading. */
+ *  re-applied within the loaded page after reading.
+ *
+ *  Scans **all case-aliases** of `cwd` ({@link sessionCatalogDirs}) so a Windows project split
+ *  across `c:\…` and `C:\…` catalog leaves returns the union. Duplicate ids keep the higher mtime. */
 export function indexSessions(deps: IndexDeps): SessionIndexEntry[] {
   const { fs, grokHome, cwd, log } = deps;
-  const dir = sessionsDirFor(grokHome, cwd);
-  if (!fs.existsSync(dir)) return [];
-  let names: string[];
-  try {
-    names = fs.readdirSync(dir);
-  } catch (e) {
-    log?.(`[sessions] failed to read ${dir}: ${(e as Error).message}`);
-    return [];
-  }
-  const out: SessionIndexEntry[] = [];
-  for (const name of names) {
-    const resolvedSessionDir = sessionDirFor(grokHome, cwd, name);
-    if (!resolvedSessionDir) continue;
-    const summaryPath = path.join(resolvedSessionDir, "summary.json");
-    let st: { mtimeMs: number };
+  const platform = deps.platform ?? process.platform;
+  const catalogs = sessionCatalogDirs({ fs, grokHome, cwd, platform });
+  if (!catalogs.length) return [];
+  const byId = new Map<string, number>();
+  for (const dir of catalogs) {
+    let names: string[];
     try {
-      // A stat on summary.json doubles as the "is this a real session dir?" check: a stray file
-      // entry (or a dir without summary.json) makes the join non-existent and statSync throws.
-      st = fs.statSync(summaryPath);
-    } catch {
+      names = fs.readdirSync(dir);
+    } catch (e) {
+      log?.(`[sessions] failed to read ${dir}: ${(e as Error).message}`);
       continue;
     }
-    out.push({ id: name, mtimeMs: st.mtimeMs });
+    for (const name of names) {
+      if (!isValidSessionId(name)) continue;
+      const resolvedSessionDir = path.join(dir, name);
+      if (!isSessionDirChild(dir, resolvedSessionDir, platform)) continue;
+      let st: { mtimeMs: number };
+      try {
+        // Order by the TRANSCRIPT, not by summary.json. Opening a conversation
+        // rewrites summary.json — the CLI rebuilds system_prompt.txt and
+        // prompt_context.json and restamps `updated_at` — without adding a
+        // single message, so merely visiting a conversation promoted it to the
+        // top of Recent and of its project. Measured against a real
+        // 1592-session store: 46 were sitting above their true activity for
+        // exactly that reason, which is why it read as intermittent.
+        // `events.jsonl` only moves when the conversation does.
+        //
+        // It also carries the "is this a real session dir?" check the
+        // summary.json stat used to provide: a stray file entry makes the join
+        // non-existent and statSync throws.
+        st = fs.statSync(path.join(resolvedSessionDir, "events.jsonl"));
+      } catch {
+        try {
+          // No transcript yet — created but never spoken to. Fall back so it
+          // still lists, and keep the dir-validity check for that case.
+          st = fs.statSync(path.join(resolvedSessionDir, "summary.json"));
+        } catch {
+          continue;
+        }
+      }
+      const prev = byId.get(name);
+      if (prev === undefined || st.mtimeMs > prev) byId.set(name, st.mtimeMs);
+    }
   }
+  const out: SessionIndexEntry[] = [...byId.entries()].map(([id, mtimeMs]) => ({ id, mtimeMs }));
+  out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return out;
+}
+
+/**
+ * Newest TRANSCRIPT mtime under `cwd`'s session catalogs, or 0.
+ *
+ * Deliberately NOT `indexSessions`, which falls back to `summary.json` when a
+ * session has no transcript yet. That fallback is right for ordering a list —
+ * a brand-new conversation should still appear — and wrong for anything that
+ * decides authorization, because grok rewrites `summary.json` when a session is
+ * merely LOADED. A remote could therefore manufacture "this project was worked
+ * in" by getting an empty session reloaded, which is exactly how the archive
+ * fence was bypassed twice.
+ *
+ * `events.jsonl` only moves when a turn actually runs. That is evidence a remote
+ * cannot produce without already being allowed in.
+ */
+export function newestTranscriptMtime(deps: IndexDeps): number {
+  const { fs, grokHome, cwd, log } = deps;
+  const platform = deps.platform ?? process.platform;
+  let newest = 0;
+  for (const dir of sessionCatalogDirs({ fs, grokHome, cwd, platform })) {
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir);
+    } catch (e) {
+      log?.(`[sessions] failed to read ${dir}: ${(e as Error).message}`);
+      continue;
+    }
+    for (const name of names) {
+      if (!isValidSessionId(name)) continue;
+      const sessionDir = path.join(dir, name);
+      if (!isSessionDirChild(dir, sessionDir, platform)) continue;
+      try {
+        const st = fs.statSync(path.join(sessionDir, "events.jsonl"));
+        if (st.mtimeMs > newest) newest = st.mtimeMs;
+      } catch {
+        // No transcript: never spoken to, so it says nothing about activity.
+      }
+    }
+  }
+  return newest;
+}
+
+/**
+ * True when a parsed `summary.json` is minimally well-formed for discovery
+ * seeding. Mtime-only dirs (empty/`{}`/non-JSON) must not count toward the
+ * auto-open threshold — otherwise a planted tree of empty summaries would
+ * open an arbitrary directory as a trusted root.
+ */
+export function isWellFormedSessionSummary(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const o = raw as Record<string, unknown>;
+  // Real grok summaries carry info and/or activity fields. Require at least one.
+  if (o.info && typeof o.info === "object") return true;
+  if (typeof o.updated_at === "string" && o.updated_at.length > 0) return true;
+  if (typeof o.created_at === "string" && o.created_at.length > 0) return true;
+  if (typeof o.num_messages === "number" && Number.isFinite(o.num_messages)) return true;
+  if (typeof o.session_summary === "string") return true;
+  if (typeof o.generated_title === "string") return true;
+  return false;
+}
+
+/**
+ * Like {@link indexSessions}, but only counts sessions whose `summary.json`
+ * parses as a minimally well-formed object. Used by desktop discovery seeding
+ * so mtime-shaped empty files cannot satisfy the threshold.
+ */
+export function indexWellFormedSessions(deps: IndexDeps): SessionIndexEntry[] {
+  const { fs, grokHome, cwd, log } = deps;
+  const platform = deps.platform ?? process.platform;
+  const catalogs = sessionCatalogDirs({ fs, grokHome, cwd, platform });
+  if (!catalogs.length) return [];
+  const byId = new Map<string, number>();
+  for (const dir of catalogs) {
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir);
+    } catch (e) {
+      log?.(`[sessions] failed to read ${dir}: ${(e as Error).message}`);
+      continue;
+    }
+    for (const name of names) {
+      if (!isValidSessionId(name)) continue;
+      const resolvedSessionDir = path.join(dir, name);
+      if (!isSessionDirChild(dir, resolvedSessionDir, platform)) continue;
+      const summaryPath = path.join(resolvedSessionDir, "summary.json");
+      let st: { mtimeMs: number };
+      let rawText: string;
+      try {
+        st = fs.statSync(summaryPath);
+        rawText = fs.readFileSync(summaryPath, "utf8");
+      } catch {
+        continue;
+      }
+      let raw: unknown;
+      try {
+        raw = JSON.parse(rawText);
+      } catch {
+        continue;
+      }
+      if (!isWellFormedSessionSummary(raw)) continue;
+      const prev = byId.get(name);
+      if (prev === undefined || st.mtimeMs > prev) byId.set(name, st.mtimeMs);
+    }
+  }
+  const out: SessionIndexEntry[] = [...byId.entries()].map(([id, mtimeMs]) => ({ id, mtimeMs }));
   out.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return out;
 }
@@ -522,6 +1169,7 @@ export interface ReadEntriesDeps {
   cwd: string;
   ids: string[];
   overrides: SessionMetaOverrides;
+  platform?: NodeJS.Platform;
   now?: () => number;
   log?: (msg: string) => void;
 }
@@ -531,10 +1179,11 @@ export interface ReadEntriesDeps {
  *  content, so callers keep it to the visible window. */
 export function readSessionEntries(deps: ReadEntriesDeps): SessionListEntry[] {
   const { fs, grokHome, cwd, ids, overrides, log } = deps;
+  const platform = deps.platform ?? process.platform;
   const now = deps.now ? deps.now() : Date.now();
   const out: SessionListEntry[] = [];
   for (const id of ids) {
-    const resolvedSessionDir = sessionDirFor(grokHome, cwd, id);
+    const resolvedSessionDir = sessionDirFor(grokHome, cwd, id, { fs, platform });
     if (!resolvedSessionDir) continue;
     const summaryPath = path.join(resolvedSessionDir, "summary.json");
     let raw: any;
@@ -544,7 +1193,15 @@ export function readSessionEntries(deps: ReadEntriesDeps): SessionListEntry[] {
       log?.(`[sessions] could not read summary.json for ${id}: ${(e as Error).message}`);
       continue;
     }
-    out.push(buildEntry(id, raw, cwd, overrides, now));
+    // Last real activity, for the same reason indexSessions stats it: `updated_at`
+    // inside summary.json is restamped by merely OPENING the conversation, so
+    // sorting on it moved a session you only glanced at to the top. Undefined
+    // when there is no transcript yet, and buildEntry then keeps `updated_at`.
+    let activityAt: number | undefined;
+    try {
+      activityAt = fs.statSync(path.join(resolvedSessionDir, "events.jsonl")).mtimeMs;
+    } catch { /* no transcript yet — fall back to the recorded stamp */ }
+    out.push(buildEntry(id, raw, cwd, overrides, now, activityAt));
   }
   return out;
 }
@@ -562,9 +1219,16 @@ export interface ContextUsage {
  *  It's also the only source of a count before any live turn has run, i.e. on
  *  a cold restore. Null when the file is missing/unreadable or the count isn't
  *  a positive number. Pure. */
-export function readContextUsage(deps: { fs: FsLike; grokHome: string; cwd: string; id: string }): ContextUsage | null {
+export function readContextUsage(deps: {
+  fs: FsLike;
+  grokHome: string;
+  cwd: string;
+  id: string;
+  platform?: NodeJS.Platform;
+}): ContextUsage | null {
   const { fs, grokHome, cwd, id } = deps;
-  const resolvedSessionDir = sessionDirFor(grokHome, cwd, id);
+  const platform = deps.platform ?? process.platform;
+  const resolvedSessionDir = sessionDirFor(grokHome, cwd, id, { fs, platform });
   if (!resolvedSessionDir) return null;
   const signalsPath = path.join(resolvedSessionDir, "signals.json");
   try {
@@ -584,14 +1248,16 @@ export function readContextUsage(deps: { fs: FsLike; grokHome: string; cwd: stri
  *  paths. Kept for callers that genuinely need the whole list at once. */
 export function listSessions(deps: ListDeps): SessionListEntry[] {
   const { fs, grokHome, cwd, overrides, log } = deps;
+  const platform = deps.platform ?? process.platform;
   const now = deps.now ? deps.now() : Date.now();
-  const index = indexSessions({ fs, grokHome, cwd, log });
+  const index = indexSessions({ fs, grokHome, cwd, platform, log });
   const out = readSessionEntries({
     fs,
     grokHome,
     cwd,
     ids: index.map((e) => e.id),
     overrides,
+    platform,
     now: () => now,
     log,
   });
@@ -683,6 +1349,9 @@ export interface EmptySessionInput {
   /** A session bound to an isolated worktree backs a checkout the user asked for.
    *  `parkFocused` already refuses to auto-delete one; so does this. */
   worktreePath?: string;
+  /** A queued composer draft makes the conversation user-owned even when its
+   *  transcript has no real prompt yet. */
+  queuedDraft?: string;
   /** grok's `session_kind`. A `subagent` directory is a delegation's own
    *  transcript — never a conversation the user started, and not ours to remove. */
   kind?: string;
@@ -728,6 +1397,7 @@ export function isEmptySession(
   if (inp.customName?.trim()) return false;
   if (typeof inp.pinnedAt === "number") return false;
   if (inp.worktreePath?.trim()) return false;
+  if (inp.queuedDraft) return false;
   if (inp.kind === "subagent") return false;
   if (inp.historyUnreadable) return false;
   if ((inp.chatHistory ?? "").trim()) {
@@ -746,14 +1416,23 @@ export function isEmptySession(
   return isPrimerSummary(title);
 }
 
-/** Remove the on-disk session directory. No-op if missing. */
+/** Remove the on-disk session directory. No-op if missing. Searches case-aliases. */
+/**
+ * Windows loses a directory delete to whatever still holds a handle inside it —
+ * the grok process that just exited, a virus scanner, the search indexer — and
+ * reports it as ENOTEMPTY, which reads like a logic bug and is not one. Node
+ * retries exactly these errors when asked to; nothing else here changes.
+ */
+const RM_RETRY = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 } as const;
+
 export function deleteSessionDir(deps: DeleteDeps): void {
   const { fs, grokHome, cwd, id } = deps;
-  const dir = sessionDirFor(grokHome, cwd, id);
+  const platform = deps.platform ?? process.platform;
+  const dir = sessionDirFor(grokHome, cwd, id, { fs, platform });
   if (!dir) return;
   if (!fs.existsSync(dir)) return;
   if (fs.rmSync) {
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, RM_RETRY);
   } else {
     fs.rmdirSync(dir, { recursive: true });
   }
@@ -763,43 +1442,59 @@ export interface ClearDeps {
   fs: FsLike;
   grokHome: string;
   cwd: string;
+  platform?: NodeJS.Platform;
   /** Session id to keep (the live/focused one — grok re-persists it, so deleting it wouldn't stick). */
   exceptId?: string;
   /** Session ids to keep when more than one live view owns history in this cwd. */
   exceptIds?: Iterable<string>;
 }
 
-/** Remove every session directory under `cwd`, optionally keeping selected ids. Returns the ids it removed.
- *  Best-effort: a directory that fails to remove is skipped, not thrown, so one locked dir doesn't
- *  abort the sweep. The directory name is the session id (mirrors `deleteSessionDir`). */
+export interface DeleteDeps {
+  fs: FsLike;
+  grokHome: string;
+  cwd: string;
+  id: string;
+  platform?: NodeJS.Platform;
+}
+
+/** Remove every session directory under `cwd` (all case-aliases), optionally keeping selected ids.
+ *  Returns the ids it removed. Best-effort: a directory that fails to remove is skipped, not thrown,
+ *  so one locked dir doesn't abort the sweep. The directory name is the session id. */
 export function clearSessions(deps: ClearDeps): string[] {
   const { fs, grokHome, cwd, exceptId, exceptIds } = deps;
+  const platform = deps.platform ?? process.platform;
   const kept = new Set(exceptIds);
   if (exceptId) kept.add(exceptId);
-  const dir = sessionsDirFor(grokHome, cwd);
-  if (!fs.existsSync(dir)) return [];
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(dir);
-  } catch {
-    return [];
-  }
+  const catalogs = sessionCatalogDirs({ fs, grokHome, cwd, platform });
+  if (!catalogs.length) return [];
   const removed: string[] = [];
-  for (const name of entries) {
-    if (kept.has(name)) continue;
-    const full = sessionDirFor(grokHome, cwd, name);
-    if (!full) continue;
+  const removedSet = new Set<string>();
+  for (const dir of catalogs) {
+    let entries: string[];
     try {
-      if (!fs.statSync(full).isDirectory()) continue;
+      entries = fs.readdirSync(dir);
     } catch {
       continue;
     }
-    try {
-      if (fs.rmSync) fs.rmSync(full, { recursive: true, force: true });
-      else fs.rmdirSync(full, { recursive: true });
-      removed.push(name);
-    } catch {
-      continue;
+    for (const name of entries) {
+      if (kept.has(name) || !isValidSessionId(name)) continue;
+      const full = path.join(dir, name);
+      if (!isSessionDirChild(dir, full, platform)) continue;
+      try {
+        if (!fs.statSync(full).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      try {
+        if (fs.rmSync) fs.rmSync(full, RM_RETRY);
+        else fs.rmdirSync(full, { recursive: true });
+        if (!removedSet.has(name)) {
+          removedSet.add(name);
+          removed.push(name);
+        }
+      } catch {
+        continue;
+      }
     }
   }
   return removed;

@@ -11,18 +11,18 @@ import * as path from "node:path";
  *  and scrolls; past ~50 the ranking, not the list, is what helps). */
 export const MENTION_RESULT_LIMIT = 50;
 
-/** Default findFiles cap for one index build (also the `grok.mentionIndexLimit`
+/** Default findFiles cap for one index build (also the `atlas.mentionIndexLimit`
  *  setting default). Big monorepos exceed it — the popover is a quick-add
  *  affordance, not a complete search surface; raise the setting if files are
  *  missing from `@` autocomplete (#69). */
 export const MENTION_INDEX_LIMIT = 5000;
 
-/** Floor for `grok.mentionIndexLimit` — tiny values make the popover useless;
+/** Floor for `atlas.mentionIndexLimit` — tiny values make the popover useless;
  *  there is no upper bound (the user may index an entire monorepo if they want). */
 export const MENTION_INDEX_LIMIT_MIN = 100;
 
 /**
- * Normalize a raw `grok.mentionIndexLimit` value: floor to an integer, enforce
+ * Normalize a raw `atlas.mentionIndexLimit` value: floor to an integer, enforce
  * {@link MENTION_INDEX_LIMIT_MIN}, no upper cap. Non-finite / non-positive input
  * falls back to {@link MENTION_INDEX_LIMIT}.
  */

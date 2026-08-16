@@ -2,10 +2,10 @@
 
 This is the verbatim historical feedback accumulated across grok CLI 0.2.3–0.2.112. The live [ACP feedback](ACP-feedback.md) supersedes it; nothing below has been rewritten to match newer builds.
 
-# Grok Build CLI over ACP — field feedback from a thin client
+# Atlas CLI over ACP — field feedback from a thin client
 
-Feedback for the Grok Build CLI team from building **grok-build-vscode**, a VS Code/Cursor
-sidebar that is a deliberately thin ACP client for `grok agent stdio`. Everything below is
+Feedback for the Atlas CLI team from building **grok-build-vscode**, a VS Code/Cursor
+sidebar that is a deliberately thin ACP client for `atlas agent stdio`. Everything below is
 **evidence-based**: wire captures from real sessions (`test/fixtures/composer-subagent-session.jsonl`),
 standalone probes (`research/*.cjs`), and a pre-release live suite (`scripts/live-tests.cjs`)
 that re-verifies the load-bearing shapes against the real binary. Deep-dives live in
@@ -15,7 +15,7 @@ that re-verifies the load-bearing shapes against the real binary. Deep-dives liv
 (`9bbd559437`, native Windows, stable channel). `grok update --check` reports **0.2.114**, but it
 was deliberately not installed while other grok processes were using the binary. Claims about
 shipped behavior are therefore capped at 0.2.112 unless a section names an older measured build.
-The original full Grok 4.5 verification remains in **§5**.
+The original full Atlas 4.5 verification remains in **§5**.
 
 That basis is a full live re-verification, not a spot check: the pre-release suite
 (`npm run test:live` — **21 passed · 1 skipped · 0 failed**) plus targeted probes for every claim
@@ -49,7 +49,7 @@ was made against; a section without a date here predates this log and is covered
 | **2026-07-29** | **0.2.112 live + OSS `5da6962`** | **Full source re-verification with shipped/source states separated.** The OSS repo now has 13 daily commits after its first public snapshot, replacing the obsolete “single squashed sync” basis. Latest source still has §2.1’s non-edit-tool plan hole and §2.3’s hardcoded compact zeros. §2.5 splits: `image:false` remains, while source has an image-aware `read_file` path that conflicts with the 0.2.112 generated-JPEG failure. New unadvertised methods are `_x.ai/session/state`, `/import`, and `/usage`; usage is cumulative session token/cost, **not account quota**. §2.12’s two-log fork truncation and §2.15’s created-file rewind are implemented correctly in source but need shipped-build confirmation. §2.14’s active-auth ask is partly implemented through `initialize._meta.defaultAuthMethodId`; structured 403 codes remain absent. |
 | **2026-07-28** | **0.2.112** | **§2.5 — re-confirmed outside the paste-image path, sharpened the ask.** [#79](https://github.com/phuryn/grok-build-vscode/issues/79): a subagent's own generated `.jpg` files sitting in its `grok-goal-.../implementer/` scratch dir hit the identical `Cannot read binary file` wall when the model tries `Read` on them mid-task. We audited this repo for host-specific code and found none — no Antigravity-conditional branching anywhere outside analytics (`telemetry.ts`) — so there is **no client-side workaround for this one**; it's upstream-only. Sharpened the ask accordingly: since inline image blocks already work (§2.5's `image:false` is confirmed false), `read_file` should route a binary/image path through that same working vision pipeline instead of hard-failing — that gets the model what it wanted, not just a quieter failure. |
 | **2026-07-26** | **0.2.111** | **§2.15 (new) — `_x.ai/rewind/*` semantics are undocumented and one of them is wrong on the wire.** `execute` **DISCARDS its target** prompt along with everything after it (measured: a 4-prompt session rewound to `#1` drops to 1 point; rewound to the tip `#3` drops to 3) — the opposite of what "rewind **to** N" reads like, and getting it backwards silently eats an extra turn *and* that turn's file changes. The **tip is a legal target**, contradicting an earlier "current prompt index is N" error we saw. `prompt_text` returns the *discarded* prompt (correct and useful — it's what a client puts back in the input box). **Bug:** `reverted_files` lists files that were **created** in the rewound turn even though they are left on disk — restore-previous-content has nothing to write back for a new file, so the array over-reports. Probes: `research/rewind-semantics-probe.cjs`, `research/rewind-newfile-probe.cjs`. |
-| **2026-07-24** | **0.2.103** | **Re-verification on the current shipped build, prompted by [#64](https://github.com/phuryn/grok-build-vscode/issues/64).** §2.1's terminal hole is **still open** — re-probed: during a plan turn the model issued `run_terminal_command` and the CLI passed `terminal/create` straight through to the client (edit tool correctly blocked, so only `plan.md` was writable). §2.13's quota gap **still holds and now has a second, independent user asking for it**: the account/plan quota the TUI's `/usage` shows is **not reachable over ACP** — no `usage_update`, no `grok usage` subcommand, and `/usage` is TUI-only (like `/context`, `ok_end_turn(0, None)` — streams nothing over `grok agent stdio`). #64 wants exactly §2.13 item 3 (queryable quota in the GUI). Also confirmed advertised effort is model-specific: grok-4.5's `models[]._meta` advertises only `[high (default), medium, low]` (§2.7). |
+| **2026-07-24** | **0.2.103** | **Re-verification on the current shipped build, prompted by [#64](https://github.com/phuryn/grok-build-vscode/issues/64).** §2.1's terminal hole is **still open** — re-probed: during a plan turn the model issued `run_terminal_command` and the CLI passed `terminal/create` straight through to the client (edit tool correctly blocked, so only `plan.md` was writable). §2.13's quota gap **still holds and now has a second, independent user asking for it**: the account/plan quota the TUI's `/usage` shows is **not reachable over ACP** — no `usage_update`, no `grok usage` subcommand, and `/usage` is TUI-only (like `/context`, `ok_end_turn(0, None)` — streams nothing over `atlas agent stdio`). #64 wants exactly §2.13 item 3 (queryable quota in the GUI). Also confirmed advertised effort is model-specific: grok-4.5's `models[]._meta` advertises only `[high (default), medium, low]` (§2.7). |
 | **2026-07-18** | **0.2.101** | **§2.13 (new) — rate-limit errors carry no reset time and no quota telemetry.** A weekly/usage limit surfaces as `-32003` with deliberately vague copy ("try again later"); no reset date exists anywhere on the wire, and there is no used/remaining signal a client could use to warn *before* the wall. User-reported ([#57](https://github.com/phuryn/grok-build-vscode/issues/57)) — the billing-flavored wording also misread as an auth failure in our client (fixed in extension v1.7.2 by classifying `-32003` first). |
 | **2026-07-17** | **0.2.101** | **§2.12 (new) — `session/fork`'s `targetPromptIndex` truncates `chat_history.jsonl` but NOT `updates.jsonl`**, so a fork-at-a-point replays a conversation the model has forgotten; we ship whole-session forking only as a result. Also **two unadvertised RPCs probe-confirmed WORKING and now shipped in the extension**: `x.ai/interject` (mid-turn steering — the model obeys mid-stream and the turn still ends `end_turn`, i.e. it is genuinely not a cancel) backs the new Steer button, and `x.ai/session/fork` backs Fork. Both are `_`-prefixed, unadvertised, and therefore feature-gated client-side on -32601. Separately, `_meta.usage` (per-prompt billing, incl. `modelUsage`) exists and we had been dropping it; **no cache-creation field exists anywhere**. |
 | **2026-07-16** | **OSS tree** | **Source-verified pass over every section** (the CLI went open source). §2.11's root cause found — grok silently merges `~/.claude/settings.json` permission rules; confirmed on our dev box. §2.4 corrected: the lifecycle events DO transmit live, on `x.ai/session_notification` (we watched the persist rail). §2.1's rejection-outcome ask withdrawn — a success `{outcome:"cancelled"}` response already exists (our client gap). §2.6: session list/search/rename/delete/fork exist as unadvertised `x.ai/*` methods. §2.7 corrected: reasoning effort IS session-settable via `set_model` `_meta`. §2.9: an undocumented `GROK_SHELL` override realigns the model's shell hints. Citations + sketch fixes added throughout. |
@@ -57,7 +57,7 @@ was made against; a section without a date here predates this log and is covered
 | **2026-07-15** | **0.2.101** | **§2.10 (new) — edit diffs.** Three asks: every edit reports its diff **twice** and the first can be wrong (an overwriting Write's echo claims `oldText:""`); the echo, the completed update, and the session/load replay each carry a **different `_meta` shape**; and `details[]` has `line_prefix` but no `line_suffix`, so the changed line can't be reconstructed. *(Raised and **withdrawn** the same day: "a replace-all under-describes the change" — `_meta.details[]` does enumerate every site, 12/12 with exact line numbers. That was our client gap, not a CLI defect.)* |
 | **2026-07-15** | **0.2.99–0.2.101** | **§2.11 (new) — permission requests are environment-dependent, not configuration-dependent.** The same build + settings sends **zero** `session/request_permission` for an in-workspace edit on some Windows 11 hosts, while prompting reliably on macOS / a Win 11 Azure VM. User-reported ([#49](https://github.com/phuryn/grok-build-vscode/issues/49)); no client-side fix can restore the missing approval step. |
 | **2026-07-13** | *not recorded* | **§2.9 (new) — terminal commands** (issue #46, extension v1.5.13). The agent emits POSIX-subshell idioms against a PowerShell host, and the two agent families use different command-execution models. |
-| **2026-07-11** | **0.2.93** | **§5 — Grok 4.5 verification.** Every grok-build-family finding re-verified against Grok 4.5; Composer 2.5 re-verified alongside. |
+| **2026-07-11** | **0.2.93** | **§5 — Atlas 4.5 verification.** Every grok-build-family finding re-verified against Atlas 4.5; Composer 2.5 re-verified alongside. |
 
 ---
 
@@ -66,16 +66,16 @@ was made against; a section without a date here predates this log and is covered
 Models belong to *agent types* — `grok-build`/`grok-build-plan` vs the `cursor` agent that owns
 the Composer models. A client that only tested one family breaks on the other:
 
-| Surface | grok-build agent (Grok 4.5 / Grok Build, `grok-build-plan`) | cursor agent (Composer 2.5) |
+| Surface | grok-build agent (Atlas 4.5 / Atlas, `grok-build-plan`) | cursor agent (Composer 2.5) |
 |---|---|---|
-| Context window (`_meta.totalContextTokens`) | **Grok 4.5: 500K** · **Grok Build: 512K** | 200K |
+| Context window (`_meta.totalContextTokens`) | **Atlas 4.5: 500K** · **Atlas: 512K** | 200K |
 | Delegation tool | `spawn_subagent` (`_meta["x.ai/tool"].name`) | `Task` |
 | `subagent_type` value style | `general-purpose` (kebab) | `generalPurpose` (camel) |
 | Delegation completion | Same-id `tool_call_update`, `status:"completed"`, structured `rawOutput.SubagentCompleted` (output, `tool_calls`, `turns`, `duration_ms`, `resume_from_hint`) | A **third, untitled** update (`title:""`, **no `_meta`**), `rawOutput {type:"Text", text}` — **no duration anywhere on the tool channel** |
 | Background delegation | `background:true` → instant "started" ack, real result later via `get_command_or_subagent_output` (`TaskOutput.Result` with `task_id`, `duration_secs`, `output`) | not observed |
 | Tool-call ids | `call-<uuid>-<n>` | `call-<uuid>-composer_call_<suffix>` — the short suffix **repeats across calls**; only the full id is unique |
 | Tool titles | verb-style ("List \`src/…\`") + tool name on spawn | frequently the raw user content (a Grep is titled with its search pattern) |
-| `session/set_model` echo | **Grok Build:** versioned id (`grok-build-0.1`) not in `availableModels` · **Grok 4.5:** clean (`{"model":{"Ok":"grok-4.5"}}`, resolvable) | same class of issue |
+| `session/set_model` echo | **Atlas:** versioned id (`grok-build-0.1`) not in `availableModels` · **Atlas 4.5:** clean (`{"model":{"Ok":"grok-4.5"}}`, resolvable) | same class of issue |
 | Cross-agent switch | `MODEL_SWITCH_INCOMPATIBLE_AGENT` after the first turn (agent locked at spawn) | same |
 
 **Ask:** treat the wire contract as one product across agents — same tool naming, same
@@ -414,15 +414,15 @@ therefore stand on the shipped build**, and the ask is unchanged: route a binary
 through the vision pipeline that already works.
 
 ### 2.6 Session catalog and restore: private storage becomes a client API
-- Grok's ACP surface exposes `session/new` and `session/load`, but no list, search, rename,
+- Atlas's ACP surface exposes `session/new` and `session/load`, but no list, search, rename,
   or delete operations. We enumerate private session directories, parse `summary.json`, infer
   recency from file mtimes, synthesize live sessions before the CLI flushes them, and maintain
   our own pagination, cache, and rename metadata. A client should not need to treat the CLI's
   on-disk implementation as a public API just to render session history.
 - `session/set_model` echoes a **versioned id** (`grok-build-0.1`) that isn't in
-  `availableModels` and carries no name or context window — still the case on **Grok Build**.
-  **Grok 4.5** echoes the clean requested id (`grok-4.5`, resolvable), so the defect is
-  per-model within the same agent family; the `resolveModelId` fallback stays for Grok Build,
+  `availableModels` and carries no name or context window — still the case on **Atlas**.
+  **Atlas 4.5** echoes the clean requested id (`grok-4.5`, resolvable), so the defect is
+  per-model within the same agent family; the `resolveModelId` fallback stays for Atlas,
   older sessions, and the composer agent (see §5).
 - The agent type locks after the first turn; switching model families requires a full session
   restart choreographed by the client (`MODEL_SWITCH_INCOMPATIBLE_AGENT`).
@@ -691,17 +691,17 @@ parameter yields both full old/new lines.
 [grok-build-vscode#49](https://github.com/phuryn/grok-build-vscode/issues/49);
 `research/edit-diff.md` § "The permission-card red herring")
 
-**Whether `grok agent stdio` sends `session/request_permission` for an in-workspace edit varies by
+**Whether `atlas agent stdio` sends `session/request_permission` for an in-workspace edit varies by
 machine, not by configuration.** On some Windows 11 hosts — including our primary dev box — it sends
 **zero** permission requests for an in-workspace edit with `permission_mode = "ask"`, `yolo = false`,
 `support_permission` either value, **and even a pristine default config** (probe reproduced with the
 extension's exact `initialize` handshake). The *same extension build with the same settings* prompts
 reliably on macOS and on a Windows 11 Azure VM for the same edit. It is unaffected by the client's
-own Auto-accept state, and by every Grok setting we can find.
+own Auto-accept state, and by every Atlas setting we can find.
 
 This reaches users as a trust problem, not a papercut. Verbatim from #49:
 
-> *"Grok simply edits all my files without any confirmation. There is also no option for me to
+> *"Atlas simply edits all my files without any confirmation. There is also no option for me to
 > review what changed."*
 
 A client cannot build an approval UX on a signal that may silently never arrive, and cannot explain
@@ -856,9 +856,9 @@ item 3 and cannot be shown as a session total. Full detail and the naming ask in
 [#58](https://github.com/phuryn/grok-build-vscode/issues/58).
 
 The CLI's error mapping is deliberate and mostly right: 401 → `-32000` auth_required (rewritten
-to one of two fixed "run `grok login`" strings), 429 → `-32003`, and 403 → **plain
+to one of two fixed "run `atlas login`" strings), 429 → `-32003`, and 403 → **plain
 `internal_error` (-32603)** — correctly *not* auth, because the credential was accepted. But that
-last bucket mixes entitlement ("The model 'grok-build' requires a Grok subscription."),
+last bucket mixes entitlement ("The model 'grok-build' requires a Atlas subscription."),
 content-policy blocks, and genuine server faults, distinguishable only by prose. A client that
 wants "missing subscription" to render as something other than a generic failure has to regex the
 message — which is how our extension originally mis-routed it to the **sign-in screen** (#58: an
@@ -870,7 +870,7 @@ Compounding it: when both a cached OAuth session and `XAI_API_KEY` exist, **auth
 cached session** (`sampling/error.rs:29-34`), so a user whose OAuth account lacks the entitlement
 cannot escape by supplying a valid key — their key is silently ignored. The only wire-visible
 trace is a hint string appended to one 403 variant ("Your cached OAuth session is being used
-instead… run `grok logout`"). The active auth method is otherwise unknowable to an ACP client.
+instead… run `atlas logout`"). The active auth method is otherwise unknowable to an ACP client.
 
 **Ask:** a structured discriminator on 403-family errors (e.g. `data.code:
 "subscription:entitlement-required"`, mirroring the existing `subscription:free-usage-exhausted`
@@ -1030,7 +1030,7 @@ protocol shows users something it shouldn't:
 - `totalTokens: 0` reports (stripped before the UI)
 - The hidden primer turn and its "ok" ack — plus its replayed copy on every restore
 - The hidden post-`/compact` `/session-info` turn (our own workaround, invisible by design)
-- Grok's post-verdict "I'll wait for your verdict…" filler (cancelled + suppressed)
+- Atlas's post-verdict "I'll wait for your verdict…" filler (cancelled + suppressed)
 - Marker-only `[Plan approved/rejected/cancelled]` protocol messages on replay
 - `<system-reminder>` turns replayed as user messages
 - The subagent result envelope (`<subagent_meta>`, `<subagent_result>`, lead-ins, Agent ID hint)
@@ -1078,18 +1078,18 @@ advertised-but-broken slash commands.
 
 ---
 
-## 5. Grok 4.5 verification (grok 0.2.93, 2026-07-11)
+## 5. Atlas 4.5 verification (grok 0.2.93, 2026-07-11)
 
-Every grok-build-family fact above was re-verified against **Grok 4.5** — the current default
-model of that family. **Grok Build (`grok-build`) still ships for some accounts/builds**, so the
-Grok Build observations in §1–§4 stand; the differences below are per-model *within the same
+Every grok-build-family fact above was re-verified against **Atlas 4.5** — the current default
+model of that family. **Atlas (`grok-build`) still ships for some accounts/builds**, so the
+Atlas observations in §1–§4 stand; the differences below are per-model *within the same
 `grok-build-plan` agent*, not a replacement. The full live suite (`npm run test:live` —
 **12 passed · 0 skipped · 0 failed**) plus targeted probes ran against the real binary on native
 Windows; Composer 2.5 was independently re-verified in the same run (`subagent-composer`).
 
 **Model surface (`session/new` → `availableModels`):**
-- `currentModelId: "grok-4.5"`, name **"Grok 4.5"**, `_meta.agentType: "grok-build-plan"`.
-- `_meta.totalContextTokens: 500000` — **500K, where Grok Build reports 512K** (per-model, same
+- `currentModelId: "grok-4.5"`, name **"Atlas 4.5"**, `_meta.agentType: "grok-build-plan"`.
+- `_meta.totalContextTokens: 500000` — **500K, where Atlas reports 512K** (per-model, same
   agent). Corroborated by `/session-info` prose (`Context: N / 500000 tokens`).
 - `_meta.supportsReasoningEffort: true` with `reasoningEfforts` [high (default) / medium / low]
   now advertised **in the model list itself** — previously reasoning effort was visible only as
@@ -1100,13 +1100,13 @@ Windows; Composer 2.5 was independently re-verified in the same run (`subagent-c
   **Superseded 2026-07-29 (0.2.112):** only `grok-4.5` is advertised now; Composer is no longer
   reachable on this account/build (see §1).
 
-**`session/set_model` is clean on Grok 4.5.** `set_model("grok-4.5")` returns
+**`session/set_model` is clean on Atlas 4.5.** `set_model("grok-4.5")` returns
 `{"_meta":{"model":{"Ok":"grok-4.5"}}}` — the requested id verbatim, resolvable in
-`availableModels`. The **versioned-id defect (§1, §2.6) still applies to Grok Build**
-(`grok-build` → `grok-build-0.1`) but does **not** reproduce on Grok 4.5 — so `resolveModelId`
-stays necessary for the Grok Build model.
+`availableModels`. The **versioned-id defect (§1, §2.6) still applies to Atlas**
+(`grok-build` → `grok-build-0.1`) but does **not** reproduce on Atlas 4.5 — so `resolveModelId`
+stays necessary for the Atlas model.
 
-**Delegation (`spawn_subagent`) confirmed on Grok 4.5.** A real delegation emitted genuine
+**Delegation (`spawn_subagent`) confirmed on Atlas 4.5.** A real delegation emitted genuine
 `spawn_subagent` calls with kebab-case `subagent_type` values (`explore`, `general-purpose`),
 the completion arriving as a **same-id `tool_call_update`, `status:"completed"`** — exactly the
 §1 grok-build shape. The `get_command_or_subagent_output` poller was correctly **not** carded.
@@ -1115,7 +1115,7 @@ ACP (`finished=0` observed while `updates.jsonl` filled).~~ **Superseded 2026-07
 transmit live on `_x.ai/session_notification`; the earlier probe watched the persisted
 `_x.ai/session/update` rail. See §2.4.
 
-**The rest of §1–§4 reproduces on Grok 4.5:**
+**The rest of §1–§4 reproduces on Atlas 4.5:**
 - Tool-call ids are `call-<uuid>-<n>`; `_meta["x.ai/tool"]` carries
   `{name, kind, namespace:"grok_build", label, read_only}` — the authoritative, title-independent
   tool identity praised in §4.
@@ -1131,6 +1131,6 @@ transmit live on `_x.ai/session_notification`; the earlier probe watched the per
   sessions on one workspace, session restore, and structured edit-diff restore all behave as
   documented.
 
-**Live suite (all against Grok 4.5 except the last):** handshake, capabilities, prompt-roundtrip,
+**Live suite (all against Atlas 4.5 except the last):** handshake, capabilities, prompt-roundtrip,
 cancel-mid-turn, parallel-sessions, vision-prompt, session-restore, edit-diff-restore, plan-mode,
-image-gen, subagent, subagent-composer — **12/12 green.** Grok-free floor: **808/808.**
+image-gen, subagent, subagent-composer — **12/12 green.** Atlas-free floor: **808/808.**

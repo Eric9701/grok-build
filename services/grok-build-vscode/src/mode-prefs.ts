@@ -15,7 +15,7 @@ export function modeToRemember(modeId: ModeId): "agent" | "yolo" | null {
 
 /**
  * Whether a brand-new session should start in Auto accept (YOLO), given the
- * remembered `grok.defaultMode` and whether this start is a resume. Resumed
+ * remembered `atlas.defaultMode` and whether this start is a resume. Resumed
  * sessions are verdict-driven (plan-restore decides), so they never pre-apply
  * the remembered mode.
  */

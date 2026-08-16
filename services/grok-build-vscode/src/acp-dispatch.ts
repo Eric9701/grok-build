@@ -10,7 +10,7 @@ import { fileUriToPath } from "./file-ref";
 
 export type DispatchEvent =
   | { kind: "response"; id: number | string; result?: any; error?: any }
-  | { kind: "session-update"; update: any; meta?: any }
+  | { kind: "session-update"; update: any; meta?: any; sessionId?: string }
   | { kind: "server-request"; id?: number | string; method: string; params: any }
   | { kind: "non-json"; line: string };
 
@@ -26,12 +26,31 @@ export function parseAcpLine(line: string): DispatchEvent | null {
     return { kind: "response", id: msg.id, result: msg.result, error: msg.error };
   }
   if (msg.method === "session/update") {
-    return { kind: "session-update", update: msg.params?.update, meta: msg.params?._meta };
+    const sessionId = typeof msg.params?.sessionId === "string" && msg.params.sessionId
+      ? msg.params.sessionId
+      : undefined;
+    return { kind: "session-update", update: msg.params?.update, meta: msg.params?._meta, sessionId };
   }
   if (msg.method) {
     return { kind: "server-request", id: msg.id, method: msg.method, params: msg.params };
   }
   return null;
+}
+
+/** True when a session/update names a different conversation than this client. */
+export function isForeignSessionUpdate(
+  updateSessionId: unknown,
+  ownerSessionId: unknown,
+): updateSessionId is string {
+  return typeof updateSessionId === "string" && updateSessionId.length > 0
+    && typeof ownerSessionId === "string" && ownerSessionId.length > 0
+    && updateSessionId !== ownerSessionId;
+}
+
+/** System wake notes and other CLI-hidden user chunks (`update._meta.hideFromScrollback`). */
+export function updateHidesFromScrollback(update: unknown): boolean {
+  const meta = (update as { _meta?: { hideFromScrollback?: unknown } } | null | undefined)?._meta;
+  return meta?.hideFromScrollback === true;
 }
 
 /** Original wall-clock time attached by grok to live and replayed updates.
@@ -171,9 +190,15 @@ export function collectToolImages(payload: any): MediaRef[] {
  * See research/image-generation.md. The host tracks these ids so the *completed*
  * update (whose title is null) can still be recognized.
  */
-export function isMediaGenToolCall(payload: any): boolean {
+/** MIRRORED in media/webview-helpers.js so the webview can gate a failure hint
+ *  without a host rewrite. KEEP THE TWO IN STEP: test/media-gen-mirror.test.ts
+ *  drives one fixture set through both and fails if either changes alone. */
+export function isMediaGenToolCall(payload: any, provider: "grok" | "codex" = "grok"): boolean {
   if (!payload || typeof payload !== "object") return false;
   const title = String(payload.title ?? "");
+  if (provider === "codex") {
+    return payload.kind === "other" && title === "Image generation";
+  }
   if (/^imagine(-video|-edit)?:/i.test(title)) return true;                   // relabeled titles
   if (/^(image_gen|image_edit|video_gen|image_to_video|reference_to_video)\b/i.test(title)) return true; // raw tool names
   if (/^(image-to-video:|reference-to-video:)/i.test(title)) return true;     // legacy relabels
@@ -234,6 +259,7 @@ export function routeSessionUpdate(u: any): UpdateRoute | null {
       return { event: "messageChunk", text: c?.text ?? "" };
     }
     case "user_message_chunk":
+      if (updateHidesFromScrollback(u)) return null;
       return { event: "userMessageChunk", text: u.content?.text ?? "" };
     case "agent_thought_chunk":
       return { event: "thoughtChunk", text: u.content?.text ?? "" };
@@ -253,6 +279,33 @@ export function routeSessionUpdate(u: any): UpdateRoute | null {
       return { event: "taskCompleted", payload: u };
     default:
       return { event: "update", payload: u };
+  }
+}
+
+/**
+ * Map a routed child update onto the additive `childStream` host payload.
+ * Mode/commands/plan/media stay off this path — they are parent chrome.
+ */
+export function childStreamFromRoute(
+  childSessionId: string,
+  route: UpdateRoute,
+):
+  | { childSessionId: string; event: "messageChunk"; text: string }
+  | { childSessionId: string; event: "thoughtChunk"; text: string }
+  | { childSessionId: string; event: "userMessageChunk"; text: string }
+  | { childSessionId: string; event: "toolCall"; call: any }
+  | { childSessionId: string; event: "toolCallUpdate"; call: any }
+  | null {
+  switch (route.event) {
+    case "messageChunk":
+    case "thoughtChunk":
+    case "userMessageChunk":
+      return { childSessionId, event: route.event, text: route.text };
+    case "toolCall":
+    case "toolCallUpdate":
+      return { childSessionId, event: route.event, call: route.payload };
+    default:
+      return null;
   }
 }
 
@@ -612,9 +665,9 @@ export function isIncompatibleAgentError(err: any): boolean {
 
 /**
  * True when a turn error looks like an expired/invalid credential rather than a
- * real fault. A long-lived pooled `grok agent stdio` process can wedge on an
+ * real fault. A long-lived pooled `atlas agent stdio` process can wedge on an
  * expired OAuth access token when its 401-refresh loses a rotation race with the
- * sibling processes (or `grok login`) that share `~/.grok/auth.json`; a fresh
+ * sibling processes (or `atlas login`) that share `~/.grok/auth.json`; a fresh
  * process re-reads the current disk token, so the host transparently restarts
  * the wedged process instead of making the user sign out and back in. Kept
  * deliberately broad — this is ONLY the gate for that one guarded reload+retry,
@@ -638,7 +691,7 @@ export function isAuthErrorText(msg: unknown): boolean {
  * ACP error code for a genuine credential failure (`auth_required`). The CLI
  * funnels EVERY prompt-turn auth failure (HTTP 401 / its internal Auth error)
  * through this code with one of two fixed "Session expired… / Authentication
- * failed… run `grok login`" strings (OSS `session_setup.rs` `to_acp_error` +
+ * failed… run `atlas login`" strings (OSS `session_setup.rs` `to_acp_error` +
  * `auth_method.rs`), which makes the code the authoritative credential signal.
  */
 export const AUTH_REQUIRED_ERROR_CODE = -32000;
@@ -652,7 +705,7 @@ export const AUTH_REQUIRED_ERROR_CODE = -32000;
  * (the CLI maps 403 to a plain internal error precisely because the credential
  * was accepted — entitlement/content-policy, not auth), bare "api key" (the
  * CLI's 403-subscription message can embed "You have an API key set
- * (XAI_API_KEY)… run `grok logout`" — advice the login overlay would invert),
+ * (XAI_API_KEY)… run `atlas logout`" — advice the login overlay would invert),
  * and all billing wording. Only this classifier may route to the sign-in
  * overlay; everything else shows in chat.
  */
@@ -737,7 +790,7 @@ export function rateLimitNoticeText(err: unknown): string {
  * wording actually says subscription/entitlement (a generic billing message
  * must not be over-diagnosed). The CLI's own text carries the actionable
  * advice — including its "API key shadowed by cached OAuth session → run
- * `grok logout`" hint — so it's shown verbatim.
+ * `atlas logout`" hint — so it's shown verbatim.
  */
 export function entitlementNoticeText(err: unknown): string {
   const detail = errorDetail(err).trim();

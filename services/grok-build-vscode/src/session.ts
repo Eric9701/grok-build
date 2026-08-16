@@ -2,6 +2,7 @@ import { AcpClient } from "./acp";
 import type { HostMsg } from "./protocol";
 import type { FileChip } from "./chips";
 import { permissionOptionsForPlan } from "./plan-gate";
+import type { AcpProvider } from "./acp-backend";
 
 /** Live state for the dashboard dot. `cold` (no live process) is represented by
  *  the absence of a Session, so it isn't in this union. */
@@ -63,7 +64,7 @@ export function preferredPermissionAllowOption(
 
 /**
  * All state that belongs to a single grok session — extracted from GrokSidebar so
- * the sidebar can hold a *pool* of these (one live `grok agent stdio` process per
+ * the sidebar can hold a *pool* of these (one live `atlas agent stdio` process per
  * session) and switch focus between them without tearing the others down.
  *
  * Today the sidebar keeps exactly one of these (the focused session). Steps C–F
@@ -73,9 +74,11 @@ export function preferredPermissionAllowOption(
  * singletons it replaces 1:1).
  */
 export class Session {
+  /** Provider is fixed once the first user turn enters history. */
+  provider: AcpProvider = "grok";
   /** Host-owned composer attachments for this session/view. */
   chips: FileChip[] = [];
-  /** The live ACP client (one spawned `grok agent stdio` process), once started. */
+  /** The live ACP client (one spawned `atlas agent stdio` process), once started. */
   client?: AcpClient;
 
   /** YOLO: auto-approve every permission request for this session. */
@@ -87,6 +90,14 @@ export class Session {
   /** Whether this session's CLI is new enough for native plan verdicts. */
   planModeAvailable = true;
   planModeUnavailableReason?: string;
+  /**
+   * True only after a live `grok --version` produced a parseable answer.
+   * A cache substitute may keep Plan available but stays unverified so a later
+   * live probe can replace it. Unverified + unavailable stays fail-closed for
+   * Plan but is re-checkable when the user picks Plan. A live below-floor
+   * answer keeps this true so we never re-ask a known-old CLI.
+   */
+  planModeVersionVerified = true;
 
   /** Latest attempt to force an unavailable Plan session back to Agent. */
   planModeRecoveryAttempt = 0;
@@ -180,7 +191,7 @@ export class Session {
   activeSessionId?: string;
 
   /**
-   * Effective working directory for this session's `grok agent stdio` process.
+   * Effective working directory for this session's `atlas agent stdio` process.
    * Usually the workspace root; for a worktree-isolated session (P2-8) this is
    * the worktree path under `~/.grok/worktrees/…`. Pinned at startSession —
    * history reopen must reuse the same cwd so `session/load` finds the dir.
@@ -193,15 +204,13 @@ export class Session {
    */
   worktree?: { path: string; label: string; sourceGitRoot: string; id?: string };
 
-  /**
-   * Session-scoped `[Image #N]` counter — the highest index used so far.
-   * Incremented per attached image and NEVER reset on send, so every image in
-   * one conversation gets a distinct tag (per-composer numbering would restart
-   * at #1 each turn and make "image #1" ambiguous in the transcript). On
-   * restore it's re-seeded from the replayed prompts' tags (sidebar's
-   * userMessageChunk handler).
-   */
-  imageCounter = 0;
+  // NOTE: there is deliberately no `[Image #N]` counter here any more. Tags are
+  // numbered per MESSAGE, from the chip's position (chips.ts
+  // `withPerMessageImageIndices`), because that is what the CLI resolves an
+  // image reference against. The session-scoped counter this replaced was
+  // chosen so two screenshots in one conversation never shared a tag — a real
+  // benefit, but it bought unambiguous transcripts at the price of tags the
+  // agent could not resolve, which is the wrong trade.
 
   titleGenerated = false;
   firstUserMessageForTitle?: string;
@@ -294,6 +303,29 @@ export class Session {
    * two risks duplicate delivery or work loss. */
   queuedSendRequiresRelay = false;
 
+  /**
+   * This view was re-homed onto a replacement while NO provider was connected,
+   * so it is bound to no agent yet. Binding it to the opposite (also
+   * disconnected) provider is what this replaces: that produced a session no
+   * amount of signing in could ever drive, because reconnecting retargeted only
+   * whichever session the recheck happened to arrive on. Reconnecting any
+   * provider adopts every session carrying this flag.
+   */
+  needsProvider = false;
+
+  /**
+   * The draft rescued from the conversation this replacement stands in for,
+   * held until there is a working composer to put it back into. Restoring it at
+   * sign-out time would post it into a view that is showing the onboarding
+   * overlay, where the user cannot see it and a reload discards it.
+   */
+  strandedDraft?: string;
+
+  /** Conversation whose META holds {@link strandedDraft}. A replacement gets a
+   * fresh provider session id after reconnect, so the durable draft must still
+   * be cleared from the conversation it was captured from. */
+  strandedDraftSessionId?: string;
+
 }
 
 /** Mark a prompt as in flight. The returned token is the only thing that can
@@ -317,6 +349,61 @@ export function endTurn(session: Session, token: object): boolean {
  *  which cannot distinguish "working" from "was working and never settled". */
 export function turnIsInFlight(session: Session): boolean {
   return session.turnToken !== undefined;
+}
+
+/**
+ * True when the ACP session can accept `session/prompt` (spawn finished and
+ * session/new|load returned an id). During the priming window the client object
+ * may already exist while `sessionId` is still unset — a prompt then throws
+ * "no session" after consuming chips. Callers must queue instead.
+ */
+export function sessionReadyForPrompt(session: Session): boolean {
+  return !!session.client && !session.priming && !!session.client.sessionId;
+}
+
+/**
+ * Busy chrome restored after a webview reload reattaches to a live session.
+ * Keeps the startup lock while priming (or while the client has no session id
+ * yet) so a rehydrate cannot unlock the composer into a work-losing send.
+ */
+export function rehydrateBusyChrome(session: Session): { value: boolean; locked: boolean } {
+  if (!sessionReadyForPrompt(session)) {
+    return { value: true, locked: true };
+  }
+  const busy =
+    session.status === "working" ||
+    session.status === "needs-you" ||
+    session.turnToken !== undefined;
+  return { value: busy, locked: false };
+}
+
+/**
+ * True while this session has something to lose — the agent is working, waiting
+ * on an answer it will resume from, or still starting up with input already
+ * queued behind it.
+ *
+ * Closing a project folder disposes its sessions and force-kills the agent
+ * process (a hard kill on Windows), so this predicate is the difference between
+ * a clean close and work discarded without a word.
+ *
+ * The startup clause is the one that is easy to get wrong, and it was: an
+ * earlier version of this checked only status and token, and reported "nothing
+ * running" for a session whose process was still spawning — precisely the
+ * window where a slow start leaves queued input sitting unsent.
+ * `rehydrateBusyChrome` treats that state as busy-and-locked for the same
+ * reason. It cannot simply defer to `sessionReadyForPrompt`, though: that is
+ * false for a brand-new session which has never started at all, and warning
+ * about those would fire on every close.
+ *
+ * Broader than `turnIsInFlight`, which only asks whether a token exists.
+ */
+export function sessionHasWorkInFlight(session: Session): boolean {
+  if (session.status === "working" || session.status === "needs-you") return true;
+  if (session.turnToken !== undefined) return true;
+  // Starting: `priming` covers the spawn window before the client object even
+  // exists; the second clause covers a client whose session/new has not
+  // returned an id yet. A session with neither has never been started.
+  return session.priming || (!!session.client && !session.client.sessionId);
 }
 
 export function beginQueuedSendCommit(session: Session, text: string): { text: string } | undefined {
@@ -365,6 +452,8 @@ export function sessionUiSnapshot(
     type: "planModeAvailability",
     available: session.planModeAvailable,
     reason: session.planModeUnavailableReason,
+    // Unverified probes stay clickable so the user can re-check without restart.
+    recheckable: !session.planModeAvailable && !session.planModeVersionVerified,
   });
   for (const [requestId, pending] of session.pendingPermissions) {
     messages.push({

@@ -23,42 +23,60 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
       // Older hosts refuse to delete the conversation the requester is reading,
       // so the client has to be told rather than assume. Capability, not version.
       deleteActiveSession: true,
+      // Project file browse for AFK Pilot. Absent on older hosts.
+      browseProjectFiles: true,
+      // Edit+save existing files — separate from browse so a host can offer
+      // list/read without a write path.
+      editProjectFiles: true,
     });
   });
 
   it("keeps read-aloud defaults explicit", () => {
     expect(
-      packageJson.contributes.configuration.properties["grok.readRepliesAloud"].default,
+      packageJson.contributes.configuration.properties["atlas.readRepliesAloud"].default,
     ).toBe(false);
     expect(
-      packageJson.contributes.configuration.properties["grok.processingSound"].default,
+      packageJson.contributes.configuration.properties["atlas.processingSound"].default,
     ).toBe(false);
     expect(
-      packageJson.contributes.configuration.properties["grok.summarizeRepliesAloud"].default,
+      packageJson.contributes.configuration.properties["atlas.summarizeRepliesAloud"].default,
     ).toBe(true);
   });
 
   it("scopes the macOS Emacs composer bindings to composer focus", () => {
     const bindings = packageJson.contributes.keybindings;
     expect(bindings).toContainEqual({
-      command: "grok.composerForward",
+      command: "atlas.composerForward",
       key: "ctrl+f",
-      when: "isMac && grok.composerFocus",
+      when: "isMac && atlas.composerFocus",
     });
     expect(bindings).toContainEqual({
-      command: "grok.composerPreviousLine",
+      command: "atlas.composerPreviousLine",
       key: "ctrl+p",
-      when: "isMac && grok.composerFocus",
+      when: "isMac && atlas.composerFocus",
+    });
+  });
+
+  it("contributes a native title-bar settings command on the chat view", () => {
+    expect(packageJson.contributes.commands).toContainEqual({
+      command: "atlas.settings",
+      title: "Atlas: Settings",
+      icon: "$(gear)",
+    });
+    expect(packageJson.contributes.menus["view/title"]).toContainEqual({
+      command: "atlas.settings",
+      when: "view == atlas.chat",
+      group: "navigation",
     });
   });
 
   it("uses findable AFK Pilot titles without changing the remote command ids", () => {
     expect(packageJson.contributes.commands).toContainEqual({
-      command: "grok.linkRemote",
+      command: "atlas.linkRemote",
       title: "AFK Pilot: Link this device",
     });
     expect(packageJson.contributes.commands).toContainEqual({
-      command: "grok.unlinkRemote",
+      command: "atlas.unlinkRemote",
       title: "AFK Pilot: Unlink this device",
     });
   });

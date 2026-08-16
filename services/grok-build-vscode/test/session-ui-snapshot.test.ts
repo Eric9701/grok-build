@@ -14,21 +14,50 @@ describe("sessionUiSnapshot", () => {
 
     expect(sessionUiSnapshot(session, "plan")).toEqual([
       { type: "modeChanged", modeId: "plan" },
-      { type: "planModeAvailability", available: true, reason: undefined },
+      { type: "planModeAvailability", available: true, reason: undefined, recheckable: false },
       { type: "chips", chips: session.chips },
       { type: "queuedSends", items: ["queued for B"] },
     ]);
   });
 
-  it("keeps an old CLI's Plan restriction attached to that session", () => {
+  it("keeps an old CLI's Plan restriction attached to that session (not recheckable)", () => {
     const session = new Session();
     session.planModeAvailable = false;
+    session.planModeVersionVerified = true;
     session.planModeUnavailableReason = "Plan mode requires a newer CLI.";
 
     expect(sessionUiSnapshot(session, "agent")).toContainEqual({
       type: "planModeAvailability",
       available: false,
       reason: "Plan mode requires a newer CLI.",
+      recheckable: false,
+    });
+  });
+
+  it("does not mark an available-but-unverified cache substitute as a disabled recheck row", () => {
+    const session = new Session();
+    session.planModeAvailable = true;
+    session.planModeVersionVerified = false;
+
+    expect(sessionUiSnapshot(session, "agent")).toContainEqual({
+      type: "planModeAvailability",
+      available: true,
+      reason: undefined,
+      recheckable: false,
+    });
+  });
+
+  it("marks an unverified Plan probe recheckable so a focus replay keeps the row clickable", () => {
+    const session = new Session();
+    session.planModeAvailable = false;
+    session.planModeVersionVerified = false;
+    session.planModeUnavailableReason = "Could not verify the installed Grok CLI version.";
+
+    expect(sessionUiSnapshot(session, "agent")).toContainEqual({
+      type: "planModeAvailability",
+      available: false,
+      reason: "Could not verify the installed Grok CLI version.",
+      recheckable: true,
     });
   });
 

@@ -7,13 +7,24 @@
 //   2. Session rows "only clickable on the label" -> whole row resumes; action
 //      buttons stopPropagation so they don't also resume
 //   3. Reasoning traces "no longer expandable" -> header click toggles the body
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { bootWebview, dispatch, click, Posted } from "./webview-harness";
 import { countsAsUserBubble } from "../src/plan-restore";
 import { bracketRemoteSnapshot } from "../src/remote-policy";
 import type { HostMsg } from "../src/protocol";
 
 const $ = (doc: Document, id: string) => doc.getElementById(id) as HTMLElement;
+function openSettingsOverlay(window: Window, doc: Document) {
+  click(window, $(doc, "gear-btn"));
+  const item = [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")]
+    .find((el) => /(^|\s)Settings$/.test((el.textContent || "").replace(/\s+/g, " ").trim()));
+  click(window, item!);
+}
+function clickSettingsNav(window: Window, doc: Document, title: string) {
+  const item = [...doc.querySelectorAll("#settings-overlay .settings-nav-item")]
+    .find((el) => (el.textContent || "").trim() === title);
+  click(window, item!);
+}
 const types = (posted: Posted[]) => posted.map((p) => p.type);
 // Mirrors chat.js's formatTime EXACTLY. That function is not locale-aware — it
 // always emits `h:mm AM/PM` — so building the expectation with
@@ -211,6 +222,28 @@ describe("history popover (regression: popover that never closed)", () => {
     expect(pop.style.maxWidth).toBe("228px"); // 240 - 6*2, re-measured without reopening
   });
 
+  it("places the history popover in layout px when chat zoom is not 1", () => {
+    // getBoundingClientRect is visual; style.top under body zoom is layout.
+    // At 1.5×, a 30px visual bottom edge is 20 layout px — without unzoom the
+    // popover opens too far below the button (and above when zoomed out).
+    const { window, doc } = bootWebview();
+    doc.body.style.setProperty("--chat-zoom", "1.5");
+    const pop = $(doc, "history-popover");
+    const btn = $(doc, "history-btn");
+    const parent = pop.parentElement as HTMLElement;
+    (parent as any).getBoundingClientRect = () =>
+      ({ left: 0, right: 600, top: 0, bottom: 900, width: 600, height: 900 });
+    (btn as any).getBoundingClientRect = () =>
+      ({ left: 540, right: 588, top: 12, bottom: 45, width: 48, height: 33 });
+
+    click(window, btn);
+
+    // (45 - 0) / 1.5 + 4 = 34
+    expect(pop.style.top).toBe("34px");
+    // available layout width = 600/1.5 - 12 = 388 → max 360
+    expect(pop.style.maxWidth).toBe("360px");
+  });
+
   it("closes the popover when the view is hidden (switching to another extension/tab)", () => {
     const { window, doc } = bootWebview();
     const pop = $(doc, "history-popover");
@@ -230,8 +263,8 @@ describe("session rows (regression: only the label was clickable)", () => {
     { id: "s2", displayName: "Refactor parser", numMessages: 9, updatedAt: Date.now() - 3600000 },
   ];
 
-  function openWithSessions() {
-    const h = bootWebview();
+  function openWithSessions(remote = false) {
+    const h = bootWebview({ remote });
     dispatch(h.window, {
       type: "repos",
       entries: [{ cwd: "/work/project", label: "project", available: true, pinned: false, updatedAt: 0 }],
@@ -250,6 +283,58 @@ describe("session rows (regression: only the label was clickable)", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].querySelector(".history-row-name")!.textContent).toBe("Add subtract fn");
     expect(rows[0].querySelector(".history-row-meta")!.textContent).toContain("4 msg");
+  });
+
+  it("keeps a legacy remote dot-only, then shows provider glyphs for two connected agents", () => {
+    const h = openWithSessions(true);
+    expect(h.doc.querySelectorAll(".history-row .provider-glyph")).toHaveLength(0);
+    expect(h.doc.querySelectorAll(".history-row > .history-row-dot")).toHaveLength(2);
+    expect(h.doc.querySelectorAll(".history-row .provider-status-badge")).toHaveLength(0);
+
+    dispatch(h.window, {
+      type: "sessions",
+      entries: [
+        { ...entries[0], provider: "grok" },
+        { ...entries[1], provider: "codex" },
+      ],
+      activeId: null,
+      dots: { s1: "working", s2: "error" },
+    });
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true },
+        { id: "codex", connected: false },
+      ],
+    });
+    expect(h.doc.querySelectorAll(".history-row .provider-glyph")).toHaveLength(0);
+    expect(h.doc.querySelectorAll(".history-row > .history-row-dot")).toHaveLength(2);
+
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true },
+        { id: "codex", connected: true },
+      ],
+    });
+    const glyphs = [...h.doc.querySelectorAll(".history-row .provider-glyph")];
+    expect(glyphs).toHaveLength(2);
+    expect(glyphs.map((el) => el.querySelector("svg.provider-logo path")?.getAttribute("d")?.length > 100))
+      .toEqual([true, true]);
+    expect(h.doc.querySelectorAll(".history-row > .history-row-dot")).toHaveLength(0);
+    const badges = [...h.doc.querySelectorAll(".history-row .provider-status-badge")];
+    expect(badges.map((el) => el.className)).toEqual([
+      "provider-status-badge dot-working",
+      "provider-status-badge dot-error",
+    ]);
+    dispatch(h.window, { type: "sessionDot", id: "s1", dot: "unread" });
+    expect(h.doc.querySelector('[data-session-dot="s1"]')!.className).toBe("provider-status-badge dot-unread");
+
+    dispatch(h.window, { type: "sessionDot", id: "s1", dot: "none" });
+    dispatch(h.window, { type: "sessionDot", id: "s2", dot: "none" });
+    expect([...h.doc.querySelectorAll(".history-row .provider-status-badge")].every((el) =>
+      el.classList.contains("dot-none"),
+    )).toBe(true);
   });
 
   it("resumes the session when the row's META area (not the label) is clicked", () => {
@@ -477,6 +562,91 @@ describe("session history pagination", () => {
     });
     expect((h.doc.querySelector(".history-footer") as any).hidden).toBe(false);
   });
+
+  it("returns the Grok offset plus Codex high-water cursor on load-more", () => {
+    const h = openPopover();
+    dispatch(h.window, {
+      type: "sessions",
+      entries: [{ ...page1[0], provider: "codex" }],
+      activeId: null,
+      offset: 0,
+      total: 103,
+      hasMore: true,
+      nextOffset: 101,
+      providerCursor: { grokOffset: 100, codexHighWater: { updatedAt: 50, id: "codex-1" } },
+    });
+    const list = h.doc.querySelector(".history-list") as HTMLElement;
+    Object.defineProperty(list, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(list, "clientHeight", { value: 300, configurable: true });
+    Object.defineProperty(list, "scrollTop", { value: 700, configurable: true });
+    list.dispatchEvent(new h.window.Event("scroll"));
+
+    expect(h.posted).toContainEqual({
+      type: "listSessions",
+      offset: 101,
+      query: "",
+      providerCursor: { grokOffset: 100, codexHighWater: { updatedAt: 50, id: "codex-1" } },
+    });
+  });
+
+  it("auto-loads hidden-only and underfilled pages without a scroll event", () => {
+    const h = openPopover();
+    dispatch(h.window, {
+      type: "sessions",
+      entries: [],
+      activeId: null,
+      offset: 0,
+      total: 202,
+      hasMore: true,
+      nextOffset: 100,
+      providerCursor: { grokOffset: 100 },
+      query: "",
+    });
+
+    expect(h.doc.querySelector(".history-empty")).toBeNull();
+    expect(h.doc.querySelector(".history-more")).not.toBeNull();
+    expect(h.doc.body.textContent).not.toContain("No sessions yet");
+    expect(h.posted).toContainEqual({
+      type: "listSessions",
+      offset: 100,
+      query: "",
+      providerCursor: { grokOffset: 100 },
+    });
+
+    dispatch(h.window, {
+      type: "sessions",
+      entries: [{ ...page2[0], provider: "codex" }],
+      activeId: null,
+      offset: 100,
+      total: 202,
+      hasMore: true,
+      nextOffset: 200,
+      providerCursor: { grokOffset: 200 },
+      query: "",
+    });
+
+    expect(h.posted).toContainEqual({
+      type: "listSessions",
+      offset: 200,
+      query: "",
+      providerCursor: { grokOffset: 200 },
+    });
+    expect(h.doc.body.textContent).not.toContain("No sessions yet");
+
+    dispatch(h.window, {
+      type: "sessions",
+      entries: [{ ...page2[1], provider: "grok" }],
+      activeId: null,
+      offset: 200,
+      total: 202,
+      hasMore: false,
+      nextOffset: 202,
+      query: "",
+    });
+
+    expect(h.doc.querySelectorAll(".history-row")).toHaveLength(2);
+    expect(h.doc.querySelector(".history-more")).toBeNull();
+  });
 });
 
 describe("session status dots (Agent Dashboard)", () => {
@@ -545,6 +715,16 @@ describe("session status dots (Agent Dashboard)", () => {
 });
 
 describe("mode picker (the plan-gate entry path)", () => {
+  it("names the active mode in the button tooltip", () => {
+    const { window, doc } = bootWebview();
+    const modeBtn = $(doc, "mode-btn") as HTMLButtonElement;
+    expect(modeBtn.title).toContain("Agent mode");
+
+    dispatch(window, { type: "modeChanged", modeId: "plan" });
+    expect(modeBtn.title).toContain("Plan mode");
+    expect(modeBtn.title).not.toContain("Agent mode");
+  });
+
   it("offers Agent / Plan / Auto accept and posts setMode with the chosen mode id", () => {
     const { window, posted, doc } = bootWebview();
     const pop = $(doc, "mode-popover");
@@ -562,9 +742,25 @@ describe("mode picker (the plan-gate entry path)", () => {
     expect((pop as any).hidden).toBe(true); // selecting a mode closes the popover
   });
 
+  it("does not offer Grok's plan gate in a Codex conversation", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "session",
+      sessionId: "codex-1",
+      provider: "codex",
+      currentModelId: "gpt-5.6-sol",
+      models: [{ modelId: "gpt-5.6-sol", name: "GPT 5.6 Sol", provider: "codex" }],
+    });
+
+    click(window, $(doc, "mode-btn"));
+    const labels = [...$(doc, "mode-popover").querySelectorAll(".mode-item-label")]
+      .map((label) => label.textContent);
+    expect(labels).toEqual(["Agent mode", "Auto accept"]);
+  });
+
   it("disables only Plan with the host's version reason, then re-enables it", () => {
     const { window, posted, doc } = bootWebview();
-    const reason = "Plan mode requires Atlas CLI 0.2.117 or newer.";
+    const reason = "Plan mode requires Grok CLI 0.2.117 or newer; installed version is 0.2.100.";
     dispatch(window, { type: "planModeAvailability", available: false, reason });
 
     const modeBtn = $(doc, "mode-btn") as HTMLButtonElement;
@@ -588,6 +784,31 @@ describe("mode picker (the plan-gate entry path)", () => {
     expect(planItem.className).not.toContain("disabled");
     expect(planItem.querySelector(".mode-item-disabled-note")).toBeNull();
     click(window, planItem);
+    expect(posted).toContainEqual({ type: "setMode", modeId: "plan" });
+  });
+
+  it("keeps Plan clickable when the host marks an unverified probe recheckable (#105)", () => {
+    const { window, posted, doc } = bootWebview();
+    const reason =
+      "Could not verify the installed Grok CLI version, so Plan mode is unavailable. " +
+      "The version check failed or timed out — a first run after install can be slow. " +
+      "Pick Plan again or reload the window to retry. " +
+      "Once verified, Plan requires 0.2.117 or newer.";
+    dispatch(window, {
+      type: "planModeAvailability",
+      available: false,
+      reason,
+      recheckable: true,
+    });
+
+    click(window, $(doc, "mode-btn"));
+    const pop = $(doc, "mode-popover");
+    const planItem = [...pop.querySelectorAll(".mode-popover-item")]
+      .find((el) => el.querySelector(".mode-item-label")!.textContent === "Plan mode") as HTMLElement;
+    expect(planItem.className).not.toContain("disabled");
+    expect(planItem.querySelector(".mode-item-disabled-note")?.textContent).toBe(reason);
+    click(window, planItem);
+    // Click still posts setMode — the host re-probes and may enable Plan on this pick.
     expect(posted).toContainEqual({ type: "setMode", modeId: "plan" });
   });
 
@@ -669,6 +890,9 @@ describe("context donut (token usage)", () => {
     const { window, doc } = boot();
     dispatch(window, { type: "contextUsage", used: 29088, window: 200000 });
     expect($(doc, "donut-label").textContent).toBe("29K/200K");
+    expect($(doc, "donut").title).toBe(
+      `Context usage — ${(29088).toLocaleString()} / ${(200000).toLocaleString()} tokens`,
+    );
   });
 
   it("contextUsage without a window keeps the model-derived window", () => {
@@ -733,6 +957,115 @@ describe("gear settings lock (model + effort disabled while busy / priming)", ()
     expect(posted).toContainEqual({ type: "setModel", modelId: "grok-composer-2.5-fast" });
   });
 
+  it("groups remote empty-session models deterministically and switches providers additively", () => {
+    const h = bootWebview({ remote: true });
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true },
+        { id: "codex", connected: true },
+      ],
+    });
+    dispatch(h.window, {
+      type: "session",
+      sessionId: "fresh",
+      provider: "grok",
+      currentModelId: "grok-build",
+      models: [
+        { provider: "codex", modelId: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+        { provider: "grok", modelId: "grok-build", name: "Grok Build" },
+      ],
+    });
+    click(h.window, $(h.doc, "gear-btn"));
+    click(h.window, modelBtn(h.doc));
+
+    expect([...h.doc.querySelectorAll(".model-provider-heading")].map((el) => el.textContent))
+      .toEqual(["Atlas", "Codex"]);
+    const codexModel = [...h.doc.querySelectorAll("#gear-popover .toolbar-popover-item")]
+      .find((el) => el.textContent?.includes("GPT-5.6 Sol")) as HTMLElement;
+    click(h.window, codexModel);
+    expect(h.posted).toContainEqual({ type: "setModel", modelId: "gpt-5.6-sol", provider: "codex" });
+  });
+
+  it("scopes a remote non-empty Codex conversation to Codex models", () => {
+    const h = bootWebview({ remote: true });
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true },
+        { id: "codex", connected: true },
+      ],
+    });
+    dispatch(h.window, {
+      type: "session",
+      sessionId: "codex-live",
+      provider: "codex",
+      currentModelId: "gpt-5.6-sol",
+      models: [
+        { provider: "grok", modelId: "grok-build", name: "Grok Build" },
+        { provider: "codex", modelId: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+        { provider: "codex", modelId: "gpt-5.6-terra", name: "GPT-5.6 Terra" },
+      ],
+    });
+    dispatch(h.window, { type: "userMessage", text: "continue this conversation", chips: [] });
+    click(h.window, $(h.doc, "gear-btn"));
+    click(h.window, modelBtn(h.doc));
+
+    const text = h.doc.getElementById("gear-popover")!.textContent || "";
+    expect(text).toContain("GPT-5.6 Sol");
+    expect(text).toContain("GPT-5.6 Terra");
+    expect(text).not.toContain("Grok Build");
+    expect(h.doc.querySelectorAll(".model-provider-heading")).toHaveLength(0);
+  });
+
+  it("renders the Accounts cluster only after the provider capability frame", () => {
+    const h = bootWithModels();
+    click(h.window, $(h.doc, "gear-btn"));
+    expect(h.doc.querySelector("#gear-popover")!.textContent).not.toContain("Accounts");
+
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true },
+        { id: "codex", connected: false },
+      ],
+    });
+    expect(h.doc.querySelector("#gear-popover")!.textContent).not.toContain("Accounts");
+
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: false },
+        { id: "codex", connected: false },
+      ],
+    });
+    expect(h.doc.querySelector("#gear-popover")!.textContent).toContain("Accounts");
+    const sections = [...h.doc.querySelectorAll("#gear-popover .popover-section")];
+    expect(sections.at(-1)?.textContent).toBe("Accounts");
+    const codex = [...h.doc.querySelectorAll("#gear-popover .toolbar-popover-item")]
+      .find((el) => el.textContent?.includes("Codex")) as HTMLElement;
+    click(h.window, codex);
+    expect(h.posted).toContainEqual({ type: "runGrokLogin", provider: "codex" });
+  });
+
+  it("never renders provider management or posts account actions remotely", () => {
+    const h = bootWebview({ remote: true });
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true },
+        { id: "codex", connected: false },
+      ],
+    });
+    click(h.window, $(h.doc, "gear-btn"));
+    const text = h.doc.getElementById("gear-popover")!.textContent || "";
+    expect(text).not.toContain("Accounts");
+    expect(text).not.toContain("Sign out");
+    expect(text).not.toContain("Connect");
+    expect(types(h.posted)).not.toContain("logout");
+    expect(types(h.posted)).not.toContain("runGrokLogin");
+  });
+
   it("while priming, the model button is disabled and clicking it neither opens the picker nor posts", () => {
     const { window, posted, doc } = bootWithModels({ value: true, locked: true });
     click(window, $(doc, "gear-btn"));
@@ -765,6 +1098,109 @@ describe("gear settings lock (model + effort disabled while busy / priming)", ()
 
     expect(($(doc, "gear-popover") as any).hidden).toBe(false); // popover stays open
     expect(modelBtn(doc).disabled).toBe(false); // now unlocked
+  });
+});
+
+describe("provider onboarding", () => {
+  it("shows desk sign-in guidance remotely and posts no provider-management action", () => {
+    const { window, doc, posted } = bootWebview({ remote: true });
+
+    for (const state of ["connect-agent", "auth-required", "codex-login"] as const) {
+      dispatch(window, { type: "onboarding", state });
+      const onboarding = doc.getElementById("welcome-onboarding")!;
+      expect(onboarding.textContent).toContain("Sign in at the desk");
+      expect(onboarding.textContent).toContain("computer running this workspace");
+      expect(onboarding.querySelectorAll("button")).toHaveLength(0);
+    }
+
+    expect(types(posted)).not.toContain("runGrokLogin");
+    expect(types(posted)).not.toContain("logout");
+  });
+
+  it("offers both agents when none is connected and keeps Grok visually primary", () => {
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, { type: "onboarding", state: "connect-agent" });
+
+    const tiles = [...doc.querySelectorAll(".onb-agent-tile")] as HTMLButtonElement[];
+    expect(tiles).toHaveLength(2);
+    expect(tiles[0].textContent).toContain("Atlas");
+    expect(tiles[0].classList.contains("primary")).toBe(true);
+    expect(tiles[1].textContent).toContain("Codex");
+    expect(tiles.every((tile) => !!tile.querySelector("svg.provider-logo path"))).toBe(true);
+
+    click(window, tiles[1]);
+    expect(posted).toContainEqual({ type: "runGrokLogin", provider: "codex" });
+  });
+
+  it("shows Codex install guidance and provider-specific re-check", () => {
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, { type: "onboarding", state: "missing-codex" });
+    expect(doc.getElementById("welcome-onboarding")!.textContent).toContain("npm i -g @openai/codex");
+    expect(doc.getElementById("welcome-onboarding")!.textContent).toContain("ChatGPT extension");
+
+    const install = [...doc.querySelectorAll("#welcome-onboarding button")]
+      .find((el) => el.textContent?.includes("Install Codex")) as HTMLElement;
+    click(window, install);
+    expect(posted).toContainEqual({ type: "installCodex" });
+
+    dispatch(window, { type: "codexInstallProgress", phase: "downloading", receivedBytes: 25, totalBytes: 100 });
+    expect(doc.getElementById("welcome-onboarding")!.textContent).toContain("Downloading Codex (25%)");
+    const progress = doc.querySelector("#welcome-onboarding progress") as HTMLProgressElement;
+    expect(progress.value).toBe(25);
+    const cancel = [...doc.querySelectorAll("#welcome-onboarding button")]
+      .find((el) => el.textContent?.includes("Cancel")) as HTMLElement;
+    click(window, cancel);
+    expect(posted).toContainEqual({ type: "cancelCodexInstall" });
+
+    dispatch(window, { type: "codexInstallProgress", phase: "idle", reason: "Codex installation failed: disk full" });
+    expect(doc.querySelector("#welcome-onboarding [role=alert]")?.textContent).toContain("disk full");
+
+    const recheck = [...doc.querySelectorAll("#welcome-onboarding button")]
+      .find((el) => el.textContent?.includes("Re-check")) as HTMLElement;
+    click(window, recheck);
+    expect(posted).toContainEqual({ type: "recheckConnection", provider: "codex" });
+  });
+
+  it("dismisses a matching provider login overlay after the account connects", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "onboarding", state: "codex-login" });
+    expect((doc.getElementById("welcome") as HTMLElement).hidden).toBe(false);
+
+    dispatch(window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true },
+        { id: "codex", connected: true },
+      ],
+    });
+
+    expect((doc.getElementById("welcome") as HTMLElement).hidden).toBe(true);
+  });
+
+  it("rechecks and dismisses the provider carried by the older missing-CLI screen", () => {
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, {
+      type: "providerState",
+      providers: [
+        { id: "codex", connected: true },
+        { id: "grok", connected: false },
+      ],
+    });
+    dispatch(window, { type: "onboarding", state: "missing-cli", provider: "grok" });
+    const recheck = [...doc.querySelectorAll("#welcome-onboarding button")]
+      .find((el) => el.textContent?.includes("Re-check")) as HTMLElement;
+
+    click(window, recheck);
+    expect(posted).toContainEqual({ type: "recheckConnection", provider: "grok" });
+
+    dispatch(window, {
+      type: "providerState",
+      providers: [
+        { id: "codex", connected: true },
+        { id: "grok", connected: true },
+      ],
+    });
+    expect((doc.getElementById("welcome") as HTMLElement).hidden).toBe(true);
   });
 });
 
@@ -811,10 +1247,8 @@ describe("gear menu — AFK Pilot onboarding", () => {
   });
 
   it("sends linked devices to the portal for account management, never a one-tap unlink", () => {
-    // Unlinking strands every other device the user works from, so it must not
-    // sit one slip away from "Continue remotely" (owner, 2026-07-30). The
-    // portal owns account + device management; `AFK Pilot: Unlink this device`
-    // remains for the deliberate case.
+    // VS Code: unlinking stays on the Command Palette. A one-tap menu item
+    // next to "Continue remotely" was removed (owner, 2026-07-30).
     const { window, posted, doc } = bootWebview();
     dispatch(window, { type: "remoteStatus", linked: true });
     click(window, $(doc, "gear-btn"));
@@ -827,7 +1261,37 @@ describe("gear menu — AFK Pilot onboarding", () => {
     expect(account).toBeTruthy();
     click(window, account!);
     expect(posted).toContainEqual({ type: "openRemotePortal" });
-    expect(posted.some((m) => m.type === "remoteSignOut")).toBe(false);
+    expect(posted.some((m) => m.type === "remoteSignOut" || m.type === "unlinkRemoteDevice")).toBe(false);
+  });
+
+  it("offers Unlink this device… in Settings → Account on desktop, not the gear", () => {
+    const { window, posted, doc } = bootWebview();
+    dispatch(window, {
+      type: "initialState",
+      useCtrlEnter: false,
+      capabilities: { relocateView: false, showOutput: false },
+    });
+    dispatch(window, { type: "remoteStatus", linked: true });
+    click(window, $(doc, "gear-btn"));
+    expect(gearItem(doc, "Unlink this device…")).toBeUndefined();
+    openSettingsOverlay(window, doc);
+    clickSettingsNav(window, doc, "Account");
+    const unlink = doc.querySelector('[data-id="unlinkDevice"] .settings-action') as HTMLElement;
+    expect(unlink).toBeTruthy();
+    click(window, unlink);
+    expect(posted).toContainEqual({ type: "unlinkRemoteDevice" });
+  });
+
+  it("does not offer Unlink this device… in the remote browser client", () => {
+    const { window, doc } = bootWebview({ remote: true });
+    dispatch(window, {
+      type: "initialState",
+      useCtrlEnter: false,
+      capabilities: { relocateView: false, showOutput: false },
+    });
+    dispatch(window, { type: "remoteStatus", linked: true });
+    click(window, $(doc, "gear-btn"));
+    expect(gearItem(doc, "Unlink this device…")).toBeUndefined();
   });
 
   it("offers a top-bar Continue remotely button only in a linked local client", () => {
@@ -863,6 +1327,21 @@ describe("gear menu — AFK Pilot onboarding", () => {
       "You can then work 100% remotely — it keeps this device awake, and never stores your prompts or code.",
     );
     expect(button(doc, "More & FAQ")).toBeTruthy();
+  });
+
+  it("uses desktop phrasing in How it works on a desktop host", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "initialState",
+      useCtrlEnter: false,
+      capabilities: { relocateView: false, showOutput: false },
+    });
+    dispatch(window, { type: "remoteStatus", linked: false });
+    click(window, $(doc, "gear-btn"));
+    click(window, gearItem(doc, "How it works")!);
+    const panel = doc.querySelector(".remote-explainer-panel");
+    expect(panel!.textContent).toContain("Keep this app open.");
+    expect(panel!.textContent).not.toContain("Keep VS Code, Cursor, or Antigravity open.");
   });
 
   it("copies afkpilot.com with success feedback and keeps More & FAQ unhinted", async () => {
@@ -972,6 +1451,34 @@ describe("reasoning trace (regression: thinking traces no longer expandable)", (
 describe("Grokking… indicator (waiting placeholder)", () => {
   const grokking = (doc: Document) => doc.querySelector(".grokking") as HTMLElement | null;
 
+  it("uses the active provider's composer placeholder and updates it live on an empty session", () => {
+    const h = bootWebview();
+    const input = h.doc.getElementById("input") as HTMLTextAreaElement;
+    expect(input.placeholder).toBe("Ask Atlas…");
+
+    dispatch(h.window, {
+      type: "session", sessionId: "c1", models: [], currentModelId: "gpt-5.6-sol", provider: "codex",
+    });
+    expect(input.placeholder).toBe("Ask GPT…");
+
+    dispatch(h.window, {
+      type: "session", sessionId: "g1", models: [], currentModelId: "grok-build", provider: "grok",
+    });
+    expect(input.placeholder).toBe("Ask Atlas…");
+  });
+
+  it("uses Opening AI for Codex while keeping the shared live-turn indicator", () => {
+    const h = bootWebview();
+    dispatch(h.window, {
+      type: "session", sessionId: "c1", models: [], currentModelId: "gpt-5.6-sol", provider: "codex",
+    });
+    dispatch(h.window, { type: "agentStart" });
+    const el = grokking(h.doc)!;
+    expect(el.querySelector(".grokking-label")?.textContent).toBe("Opening AI");
+    expect(el.getAttribute("aria-label")).toBe("OpenAI is working");
+    expect(el.querySelector(".grokking-icon svg")).not.toBeNull();
+  });
+
   it("mounts on agentStart with a spinning orbit icon, a label, and no dots or chevron", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "agentStart" });
@@ -979,7 +1486,7 @@ describe("Grokking… indicator (waiting placeholder)", () => {
     const el = grokking(doc);
     expect(el).not.toBeNull();
     const label = el!.querySelector(".grokking-label") as HTMLElement;
-    expect(label.textContent).toBe("Working");
+    expect(label.textContent).toBe("Grokking");
     // The orbit icon is Grokking's motion — no blink-dots here (those are for
     // Thinking / tools); and NOT expandable: no chevron, no body, not .thinking.
     expect(el!.querySelector(".grokking-icon svg")).not.toBeNull();
@@ -1248,7 +1755,7 @@ describe("welcome version line (session-start lifecycle)", () => {
     const { window, doc } = bootWebview();
 
     dispatch(window, { type: "cliUpdating" });
-    expect(ver(doc)).toBe("Updating Grok Build CLI");
+    expect(ver(doc)).toBe("Updating Atlas CLI");
     expect(animating(doc)).toBe(true);
 
     dispatch(window, { type: "initialized", info: { version: "0.2.40" } });
@@ -1310,68 +1817,216 @@ describe("send button startup state (spinner by default until the session is rea
   });
 });
 
-describe("gear menu — Other group + About / Config & debug sub-views", () => {
+describe("gear menu — Other group + About / Settings", () => {
   function boot() {
     const h = bootWebview();
-    dispatch(h.window, { type: "initialState", useCtrlEnter: false, effort: "", cwd: "/x", extVersion: "1.4.0" });
+    dispatch(h.window, {
+      type: "initialState",
+      useCtrlEnter: false,
+      effort: "",
+      cwd: "/x",
+      extVersion: "1.4.0",
+      // VS Code host affordances — gear gates logs / Move view on these.
+      capabilities: {
+        uploadFile: true,
+        remoteVoice: true,
+        deleteActiveSession: true,
+        relocateView: true,
+        showOutput: true,
+      },
+    });
     dispatch(h.window, { type: "initialized", info: { version: "0.2.33" } });
     dispatch(h.window, { type: "session", sessionId: "s1", models: [], currentModelId: "grok-build" });
     h.posted.length = 0;
     return h;
   }
-  const gear = (doc: Document) => $(doc, "gear-popover");
   const items = (doc: Document) => [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")] as HTMLElement[];
-  const itemByText = (doc: Document, text: string) =>
-    items(doc).find((el) => el.textContent!.includes(text)) as HTMLElement;
 
   it("replaces the flat Config/Account/Debug sections with an Other group", () => {
     const h = boot();
     click(h.window, $(h.doc, "gear-btn"));
     const labels = items(h.doc).map((el) => el.textContent || "");
-    expect(labels.some((l) => l.includes("Version & about"))).toBe(true);
-    expect(labels.some((l) => l.includes("Config & debug"))).toBe(true);
+    expect(labels.some((l) => l.includes("Version & about"))).toBe(false);
+    expect(labels.some((l) => /(^|\s)Settings$/.test(l.replace(/\s+/g, " ").trim()))).toBe(true);
+    expect(labels.some((l) => l.includes("Config & debug"))).toBe(false);
     expect(labels.some((l) => l.includes("Log out"))).toBe(true);
     // the old standalone items no longer live on the main view
     expect(labels.some((l) => l.trim() === "Sign out")).toBe(false);
     expect(labels.some((l) => l.includes("Show extension logs"))).toBe(false);
   });
 
+  function aboutSurface(h: ReturnType<typeof bootWebview>) {
+    return h.doc.getElementById("settings-overlay")!;
+  }
+  function openAbout(h: ReturnType<typeof bootWebview>) {
+    openSettingsOverlay(h.window, h.doc);
+    clickSettingsNav(h.window, h.doc, "About");
+    return aboutSurface(h);
+  }
+
   it("About shows both versions and requests an update check", () => {
     const h = boot();
-    click(h.window, $(h.doc, "gear-btn"));
-    click(h.window, itemByText(h.doc, "Version & about"));
+    const overlay = openAbout(h);
 
-    const text = gear(h.doc).textContent || "";
+    const text = overlay.textContent || "";
     expect(text).toContain("This extension");
     expect(text).toContain("v1.4.0");
     expect(text).toContain("Grok Build CLI");
     expect(text).toContain("v0.2.33");
-    expect(types(h.posted)).toContain("checkGrokUpdate");
+    expect(types(h.posted)).toContain("checkAtlasUpdate");
   });
 
-  it("enables Update Grok Build when an update is available and posts updateGrok", () => {
+  it("About shows connected Grok and Codex versions without relabelling the adapter as the CLI", () => {
     const h = boot();
-    click(h.window, $(h.doc, "gear-btn"));
-    click(h.window, itemByText(h.doc, "Version & about"));
-    dispatch(h.window, { type: "grokUpdateStatus", current: "0.2.3", latest: "0.2.33", updateAvailable: true });
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true, cliVersion: "0.2.117" },
+        { id: "codex", connected: true, cliVersion: "0.146.0", adapterVersion: "1.1.14", latestCliVersion: "0.147.0", updateAvailable: true },
+      ],
+    });
+    const overlay = openAbout(h);
 
-    expect(gear(h.doc).textContent).toContain("Update available");
-    const btn = itemByText(h.doc, "Update Grok Build");
-    expect(btn.className).not.toContain("disabled");
+    const text = overlay.textContent || "";
+    expect(text).toContain("Grok Build CLI");
+    expect(text).toContain("v0.2.117");
+    expect(text).toContain("Codex CLI");
+    expect(text).toContain("v0.146.0");
+    expect(text).toContain("Codex ACP adapter");
+    expect(text).toContain("v1.1.14");
+    expect(text).toContain("at its install source");
+    expect(text).toContain("Codex update available");
+    expect(overlay.querySelector('[data-id="aboutUpdateGrok"]')).toBeNull();
+  });
+
+  it("Codex-only About has no Grok update action or adapter-as-CLI label", () => {
+    const h = boot();
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: false },
+        { id: "codex", connected: true, cliVersion: "0.147.0", adapterVersion: "1.1.14" },
+      ],
+    });
+    const overlay = openAbout(h);
+
+    const text = overlay.textContent || "";
+    expect(text).toContain("Codex CLI");
+    expect(text).toContain("Codex ACP adapter");
+    expect(overlay.querySelector('[data-id="aboutGrokCli"]')).toBeNull();
+    expect(overlay.querySelector('[data-id="aboutUpdateGrok"]')).toBeNull();
+    expect(types(h.posted)).not.toContain("checkAtlasUpdate");
+  });
+
+  describe("on a remote, About describes the desk machine and offers nothing", () => {
+    function bootRemoteAbout(extra?: Record<string, unknown>) {
+      const h = bootWebview({ remote: true });
+      const meta = h.doc.createElement("meta");
+      meta.setAttribute("name", "grok-web-version");
+      meta.setAttribute("content", "3.5.0");
+      h.doc.head.appendChild(meta);
+      dispatch(h.window, {
+        type: "initialState",
+        useCtrlEnter: false,
+        effort: "",
+        cwd: "/x",
+        extVersion: "1.4.0",
+        hostKind: "desktop",
+        hostName: "Pawel-Desk",
+        capabilities: { uploadFile: true, deleteActiveSession: true },
+        ...extra,
+      });
+      dispatch(h.window, { type: "initialized", info: { version: "0.2.33" } });
+      h.posted.length = 0;
+      openAbout(h);
+      return h;
+    }
+
+    it("names what you are holding and what it is connected to", () => {
+      const h = bootRemoteAbout();
+      const text = aboutSurface(h).textContent || "";
+      expect(text).toContain("Web app");
+      expect(text).toContain("v3.5.0");
+      expect(text).toContain("Connected to");
+      expect(text).toContain("Pawel-Desk");
+      expect(text).toContain("Desktop app");
+      expect(text).toContain("v1.4.0");
+      expect(text).toContain("v0.2.33");
+      // "This extension" is the local panel's wording, and it is wrong on a
+      // phone — the phone is not the thing being versioned.
+      expect(text).not.toContain("This extension");
+    });
+
+    it("never asks the host to check for updates", () => {
+      // The old panel did, and the answer never arrived — a spinner that could
+      // not resolve. Not sending it is what removes the spinner.
+      const h = bootRemoteAbout();
+      expect(types(h.posted)).not.toContain("checkAtlasUpdate");
+      expect(aboutSurface(h).textContent).not.toContain("Checking for updates");
+    });
+
+    it("reports an available CLI update but offers no way to run it", () => {
+      const h = bootRemoteAbout();
+      dispatch(h.window, {
+        type: "atlasUpdateStatus", current: "0.2.3", latest: "0.2.33", updateAvailable: true,
+      });
+      const overlay = aboutSurface(h);
+      const text = overlay.textContent || "";
+      expect(text).toContain("CLI update available");
+      expect(text).toContain("at the desk");
+      expect(overlay.querySelector('[data-id="aboutUpdateGrok"]')).toBeNull();
+    });
+
+    it("renders host-reported provider versions view-only", () => {
+      const h = bootRemoteAbout();
+      dispatch(h.window, {
+        type: "providerState",
+        providers: [
+          { id: "grok", connected: true, cliVersion: "0.2.117" },
+          { id: "codex", connected: true, cliVersion: "0.146.0", adapterVersion: "1.1.14", latestCliVersion: "0.147.0", updateAvailable: true },
+        ],
+      });
+      const overlay = aboutSurface(h);
+      const text = overlay.textContent || "";
+      expect(text).toContain("Grok Build CLI");
+      expect(text).toContain("Codex CLI");
+      expect(text).toContain("Codex ACP adapter");
+      expect(text).toContain("Codex update available");
+      expect(text).toContain("at the desk");
+      expect(types(h.posted)).not.toContain("checkAtlasUpdate");
+      expect(overlay.querySelector('[data-id="aboutUpdateGrok"]')).toBeNull();
+    });
+
+    it("keeps the local panel when the host is too old to describe itself", () => {
+      // Capability by field presence: no hostKind means no answers, and a page
+      // of blanks is worse than the panel that was already there.
+      const h = bootRemoteAbout({ hostKind: undefined, hostName: undefined });
+      expect(aboutSurface(h).textContent).toContain("This extension");
+    });
+  });
+
+  it("enables Update Atlas when an update is available and posts updateAtlas", () => {
+    const h = boot();
+    const overlay = openAbout(h);
+    dispatch(h.window, { type: "atlasUpdateStatus", current: "0.2.3", latest: "0.2.33", updateAvailable: true });
+
+    expect(overlay.textContent).toContain("Update available");
+    const btn = overlay.querySelector('[data-id="aboutUpdateGrok"] .settings-action') as HTMLElement;
+    expect(btn).toBeTruthy();
+    expect((btn as HTMLButtonElement).disabled).toBe(false);
 
     h.posted.length = 0;
     click(h.window, btn);
-    expect(types(h.posted)).toContain("updateGrok");
+    expect(types(h.posted)).toContain("updateAtlas");
   });
 
   it("shows a grayed up-to-date status and no update action when current", () => {
     const h = boot();
-    click(h.window, $(h.doc, "gear-btn"));
-    click(h.window, itemByText(h.doc, "Version & about"));
-    dispatch(h.window, { type: "grokUpdateStatus", current: "0.2.33", latest: "0.2.33", updateAvailable: false });
+    const overlay = openAbout(h);
+    dispatch(h.window, { type: "atlasUpdateStatus", current: "0.2.33", latest: "0.2.33", updateAvailable: false });
 
-    expect(gear(h.doc).textContent).toContain("up to date");
-    expect(itemByText(h.doc, "Update Grok Build")).toBeUndefined();
+    expect(overlay.textContent).toContain("up to date");
+    expect(overlay.querySelector('[data-id="aboutUpdateGrok"]')).toBeNull();
   });
 
   it("falls back to the update check's version when the handshake gave none", () => {
@@ -1379,36 +2034,34 @@ describe("gear menu — Other group + About / Config & debug sub-views", () => {
     dispatch(h.window, { type: "initialState", useCtrlEnter: false, effort: "", cwd: "/x", extVersion: "1.4.0" });
     // No `initialized` version (native Windows build) — the panel starts at "—".
     dispatch(h.window, { type: "session", sessionId: "s1", models: [], currentModelId: "grok-build" });
-    click(h.window, $(h.doc, "gear-btn"));
-    click(h.window, itemByText(h.doc, "Version & about"));
-    dispatch(h.window, { type: "grokUpdateStatus", current: "0.2.3", latest: "0.2.3", updateAvailable: false });
+    const overlay = openAbout(h);
+    dispatch(h.window, { type: "atlasUpdateStatus", current: "0.2.3", latest: "0.2.3", updateAvailable: false });
 
-    const text = gear(h.doc).textContent || "";
+    const text = overlay.textContent || "";
     expect(text).toContain("Grok Build CLI");
     expect(text).toContain("v0.2.3");
-    expect(text).not.toContain("—");
+    expect(overlay.querySelector('[data-id="aboutGrokCli"]')!.textContent).not.toContain("—");
   });
 
-  it("the About back row returns to the main menu", () => {
+  it("the gear no longer has a Version & about entry", () => {
     const h = boot();
     click(h.window, $(h.doc, "gear-btn"));
-    click(h.window, itemByText(h.doc, "Version & about"));
-    click(h.window, itemByText(h.doc, "← Version & about"));
-    expect(items(h.doc).some((el) => (el.textContent || "").includes("Config & debug"))).toBe(true);
+    expect(items(h.doc).some((el) => (el.textContent || "").includes("Version & about"))).toBe(false);
+    expect(items(h.doc).some((el) => (el.textContent || "").includes("Settings"))).toBe(true);
   });
 
-  it("Config & debug exposes the config + logs links and posts the right message", () => {
+  it("Settings → Advanced exposes the config + logs links and posts the right message", () => {
     const h = boot();
-    click(h.window, $(h.doc, "gear-btn"));
-    click(h.window, itemByText(h.doc, "Config & debug"));
+    openSettingsOverlay(h.window, h.doc);
+    clickSettingsNav(h.window, h.doc, "Advanced");
 
-    const labels = items(h.doc).map((el) => el.textContent || "");
-    expect(labels.some((l) => l.includes("Open global config"))).toBe(true);
-    expect(labels.some((l) => l.includes("Open project config"))).toBe(true);
-    expect(labels.some((l) => l.includes("MCP servers"))).toBe(true);
-    expect(labels.some((l) => l.includes("Show extension logs"))).toBe(true);
+    const overlay = h.doc.getElementById("settings-overlay")!;
+    expect(overlay.querySelector('[data-id="openGlobalConfig"]')).toBeTruthy();
+    expect(overlay.querySelector('[data-id="openProjectConfig"]')).toBeTruthy();
+    expect(overlay.querySelector('[data-id="runMcpList"]')).toBeTruthy();
+    expect(overlay.querySelector('[data-id="showLogs"]')).toBeTruthy();
 
-    click(h.window, itemByText(h.doc, "Show extension logs"));
+    click(h.window, overlay.querySelector('[data-id="showLogs"] .settings-action')!);
     expect(types(h.posted)).toContain("showLogs");
   });
 });
@@ -1433,8 +2086,9 @@ describe("thinking traces toggle (#26)", () => {
     expect(doc.body.classList.contains("thinking-hidden")).toBe(true);
   });
 
-  it("toggles the body class live on a showThinking message", () => {
+  it("toggles the body class live on a showThinking message (Coding purpose)", () => {
     const { window, doc } = bootWebview();
+    dispatch(window, { type: "appPurpose", value: "coding" });
     dispatch(window, { type: "showThinking", value: true });
     expect(doc.body.classList.contains("thinking-hidden")).toBe(false);
     dispatch(window, { type: "showThinking", value: false });
@@ -1452,8 +2106,9 @@ describe("thinking traces toggle (#26)", () => {
     expect(doc.querySelector(".msg.thinking")).not.toBeNull();
   });
 
-  it("shows no stand-in when traces are visible", () => {
+  it("shows no stand-in when traces are visible (Coding purpose)", () => {
     const { window, doc } = bootWebview();
+    dispatch(window, { type: "appPurpose", value: "coding" });
     dispatch(window, { type: "showThinking", value: true });
     dispatch(window, { type: "thoughtChunk", text: "weighing options…" });
     expect(doc.querySelector(".thinking-indicator")).toBeNull();
@@ -1469,44 +2124,31 @@ describe("thinking traces toggle (#26)", () => {
     expect(doc.querySelector(".thinking-indicator")).toBeNull();
   });
 
-  it("exposes a Show thinking traces switch in Config & debug that posts setShowThinking and flips the class", () => {
+  it("exposes a Show thinking traces switch in Settings → General under Coding", () => {
     const { window, posted, doc } = bootWebview();
+    dispatch(window, { type: "appPurpose", value: "coding" });
     dispatch(window, { type: "showThinking", value: false });
     expect(doc.body.classList.contains("thinking-hidden")).toBe(true);
-    click(window, $(doc, "gear-btn"));
-    const cfg = [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find(
-      (el) => el.textContent?.includes("Config & debug"),
-    ) as HTMLElement;
-    click(window, cfg);
-    const toggle = [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find(
-      (el) => el.textContent?.includes("Show thinking traces"),
-    ) as HTMLElement;
+    openSettingsOverlay(window, doc);
+    const toggle = doc.querySelector('[data-id="showThinking"] .settings-switch') as HTMLElement;
     expect(toggle).toBeTruthy();
-    expect(toggle.querySelector(".popover-switch")).not.toBeNull();
     click(window, toggle);
     expect(posted.some((p) => p.type === "setShowThinking" && p.value === true)).toBe(true);
     expect(doc.body.classList.contains("thinking-hidden")).toBe(false); // optimistic flip
   });
 
-  it("exposes a Sound notifications switch in Config & debug that reflects the setting and posts setSoundNotifications (#59)", () => {
+  it("exposes a Sound notifications switch in Settings that reflects the setting and posts setSoundNotifications (#59)", () => {
     const { window, posted, doc } = bootWebview();
     dispatch(window, { type: "soundNotifications", value: true }); // host says it's on
-    const soundToggle = () => [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find(
-      (el) => el.textContent?.includes("Sound notifications"),
-    ) as HTMLElement;
-    click(window, $(doc, "gear-btn"));
-    const cfg = [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find(
-      (el) => el.textContent?.includes("Config & debug"),
-    ) as HTMLElement;
-    click(window, cfg);
-    let toggle = soundToggle();
+    openSettingsOverlay(window, doc);
+    clickSettingsNav(window, doc, "Notifications");
+    let toggle = doc.querySelector('[data-id="soundNotifications"] .settings-switch') as HTMLElement;
     expect(toggle).toBeTruthy();
-    expect(toggle.querySelector(".popover-switch.on")).not.toBeNull(); // reflects value:true
-    click(window, toggle); // turn it off — the click handler re-renders the panel in place
+    expect(toggle.classList.contains("on")).toBe(true);
+    click(window, toggle);
     expect(posted.some((p) => p.type === "setSoundNotifications" && p.value === false)).toBe(true);
-    // The re-rendered switch (still-open panel) now reflects the off state.
-    toggle = soundToggle();
-    expect(toggle.querySelector(".popover-switch.on")).toBeNull();
+    toggle = doc.querySelector('[data-id="soundNotifications"] .settings-switch') as HTMLElement;
+    expect(toggle.classList.contains("on")).toBe(false);
   });
 
   it("defaults local read-aloud off, then speaks completed replies and posts its VS Code setting", () => {
@@ -1532,18 +2174,13 @@ describe("thinking traces toggle (#26)", () => {
       extVersion: "2.0.9",
       readRepliesAloud: false,
     });
-    click(window, $(doc, "gear-btn"));
-    const cfg = [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find(
-      (el) => el.textContent?.includes("Config & debug"),
-    ) as HTMLElement;
-    click(window, cfg);
-    const readAloudToggle = () => [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find(
-      (el) => el.textContent?.includes("Read replies aloud"),
-    ) as HTMLElement;
+    openSettingsOverlay(window, doc);
+    clickSettingsNav(window, doc, "Voice");
+    const readAloudToggle = () => doc.querySelector('[data-id="readRepliesAloud"] .settings-switch') as HTMLElement;
 
-    expect(readAloudToggle().querySelector(".popover-switch.on")).toBeNull();
+    expect(readAloudToggle().classList.contains("on")).toBe(false);
     dispatch(window, { type: "readRepliesAloud", value: true });
-    expect(readAloudToggle().querySelector(".popover-switch.on")).not.toBeNull();
+    expect(readAloudToggle().classList.contains("on")).toBe(true);
     dispatch(window, { type: "agentStart" });
     dispatch(window, { type: "messageChunk", text: "Finished.\n```js\nhidden();\n```" });
     dispatch(window, { type: "agentEnd" });
@@ -1565,23 +2202,16 @@ describe("thinking traces toggle (#26)", () => {
         (w as any).speechSynthesis = { cancel() {}, speak() {} };
       },
     });
-    click(window, $(doc, "gear-btn"));
-    const cfg = [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find(
-      (el) => el.textContent?.includes("Config & debug"),
-    ) as HTMLElement;
-    click(window, cfg);
-    const summarize = [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find(
-      (el) => el.textContent?.includes("Read simplified summaries"),
-    ) as HTMLElement;
+    openSettingsOverlay(window, doc);
+    clickSettingsNav(window, doc, "Voice");
+    const summarize = doc.querySelector('[data-id="summarizeRepliesAloud"]') as HTMLElement;
 
     expect(summarize).toBeTruthy();
-    expect(summarize.classList.contains("disabled")).toBe(true);
-    expect(summarize.getAttribute("aria-disabled")).toBe("true");
-    expect(summarize.title).toContain("Turn on Read replies aloud");
-    expect(summarize.textContent).not.toContain("uses your xAI API key");
-    click(window, summarize);
+    expect(summarize.classList.contains("is-disabled")).toBe(true);
+    expect(summarize.querySelector(".settings-switch")?.hasAttribute("disabled")).toBe(true);
+    click(window, summarize.querySelector(".settings-switch")!);
     expect(posted.some((p) => p.type === "setSummarizeRepliesAloud")).toBe(false);
-    expect(summarize.querySelector(".popover-switch.on")).toBeNull();
+    expect(summarize.querySelector(".settings-switch.on")).toBeNull();
   });
 
   it("turning local read-aloud off clears and persists summarize in the open popover", () => {
@@ -1597,23 +2227,17 @@ describe("thinking traces toggle (#26)", () => {
     dispatch(window, { type: "readRepliesAloud", value: true });
     dispatch(window, { type: "summarizeRepliesAloud", value: true });
     posted.length = 0;
-    click(window, $(doc, "gear-btn"));
-    const cfg = [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find(
-      (el) => el.textContent?.includes("Config & debug"),
-    ) as HTMLElement;
-    click(window, cfg);
-    const gearToggle = (label: string) => [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find(
-      (el) => el.textContent?.includes(label),
-    ) as HTMLElement;
+    openSettingsOverlay(window, doc);
+    clickSettingsNav(window, doc, "Voice");
 
-    expect(gearToggle("Read simplified summaries").querySelector(".popover-switch.on")).not.toBeNull();
-    click(window, gearToggle("Read replies aloud"));
+    expect(doc.querySelector('[data-id="summarizeRepliesAloud"] .settings-switch.on')).not.toBeNull();
+    click(window, doc.querySelector('[data-id="readRepliesAloud"] .settings-switch')!);
 
     expect(posted).toContainEqual({ type: "setReadRepliesAloud", value: false });
     expect(posted).toContainEqual({ type: "setSummarizeRepliesAloud", value: false });
-    const summarize = gearToggle("Read simplified summaries");
-    expect(summarize.classList.contains("disabled")).toBe(true);
-    expect(summarize.querySelector(".popover-switch.on")).toBeNull();
+    const summarize = doc.querySelector('[data-id="summarizeRepliesAloud"]') as HTMLElement;
+    expect(summarize.classList.contains("is-disabled")).toBe(true);
+    expect(summarize.querySelector(".settings-switch.on")).toBeNull();
   });
 
   it("summarizes only the spoken text and ignores stale summary results", () => {
@@ -1680,7 +2304,7 @@ describe("thinking traces toggle (#26)", () => {
 
     expect(spoken).toEqual([
       "Which database should I use?",
-      "Grok is waiting for your permission. Review the request and choose an option.",
+      "Atlas is waiting for your permission. Review the request and choose an option.",
     ]);
     expect(spoken.join(" ")).not.toContain("private-file.txt");
   });
@@ -1709,49 +2333,60 @@ describe("thinking traces toggle (#26)", () => {
   });
 });
 
-describe("gear menu — worktree/rewind gating (#65)", () => {
+describe("VS Code session overflow + gear worktree gating", () => {
   const gearItems = (doc: Document) =>
     [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].map((el) => el.textContent || "");
   const has = (doc: Document, label: string) => gearItems(doc).some((t) => t.includes(label));
+  const openOverflow = (window: Window, doc: Document) => {
+    click(window, doc.querySelector("#vscode-session-actions .rail-menu-btn")!);
+    return [...doc.querySelectorAll(".rail-menu-item")].map((el) => el.textContent || "");
+  };
 
-  it("non-worktree shows Fork + New worktree; worktree shows Fork + Apply/Remove and hides only New worktree", () => {
-    const { window, doc } = bootWebview();
+  it("moves Continue to the overflow; worktree sessions keep Apply/Remove in gear", () => {
+    const { window, doc } = bootWebview({ vscode: true });
     dispatch(window, { type: "session", sessionId: "s1", models: [], currentModelId: "grok-build" });
+    dispatch(window, { type: "sessionName", sessionId: "s1", name: "Session one", cwd: "/work/repo" });
     click(window, $(doc, "gear-btn"));
-    expect(has(doc, "Fork conversation")).toBe(true);
-    expect(has(doc, "New worktree session")).toBe(true);
+    expect(has(doc, "Continue in a new chat")).toBe(false);
+    // Old three-entry menu is gone.
+    expect(has(doc, "Fork conversation")).toBe(false);
+    expect(has(doc, "New worktree session")).toBe(false);
     expect(has(doc, "Apply worktree")).toBe(false);
     expect(has(doc, "Remove worktree")).toBe(false);
-    click(window, $(doc, "gear-btn")); // close
+    click(window, $(doc, "gear-btn")); // close before opening the separate overflow
+    expect(openOverflow(window, doc).some((text) => text.includes("Continue in a new chat"))).toBe(true);
 
     dispatch(window, { type: "session", sessionId: "s2", models: [], currentModelId: "grok-build", worktree: true });
+    dispatch(window, { type: "sessionName", sessionId: "s2", name: "Worktree", cwd: "/work/repo" });
     click(window, $(doc, "gear-btn")); // re-open
+    expect(has(doc, "Continue in a new chat")).toBe(false);
     expect(has(doc, "Apply worktree")).toBe(true);
     expect(has(doc, "Remove worktree")).toBe(true);
-    // Fork stays (a shared-checkout branch, like the Dashboard's parallel sessions);
-    // only New worktree is blocked (no nesting).
-    expect(has(doc, "Fork conversation")).toBe(true);
-    expect(has(doc, "New worktree session")).toBe(false);
   });
 
-  it("hides Rewind conversation on an empty session, shows it once a user message exists", () => {
-    const { window, doc } = bootWebview();
+  it("never shows gear Rewind — rewind is per-message only", () => {
+    const { window, doc } = bootWebview({ vscode: true });
     dispatch(window, { type: "session", sessionId: "s1", models: [], currentModelId: "grok-build" });
+    dispatch(window, { type: "sessionName", sessionId: "s1", name: "Session one", cwd: "/work/repo" });
+    dispatch(window, { type: "userMessage", text: "hello", chips: [] });
     click(window, $(doc, "gear-btn"));
     expect(has(doc, "Rewind conversation")).toBe(false);
-    click(window, $(doc, "gear-btn")); // close
-
-    dispatch(window, { type: "userMessage", text: "hello", chips: [] });
-    click(window, $(doc, "gear-btn")); // re-open
-    expect(has(doc, "Rewind conversation")).toBe(true);
+    expect(has(doc, "Continue in a new chat")).toBe(false);
+    expect(openOverflow(window, doc).some((text) => text.includes("Continue in a new chat"))).toBe(true);
   });
 });
 
 describe("scroll-to-bottom button (#28)", () => {
-  const setMetrics = (window: any, list: HTMLElement, top: number, height: number, client: number) => {
+  // #92: the pin recomputes only after a real user gesture (wheel / touch /
+  // scrollbar / paging keys) within the 750ms intent latch. A bare
+  // programmatic scrollTop + scroll is the phantom-scroll case the latch
+  // exists to ignore, so tests that mean "the user scrolled" must fire a
+  // wheel first — same contract as test/stick-to-bottom.dom.test.ts.
+  const userScrollTo = (window: any, list: HTMLElement, top: number, height: number, client: number) => {
     Object.defineProperty(list, "scrollHeight", { value: height, configurable: true });
     Object.defineProperty(list, "clientHeight", { value: client, configurable: true });
     Object.defineProperty(list, "scrollTop", { value: top, configurable: true, writable: true });
+    list.dispatchEvent(new window.WheelEvent("wheel", { deltaY: top === 0 ? -80 : 80, bubbles: true }));
     list.dispatchEvent(new window.Event("scroll"));
   };
 
@@ -1759,9 +2394,9 @@ describe("scroll-to-bottom button (#28)", () => {
     const { window, doc } = bootWebview();
     const btn = $(doc, "scroll-bottom-btn");
     const list = $(doc, "messages");
-    setMetrics(window, list, 0, 1000, 300); // 700px from bottom → visible
+    userScrollTo(window, list, 0, 1000, 300); // 700px from bottom → visible
     expect(btn.classList.contains("visible")).toBe(true);
-    setMetrics(window, list, 680, 1000, 300); // 20px from bottom (≤40) → hidden
+    userScrollTo(window, list, 680, 1000, 300); // 20px from bottom (≤40) → hidden
     expect(btn.classList.contains("visible")).toBe(false);
   });
 
@@ -1770,7 +2405,7 @@ describe("scroll-to-bottom button (#28)", () => {
     const btn = $(doc, "scroll-bottom-btn");
     const list = $(doc, "messages") as any;
     list.scrollTo = () => {}; // happy-dom has no smooth-scroll impl
-    setMetrics(window, list, 0, 1000, 300);
+    userScrollTo(window, list, 0, 1000, 300);
     expect(btn.classList.contains("visible")).toBe(true);
     click(window, btn);
     expect(btn.classList.contains("visible")).toBe(false);
@@ -2226,33 +2861,89 @@ describe("composer input focus (caret ready on open)", () => {
   });
 });
 
-describe("gear entry: Move view (Config & debug)", () => {
-  function openConfigDebug(window: Window, doc: Document) {
-    click(window, $(doc, "gear-btn"));
-    const item = [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find((el) =>
-      el.textContent!.includes("Config & debug"),
-    ) as HTMLElement;
-    click(window, item);
+describe("gear entry: Move view (Settings → Advanced)", () => {
+  function openAdvancedSettings(window: Window, doc: Document) {
+    openSettingsOverlay(window, doc);
+    clickSettingsNav(window, doc, "Advanced");
   }
   const itemByLabel = (doc: Document, label: string) =>
-    [...doc.querySelectorAll("#gear-popover .toolbar-popover-item")].find((el) =>
-      el.textContent!.includes(label),
+    [...doc.querySelectorAll("#settings-overlay .settings-row")].find((el) =>
+      (el.textContent || "").includes(label),
     ) as HTMLElement | undefined;
 
-  it("offers the three destinations, each posting moveView with its location", () => {
+  it("offers one item, the host's own picker, where the secondary side bar was refused", () => {
+    // Was three destinations naming our own containers. They went because an
+    // editor that refuses our secondary-side-bar container also ignores where
+    // the other two declared they live, so all three landed in the same place —
+    // and an editor that accepts it already has its own Move To on the view's
+    // context menu, which does more than ours could.
     const { window, posted, doc } = bootWebview();
-    const destinations: Array<[string, string]> = [
-      ["To Secondary Side Bar", "auxiliarybar"],
-      ["To Primary Side Bar", "sidebar"],
-      ["To Panel", "panel"],
-    ];
-    for (const [label, location] of destinations) {
-      openConfigDebug(window, doc); // clicking an item closes the popover — reopen each time
-      const item = itemByLabel(doc, label);
-      expect(item, label).toBeTruthy();
-      click(window, item!);
-      expect(posted).toContainEqual({ type: "moveView", location });
-    }
+    dispatch(window, {
+      type: "initialState",
+      useCtrlEnter: false,
+      capabilities: {
+        uploadFile: true,
+        remoteVoice: true,
+        relocateView: true,
+        secondarySideBar: false,
+        showOutput: true,
+      },
+    });
+    openAdvancedSettings(window, doc);
+    const item = itemByLabel(doc, "Move view…");
+    expect(item).toBeTruthy();
+    click(window, item!.querySelector(".settings-action")!);
+    // `pick` maps to no container by design, so the host falls through to its
+    // own picker — the only mover that targets a LOCATION.
+    expect(posted).toContainEqual({ type: "moveView", location: "pick" });
+  });
+
+  it("still shows Show logs when the host sends no capability flags (v3.1.0)", () => {
+    // Compatibility contract: the web client is always new; the extension may
+    // be an older install that never emitted relocateView/showOutput. That item
+    // existed ungated before the flags — absent must still mean supported.
+    //
+    // Move view is the deliberate exception, and its polarity is the opposite:
+    // an absent `secondarySideBar` means the editor HAS one, and an editor with
+    // a secondary side bar has its own Move To. So absent means no section.
+    const { window, posted, doc } = bootWebview();
+    dispatch(window, {
+      type: "initialState",
+      useCtrlEnter: false,
+      // No relocateView / showOutput — mirrors released v3.1.0 hosts.
+      capabilities: { uploadFile: true, remoteVoice: true },
+    });
+    openAdvancedSettings(window, doc);
+    expect(itemByLabel(doc, "Show extension logs")).toBeTruthy();
+    expect(itemByLabel(doc, "Move view")).toBeUndefined();
+    click(window, itemByLabel(doc, "Show extension logs")!.querySelector(".settings-action")!);
+    expect(posted).toContainEqual({ type: "showLogs" });
+  });
+
+  it("still shows Show logs when capabilities is omitted entirely", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "initialState",
+      useCtrlEnter: false,
+      // No capabilities object at all (hostCaps stays {}).
+    });
+    openAdvancedSettings(window, doc);
+    expect(itemByLabel(doc, "Show extension logs")).toBeTruthy();
+    expect(itemByLabel(doc, "Move view")).toBeUndefined();
+  });
+
+  it("hides Move view and Show logs only when the host opts out with false (desktop)", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "initialState",
+      useCtrlEnter: false,
+      capabilities: { uploadFile: true, remoteVoice: true, relocateView: false, showOutput: false },
+    });
+    openAdvancedSettings(window, doc);
+    expect(itemByLabel(doc, "Move view")).toBeUndefined();
+    expect(itemByLabel(doc, "Show extension logs")).toBeUndefined();
+    // Config paths still work on desktop.
+    expect(itemByLabel(doc, "Open global config")).toBeTruthy();
   });
 });
 
@@ -2675,20 +3366,20 @@ describe("remote tab session reconnect", () => {
       remote: true,
       beforeScripts: (w) => {
         (w as any).BroadcastChannel = FakeBroadcastChannel;
-        w.sessionStorage.setItem("grok.remote.tabSession:default", JSON.stringify(remembered));
+        w.sessionStorage.setItem("atlas.remote.tabSession:default", JSON.stringify(remembered));
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const originalToken = original.window.sessionStorage.getItem("grok.remote.tabToken:default");
-    const originalOwner = original.window.sessionStorage.getItem("grok.remote.tabOwner:default");
+    await vi.waitFor(() => (original.window as any).__grokTabTokenReady);
+    const originalToken = original.window.sessionStorage.getItem("atlas.remote.tabToken:default");
+    const originalOwner = original.window.sessionStorage.getItem("atlas.remote.tabOwner:default");
 
     const duplicate = bootWebview({
       remote: true,
       beforeScripts: (w) => {
         (w as any).BroadcastChannel = FakeBroadcastChannel;
-        w.sessionStorage.setItem("grok.remote.tabToken:default", originalToken!);
-        w.sessionStorage.setItem("grok.remote.tabOwner:default", originalOwner!);
-        w.sessionStorage.setItem("grok.remote.tabSession:default", JSON.stringify(remembered));
+        w.sessionStorage.setItem("atlas.remote.tabToken:default", originalToken!);
+        w.sessionStorage.setItem("atlas.remote.tabOwner:default", originalOwner!);
+        w.sessionStorage.setItem("atlas.remote.tabSession:default", JSON.stringify(remembered));
       },
     });
     const tokenReady = (duplicate.window as any).__grokTabTokenReady as Promise<string | undefined>;
@@ -2697,10 +3388,10 @@ describe("remote tab session reconnect", () => {
     const settledToken = await tokenReady;
     await Promise.resolve();
 
-    const duplicateToken = duplicate.window.sessionStorage.getItem("grok.remote.tabToken:default");
+    const duplicateToken = duplicate.window.sessionStorage.getItem("atlas.remote.tabToken:default");
     expect(duplicateToken).not.toBe(originalToken);
     expect(settledToken).toBe(duplicateToken);
-    expect(duplicate.window.sessionStorage.getItem("grok.remote.tabSession:default")).toBeNull();
+    expect(duplicate.window.sessionStorage.getItem("atlas.remote.tabSession:default")).toBeNull();
     expect(duplicate.posted.find((message) => message.type === "ready")).toEqual({
       type: "ready",
       tabToken: duplicateToken,
@@ -2720,7 +3411,7 @@ describe("remote tab session reconnect", () => {
         (w as any).BroadcastChannel = undefined;
       },
     });
-    const stored = window.sessionStorage.getItem("grok.remote.tabToken:default");
+    const stored = window.sessionStorage.getItem("atlas.remote.tabToken:default");
 
     await expect((window as any).__grokTabTokenReady).resolves.toBe(stored);
   });
@@ -2731,9 +3422,9 @@ describe("remote tab session reconnect", () => {
       remote: true,
       beforeScripts: (w) => {
         (w as any).BroadcastChannel = undefined;
-        w.sessionStorage.setItem("grok.remote.tabToken:default", oldToken);
-        w.sessionStorage.setItem("grok.remote.tabOwner:default", "other-page");
-        w.sessionStorage.setItem("grok.remote.tabSession:default", JSON.stringify({
+        w.sessionStorage.setItem("atlas.remote.tabToken:default", oldToken);
+        w.sessionStorage.setItem("atlas.remote.tabOwner:default", "other-page");
+        w.sessionStorage.setItem("atlas.remote.tabSession:default", JSON.stringify({
           id: "copied-session",
           repoCwd: "/work/repo-b",
         }));
@@ -2742,7 +3433,7 @@ describe("remote tab session reconnect", () => {
 
     const token = await (window as any).__grokTabTokenReady;
     expect(token).not.toBe(oldToken);
-    expect(window.sessionStorage.getItem("grok.remote.tabSession:default")).toBeNull();
+    expect(window.sessionStorage.getItem("atlas.remote.tabSession:default")).toBeNull();
   });
 
   it("starts fresh from copied state when BroadcastChannel construction throws", async () => {
@@ -2753,9 +3444,9 @@ describe("remote tab session reconnect", () => {
         (w as any).BroadcastChannel = class {
           constructor() { throw new Error("disabled"); }
         };
-        w.sessionStorage.setItem("grok.remote.tabToken:default", oldToken);
-        w.sessionStorage.setItem("grok.remote.tabOwner:default", "other-page");
-        w.sessionStorage.setItem("grok.remote.tabSession:default", JSON.stringify({
+        w.sessionStorage.setItem("atlas.remote.tabToken:default", oldToken);
+        w.sessionStorage.setItem("atlas.remote.tabOwner:default", "other-page");
+        w.sessionStorage.setItem("atlas.remote.tabSession:default", JSON.stringify({
           id: "copied-session",
           repoCwd: "/work/repo-b",
         }));
@@ -2764,7 +3455,7 @@ describe("remote tab session reconnect", () => {
 
     const token = await (window as any).__grokTabTokenReady;
     expect(token).not.toBe(oldToken);
-    expect(window.sessionStorage.getItem("grok.remote.tabSession:default")).toBeNull();
+    expect(window.sessionStorage.getItem("atlas.remote.tabSession:default")).toBeNull();
   });
 
   it("retains identity and conversation when a stale owner marker has no live channel participant", async () => {
@@ -2782,15 +3473,15 @@ describe("remote tab session reconnect", () => {
           postMessage() {}
           close() {}
         };
-        w.sessionStorage.setItem("grok.remote.tabToken:default", oldToken);
-        w.sessionStorage.setItem("grok.remote.tabOwner:default", "dead-renderer");
-        w.sessionStorage.setItem("grok.remote.tabSession:default", JSON.stringify(remembered));
+        w.sessionStorage.setItem("atlas.remote.tabToken:default", oldToken);
+        w.sessionStorage.setItem("atlas.remote.tabOwner:default", "dead-renderer");
+        w.sessionStorage.setItem("atlas.remote.tabSession:default", JSON.stringify(remembered));
       },
     });
 
     await expect((window as any).__grokTabTokenReady).resolves.toBe(oldToken);
-    expect(window.sessionStorage.getItem("grok.remote.tabToken:default")).toBe(oldToken);
-    expect(window.sessionStorage.getItem("grok.remote.tabSession:default")).toBe(JSON.stringify(remembered));
+    expect(window.sessionStorage.getItem("atlas.remote.tabToken:default")).toBe(oldToken);
+    expect(window.sessionStorage.getItem("atlas.remote.tabSession:default")).toBe(JSON.stringify(remembered));
 
     dispatch(window, { type: "initialState", cwd: "/work/repo-a" });
     expect(posted).toContainEqual({ type: "selectRepo", cwd: "/work/repo-b" });
@@ -2812,24 +3503,24 @@ describe("remote tab session reconnect", () => {
       remote: true,
       beforeScripts: (w) => {
         (w as any).BroadcastChannel = FakeBroadcastChannel;
-        w.sessionStorage.setItem("grok.remote.tabSession:default", JSON.stringify(remembered));
+        w.sessionStorage.setItem("atlas.remote.tabSession:default", JSON.stringify(remembered));
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const token = priorPage.window.sessionStorage.getItem("grok.remote.tabToken:default");
+    await vi.waitFor(() => (priorPage.window as any).__grokTabTokenReady);
+    const token = priorPage.window.sessionStorage.getItem("atlas.remote.tabToken:default");
     priorPage.window.dispatchEvent(new priorPage.window.Event("pagehide"));
 
     const reloaded = bootWebview({
       remote: true,
       beforeScripts: (w) => {
         (w as any).BroadcastChannel = FakeBroadcastChannel;
-        w.sessionStorage.setItem("grok.remote.tabToken:default", token!);
-        w.sessionStorage.setItem("grok.remote.tabSession:default", JSON.stringify(remembered));
+        w.sessionStorage.setItem("atlas.remote.tabToken:default", token!);
+        w.sessionStorage.setItem("atlas.remote.tabSession:default", JSON.stringify(remembered));
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await vi.waitFor(() => (reloaded.window as any).__grokTabTokenReady);
 
-    expect(reloaded.window.sessionStorage.getItem("grok.remote.tabToken:default")).toBe(token);
+    expect(reloaded.window.sessionStorage.getItem("atlas.remote.tabToken:default")).toBe(token);
     dispatch(reloaded.window, { type: "initialState", cwd: "/work/repo-a" });
     expect(reloaded.posted).toContainEqual({ type: "selectRepo", cwd: "/work/repo-b" });
     expect(reloaded.posted).toContainEqual({
@@ -2848,7 +3539,7 @@ describe("remote tab session reconnect", () => {
     const { window, posted } = bootWebview({
       remote: true,
       beforeScripts: (w) => {
-        w.sessionStorage.setItem("grok.remote.tabSession:default", JSON.stringify(remembered));
+        w.sessionStorage.setItem("atlas.remote.tabSession:default", JSON.stringify(remembered));
       },
     });
 
@@ -2874,14 +3565,14 @@ describe("remote tab session reconnect", () => {
       activeId: "session-tab-b",
     });
 
-    expect(JSON.parse(window.sessionStorage.getItem("grok.remote.tabSession:default")!)).toEqual({
+    expect(JSON.parse(window.sessionStorage.getItem("atlas.remote.tabSession:default")!)).toEqual({
       id: "session-tab-b",
       repoCwd: "/work/repo-b",
       cwd: "/work/repo-b",
     });
 
     click(window, $(doc, "new-btn"));
-    expect(window.sessionStorage.getItem("grok.remote.tabSession:default")).toBeNull();
+    expect(window.sessionStorage.getItem("atlas.remote.tabSession:default")).toBeNull();
   });
 
   it("does not replace reconnect identity until the host accepts a history selection", () => {
@@ -2912,7 +3603,7 @@ describe("remote tab session reconnect", () => {
       id: "rejected",
       cwd: "/work/repo-b",
     });
-    expect(JSON.parse(window.sessionStorage.getItem("grok.remote.tabSession:default")!))
+    expect(JSON.parse(window.sessionStorage.getItem("atlas.remote.tabSession:default")!))
       .toMatchObject({ id: "current", repoCwd: "/work/repo-b" });
 
     dispatch(window, {
@@ -2920,7 +3611,7 @@ describe("remote tab session reconnect", () => {
       entries: [{ id: "current", cwd: "/work/repo-b", displayName: "Current" }],
       activeId: "current",
     });
-    expect(JSON.parse(window.sessionStorage.getItem("grok.remote.tabSession:default")!))
+    expect(JSON.parse(window.sessionStorage.getItem("atlas.remote.tabSession:default")!))
       .toMatchObject({ id: "current", repoCwd: "/work/repo-b" });
   });
 
@@ -2928,7 +3619,7 @@ describe("remote tab session reconnect", () => {
     const { window } = bootWebview({
       remote: true,
       beforeScripts: (w) => {
-        w.sessionStorage.setItem("grok.remote.tabSession:default", JSON.stringify({
+        w.sessionStorage.setItem("atlas.remote.tabSession:default", JSON.stringify({
           id: "stale",
           repoCwd: "/work/repo-b",
           cwd: "/work/repo-b",
@@ -2938,6 +3629,6 @@ describe("remote tab session reconnect", () => {
 
     dispatch(window, { type: "sessions", entries: [], activeId: null });
 
-    expect(window.sessionStorage.getItem("grok.remote.tabSession:default")).toBeNull();
+    expect(window.sessionStorage.getItem("atlas.remote.tabSession:default")).toBeNull();
   });
 });

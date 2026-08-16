@@ -1,43 +1,139 @@
 # Architecture
 
-How the Grok Build VS Code extension is put together, and the one place it
-deliberately stops being "thin." For day-to-day usage see the
+How the Atlas VS Code and desktop clients are put together, and the places
+they deliberately stop being "thin." For day-to-day usage see the
 [README](../README.md); for the test layers see [TESTS.md](../TESTS.md).
 
 ## The thin-client boundary
 
-The extension is a UI shell over `grok agent stdio`. It speaks JSON-RPC over the
-[Agent Client Protocol (ACP)](https://agentclientprotocol.com) on the CLI's
-stdin/stdout and renders the results. Almost all real state lives in the CLI
-process, not the extension.
+The host is a UI shell over either `atlas agent stdio` or the pinned
+`@agentclientprotocol/codex-acp` adapter. It speaks JSON-RPC over the
+[Agent Client Protocol (ACP)](https://agentclientprotocol.com) on the selected
+backend's stdin/stdout and renders one internal event vocabulary. Conversation
+state remains in the selected CLI; provider identity and presentation state live
+in the host.
 
 | Lives in the CLI | Lives in the extension |
 |---|---|
-| Conversation history, memory, `~/.grok/` | Chips list (active editor + drag-added files) |
-| MCP servers, subagents, plugins | YOLO flag (auto-approval) |
-| Tool execution, model state | Plan-mode gate + per-plan verdict log |
-| Plan text on disk (`~/.grok/sessions/<…>/plan.md`) | Webview UI state, popovers, slash filter, pending diff per `toolCallId` |
+| Provider-owned conversation history and memory | Chips list (active editor + drag-added files) |
+| MCP servers, subagents, plugins | Provider connection/model caches and immutable per-session provider metadata |
+| Tool execution and model state | Atlas auto-approval and client Plan gate; Codex permission presentation |
+| Atlas plan text on disk (`~/.grok/sessions/<…>/plan.md`) | Webview UI state, popovers, slash filter, pending diff per `toolCallId` |
 
-Kill the extension and the `grok` child dies with it; kill `grok` and the
-extension surfaces an error and offers a fresh session. Restarting the session
-(the **+** button) kills the CLI child and spawns a new one — memory the CLI
-persisted under `~/.grok/` survives.
+Kill the host and its backend child dies with it; kill the backend and the host
+surfaces an error and offers a fresh session. Restarting the session (the **+**
+button) kills that child and spawns the same provider again; persisted provider
+history survives.
 
 ## Message flow
 
 ```
-VS Code webview ──postMessage──► extension host ──JSON-RPC over stdin/stdout──► grok agent stdio
-                                                  ◄── session/update (message chunks, thought chunks, tool calls, mode changes)
-                                                  ◄── fs/read_text_file, fs/write_text_file
-                                                  ◄── terminal/create, terminal/output, terminal/wait_for_exit, terminal/kill, terminal/release
-                                                  ◄── session/request_permission
-                                                  ◄── x.ai/exit_plan_mode, x.ai/ask_user_question
-                                                  ◄── _x.ai/session_notification (live rail: auto_compact_completed/started/failed → donut + notice; subagent_spawned/finished → card duration/output; model_changed → effort/model sync)
+webview / browser
+       │ additive HostMsg/WebviewMsg (session.provider, providerState, models)
+       ▼
+sidebar host ──► AcpClient ──► GrokBackend  ──► atlas agent stdio
+                         └────► CodexBackend ──► node codex-acp (CODEX_PATH=codex,
+                                                     ELECTRON_RUN_AS_NODE=1)
+       ▲                         │
+       └── established internal events ◄── Codex wire normalization
 ```
+
+Atlas supplies the mandatory `fs/*` and `terminal/*` callbacks, native
+`x.ai/exit_plan_mode` / `x.ai/ask_user_question`, and its private notification
+rail. Codex executes commands and edits server-side; its adapter sends ordinary
+tool/diff updates and `session/request_permission`, including plan review.
 
 The extension implements **every mandatory server→client handler**
 (`fs/read_text_file`, `fs/write_text_file`, `terminal/{create,output,wait_for_exit,kill,release}`)
 — miss one and the agent crashes mid-session.
+
+`AcpClient` has a provider seam at the wire's divergence points. The default
+`grokBackend` is an identity adapter: it preserves Atlas's spawn arguments,
+requests, responses, and notifications. `CodexBackend`
+spawns the pinned `@agentclientprotocol/codex-acp` entry point under Node with
+`CODEX_PATH` set to the discovered Codex CLI and `ELECTRON_RUN_AS_NODE=1`
+explicitly set for VS Code, desktop Electron, and plain Node hosts, then normalizes composite model
+ids, config-option responses, usage, tool output, diffs, permissions, generated
+titles, and session-list pages into the existing host event shapes. Codex runs
+commands and edits server-side, and its Plan enforcement stays server-side, so
+the Atlas terminal/fs Plan gate is disabled for that provider.
+
+Connection is explicit and binary-aware. `atlas.providerConnections` records the
+user choice; a located binary alone never connects Codex. `atlas.providerModelCache`
+holds each provider's last advertised model list, and `atlas.projectProviderDefaults`
+holds the last provider/model for each normalized project path. These exact keys
+are used by VS Code globalState and the desktop `globalState.json` memento. An
+empty cached `modelId` means “use that provider's default,” not “no selection.”
+On Codex connect, a short-lived adapter creates a session in a temporary scratch
+cwd, stores the advertised models, deletes that throwaway session through ACP,
+and disposes; a failure is logged and does not fail the connection.
+
+If no Codex binary is found, onboarding can install the pinned official
+`rust-v0.147.0` standalone package into versioned global storage. The download is
+streamed to a sibling staging file, SHA-256 verified before decompression, unpacked
+with the dependency-free tar reader (preserving regular-file mode bits on POSIX),
+then renamed into place atomically. Discovery
+checks this managed package last, so a configured path, PATH command, or ChatGPT
+extension bundle always wins. Every sidebar discovery, including session start,
+uses the same class-owned locator inputs. Progress and cancellation stay host-local.
+
+The new-session picker groups cached models from all connected providers, Atlas
+first. Choosing a model chooses the backend and persists it in the session's
+`atlas.sessionMeta` override; absent metadata means Atlas for older installations.
+An empty conversation may switch providers through the same discard-and-restart
+path on the desk and remotely. After the first user turn the provider is immutable,
+and the picker is provider-local; the host also infers the owner of a cached model
+from older provider-blind clients and rejects a cross-provider live pick with a
+targeted notice before it reaches an adapter. The additive `provider` field travels
+in session/history frames through `HostMsg` to the shared webview and browser client.
+Every remote snapshot also carries the relay-safe `providerState` frame
+(`id` + `connected`, plus host-probed CLI/adapter version facts when known). The inline, `currentColor` provider marks appear only
+when more than one provider is connected. In mixed-provider history and rail rows
+the status dot overlays the mark; single-provider and old-host rows retain the
+standalone dot structure.
+
+The shared `media/chat.js` gear opens with **Use this app for**, then Remote
+Control (desk only; Continue remotely + Your account, or Sign in / How it works —
+unlink is Settings → Account only), then a single **Settings** entry. Versions,
+CLI update, bug/feature tracker links, contact, and the non-affiliation
+disclaimer live in Settings → About. Provider account rows appear on the desk gear only when no
+provider is connected or one needs login; healthy connected accounts live in
+Settings → Providers. The browser receives view-only connection state and
+renders no account-management controls in the gear. Desk account actions
+reuse the sidebar's provider login/logout messages. The exhaustive inbound policy
+classifies `logout`, `runGrokLogin`, and the durable `recheckConnection` as
+host-local, so a modified remote cannot clear credentials, connect an account, or
+open a login terminal on the desk. A remote `retryProviderSession` may only restart
+an already-connected provider; signed-out remote onboarding shows desk guidance
+without dead action buttons. Login remains visible in a terminal. Its action starts
+a bounded credential re-probe, and Re-check bypasses the history freshness clock;
+Codex probes use `isCodexCredentialError`, so an uncoded `Sign in required` result
+sets `needsLogin` and a later success clears it. Atlas uses the same observable
+re-probe lifecycle. Codex logout runs as an observed one-shot process and clears connection state only after exit success
+(an unspawnable process is opened in a terminal while state remains connected).
+After a successful sign-out, the provider is disconnected in memory and every
+matching focused, background, active-remote, or detached-tab session is
+synchronously detached before the memento write or replacement startup can
+stall. Every queued draft with a conversation id is written to that conversation's
+`atlas.sessionMeta` at capture time. Focused and active-remote drafts return to
+replacement composers only after replacement startup succeeds; failed starts leave
+both META and the in-memory stranded copy intact. Background drafts get a named
+transient desk notice, including start races that do not yet have an id. Detached
+tabs keep an inert replacement and the META-backed draft, but deliberately miss
+both transient notices and composer restore frames while disconnected. Every
+same-provider, other-provider, and needs-provider reattachment restores and only
+then clears META once the composer is live. Draft-bearing and `needsProvider`
+sessions are protected from parking, release, empty sweeps, and TTL/LRU reaping;
+provider retargeting scans detached logical tabs as well as attached sessions.
+The local replacement uses the focused session's still-authorized cwd rather
+than the project currently browsed in history. A rejected memento write is
+reported but cannot make the old clients reachable again. A crashed or
+clientless focused session on the other provider is untouched.
+The desktop has no Codex-path settings row. Its JSON config store still reads
+`atlas.codexCliPath`, and VS Code keeps the contributed setting, so file/settings
+overrides continue to participate in discovery without renderer plumbing.
+
+Settings live in one shared surface ([media/settings.js](../media/settings.js)): a view over existing prefs and actions, plus the voice send-phrase / dictionary setters (`setVoiceSendPhrase` / `setVoiceKeyterms`, classified `propose` so a phone can edit them). Desktop and the remote browser open it as a full-window overlay from gear → **Settings**. The overlay traps Tab, marks covered siblings `inert`, and restores the opener on Escape or the top-left **← Back to app** link (above search; inside the trap). VS Code opens the same component in an editor-area webview tab (`atlas.settings`, also a view/title gear on `atlas.chat`) and has no Back link — the tab closes natively. Categories are General (purpose + chat display + telemetry), Voice, Notifications, Providers, Account, Advanced, About — each nav row is icon + label. About is last and is the only place the non-affiliation disclaimer appears. Restore defaults only resets toggles/selects/sliders (`restoreChanges` — never free-text or list inputs such as the send phrase or dictionary), hides the button when nothing on the page would change, and expands an in-surface confirm that lists the rows and target values before acting. The tab snapshots on open and posts the same `set*` / `open*` messages, so a change cannot be lost or desync the sidebar. Host-local Advanced rows stay hidden on remote; Providers and Account render as read-only desk connection state plus a device-manager link. Telemetry is a desktop toggle, a VS Code settings-opener, and a remote read-only row using the privacy.md claims.
 
 The `postMessage` half (host↔webview) is a **typed contract**: [src/protocol.ts](../src/protocol.ts)
 is the single source of truth — `HostMsg` (host→webview) and `WebviewMsg` (webview→host)
@@ -50,31 +146,34 @@ gap the untyped `any` direction used to leave open around restore, pagination, a
 
 When the panel opens (or you click **+** for a new session):
 
-1. Locate the `grok` binary: `grok.cliPath` setting → `~/.grok/bin/grok` → `PATH`.
-2. Spawn `grok agent stdio` as a background child — visible in `ps` / Task
-   Manager, never opening a terminal window.
-3. If `grok.defaultEffort` is set, pass `--reasoning-effort <value>` **before**
-   the `stdio` subcommand (it's an agent-level flag).
-4. `initialize` → `session/new` (or `session/load` to resume) → `session/set_model`.
-5. Stream `session/update` notifications (messages, thoughts, tool calls,
-   permission requests, mode changes) back into the chat.
+1. Resolve the selected provider. Atlas uses `atlas.cliPath` → `~/.grok/bin/grok`
+   → PATH. Codex uses `atlas.codexCliPath` → PATH → the newest matching OpenAI
+   ChatGPT extension bundle → the versioned extension-managed package.
+2. Spawn `atlas agent stdio`, or Node with the packaged Codex ACP entry point and
+   `CODEX_PATH` set to the located Codex binary.
+3. Run `initialize` → `session/new` (or `session/load` to resume). Atlas keeps its
+   existing `session/set_model` lifecycle; Codex configures model, effort, and
+   mode through `session/set_config_option`.
+4. Normalize backend updates at the host boundary and stream the established
+   message, thought, tool, permission, model, and usage events into the chat.
 
-The composer unlocks as soon as the session is live. While a user turn is waiting
-on grok, the chat shows an animated **Grokking…** placeholder, replaced in place
-by the first thought / message / tool card.
+The composer unlocks as soon as the session is live. Its placeholder follows the
+session provider (**Ask Atlas…** / **Ask GPT…**). While a user turn is waiting, the
+same animated activity row says **Grokking…** for Atlas or **Opening AI…** for
+Codex, then is replaced in place by the first thought / message / tool card.
 
 ## The session pool (Agent Dashboard)
 
 The sidebar shows one conversation at a time, but it keeps a **pool of live
-sessions** behind it — one spawned `grok agent stdio` process each, with exactly
+sessions** behind it — one spawned backend process each, with exactly
 one *focused* (the one you see). All the per-session state lives in a
 [`Session`](../src/session.ts) object; the sidebar holds `focused` plus a `Set` of
 every live `Session` (`pool`). The point is **lossless re-focus**: a backgrounded
 session keeps streaming into its own *view buffer* (every webview post that built
 its chat, in order), so re-focusing it is a `clearMessages` + replay of that
-buffer — no grok reload, no process kill, even mid-turn or mid-approval.
+buffer — no backend reload, no process kill, even mid-turn or mid-approval.
 
-Switching focus (`focusSession`) never touches grok: it swaps `this.focused`,
+Switching focus (`focusSession`) never touches the backend: it swaps `this.focused`,
 replays the target's buffer to the webview, and re-pushes the mode/sessions UI.
 Clicking a session that *isn't* live (cold — it was reaped, or predates this
 window) loads it from grok's on-disk history into a fresh pool member instead
@@ -123,11 +222,11 @@ everything spare is busy, by design. Reaping just kills the process and recomput
 the dot — a reaped session that's still unread **stays green**, a read one goes
 gray — and re-clicking the row reloads the session from disk.
 
-One safety valve sits next to this: the explicit **Update Grok Build CLI** action
+One safety valve sits next to this: the explicit **Update Atlas CLI** action
 tears down every live session to swap the binary, so it now confirms first if any
 session is `working` or `needs-you` (the silent startup auto-update runs before
 anything is in flight, so it doesn't ask). The teardown is **awaited** before
-`grok update` runs — `kill()` only signals, and on Windows the `grok.exe` lock
+`grok update` runs — `kill()` only signals, and on Windows the `atlas.exe` lock
 clears a beat after the process actually exits, so an un-awaited update would race
 it and fail with *"cannot rename locked executable"*. On Windows the kill is a
 `taskkill /T /F` of the process **tree** (grok backgrounds subagent/command
@@ -137,14 +236,21 @@ and the update retries once if a lingering lock still slips through.
 `maybeUpdateCliOnUpgrade` retains the normal session-start trigger: once per
 activation it compares `CLI_UPDATE_VERSION_KEY`, updating only after an extension
 version change; a fresh install records its baseline without updating. After that,
-every session start reads `grok --version`. On Windows, `maybePinBrokenCli` uses the
+every session start reads `grok --version` through `resolvePlanModeAvailability`
+(one short retry when the first read is empty/unparseable, then the last verified
+banner in `atlas.cliVersionCache` when that binary's mtime/size still match). A live
+parseable answer always wins over the cache. On Windows, `maybePinBrokenCli` uses the
 bounded `isStdioBrokenGrokVersion` check to move 0.2.61–0.2.70 to the current
 `GROK_STDIO_DOWNGRADE_TARGET` before ACP spawn. `GROK_REQUIRED_VERSION` is the
-cross-platform ACP behavior floor and the current recovery target. A CLI below the floor, or whose version cannot be
-verified, still starts in Agent/Auto accept, but that `Session` carries
-`planModeAvailable:false`: the host emits `planModeAvailability`, the picker disables
-only Plan and shows the exact reason, and `setMode` rejects stale or forged Plan
-requests. Agent-initiated and restored Plan transitions raise the client safety gate.
+cross-platform ACP behavior floor and the current recovery target.
+A live parseable CLI below the floor latches Plan off (`planModeVersionVerified:true`);
+an unreadable probe with no matching cache also sets `planModeAvailable:false` but
+stays re-checkable — the picker keeps Plan clickable
+(`planModeAvailability.recheckable`) and `setMode` re-probes via
+`recheckPlanModeAvailability` instead of forcing a restart. A cache substitute
+keeps that availability but is never verified, so a stale below-floor banner
+stays re-checkable and a later live probe replaces the stand-in. A live
+verified-old CLI still hard-disables the Plan row and rejects forged Plan requests. Agent-initiated and restored Plan transitions raise the client safety gate.
 A live untrusted planning turn is cancelled, and the gate stays raised until both
 that `session/prompt` settles and `session/set_mode(default)` confirms Agent; a
 failure or stalled recovery stays gated and is surfaced explicitly.
@@ -155,9 +261,9 @@ newly started compatible processes, never for an older process that is still ali
 Reactive Windows stdio recovery remains a separate single-retry backstop after an
 observed startup failure.
 
-## Plan Mode — native verdicts plus a client-side safety gate
+## Plan Mode — provider-owned review, Atlas client safety gate
 
-The CLI owns plan-review continuation. The extension responds to
+Atlas owns plan-review continuation. The extension responds to
 `_x.ai/exit_plan_mode` with its native success result: `approved`, `cancelled`
 (Keep planning), or `abandoned` (Cancel). Approval continues into implementation
 inside the original turn; cancellation stays in Plan and lets grok revise and
@@ -222,6 +328,12 @@ cancel, or synthetic lifecycle.
   also retained for other hidden maintenance turns; they are no longer a priming
   mechanism.
 
+Codex plan review follows a different wire path: it is a normal
+`session/request_permission` whose tool kind is `switch_mode`. The host renders
+the ordinary permission card and returns the selected option. `CodexBackend`
+reports `usesClientPlanGate = false`, so none of the Atlas filesystem/terminal
+gate, plan-file snooping, or `x.ai/exit_plan_mode` verdict machinery is attached.
+
 The full pedagogical write-up lives in
 [research/understanding-plan-mode.md](../research/understanding-plan-mode.md).
 
@@ -231,14 +343,18 @@ The full pedagogical write-up lives in
 |---|---|
 | [src/extension.ts](../src/extension.ts) | Entry point — registers commands, keybindings, output channel |
 | [src/sidebar.ts](../src/sidebar.ts) | Webview provider, message routing, fs handlers, native diff opening, logout, generated-media serving (`postGeneratedMedia` → `asWebviewUri`, base64 fallback) |
-| [src/diff-view.ts](../src/diff-view.ts) | Pure whole-file native-diff reconstruction (#66) — combines Grok's replaced regions + positioned sites with disk content, bounds expansion size, and finds the first changed line |
-| [src/acp.ts](../src/acp.ts) | ACP client — spawns CLI, manages session lifecycle, emits events. `interject` (#52 Steer), `forkSession` (#48), and worktree RPCs (P2-8) call the unadvertised `_x.ai/*` methods, returning `"unsupported"` on -32601 rather than throwing |
+| [src/diff-view.ts](../src/diff-view.ts) | Pure whole-file native-diff reconstruction (#66) — combines Atlas's replaced regions + positioned sites with disk content, bounds expansion size, and finds the first changed line |
+| [src/acp.ts](../src/acp.ts) | Provider-neutral ACP client — spawns the selected backend, manages session lifecycle, normalizes through its backend hooks, and emits the extension's established events. `interject` (#52 Steer), `forkSession` (#48), and worktree RPCs (P2-8) call the unadvertised `_x.ai/*` methods, returning `"unsupported"` on -32601 rather than throwing |
+| [src/acp-backend.ts](../src/acp-backend.ts) / [src/grok-backend.ts](../src/grok-backend.ts) / [src/codex-backend.ts](../src/codex-backend.ts) | Backend contract, Atlas identity implementation, and Codex host normalization. Codex uses `session/set_config_option`, consumes `session_info_update`, paginates `session/list` without `cwd`, and keeps the existing host/webview shapes provider-neutral |
+| [src/codex-model-cache.ts](../src/codex-model-cache.ts) | Short-lived connect warm-up that caches Codex models from a scratch `session/new`, deletes the temporary adapter-owned session, and cleans up the client/cwd |
+| [src/provider-ui.ts](../src/provider-ui.ts) | Pure provider presentation/state policy — Atlas-first model grouping, empty-model default sentinel, normalized project defaults, Codex history shaping, and mixed-provider recency merge |
 | [src/worktree.ts](../src/worktree.ts) | Pure worktree helpers (P2-8) — parse create/list/apply/remove/status, multi-cwd history merge; wire notes in [research/worktree.md](../research/worktree.md) |
-| [src/session.ts](../src/session.ts) | Per-session state bag — one `Session` per live `grok agent stdio` process (the sidebar holds a *pool* of these + one focused); carries the send queue (#37) and optional worktree binding (`cwd` / `worktree`), while cumulative billing stays solely in session-id-keyed metadata (#53) |
+| [src/session.ts](../src/session.ts) | Per-session state bag — one `Session` per live backend process, with immutable `provider` identity (the sidebar holds a *pool* plus one focused); carries the send queue (#37) and optional worktree binding (`cwd` / `worktree`), while cumulative billing stays solely in session-id-keyed metadata (#53) |
 | [src/session-pool.ts](../src/session-pool.ts) | Pure reaping policy (`selectReapable`) — idle-TTL + LRU cap over the live-session pool |
 | [src/acp-dispatch.ts](../src/acp-dispatch.ts) | Pure protocol helpers — line parsing, update routing, response + generated-media extraction, live context extraction (`contextUsedFromUpdateEnvelope` plus compact notifications), billing helpers (`extractPromptUsage`/`addUsage`/`usageIsRealMeasurement`, including `costUsdTicks`), and the -32601 capability gate behind private RPCs |
 | [src/protocol.ts](../src/protocol.ts) | Single source of truth for the host↔webview message contract — `HostMsg`/`WebviewMsg` unions + the runtime `HOST_MESSAGE_TYPES`/`WEBVIEW_MESSAGE_TYPES` arrays (kept exhaustive by compile-time `Record` maps). Pure types + two arrays, no runtime deps |
 | [src/cli-locator.ts](../src/cli-locator.ts) / [src/cli-process.ts](../src/cli-process.ts) | Locate and invoke the `grok` binary cross-platform; one shim-aware execution policy covers ACP spawn plus version/update commands |
+| [src/codex-cli-locator.ts](../src/codex-cli-locator.ts) / [src/codex-managed-installer.ts](../src/codex-managed-installer.ts) | Pure, injected Codex discovery with the managed package at lowest priority; pinned target/URL/hash selection, streamed download, SHA-256 verification, dependency-free tar extraction, cleanup, and atomic versioned layout |
 | [src/terminal-manager.ts](../src/terminal-manager.ts) | Headless shells for the agent's `terminal/*` calls |
 | [src/plan-gate.ts](../src/plan-gate.ts) | Plan-mode policy (pure) — workspace-write containment + read-only command allowlist |
 | [src/plan-restore.ts](../src/plan-restore.ts) | Plan persist + restore decision (pure) |
@@ -246,40 +362,68 @@ The full pedagogical write-up lives in
 | [src/chips.ts](../src/chips.ts) | File-chip CRUD (pure) |
 | [src/prompt-builder.ts](../src/prompt-builder.ts) | Chip → prompt-string with `@path` refs and fenced blocks (pure) |
 | [src/slash-filter.ts](../src/slash-filter.ts) | Slash-command autocomplete filter + `matchSlashCommand` dispatch gate + hidden-command filter (`filterAdvertisedCommands` drops the config-mutating `/always-approve`) (pure) |
-| [src/mention.ts](../src/mention.ts) | The composer's `@` file popover, host half (pure) — `filterMentionFiles` ranking, `buildExcludeGlob` (files.exclude + search.exclude → one findFiles exclude), `orderMentionIndex`, `clampMentionIndexLimit` (`grok.mentionIndexLimit`) and `mergeMentionEntries` (open tabs layered over the capped findFiles snapshot, #69); the webview half (`getMentionQuery`/`applyMentionPick`) lives in webview-helpers.js |
+| [src/mention.ts](../src/mention.ts) | The composer's `@` file popover, host half (pure) — `filterMentionFiles` ranking, `buildExcludeGlob` (files.exclude + search.exclude → one findFiles exclude), `orderMentionIndex`, `clampMentionIndexLimit` (`atlas.mentionIndexLimit`) and `mergeMentionEntries` (open tabs layered over the capped findFiles snapshot, #69); the webview half (`getMentionQuery`/`applyMentionPick`) lives in webview-helpers.js |
 | [src/grok-config.ts](../src/grok-config.ts) | Reads grok's `config.toml` to detect `permission_mode = "always-approve"` so the mode button shows Auto accept (pure) |
 | [src/mode-prefs.ts](../src/mode-prefs.ts) | Remembered-mode policy (pure) — persist Agent/Auto-accept (never Plan), apply on new sessions only |
-| [src/view-move.ts](../src/view-move.ts) | View placement (pure) — maps the gear-menu "Move view" destinations to the extension-owned per-location view containers targeted via `vscode.moveViews` (view default-homes in the Secondary Side Bar) |
-| [src/sessions.ts](../src/sessions.ts) | Disk-driven session listing/delete + name overrides (pure) — `indexSessions` (stat-only ordering), `readSessionEntries` (windowed read), `listSessions` (whole-list), `clearSessions`, `discoverRepos` (the repo catalog behind the remote switcher) |
+| [src/view-move.ts](../src/view-move.ts) | View placement (pure) — the view default-homes in the Secondary Side Bar, which Cursor refuses to create. Decides the one first-run correction into the activity-bar container, and which move mechanism applies: `vscode.moveViews` names a CONTAINER (a host may render ours anywhere), the host's own picker names a LOCATION and is the only route to a dock the host draws itself |
+| [src/sessions.ts](../src/sessions.ts) | Atlas disk-driven session listing/delete plus provider-bearing name overrides (pure) — `indexSessions` (stat-only ordering), `readSessionEntries` (windowed read), `listSessions` (whole-list), `clearSessions`, `discoverRepos` (the repo catalog behind the remote switcher). Codex list/load/delete stays behind `AcpClient` and is shaped/merged by `provider-ui.ts` |
 | [src/file-ref.ts](../src/file-ref.ts) | Open-file ref parsing + large-file inline-read guard (pure) |
 | [src/file-upload.ts](../src/file-upload.ts) | Pure remote-document upload validation, owned staging-path checks, and session/fork lifetime accounting |
 | [src/plan-review.ts](../src/plan-review.ts) | Plan-snapshot Markdown filename generation (pure) |
 | [src/voice.ts](../src/voice.ts) | Voice-input pure helpers — STT request/response, ffmpeg args, device parsing, key resolution |
 | [src/voice-recorder.ts](../src/voice-recorder.ts) | Batch capture (`ffmpeg` → WAV) + STT REST upload |
-| [src/voice-streamer.ts](../src/voice-streamer.ts) | Shared live STT transport: `PcmVoiceStreamer` accepts raw PCM from any producer; `VoiceStreamer` composes it with local ffmpeg capture. Transcripts insert at the composer selection captured on start; a manual Send/Queue discards capture and invalidates late voice callbacks, while spoken `grok send` keeps listening |
-| [src/telemetry.ts](../src/telemetry.ts) | Anonymous Aptabase telemetry — pure payload builders + a fire-and-forget `session_start` (opt-out via `grok.telemetry.enabled`; see [privacy.md](privacy.md)) |
+| [src/voice-streamer.ts](../src/voice-streamer.ts) | Shared live STT transport: `PcmVoiceStreamer` accepts raw PCM from any producer; `VoiceStreamer` composes it with local ffmpeg capture. Transcripts insert at the composer selection captured on start; a manual Send/Queue discards capture and invalidates late voice callbacks, while spoken `atlas send` keeps listening |
+| [src/telemetry.ts](../src/telemetry.ts) | Anonymous Aptabase telemetry — pure payload builders + allowlisted `session_start` snapshot (opt-out via `atlas.telemetry.enabled`; see [privacy.md](privacy.md)) |
 | [src/remote-policy.ts](../src/remote-policy.ts) / [src/remote-frames.ts](../src/remote-frames.ts) / [src/remote-uplink.ts](../src/remote-uplink.ts) / [src/remote-client-state.ts](../src/remote-client-state.ts) | AFK Pilot client — exhaustive protocol policy, relay frames/transport, and host-owned `clientId → {cwd, active Session, browser preferences}` tab state. `bracketRemoteSnapshot` caps reconnect and cold-load history at the last ten user messages, re-bases counter-positioned cards, and sends the transcript in one additive `historyBatch` frame inside replay brackets; cold `session/load` events remain live only on the desk until the complete remote snapshot replaces them. Chat/session UI/voice traffic uses targeted `host-to` frames; this includes speech summaries, whose inbound request fields and logical-tab TTS preferences are validated before the host spends the extra xAI call, with the result returned only to the requester. The browser speaks its retained original after a bounded wait if no result returns and ignores a late result. `client-left` removes ephemeral ownership while the live pool member remains reclaimable; only device-global state uses relay broadcast |
 | [src/remote-voice.ts](../src/remote-voice.ts) / [media/pcm-worklet.js](../media/pcm-worklet.js) | Remote microphone boundary — one independent producer/stream per browser client, strict PCM chunk/duration/cumulative-byte caps, bounded buffering while that client's hands-free STT reconnects, targeted partial/state messages, and browser AudioWorklet downsampling to signed PCM16 LE / 16 kHz / mono. Send-phrase completion returns `voiceSubmit` to the owning browser, which submits through the ordinary relay-metered `send` or busy-turn queue path; STT never prompts ACP directly |
-| [src/keep-awake.ts](../src/keep-awake.ts) | OS wake lock held for exactly the uplink's lifetime, so an AFK machine can't idle-suspend mid-turn. Pure plan builders per platform (`buildKeepAwakePlan`) + the `KeepAwake` runner; `grok.remote.keepAwake` is the opt-out. See [research/keep-awake.md](../research/keep-awake.md) |
+| [src/keep-awake.ts](../src/keep-awake.ts) | OS wake lock held for exactly the uplink's lifetime, so an AFK machine can't idle-suspend mid-turn. Pure plan builders per platform (`buildKeepAwakePlan`) + the `KeepAwake` runner; `atlas.remote.keepAwake` is the opt-out. See [research/keep-awake.md](../research/keep-awake.md) |
 | [media/chat.{js,css}](../media/) | Webview UI |
 | [media/webview-helpers.js](../media/webview-helpers.js) | Pure webview helpers (file-ref detection, relative-time, mic-button state machine, trailing send-phrase highlight, math extraction `splitMath`/`stripUnsupportedTex`, and the subagent classifier `isSubagentToolCall`/`subagentLabel`) — shared between webview and tests |
+| [src/desktop/config-store.ts](../src/desktop/config-store.ts) / [src/desktop/main.ts](../src/desktop/main.ts) / [src/desktop/app-update.ts](../src/desktop/app-update.ts) | Desktop configuration/state host. Dotted settings include `atlas.codexCliPath`; the file memento supplies the same provider global-state keys as VS Code, and account login/logout opens the provider CLI in the native terminal. Packaged win32/darwin auto-update uses `electron-updater` against the relay generic feed; check/download failure falls back to the GitHub notice. `electron-builder.yml` explicitly includes the pinned Codex ACP package |
 
 ## History at scale
 
-The history dropdown lists every session the CLI saved for this workspace, and that
-store can grow into the thousands. The old path read and `JSON.parse`d *every*
+The history dropdown is one recency-sorted view across every connected provider.
+Atlas's store can grow into the thousands. Its old path read and `JSON.parse`d *every*
 `summary.json` on every open, then rendered every row — linear cost that stalled the
 popover at scale. It now loads **one page at a time** (`SESSION_PAGE_SIZE = 100`,
 newest-first), built from two pure primitives in
 [src/sessions.ts](../src/sessions.ts):
 
 - `indexSessions` does **one `stat` per session dir, no reads** — it orders every id
-  newest-first by `summary.json` **mtime**. mtime is the cheap last-activity proxy:
-  grok rewrites that file (it holds `updated_at`) on every turn. We sort by mtime
+  newest-first by `events.jsonl` **mtime** (falling back to `summary.json` before a
+  transcript exists). The transcript mtime ignores `session/load` restamps. We sort by mtime
   *because the id is a UUIDv7 whose timestamp is creation, not last activity* — an
   id-sort would order by when the session was first opened, which is wrong.
 - `readSessionEntries` reads + parses `summary.json` for **exactly the visible page's
   ids** and applies name overrides.
+
+The combined `buildSessionsList` authorizes cwd before scheduling either
+provider, so a stale remote project cannot spawn an adapter or mutate a Codex
+cache. Codex history is listed from a lazily spawned adapter client without a `cwd`
+argument, paginated to the terminal cursor with loop guards, then filtered by
+resolved path on the host (case-insensitive on Windows). Per-project cache and
+refresh keys use the same `normalizeWorkspaceFsPath` machinery, so adapter cwd
+casing drift cannot create a second cache bucket on Windows. Codex rows keep a
+host-owned activity clock after first discovery because the adapter restamps
+`updatedAt` on load: opening never advances it, send advances it optimistically,
+and turn end reasserts/rechecks the provider lists. The cache holds the complete
+Codex listing. `provider-ui.ts` treats Atlas pagination as a black box: each mixed
+request consumes exactly one ordinary Atlas page (including hidden-row slot
+consumption and its within-page exact sort), then merges every not-yet-emitted
+Codex row at-or-newer than that page's oldest visible Atlas timestamp. Once Atlas is
+exhausted, the Codex suffix continues in pages bounded by the requested `limit`.
+The wire cursor carries Atlas's untouched
+`nextOffset` plus a Codex `{updatedAt,id}` high-water mark; there is no combined
+slot arithmetic or look-ahead. Only search may warm the full Atlas catalog. Both
+fresh and paged final merges collapse rows by globally
+unique session id; provider, cwd, and display name are never identity keys. Cold Codex rows in
+rename/delete and Pinned are proven through this adapter-backed cache rather
+than Atlas's disk catalog, without bypassing repository containment or live-owner
+checks. Codex delete calls the
+adapter capability and reports refusal rather than hiding a session locally.
+Provider metadata still resolves an older Atlas row with no explicit field to Atlas,
+but it does not permit two rows with the same global session id.
 
 History is scoped to the **selected repo**. `discoverRepos` enumerates cwd catalogs from
 `<grokHome>/sessions` (rejecting temp roots and `<grokHome>/worktrees` — a worktree is
@@ -301,10 +445,15 @@ At desktop width that picker becomes a **projects rail**, which is the same
 capability-gated affordance in another shape: `#projects-rail` exists only in the
 relay's page, so the element lookup is the entire gate and the VS Code webview renders
 nothing new. Other projects' rows arrive on `repoSessions` (answering `listRepoSessions`);
-where that frame never comes the rail degrades to the selected repo's own list. Which
+where that frame never comes the rail degrades to the selected repo's own list. A
+session's visual section is resolved in precedence order (Pinned, an expanded
+Recent section, then project/archive) with one claimed-id set across the final render;
+the same id therefore cannot appear in two rail groups. Click and highlight state is
+also keyed by id, so two distinct sessions with the same display name remain independent.
+Which
 section a project sits in — Projects or Archived — is **derived in the client**, never a
 stored section: `setRepoArchived` records one timestamped choice per repo in
-`grok.repoArchives`, reported back on every catalog row as `archived`/`archivedAt`, and a
+`atlas.repoArchives`, reported back on every catalog row as `archived`/`archivedAt`, and a
 project counts as archived when that choice outranks its newest conversation or when
 nothing has happened in it for thirty days. Activity newer than the choice simply
 overrides it, which is what makes "work in an archived project and it returns" need no
@@ -345,7 +494,7 @@ queued text is not restored to the composer.
 Destructive history actions follow the same ownership boundary. A delete is refused
 while the target session is owned by any browser tab or by the local VS Code view, and
 Clear all preserves every such session rather than only the requester's active row.
-Cold `session/load` also reserves its Grok session id synchronously, before ACP can clear
+Cold `session/load` also reserves its Atlas session id synchronously, before ACP can clear
 and later repopulate `Session.activeSessionId`; local/remote resume, delete, and Clear all
 all consult that bounded reservation. A same-token replacement joins the reservation's
 in-flight operation, keeps the pending id authoritative in snapshots, and receives
@@ -363,7 +512,7 @@ Same-token handoff therefore works even when replacement `ready` precedes the ol
 `client-left`. A session owned by another logical tab/the VS Code view is refused instead
 of starting a colliding process; a missing session or unavailable repository produces a
 targeted error and never silently starts blank. New, Resume, and Select-repo transitions
-are serialized in arrival order per tab, while Resume additionally serializes by Grok
+are serialized in arrival order per tab, while Resume additionally serializes by Atlas
 session id. A send waiting behind a transition is dispatched through the logical-tab token,
 which resolves the current relay id only after the wait; non-`ready` state access never
 implicitly recreates a departed client at the workspace cwd. Turn and mid-turn control
@@ -384,8 +533,11 @@ those ids can't appear on a later page) — a still-focused session from a *diff
 repo must not leak into the list being built for the one just selected, or it masquerades
 as that repo's newest/active row and the remote auto-open shim mistakes it for an
 already-open match instead of resuming or starting the right session. The
-webview appends pages on scroll-near-bottom (de-duped by id, one request per boundary)
-and debounces the search box. An opt-in
+webview appends pages on scroll-near-bottom and automatically advances empty or
+underfilled pages until overflow/exhaustion (de-duped by id, one request per
+boundary, repeated-cursor guard). A visible Load more button backs up the
+automatic path, and the empty-state label is withheld while `hasMore` is true.
+The search box remains debounced. An opt-in
 perf simulation ([test/sessions.perf.ts](../test/sessions.perf.ts) via
 `npm run test:perf`, kept out of `npm test`/CI) asserts the op counts at N=5000: first
 open drops reads 5000→100 (~98%), steady-state re-open is 0 reads, search warms once
@@ -433,7 +585,7 @@ the steady-state fix.
   `MODEL_SWITCH_INCOMPATIBLE_AGENT`. So `switchModel` tries the live switch and,
   on that specific error (`isIncompatibleAgentError` in
   [src/acp-dispatch.ts](../src/acp-dispatch.ts)), persists the pick to
-  `grok.defaultModel` and restarts — `newSession` re-applies the model before the
+  `atlas.defaultModel` and restarts — `newSession` re-applies the model before the
   first turn, while the agent is still rebindable. No history → transparent
   restart; with history → a Summarize / Just-Restart choice. (An **effort** change,
   by contrast, no longer restarts on recent CLIs — see the live-effort bullet
@@ -466,9 +618,23 @@ the steady-state fix.
   `/imagine-video` write a file into the session dir and report its *path* as
   JSON-in-text on the completed tool result. The host parses the path, classifies
   image-vs-video by extension, and serves it to the webview via `asWebviewUri`
-  (streamed from disk) so even a multi-MB video renders. See
+  (streamed from disk) so even a multi-MB video renders. A host-local
+  `showInFolder` action replaces the open action for BOTH generated images and
+  videos on a host that advertises the capability (the desktop app, whose media
+  handler it owns), and reuses the same path authorization as `openFile`. An
+  editor host keeps `openFile` — a tab is somewhere new to put the file, whereas
+  the desktop already plays clips inline and enlarges images in place. See
   [research/image-generation.md](../research/image-generation.md).
-- **Math renders via vendored MathJax (SVG), extracted before HTML-escaping.** Grok
+  Codex image generation is detected only for a Codex-provider `kind:"other"`
+  tool titled `Image generation`; its completed captured shape maps to
+  `<codexHome>/generated_images/<sessionId>/<toolCallId>.png`. Both adapter ids
+  must be UUID-shaped (`exec-UUID` for the tool), and the resolved plus canonical
+  file path must remain under `generated_images`; failure is log-only and cannot
+  reach the file-read/data-URI fallback. That trusted root feeds the same
+  `postGeneratedMedia` path on VS Code, desktop, and remote, with
+  the same inline rendering and surface-specific hover actions. Provider scoping
+  ensures a Atlas tool whose user-derived title contains the phrase is not media.
+- **Math renders via vendored MathJax (SVG), extracted before HTML-escaping.** Atlas
   answers with TeX (inline `\(…\)`, display `\[…\]`, `\begin{pmatrix}` matrices).
   The pure `splitMath` pulls math spans out *before* the markdown pass escapes
   HTML — so backslashes and braces survive into placeholders, mirroring the
@@ -490,7 +656,7 @@ the steady-state fix.
   recolors `currentColor`; mermaid re-renders per theme via a `%%{init}%%`
   directive). The host (`sidebar.ts exportExpr`) runs the quick-pick + save dialog;
   Open writes the PNG to `globalStorageUri/exports/` and previews it.
-- **Mermaid renders async, as a post-pass over the inserted DOM.** Grok answers
+- **Mermaid renders async, as a post-pass over the inserted DOM.** Atlas answers
   with ` ```mermaid ` fences (flowcharts, sequence/state diagrams, git graphs, …).
   Unlike the synchronous math render, `mermaid.render` is async and needs
   the live DOM (it measures text to lay out nodes), so `renderMarkdown` only turns

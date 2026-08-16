@@ -1,5 +1,314 @@
 # Changelog
 
+## 3.10.0 — 2026-08-15
+
+### Added
+
+- **Touch sizes for real fingers.** On phones and tablets the whole UI steps up: 15–16px text in the rail, file tree and panel (reading prose goes 12 → 15px), every row you tap is at least 36px tall — including the project headers and tree rows that quietly sat under the floor — and every tap target meets one universal 36px minimum with zero exceptions. Text inputs go 16px on touch, which stops iOS Safari's zoom-lurch when you focus the search or the composer. The code viewer deliberately keeps its smaller type: columns beat point size on a phone. Desktop and mouse layouts are pixel-identical to before.
+- **File tabs that behave like tabs.** The file panel's strip stops scrolling: named tabs shrink to icon-only, then overflow into one "…" chip styled like a tab — and whatever fits shows its whole name, extension included, so `.env` and `CLAUDE.md` read fully instead of becoming `…`. The active tab always keeps its ✕ and its name; maximize/minimize sits pinned at the right and can never silently disappear; on desktop, maximize gives the panel the whole window until Escape.
+- **A real mode switcher in the file viewer.** Reader and Source are a proper segmented control with a filled selected state; Cancel, Save and ⋯ sit at the right end; and both "…" menus now close when you tap their button again.
+- **One icon scale everywhere.** Every top-bar icon rides the same 20px glyph in an invisible touch-sized hit box with color-only hover — chat header, file panel and rail now measure identical on the phone.
+
+### Fixed
+
+- **Refreshing the phone lands in your conversation, directly.** The page holds a quiet "Restoring conversation…" instead of flashing a blank New session (title bar included) and then swapping. Restores survive a just-reloaded desk (the host waits out its own cold start instead of refusing), a genuinely failed restore says so once and hands any queued text back to the composer — including text queued mid-turn, which used to vanish — and a brand-new empty session refreshes clean instead of announcing "could not restore" over phantom "queued actions".
+- **Transient agent hiccups stop painting terminal errors.** A failed provider start retries quietly before surfacing; a process that dies mid-startup can no longer be treated as running (which could silently swallow an automatic sign-in retry); and "exited (code 0)" on an empty conversation — a clean exit with nothing to say — no longer renders as a red must-restart banner.
+- **Worktree dialogs answer the conversation they were opened for.** Fork, apply and remove name their session on the wire and the host refuses a mismatch, so a confirmation answered after switching conversations can never land on the wrong one.
+- **Just the conversation name.** The repository suffix under session names is gone on every surface — the rail already says which project you're in.
+- **The `/` command popover hugs its content** instead of spanning the whole composer.
+
+## 3.9.0 — 2026-08-14
+
+### Added
+
+- **Parallel subagents stop scrambling the chat.** The CLI streams every agent's words onto one wire, interleaved mid-sentence — and the transcript used to paint them that way (#62). Each subagent now gets its own card in the conversation: collapsed with a live one-line status while it works, expandable to its own transcript of prose and tool calls, with the parent's narration staying coherent above it all. Old CLI versions that never interleaved behave exactly as before.
+- **All settings, one place.** A full settings surface — search with `/`, categories with icons, one row per setting with a sentence that says what it does. On desktop and the phone it opens over the app with **← Back to app** as the exit; in VS Code it's an editor tab plus a native gear icon on the Grok view's title bar. The gear popover slims down to quick actions and one Settings entry. **About** lives at the bottom of Settings now — versions, update check, report-a-bug and feature-request links, and a support contact. Restore defaults confirms first with a concrete list, and never touches things you wrote yourself (voice dictionary, send phrase).
+- **Voice's fiddly bits are editable** — the spoken send phrase and the recognition dictionary, from any client including the phone, saved to the config scope that actually wins.
+- **The telemetry switch is visible.** The existing anonymous-usage setting has a real toggle on desktop and a row everywhere, with the honest description: one anonymous session-start event, never prompts, code, paths, or identity; the IP address is discarded, never stored.
+- **Devices tell afkpilot.com what they are.** Linking (and every reconnect) now reports the client kind and OS, so the device list can show "DESKTOP-X (VS Code extension, Windows 11)" with the right OS mark — existing devices label themselves on their next connect, no re-linking needed.
+- **Unlink from the desktop app** — gear → Your account → "Unlink this device…", with a native confirmation naming the machine. The palette-less desktop finally has the deliberate path (#112's side-finding).
+
+### Fixed
+
+- **Desktop opens in its real layout.** The brief flash of the old panel-less UI before the rail and file panel arrived is gone — the full three-column chrome paints from the first frame.
+- **Rail menus stop growing sideways.** Context menus cap at a sane width with ellipsis instead of stretching as wide as their longest entry.
+- **The gray idle dot next to provider logos is gone** — the logo already says which agent owns the session; the dot only returns for states that mean something (working, needs you, unread, error).
+- **"How it works" tells desktop users the truth** — "Keep this app open," not a list of editors you're not using.
+
+## 3.8.0 — 2026-08-14
+
+### Added
+
+- **The desktop app updates itself.** Windows and macOS builds check quietly in the background, download the new version while you keep working, and the rail button becomes **Restart to update** when it's staged — one click installs silently and brings the app right back. A normal quit installs it too. No wizard, no SmartScreen detour, no download page: that whole trip now exists only as the fallback when the feed is unreachable. An in-flight reply is never interrupted — the update waits for your click or your next quit.
+- **Typing part of a command's name finds it.** `/rev` matches `/code-review` now, not just commands that start with those letters — commands beginning with what you typed still list first (#110).
+- **Anonymous usage telemetry knows the app from the editor.** The one existing session-start event now says whether it came from the desktop app or VS Code, and which settings shape the session (mode, model, effort, thinking traces, voice on/off, which agents are connected). Strictly enums and booleans — a new test proves no path, filename, or free text can enter the payload, and any value the app hasn't actually measured is omitted rather than guessed. The full field list is in docs/privacy.md.
+
+### Fixed
+
+- **The projects rail no longer vanishes on desktop startup.** Opening the app with a restored conversation could boot into a chat with no left rail at all — every time, on some machines — until a hard reload brought it back. The startup handshake was mistaking its own just-started session for a window reload and skipping the project list on the strength of it.
+- **The desktop window can no longer open scrambled.** An occasional first paint had the content shifted and cropped at both edges, panels pushed off-screen, zoom applied twice. The window now shows only once the page can measure it, the app's zoom is the only zoom, and a boot-time focus can no longer scroll the layout into a stuck state.
+- **Your history is there before the agent is.** With the CLI still starting — or not installed at all — conversations on disk now list and open read-only instead of showing an empty rail behind a blank onboarding screen.
+- **Grok 4.6** replaces Grok 4.5 across the listing and manifest, and packaging keeps the Codex adapter's dependencies out of the shipped artifacts (5.2 MB vsix, 17 MB desktop asar — with the ~350 MB Codex platform binary provably excluded from both).
+
+## 3.7.0 — 2026-08-13
+
+### Added
+
+- **OpenAI Codex can run alongside Grok.** Connect it from the gear in VS Code or Settings on the desktop; models from both providers share one picker, every conversation keeps the provider it started with, and both providers' sessions sit side by side in the rail. No Codex CLI installed? The app offers to install a pinned, checksummed copy for you. A phone sees which providers are connected; signing in and out stays at the desk.
+- **Export a conversation as Markdown.** In the conversation's ⋯ menu on every surface — VS Code opens it as an untitled document, the desktop asks where to save, the browser downloads the file. Rewound turns and hidden bookkeeping never leak into it, and an export of a partial phone history says so instead of passing as the whole conversation.
+- **The VS Code chat grew its own ⋯ menu.** Continue in a new chat moved there from the gear, alongside the new export — per-conversation actions live with the conversation now.
+- **"View all" and proposed diffs open inside the desktop app.** A themed, syntax-highlighted overlay with Copy and Save As replaces the bare read-only window that knew a file's language but couldn't paint it.
+- **Copy Link.** Right-click — or long-press on a phone — a link in the transcript to copy its real address; file references copy their path.
+- **Shell scripts can be saved from the file panel.** Editing `deploy.sh` or a `.ps1` was refused with "executable path refused" — a check written to stop the operating system *launching* a file, reused to decide whether you were allowed to *write* one. It stopped only the person: ask grok to edit the same file and it always could. The refusal stays exactly where it belongs, on Open in default app and Reveal. `.bat` and `.cmd` also open in the panel now, which `.sh` and `.ps1` already did.
+- **Opening a conversation logs where the time went.** One line in Output → Grok splits the open into its phases, so a "sometimes slow" report can carry numbers instead of an impression.
+
+### Fixed
+
+- **The chat no longer scrolls away from the bottom on its own.** With the UI zoomed and tool details expanded, answering a permission card — or just a growing reply — could unpin the view and bring the "Scroll to bottom" button back every turn. Only a real gesture (wheel, touch, scrollbar, paging keys) unpins now; a reader who scrolled up to read history stays exactly where they are.
+- **"View all" opens with a language.** A command opens in your shell's language, and output is no longer forced to Plain Text, so the editor can recognize JSON, logs and generated code.
+- **Copy and the timestamp under a message are readable without hovering.** They rest dimmed instead of invisible — and on a phone they take a direct tap, no gesture first.
+- **Plan mode is no longer lost to a slow version check.** A first `grok --version` after install can time out (Windows antivirus is the usual cause). The last verified version for that binary is remembered, so a failed probe keeps Plan when the file has not changed. That memory is only a stand-in — picking Plan checks again — so a later update is not stuck behind a stale reading, and a live check still replaces the stand-in either way. A live reading of an old CLI is still refused. The disabled message now says the check failed and that picking Plan again or reloading retries it.
+- **Windows machines can sleep with the chat panel open.** The first click created an audio session and never released it, even with every sound setting off. The session is created only when a sound is actually on, and it is suspended again once the tone finishes.
+- **Everything you tap on a phone is at least 36px.** The rename pencil was 22px — below the accessibility minimum — and the file-panel toggle, the one you use to reach files at all, was 28. Save and Cancel were 26 tall. Mouse-driven windows keep their compact controls; the larger targets appear only where the pointer is a finger.
+
+## 3.6.0 — 2026-08-12
+
+### Added
+
+- **Code in the file panel is syntax-highlighted — while you read it and while you type.** Every file that was not Markdown or JSON opened as flat grey text: fine for a glance, tiring for anything longer. Around sixty file types now colour their comments, strings and keywords, and the colours stay when you switch to editing rather than vanishing the moment you tap Edit. It is our own highlighter rather than a library — the panel runs under a strict content policy that cannot load one, and the alternative was ~200KB of parser in every page load for something you mostly skim.
+- **`.sql` and about twenty more file types open in the panel at all.** They used to be handed to the operating system, which on the desk is a detour and from a phone means they could not be opened. `.scss`, `.ini`, `.conf`, `.rb`, `.php`, `.kt`, `.swift`, `.cs` and `.diff` are among the rest.
+- **A link in a README opens the file it points at.** Tapping `_shared/auth.ts` in a rendered Markdown file was treated as a web address, so from a phone it navigated away from the app entirely. It now opens that file as a tab. Links that really do point at the web still go to the browser.
+
+### Fixed
+
+- **Referring to an image the agent could not find.** Attach a picture, attach another in a later message, and asking about the second failed with *"does not match any attached image"*. The tag said `#2` because it was the conversation's second image; grok counts the images on the message it is reading, where it was the first. Images are now numbered from 1 in every message — in the tag and in what you see — so the number you read is the number the agent was told. Two pictures in one conversation are both "Image #1" now, each in its own message, which is the trade that makes the reference work at all.
+- **Deleting the last empty line of a file, and having it come back.** The editor said "Saved." while the file on disk kept the newline you had just removed. Saving a formatted `.json` had the mirror-image problem: it quietly *removed* the final newline every time, so `package.json` came back with a spurious change after any edit.
+- **The file panel is the whole screen on a phone and a third column on a desktop — never something in between.** At tablet widths it floated over the middle of the chat with the projects rail showing behind it. Below the width where it can sit beside the conversation it now takes the screen, and the panel's own close button brings you back. Files no longer carry individual close buttons there — two small targets side by side, and a project tab that looked closable but was not.
+- **A file that cannot be previewed opens as a tab, with the reason inside it.** The message used to be painted over the file tree with no tab at all, so nothing told you which file had failed, and the tree's search box stayed on screen above it. On the desk the file was also handed straight to your operating system before you could see what it applied to; *Open in default app* is now offered inside that tab instead of taken on your behalf.
+- **"More actions" in the file viewer opens.** On Grok Build Desktop the button did nothing, silently — the click that opened the menu was also the click that closed it.
+- **A conversation you send to rises up its project in the rail.** Sending in one project never told a connected browser that a *different* project had just become active, so its position there went stale.
+
+## 3.5.0 — 2026-08-11
+
+### Added
+
+- **The browser gets the desktop's file panel — the same one.** Browsing files from your phone was a different piece of software from the panel in Grok Build Desktop: a flat list you stepped through, one file at a time, floating over the chat. It is now literally the same panel — a tree you expand in place, several files open at once as tabs, and on a wide screen it docks beside the conversation instead of covering it. On a phone it still opens as a drawer, because a phone has no room for a third column. There is one renderer now instead of two that drifted apart every time either was touched.
+- **Version & about describes the machine you are driving.** On a phone the page said "This extension" over a "Checking for updates…" that never finished — the desk machine's own panel, shown to a device that is neither the extension nor able to update anything. It now says what you are holding, what it is connected to, and the two versions installed over there. No update button: the binaries live on the desk machine and only the desk can replace them.
+- **Opening a conversation from GROK: PROJECTS brings the chat forward.** The rail has its own icon in the activity bar, so a click could load the conversation behind whatever view you were looking at and read as having done nothing.
+
+### Fixed
+
+- **Saving no longer throws you out of the file, or moves your cursor.** A successful save dropped you back to the read view, so carrying on meant clicking Edit again — for the ordinary habit of saving as you work. It also rebuilt the editor, which sent the caret to the top and lost your selection and scroll position. You now stay exactly where you were.
+- **The right-click menu in the file panel respects zoom.** It was placed at raw pointer coordinates while the chat scales, so the further from the top-left you clicked, the further away the menu appeared. It also could not flip up and had no bottom clamp, so it could open off the screen.
+- **The file panel's toolbar buttons are visible.** Every icon on the open-file row rendered as an empty box.
+- **Markdown reads like every other file type again.** It had become the only kind with a worded toggle while everything else got an icon, so one toolbar looked like two designs.
+- **Conversations sit at one spacing everywhere in the rail** — including under a section label, which used to sit noticeably further from its first row than the rows sat from each other.
+- **The project name is no longer truncated when nothing sits beside it**, and the shading behind a row's hover actions matches the row rather than the panel.
+- **The VS Code rail stopped re-reading every project on every refresh.** Each refresh asked every other project for its conversations again — a full pass over its history — even when nothing about it had changed.
+- **A phone can no longer start a CLI update on your desk machine.** The status still travels, so you can see the CLI is behind; acting on it belongs to the machine it is installed on.
+
+## 3.4.0 — 2026-08-10
+
+### Added
+
+- **Archived projects stay on the desk.** A project you have filed away no longer appears on your phone, and its conversations, files and pinned rows go with it. Working in it again at the desk brings it back. Opening it in VS Code keeps it visible throughout — filing something away was never meant to hide the thing you are looking at.
+- **Opening a conversation now says where its time went.** The log records each phase of an open — waiting for the previous CLI to exit, checking its version, starting it, loading the transcript — so a slow one can be explained instead of guessed at. Measured first: ordering 1,786 conversations takes 190ms, so the wait was never the history list.
+
+### Fixed
+
+- **Renaming a conversation no longer makes the top bar jump.** The rename pencil is a fixed-height button and the tallest thing in that row, so hiding it collapsed the row and took 7px off the whole bar, dragging the project line and the separator up with it.
+- **The top-bar icons sit level.** They were 2px from the top edge and 15px from the rule underneath, left behind when the conversation name grew a second line.
+- **A file type is no longer linked as a file.** "The main `.md` files" turned `.md` into a link to nothing; a bare extension names a kind of file, not one you can open. `.env` and `.gitignore` still link, being real filenames.
+- **A crashed CLI no longer keeps a worktree slot forever.** If it died while a worktree was still being copied, the dead process stayed referenced until the window closed.
+- **The extension's own docs name SpaceXAI** where they describe who makes Grok. The trademark line still reads xAI, which is what the rights holder's own brand guidelines ask for.
+
+## 3.3.1 — 2026-08-10
+
+### Fixed
+
+- **Menus in the projects rail stop running away from the pointer.** On a wide rail a menu opens at the right-hand edge, next to the ⋯ button — far enough from the click that the "you have walked away" rule closed it before you could reach it. Walking away is now something you can only do after arriving.
+- **"Set color" opens its swatches where the menu was.** Right-clicking a project opens the menu under the pointer, but choosing Set color threw the colours back across the rail to the ⋯ button, out from under the cursor that was following them.
+
+## 3.3.0 — 2026-08-10
+
+### Added
+
+- **A projects rail in VS Code**, with its own icon in the activity bar. Every project Grok has worked in, side by side: pinned conversations, the ten most recent across all of them, and each project's own list underneath. Until now VS Code showed you one project — whichever folder the window had open — and everything else was invisible unless you reopened the window somewhere else.
+- **Open a conversation from any project without leaving the one you are in.** Nothing reloads. The chat follows the conversation, and so do New Session, worktrees, and the file chips — a conversation in another project no longer quietly attaches a file from the folder VS Code happens to have open.
+- **Browse your project's files from a browser, and edit them.** Open a text file on your phone, change it, save it. Images preview but cannot be edited; nothing else can be read or written, and every path is checked against the repository that tab has selected.
+- **Projects can be added to the rail and hidden from it.** Adding one records it rather than reopening the window — VS Code turns a single-folder window into a multi-root one and restarts the extension host, which is not a reasonable price for putting a folder in a list.
+- **Projects file themselves away when they go quiet.** Anything untouched for a month, and anything with no conversations at all, moves to an archive group; working in one brings it straight back. Opening a project in VS Code always lifts it to the top, marked **Your IDE**.
+- **Projects can have a colour in VS Code**, as they already could on desktop and the phone.
+
+### Fixed
+
+- **Worktrees work again, and the reason they didn't is worth stating.** Not every worktree the Grok CLI makes is a `git worktree` — for some repositories it makes a full copy instead, which the original repository's worktree list will never mention. So a perfectly good checkout was created and then rejected as unrecognised, and the retry that appeared to succeed had actually been waved through on the CLI's own say-so, sometimes onto an empty folder where the agent then failed to start. Both halves are fixed: git is asked first and always, and a copied checkout is verified from a file on disk rather than taken on trust.
+- **"Remove worktree failed: Internal error."** The CLI deletes the checkout and *then* fails to deregister it, so what was left was an empty folder and an error you could do nothing about. That leftover is now removed for you. A creation that *is* rejected also tells you where the checkout was left, instead of leaving orphans behind silently.
+- **The rail's menu did nothing.** Rename, Delete, Clear all history and Hide project were all silent — VS Code disables the browser prompts they relied on, and every one of them read that as "cancelled". They ask properly now, which is also why the lists had looked frozen: nothing had happened to refresh them.
+- **Recent updates when you send a message.** It ranks by when a conversation last changed, and that clock is written by the agent, not by the extension — so there was no moment on our side to notice. The end of a turn is now that moment.
+- **Menus close when you look away.** A click anywhere else in VS Code never reaches the rail, so an open menu had no way to know it had been left behind. Moving the pointer well away from it closes it too.
+- **"Move to Projects" appeared on projects already in Projects**, because the menu read a stored flag while the rail places rows by how recently you worked in them. The action follows the group the project is actually shown in.
+- **A conversation's project is named under its title**, not beside it, and the rename pencil stayed where it belongs instead of dropping to a line of its own.
+- **Deleting a conversation no longer fails with a directory-not-empty error on Windows**, which happened when anything still had the folder open for a moment.
+- **Plan mode stops disappearing because a version check was slow.** Only a CLI actually verified as too old turns it off now, and the message says the version could not be checked rather than implying the CLI is out of date.
+- **Grok Build Desktop's prompts look like dialogs.** The worktree prompt in particular was a window with rules across the top and bottom, no padding, the stock Electron icon, and a maximise button — a small web page rather than a question.
+
+### Changed
+
+- **Clicking a conversation in the VS Code rail highlights it immediately**, instead of waiting for the conversation to load. It has always worked that way on desktop, where the rail and the chat share a window.
+- **"Current" is now "Your IDE"**, and it means the folder VS Code has open — not whichever project you were last looking at in the rail.
+- **Section labels in the VS Code rail scroll with their conversations** rather than staying pinned at the top of the panel.
+- **xAI is named SpaceXAI** where the non-affiliation notice says who we are not affiliated with. The trademark line still reads "of xAI", which is what their own brand guidelines ask for.
+
+## 3.2.11 — 2026-08-09
+
+### Added
+
+- **Projects can have a colour.** Give each project a coloured folder in the conversation rail — *Set color* in its ⋯ menu, six colours or none. The choice is stored with your projects rather than in one browser, so it follows you to your phone. Desktop and browser.
+- **Right-click works wherever ⋯ does.** Projects and conversations in the rail, files and folders in Grok Build Desktop's file panel — right-clicking opens the same menu the ⋯ button does. Not on touch, where a long press already means something.
+- **Folders can be revealed in Finder or Explorer**, not only files, and the file panel's row actions now live in a ⋯ menu like the conversation list's do.
+
+### Fixed
+
+- **Conversations stop jumping to the top of the list for being opened.** Opening one rewrites its record on disk, and the list read that as activity — so merely looking at an old conversation promoted it above ones you had actually been working in. The list now follows the conversation itself. Measured against a real store of 1,592 conversations: 46 were sitting higher than they had earned.
+- **Closing a project takes one click.** Clicking an unselected project used to switch into it and force it open, so the first click on an already-open one appeared to do nothing. It also left the chat on one project while the rail claimed another; switching now follows from opening a conversation, which is what made that state coherent in the first place.
+- **The conversation list stops flickering while a conversation opens.** The row buttons blinked under a stationary cursor, and an open ⋯ menu was closed again on every refresh — so it could not be used at the moment you most wanted it.
+- **The store listing printed "Install" and "Quick start" twice.** It is generated from the project README, and the generator was adding its own copy on top of the one already there.
+
+### Changed
+
+- **Clicking a conversation highlights it immediately** instead of waiting for it to load, so a click never looks dropped. The few actions that act on "whichever conversation is open" — continue in a new chat, and worktree apply/remove — grey out for that moment, because until the load finishes there is genuinely no safe answer to which conversation they would act on.
+- **One waiting animation everywhere.** The status line's growing ellipsis is gone; everything that is working now shows the same three blinking dots, and they hold still if your system asks for reduced motion.
+
+## 3.2.10 — 2026-08-09
+
+### Fixed
+
+- **Generated videos play, and 3.2.9 was wrong about why they didn't.** That release said the browser engine ran out of video decoders and stopped reserving one per clip. It wasn't the decoders, and it didn't work. The real cause: Grok Build Desktop served every file whole, ignoring the "send me this part of it" requests a video player makes as it plays. Playback would start, run about a second, and die. The app answers those requests properly now. Measured against the clips that failed: 4 failures in 45 attempts before, none in 45 after. *This is Desktop only — in VS Code the editor serves the file itself, and that path is not ours to fix.*
+- **A video shows its first frame again, instead of an empty box that jumps.** The preview 3.2.9 traded away comes back now the byte-range problem is actually fixed, and the clip is the right shape before you press play rather than snapping to it afterwards.
+- **The chat scrollbar sits against the edge of the pane.** At a small chat font on a wide window it floated well inland — the further in, the smaller the font. The text column is still a comfortable reading width; it just no longer drags the scrollbar with it. Desktop only.
+- **Clicking a conversation moves the file panel to its project.** Clicking a *project* always did, and so did starting a new conversation, which is what made it look arbitrary. Desktop only.
+- **Links to a plan open the plan.** Plans are written outside your project, so clicking one did nothing at all — no window, no error.
+
+### Changed
+
+- **A generated image or video now offers "Show in folder" in Grok Build Desktop.** Opening the file gave you nothing you couldn't already see: clips play in the chat, and pictures enlarge in place. Finding the file is the useful thing. In VS Code the button still opens an editor tab, which is what an editor is for.
+- **The composer drops the words beside its two icons when it is narrow.** "Agent mode" and the token count give way to the icon and the ring; the tooltips carry what the labels stopped saying, including which mode is active.
+- **Recent lists ten conversations, not twenty**, and the file panel's title and tabs line up with the rows beneath them.
+
+## 3.2.9 — 2026-08-08
+
+### Fixed
+
+- **Links to generated images open.** When Grok makes a picture it usually links to it in its reply as well, and it writes that link relative to the conversation rather than to your project — so clicking it went looking in your repository for a file that was never there. Grok Build Desktop answered *"File not found … It is not under the open project"*; VS Code simply opened nothing. Those links now find the picture that was actually generated. The image in the transcript was always right; it was only the link beneath it that missed.
+- **The open-file button on a generated image works in Grok Build Desktop.** Generated pictures live in Grok's own conversation folder, which sits outside your project, so the button was refused every time it was pressed. It is now allowed for that one kind of file — a picture or video Grok generated for one of this project's conversations — and for nothing else. Everything the app opens on your behalf is still held to the same containment checks as before.
+- **Generated videos play after the first few.** Every video in a conversation reserved a decoder the moment it appeared, whether or not anyone watched it, and enough of them in one chat exhausted the browser engine's pool — after which pressing play on some clips did nothing, and which clips varied. A video now reserves nothing until you press play. The trade is that a clip shows an empty frame rather than a preview until it starts.
+- **A clearer answer when video generation is blocked by your account settings.** xAI refuses video generation on accounts with zero data retention, and says so by naming an API field you cannot supply. Grok Build now adds where the setting actually lives: the Grok CLI's `/settings` → Privacy → Coding data, retention, and training.
+
+### Changed
+
+- **Clicking a generated image enlarges it where there is no editor to open it in.** In Grok Build Desktop and in the browser client the picture now opens full-size in place. Previously the browser left it inert, and Desktop handed the file to whichever program your system uses for images — leaving the app to show you something already on screen. In VS Code the click still opens an editor tab, which is what an editor is for.
+
+## 3.2.8 — 2026-08-08
+
+### Fixed
+
+- **The chat opens in Cursor.** Cursor reserves the secondary side bar for its own agent UI and refuses to place an extension there, so the panel Grok Build asks for was never created — the view was dropped into Explorer and every way of opening it answered "command not found". It now opens the view wherever the editor actually put it.
+- **A fresh install lands somewhere you can see it.** On the very first run — and only then — a chat the editor has stashed somewhere unusable is moved into its own view. It has to happen without you opening anything, because someone whose chat is buried in an Explorer section has no way to open it. After that first run the placement is yours and nothing touches it again: there is no way for an extension to ask where its own view sits, so we cannot tell someone who deliberately moved it from someone who never did, and guessing would mean dragging your layout back after every update.
+
+### Changed
+
+- **Move view now appears only where the editor needs it**, as a single **Move view…** that opens the editor's own destination picker; **Grok: Move Chat View** does the same from the command palette. The three fixed destinations are gone. In an editor with a secondary side bar they duplicated a **Move To** it already offers, and in one without, all three led to the same place — because a container is not a location, and an editor is free to draw our containers wherever it likes. Its own picker moves by location, which is how it reaches docks we cannot name.
+- **Move view is hidden in the browser client.** Where the chat sits is a property of the machine running the extension, so those entries could never do anything from a phone.
+
+## 3.2.7 — 2026-08-08
+
+### Changed
+
+- **Grok Build Desktop for macOS is signed and notarised by Apple.** It opens on first double-click — no *unidentified developer* warning, no trip through Privacy & Security, and no *"damaged and can't be opened"* on Apple silicon. Installers on this release are the first signed ones.
+
+### Fixed
+
+- **Voice finds ffmpeg where it is actually installed.** The desktop app only searched the `PATH` it inherits, which on macOS leaves out Homebrew's directory — so `brew install ffmpeg` looked like it had done nothing, and voice kept reporting ffmpeg missing until you pointed a setting at the binary by hand. It now checks the standard install locations too.
+- **A useful answer when ffmpeg is missing.** The error offered only *Open Settings*, which cannot help when the program isn't installed at all — it sent you to a text field to name a file you don't have. It now shows the install command, and on macOS offers to open a terminal with it typed ready to run. Pointing the setting at a folder instead of the program is also named as such, rather than failing as a permissions error.
+
+## 3.2.6 — 2026-08-08
+
+### Fixed
+
+- **The extension loads again.** 3.2.0 through 3.2.5 failed to start: a module the sidebar needs at runtime was left out of the published package, so activation threw before a single command was registered — every `Grok:` command answered "command not found" and the sidebar never appeared. Update from any 3.2.x; the downgrade to 3.1.0 is no longer needed. Grok Build Desktop was never affected. Found and diagnosed in #101.
+- **Packaging refuses to build a package that cannot load.** Every `require` in the packed code is now resolved against the files actually being shipped, so a missing module fails the build instead of reaching a marketplace.
+
+## 3.2.5 — 2026-08-07
+
+### Changed
+
+- **"Update available" opens a page that just gives you the download.** It used to open the GitHub release, which lists ten files — installers for three platforms, their checksums, and the VS Code extension — with nothing saying which one is yours. Now it detects your platform, offers one button, and shows how to get past the first-launch warning.
+
+## 3.2.4 — 2026-08-07
+
+### Added
+
+- **Hide a project from the desktop rail** — in a project's `⋯` menu. It leaves the list; nothing leaves your disk, and **+** adds it back.
+
+### Changed
+
+- **Projects are listed by name**, in the rail and the repository picker. They used to reorder by recent activity, so starting a conversation moved the project you were in to the top and shifted everything under your cursor.
+
+### Fixed
+
+- **A new conversation appears in the rail straight away.** The project moved to the top but gained no row, and only closing and reopening it made the conversation show up.
+- **New session is never disabled.** While the app was switching projects, every **+** in the rail greyed out at once — and on a switch that opens no conversation it stayed that way.
+- **"+" on another project starts the conversation there**, rather than switching and leaving you on whatever was already open.
+
+## 3.2.3 — 2026-08-07
+
+### Fixed
+
+- **Grok Build Desktop opens on macOS.** Earlier builds were refused outright — *"Grok Build Desktop is damaged and can't be opened"* — because the app carried no signature at all, which Apple silicon will not load. It is now ad-hoc signed, so macOS asks whether to open it (*right-click → Open*, or *Privacy & Security → Open Anyway*) instead of telling you to bin it. Still not notarised; a certificate is on the way. If you already downloaded an earlier build, `xattr -dr com.apple.quarantine "/Applications/Grok Build Desktop.app"` recovers it.
+
+## 3.2.2 — 2026-08-07
+
+### Fixed
+
+- **The Marketplace and Open VSX listing shows its screenshot again.** A screenshot removed in 3.2.1 was still referenced by the store page, which renders from its own copy of the README, so the listing showed alt text where the picture should be.
+
+## 3.2.1 — 2026-08-07
+
+### Fixed
+
+- **The projects rail lists other projects' conversations from a phone again.** It said *"Update Grok Build to preview"* against a host that was fully up to date and had already answered — the reply was dropped on the way out because it described a project other than the one that browser tab was working in, which is exactly what the rail asks about.
+- **Grok Build Desktop wears its own icon on Windows.** The Start menu, the taskbar and Task Manager showed Electron's default: the packaging step that stamps the icon and version details onto the app had been switched off. The installer wizard carries the mark now too.
+
+## 3.2.0 — 2026-08-07
+
+### Added
+
+- **Grok Build Desktop (Community) — a standalone app for Windows and macOS.** The same coding agent, without an editor or a terminal in front of it: open a folder and start. Projects on the left, the conversation in the middle, your files on the right. The builds are **not code-signed yet** — Windows SmartScreen and macOS Gatekeeper will warn you the first time. [Download](https://afkpilot.com/desktop).
+- **The desktop file panel edits text files, in tabs.** Several files open at once, each with its own unsaved-changes dot. Markdown opens as a preview with a source toggle, `Ctrl`/`Cmd+S` saves, **Cancel changes** reverts, and closing a tab with unsaved edits asks first. If the agent changed the file underneath you, the save is refused and you choose: reload its version, or keep yours. Silently winning that race in either direction is how people lose work.
+- **The app tells you when a new version exists.** It checks on start and every twelve hours, and shows how to update. It does not install anything behind your back — and it cannot on macOS anyway, since an unsigned app can't be replaced automatically.
+- **Add project folders from the rail.** A `+` on the PROJECTS heading, and the empty rail offers it too.
+- **A project that turns off permission prompts now asks you first.** A repository can ship a `.grok/config.toml` setting `permission_mode = "always-approve"`, and it overrides your own setting — so cloning someone's code was enough to remove every prompt between the agent and your machine. Opening such a project now says so and waits for you. Your own global setting is unaffected and stays silent.
+
+### Changed
+
+- **"Continue in a new chat" moved to the conversation's `⋯` menu**, beside Rename and Delete — the things you do *to* a conversation. The composer's settings keep model and effort, which is what they are for. Worktree apply and remove moved with it.
+- **The file tree and the projects rail can be resized** by dragging their edge, on desktop and in the browser.
+
+### Fixed
+
+- **File icons are visible in dark themes.** Around thirty file types drew almost black on a dark background, so `.dockerignore` and friends were nearly invisible.
+- **Markdown files render properly in the desktop panel** — lists, tables and the rest, using the same renderer the conversation uses, rather than a reduced one that handled only links and headings.
+- **The settings button under the composer opens settings on the first click** when the gear menu is already open, instead of only focusing the composer.
+- **A phone's project drawer is full width again.** It had collapsed to about 150px in AFK Pilot.
+- **Closing a project folder asks first when something is still running.** It ends every conversation in that folder and stops the agent, which discarded a turn in progress with no warning.
+- **`--config-json` applies to one run.** It was merged into your real configuration and left there, so a throwaway setting passed once kept applying on every later launch, with nothing on screen explaining why.
+- **Files in one project can no longer be opened from a conversation in another.** Having both projects open was treated as permission to reach either from either.
+- **Markdown with Windows line endings renders properly.** Headings kept their `#` and bullets kept their `-`, while tables and links worked — so it looked like the renderer was mostly fine when the document's structure was actually gone. Affected chat messages too, not just the file panel.
+- **A file saved after you switch projects goes to the file you opened**, not to a same-named file in the project you switched to.
+- **Selecting a project no longer opens a conversation in it.** It shows you what is there; you choose what to open.
+- **The `⋯` menus close when you click them again.**
+
 ## 3.1.0 — 2026-08-06
 
 ### Added

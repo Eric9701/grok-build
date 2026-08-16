@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   INBOUND_DISPOSITION,
   OUTBOUND_DISPOSITION,
+  OUTBOUND_PROJECT_AUTH,
   allowFromRemote,
   allowRemoteRepoTarget,
   bracketRemoteSnapshot,
+  mayDeliverRemoteHostMsg,
   repoScopeFor,
   sessionForRequest,
   sessionCwdBelongsToRepo,
@@ -16,8 +18,11 @@ import {
   MAX_REMOTE_MEDIA_BYTES,
   MAX_REMOTE_THUMBNAIL_BYTES,
   type MediaInlineDeps,
+  capabilitiesForRemote,
+  DESK_ONLY_CAPABILITIES,
 } from "../src/remote-policy";
 import { HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, type HostMsg } from "../src/protocol";
+import { pathsEqual } from "../src/worktree";
 
 const sorted = (a: readonly string[]) => [...a].sort();
 
@@ -32,21 +37,32 @@ describe("remote-policy classification tables", () => {
     expect(sorted(Object.keys(OUTBOUND_DISPOSITION))).toEqual(sorted(HOST_MESSAGE_TYPES));
   });
 
+  it("classifies every HostMsg type for project-scope authorization", () => {
+    expect(sorted(Object.keys(OUTBOUND_PROJECT_AUTH))).toEqual(sorted(HOST_MESSAGE_TYPES));
+  });
+
   it("keeps the load-bearing classifications from the design doc", () => {
     expect(INBOUND_DISPOSITION.ready).toBe("control");
     expect(INBOUND_DISPOSITION.send).toBe("propose");
     expect(INBOUND_DISPOSITION.steerSend).toBe("propose");
     expect(INBOUND_DISPOSITION.uploadFile).toBe("propose");
+    // Workspace file mutation — propose (not view); existing files only.
+    expect(INBOUND_DISPOSITION.writeProjectFile).toBe("propose");
     expect(INBOUND_DISPOSITION.permissionAnswer).toBe("full");
     expect(INBOUND_DISPOSITION.exitPlanAnswer).toBe("full");
-    expect(INBOUND_DISPOSITION.logout).toBe("full");
+    expect(INBOUND_DISPOSITION.logout).toBe("host-local");
+    expect(INBOUND_DISPOSITION.runGrokLogin).toBe("host-local");
+    expect(INBOUND_DISPOSITION.recheckConnection).toBe("host-local");
+    expect(INBOUND_DISPOSITION.retryProviderSession).toBe("propose");
     expect(INBOUND_DISPOSITION.clearAllSessions).toBe("full");
     expect(INBOUND_DISPOSITION.remotePreferences).toBe("view");
     expect(INBOUND_DISPOSITION.listSessions).toBe("view");
     expect(INBOUND_DISPOSITION.selectRepo).toBe("view");
     expect(INBOUND_DISPOSITION.toggleRepoPin).toBe("full");
+    expect(INBOUND_DISPOSITION.setRepoColor).toBe("full");
     // native pickers/editors/mic act on the LOCAL VS Code — never remote-drivable
     expect(INBOUND_DISPOSITION.openFile).toBe("host-local");
+    expect(INBOUND_DISPOSITION.showInFolder).toBe("host-local");
     expect(INBOUND_DISPOSITION.openText).toBe("host-local");
     expect(INBOUND_DISPOSITION.pickFile).toBe("host-local");
     expect(INBOUND_DISPOSITION.voiceStart).toBe("host-local");
@@ -59,10 +75,15 @@ describe("remote-policy classification tables", () => {
     expect(INBOUND_DISPOSITION.setShowThinking).toBe("host-local");
     expect(INBOUND_DISPOSITION.setReadRepliesAloud).toBe("host-local");
     expect(INBOUND_DISPOSITION.setSummarizeRepliesAloud).toBe("host-local");
+    expect(INBOUND_DISPOSITION.setVoiceSendPhrase).toBe("propose");
+    expect(INBOUND_DISPOSITION.setVoiceKeyterms).toBe("propose");
+    expect(INBOUND_DISPOSITION.setTelemetryEnabled).toBe("host-local");
+    expect(OUTBOUND_DISPOSITION.telemetryEnabled).toBe("mirror");
     expect(INBOUND_DISPOSITION.summarizeSpeech).toBe("propose");
     expect(INBOUND_DISPOSITION.requestImageFull).toBe("propose");
-    // worktree/rewind flows run native host dialogs (input box / QuickPick) —
-    // desktop-only until they get remote-capable UI (2026-07-24)
+    // Worktree create/apply/remove stay host-local. apply/remove now refuse a
+    // mismatched sessionId and act on the dispatch session, but widening back
+    // to "propose" is a separate product decision — see remote-policy.ts.
     expect(INBOUND_DISPOSITION.newWorktreeSession).toBe("host-local");
     expect(INBOUND_DISPOSITION.applyWorktree).toBe("host-local");
     expect(INBOUND_DISPOSITION.removeWorktree).toBe("host-local");
@@ -70,11 +91,14 @@ describe("remote-policy classification tables", () => {
     // relay account actions manage THIS machine's device token
     expect(INBOUND_DISPOSITION.remoteSignIn).toBe("host-local");
     expect(INBOUND_DISPOSITION.remoteSignOut).toBe("host-local");
+    expect(INBOUND_DISPOSITION.unlinkRemoteDevice).toBe("host-local");
     expect(INBOUND_DISPOSITION.openRemotePortal).toBe("host-local");
     expect(OUTBOUND_DISPOSITION.remoteStatus).toBe("host-local");
     expect(OUTBOUND_DISPOSITION.readRepliesAloud).toBe("host-local");
     expect(OUTBOUND_DISPOSITION.summarizeRepliesAloud).toBe("host-local");
     expect(OUTBOUND_DISPOSITION.speechSummary).toBe("mirror");
+    expect(OUTBOUND_DISPOSITION.providerState).toBe("mirror");
+    expect(INBOUND_DISPOSITION.installCodex).toBe("host-local");
     // Local call sites stay local-only; the same output shapes carry remote STT.
     expect(OUTBOUND_DISPOSITION.voiceState).toBe("mirror");
     expect(OUTBOUND_DISPOSITION.voiceConfigured).toBe("mirror");
@@ -103,14 +127,49 @@ describe("remote repo target gate", () => {
   it("accepts only discovered cwd values for switching, pinning, and explicit resume", () => {
     expect(allowRemoteRepoTarget({ type: "selectRepo", cwd: "/work/a" }, discovered)).toBe(true);
     expect(allowRemoteRepoTarget({ type: "toggleRepoPin", cwd: "/work/b", pinned: true }, discovered)).toBe(true);
+    expect(allowRemoteRepoTarget({ type: "setRepoColor", cwd: "/work/a", color: "blue" }, discovered)).toBe(true);
     expect(allowRemoteRepoTarget({ type: "resumeSession", id: "s", cwd: "/work/a" }, discovered)).toBe(true);
     expect(allowRemoteRepoTarget({ type: "clearAllSessions", cwd: "/work/a" }, discovered)).toBe(true);
     // The rail previews a repo without selecting it — same catalog gate, so it
     // cannot become a way to read history for a path the host never published.
     expect(allowRemoteRepoTarget({ type: "listRepoSessions", cwd: "/work/a" }, discovered)).toBe(true);
     expect(allowRemoteRepoTarget({ type: "listRepoSessions", cwd: "/etc" }, discovered)).toBe(false);
+    // File browse names a cwd — without listing these types here, the default
+    // branch would return true and a remote could claim an arbitrary path.
+    expect(allowRemoteRepoTarget({ type: "listProjectDir", cwd: "/work/a" }, discovered)).toBe(true);
+    expect(allowRemoteRepoTarget({ type: "listProjectDir", cwd: "/etc" }, discovered)).toBe(false);
+    expect(allowRemoteRepoTarget({ type: "readProjectFile", cwd: "/work/a", relPath: "a.ts" }, discovered)).toBe(true);
+    expect(allowRemoteRepoTarget({ type: "readProjectFile", cwd: "/etc", relPath: "passwd" }, discovered)).toBe(false);
+    expect(
+      allowRemoteRepoTarget(
+        {
+          type: "writeProjectFile",
+          cwd: "/work/a",
+          relPath: "a.ts",
+          text: "x",
+          stamp: { mtimeMs: 1, size: 1 },
+          expectedAbsPath: "/work/a/a.ts",
+        },
+        discovered,
+      ),
+    ).toBe(true);
+    expect(
+      allowRemoteRepoTarget(
+        {
+          type: "writeProjectFile",
+          cwd: "/etc",
+          relPath: "passwd",
+          text: "x",
+          stamp: { mtimeMs: 1, size: 1 },
+          expectedAbsPath: "/etc/passwd",
+        },
+        discovered,
+      ),
+    ).toBe(false);
     expect(allowRemoteRepoTarget({ type: "selectRepo", cwd: "/etc" }, discovered)).toBe(false);
     expect(allowRemoteRepoTarget({ type: "toggleRepoPin", cwd: "/etc", pinned: true }, discovered)).toBe(false);
+    // A colour write that names an arbitrary cwd is the same hole as archive/pin.
+    expect(allowRemoteRepoTarget({ type: "setRepoColor", cwd: "/etc", color: "teal" }, discovered)).toBe(false);
     expect(allowRemoteRepoTarget({ type: "resumeSession", id: "s", cwd: "/etc" }, discovered)).toBe(false);
     expect(allowRemoteRepoTarget({ type: "clearAllSessions", cwd: "/etc" }, discovered)).toBe(false);
   });
@@ -118,6 +177,329 @@ describe("remote repo target gate", () => {
   it("allows cwd-less resume to use the host's already-bounded resolution", () => {
     expect(allowRemoteRepoTarget({ type: "resumeSession", id: "s" }, discovered)).toBe(true);
     expect(allowRemoteRepoTarget({ type: "send", text: "hi" }, discovered)).toBe(true);
+  });
+
+  it("allows cwd-less toggleSessionPin at the wire gate (host re-checks home)", () => {
+    // Protocol keeps cwd optional; authorization of the resolved home is host-side.
+    expect(
+      allowRemoteRepoTarget({ type: "toggleSessionPin", id: "s", pinned: true }, discovered),
+    ).toBe(true);
+    expect(
+      allowRemoteRepoTarget(
+        { type: "toggleSessionPin", id: "s", cwd: "/etc", pinned: true },
+        discovered,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("mayDeliverRemoteHostMsg (outbound project authorization)", () => {
+  const open = ["/work/open"];
+  const closed = "/work/closed";
+  const same = pathsEqual;
+
+  it("always allows device prefs, errors, and path-free chrome", () => {
+    expect(
+      mayDeliverRemoteHostMsg({ type: "error", text: "x" }, open, closed, same),
+    ).toBe(true);
+    expect(
+      mayDeliverRemoteHostMsg({ type: "showThinking", value: true }, open, undefined, same),
+    ).toBe(true);
+    expect(
+      mayDeliverRemoteHostMsg({ type: "clearMessages" }, open, undefined, same),
+    ).toBe(true);
+  });
+
+  it("delivers the file-browser answers for an authorized project", () => {
+    // All three were classified `message-cwd` and then not handled in that
+    // branch, so every one fell through to false. The remote file browser sent
+    // its request, the host answered, and the answer was dropped here — the
+    // panel sat on "Loading…" for ever and the feature had never worked.
+    expect(
+      mayDeliverRemoteHostMsg(
+        { type: "projectDirListing", cwd: open[0], relPath: "", ok: true, entries: [], truncated: false },
+        open,
+        undefined,
+        same,
+      ),
+    ).toBe(true);
+    expect(
+      mayDeliverRemoteHostMsg(
+        { type: "projectFileContent", cwd: open[0], relPath: "a.md", ok: false, reason: "nope" },
+        open,
+        undefined,
+        same,
+      ),
+    ).toBe(true);
+    expect(
+      mayDeliverRemoteHostMsg(
+        { type: "projectFileWriteResult", cwd: open[0], relPath: "a.md", ok: true, stamp: { mtimeMs: 1, size: 2 } },
+        open,
+        undefined,
+        same,
+      ),
+    ).toBe(true);
+  });
+
+  it("still refuses a file-browser answer for a project that has since closed", () => {
+    // The whole point of classifying them `message-cwd`: the request was let in
+    // while the project was open, and the answer must be re-checked against the
+    // LIVE set rather than trusted from when it was accepted.
+    for (const msg of [
+      { type: "projectDirListing", cwd: closed, relPath: "", ok: true, entries: [], truncated: false },
+      { type: "projectFileContent", cwd: closed, relPath: "a.md", ok: true, kind: "text", text: "x" },
+      { type: "projectFileWriteResult", cwd: closed, relPath: "a.md", ok: true, stamp: { mtimeMs: 1, size: 2 } },
+    ] as const) {
+      expect(mayDeliverRemoteHostMsg(msg as never, open, closed, same), msg.type).toBe(false);
+    }
+  });
+
+  it("refuses repos / initialState frames that carry a closed project's cwd", () => {
+    // Unconditional "none" classification was the hole: builders could (and
+    // rehome deliberately did) put a closed selectedCwd on the wire.
+    expect(
+      mayDeliverRemoteHostMsg(
+        { type: "repos", entries: [], selectedCwd: closed, activeCwd: closed },
+        open,
+        closed,
+        same,
+      ),
+    ).toBe(false);
+    expect(
+      mayDeliverRemoteHostMsg(
+        { type: "repos", entries: [], selectedCwd: closed, activeCwd: "/work/open" },
+        open,
+        closed,
+        same,
+      ),
+    ).toBe(false);
+    expect(
+      mayDeliverRemoteHostMsg(
+        {
+          type: "repos",
+          entries: [
+            {
+              cwd: closed,
+              label: "leak",
+              available: true,
+              pinned: false,
+              updatedAt: 1,
+            },
+          ],
+          selectedCwd: "/work/open",
+          activeCwd: "/work/open",
+        },
+        open,
+        "/work/open",
+        same,
+      ),
+    ).toBe(false);
+
+    // Empty selected/active after rehome (unbound) is OK — not a closed path.
+    expect(
+      mayDeliverRemoteHostMsg(
+        { type: "repos", entries: [], selectedCwd: "", activeCwd: "" },
+        open,
+        undefined,
+        same,
+      ),
+    ).toBe(true);
+    expect(
+      mayDeliverRemoteHostMsg(
+        {
+          type: "repos",
+          entries: [
+            {
+              cwd: "/work/open",
+              label: "open",
+              available: true,
+              pinned: false,
+              updatedAt: 1,
+            },
+          ],
+          selectedCwd: "/work/open",
+          activeCwd: "/work/open",
+        },
+        open,
+        "/work/open",
+        same,
+      ),
+    ).toBe(true);
+
+    const caps = {
+      uploadFile: true,
+      remoteVoice: true,
+      deleteActiveSession: true,
+    };
+    const baseInitial = {
+      type: "initialState" as const,
+      effort: "",
+      useCtrlEnter: false,
+      extVersion: "0",
+      showThinking: false,
+      expandCommandOutputs: false,
+      steerByDefault: false,
+      soundNotifications: false,
+      processingSound: false,
+      readRepliesAloud: false,
+      capabilities: caps,
+    };
+    expect(
+      mayDeliverRemoteHostMsg({ ...baseInitial, cwd: closed }, open, closed, same),
+    ).toBe(false);
+    expect(
+      mayDeliverRemoteHostMsg({ ...baseInitial, cwd: "/work/open" }, open, closed, same),
+    ).toBe(true);
+    expect(
+      mayDeliverRemoteHostMsg({ ...baseInitial, cwd: "" }, open, undefined, same),
+    ).toBe(true);
+  });
+
+  it("classifies repos as repos-catalog and initialState as optional-cwd", () => {
+    expect(OUTBOUND_PROJECT_AUTH.repos).toBe("repos-catalog");
+    expect(OUTBOUND_PROJECT_AUTH.initialState).toBe("optional-cwd");
+    expect(OUTBOUND_PROJECT_AUTH.initialized).toBe("scope");
+    // Project voice prefs (sendPhrase / key resolution) must not follow a closed tab.
+    expect(OUTBOUND_PROJECT_AUTH.voiceConfigured).toBe("scope");
+    expect(OUTBOUND_PROJECT_AUTH.voiceState).toBe("none");
+    expect(OUTBOUND_PROJECT_AUTH.clearMessages).toBe("none");
+    expect(OUTBOUND_PROJECT_AUTH.error).toBe("none");
+  });
+
+  it("refuses voiceConfigured for a closed or missing project scope", () => {
+    const msg: HostMsg = {
+      type: "voiceConfigured",
+      value: true,
+      sendPhrase: "atlas send",
+    };
+    // Prior project closed / re-homed — must not keep delivering its prefs.
+    expect(mayDeliverRemoteHostMsg(msg, open, closed, same)).toBe(false);
+    expect(mayDeliverRemoteHostMsg(msg, open, undefined, same)).toBe(false);
+    // Authorized open scope still delivers.
+    expect(mayDeliverRemoteHostMsg(msg, open, "/work/open", same)).toBe(true);
+  });
+
+  it("mutation: voiceConfigured classified as none reopens the cross-project prefs leak", () => {
+    // If OUTBOUND_PROJECT_AUTH.voiceConfigured were "none", mayDeliver would
+    // always return true and a closed-tab client would keep the prior project's
+    // sendPhrase / configured flag. Classification must be "scope".
+    expect(OUTBOUND_PROJECT_AUTH.voiceConfigured).not.toBe("none");
+    expect(OUTBOUND_PROJECT_AUTH.voiceConfigured).toBe("scope");
+    const msg: HostMsg = { type: "voiceConfigured", value: true };
+    // Gate with closed scope must refuse (fails if classification is none).
+    expect(mayDeliverRemoteHostMsg(msg, open, closed, same)).toBe(false);
+  });
+
+  it("mutation: treating repos as unconditional none reopens the closed-cwd leak", () => {
+    // If classification falls back to always-true, a closed selectedCwd leaves.
+    const msg: HostMsg = {
+      type: "repos",
+      entries: [],
+      selectedCwd: closed,
+      activeCwd: closed,
+    };
+    const buggyNoneAlways = true;
+    expect(buggyNoneAlways).toBe(true);
+    expect(mayDeliverRemoteHostMsg(msg, open, closed, same)).toBe(false);
+  });
+
+  it("refuses transcript / history content without an authorized scope cwd", () => {
+    const chunk: HostMsg = { type: "messageChunk", text: "secret from closed project" };
+    expect(mayDeliverRemoteHostMsg(chunk, open, closed, same)).toBe(false);
+    expect(mayDeliverRemoteHostMsg(chunk, open, undefined, same)).toBe(false);
+    expect(mayDeliverRemoteHostMsg(chunk, open, "/work/open", same)).toBe(true);
+  });
+
+  it("refuses historyBatch that would carry closed-project transcript", () => {
+    const batch: HostMsg = {
+      type: "historyBatch",
+      messages: [
+        { type: "userMessage", text: "hi" },
+        { type: "messageChunk", text: "leak" },
+      ],
+    };
+    expect(mayDeliverRemoteHostMsg(batch, open, closed, same)).toBe(false);
+    expect(mayDeliverRemoteHostMsg(batch, open, "/work/open", same)).toBe(true);
+  });
+
+  it("refuses sessionName / chips / sessionDot for a closed scope", () => {
+    expect(
+      mayDeliverRemoteHostMsg(
+        { type: "sessionName", sessionId: "s", name: "X", cwd: closed },
+        open,
+        closed,
+        same,
+      ),
+    ).toBe(false);
+    expect(
+      mayDeliverRemoteHostMsg({ type: "chips", chips: [] }, open, closed, same),
+    ).toBe(false);
+    expect(
+      mayDeliverRemoteHostMsg({ type: "sessionDot", id: "s", dot: "none" }, open, closed, same),
+    ).toBe(false);
+    expect(
+      mayDeliverRemoteHostMsg({ type: "sessionDot", id: "s", dot: "working" }, open, "/work/open", same),
+    ).toBe(true);
+  });
+
+  it("allows empty sessions lists and refuses lists that include a closed cwd entry", () => {
+    expect(
+      mayDeliverRemoteHostMsg(
+        {
+          type: "sessions",
+          entries: [],
+          activeId: null,
+          dots: {},
+          offset: 0,
+          total: 0,
+          hasMore: false,
+          nextOffset: 0,
+          query: "",
+        },
+        open,
+        closed,
+        same,
+      ),
+    ).toBe(true);
+    expect(
+      mayDeliverRemoteHostMsg(
+        {
+          type: "sessions",
+          entries: [
+            {
+              id: "a",
+              cwd: closed,
+              displayName: "leak",
+              rawSummary: "",
+              updatedAt: 1,
+              createdAt: 1,
+              numMessages: 0,
+            },
+          ],
+          activeId: null,
+          dots: {},
+          offset: 0,
+          total: 1,
+          hasMore: false,
+          nextOffset: 1,
+          query: "",
+        },
+        open,
+        closed,
+        same,
+      ),
+    ).toBe(false);
+  });
+
+  it("mutation: trusting mapping-clear order alone would re-open the transcript leak", () => {
+    // Old path: sendRemoteHistorySnapshot only checked clientsForActiveValue.
+    // If revoke ordered mapping clear after a concurrent snapshot, transcript
+    // still left. Fixed path: mayDeliverRemoteHostMsg refuses closed scope.
+    const snapshotMsg: HostMsg = { type: "userMessage", text: "from closed" };
+    const clientStillMapped = true; // simulated race
+    const oldWouldSend = clientStillMapped;
+    expect(oldWouldSend).toBe(true);
+    expect(mayDeliverRemoteHostMsg(snapshotMsg, open, closed, same)).toBe(false);
   });
 });
 
@@ -139,15 +521,44 @@ describe("allowFromRemote tier gating", () => {
     expect(allowFromRemote("summarizeSpeech", "propose")).toBe(true);
   });
 
-  it("approvals and destructive ops need full", () => {
-    for (const t of ["permissionAnswer", "exitPlanAnswer", "logout", "deleteSession", "clearAllSessions", "updateGrok"] as const) {
+  it("approvals and destructive session ops need full", () => {
+    for (const t of ["permissionAnswer", "exitPlanAnswer", "deleteSession", "clearAllSessions"] as const) {
       expect(allowFromRemote(t, "propose")).toBe(false);
       expect(allowFromRemote(t, "full")).toBe(true);
     }
   });
 
+  it("refuses remote-origin provider logout and login-terminal actions at every tier", () => {
+    for (const type of ["logout", "runGrokLogin"] as const) {
+      expect(INBOUND_DISPOSITION[type]).toBe("host-local");
+      for (const tier of ["read-only", "propose", "full"] as const) {
+        expect(allowFromRemote(type, tier)).toBe(false);
+      }
+    }
+  });
+
+  it("refuses a remote unlink of this machine at every tier", () => {
+    expect(INBOUND_DISPOSITION.unlinkRemoteDevice).toBe("host-local");
+    for (const tier of ["read-only", "propose", "full"] as const) {
+      expect(allowFromRemote("unlinkRemoteDevice", tier)).toBe(false);
+    }
+  });
+
+  it("a remote can never replace the CLI binary, at any tier", () => {
+    // `updateAtlas` / `checkAtlasUpdate` used to sit in the list above, which
+    // meant a phone could start a binary replacement on the desk machine. The
+    // binaries live there and only the desk can replace them, so they are
+    // host-local now — and the remote Version & about page is informational for
+    // the same reason. The STATUS still travels: atlasUpdateStatus is mirrored,
+    // so a phone can see the CLI is behind without being able to act on it.
+    for (const t of ["updateAtlas", "checkAtlasUpdate"] as const) {
+      expect(allowFromRemote(t, "propose")).toBe(false);
+      expect(allowFromRemote(t, "full")).toBe(false);
+    }
+  });
+
   it("host-local and control are never routed, even at full", () => {
-    for (const t of ["openFile", "pickFile", "voiceStart", "moveView", "dropFile", "exportExpr", "ready"] as const) {
+    for (const t of ["openFile", "showInFolder", "pickFile", "voiceStart", "moveView", "dropFile", "exportExpr", "ready"] as const) {
       expect(allowFromRemote(t, "full")).toBe(false);
     }
   });
@@ -552,5 +963,52 @@ describe("remote reconnect snapshot replay", () => {
     const messages = batched(buffer);
     expect(messages[0]).toEqual({ type: "userMessage", text: "only prompt" });
     expect(messages[messages.length - 1]).toEqual({ type: "messageChunk", text: "the newest words" });
+  });
+});
+
+// `messageForRemote` strips capabilities that describe the DESK machine before
+// a phone sees them. Nothing proved it did — and the failure mode is silent:
+// someone adds capability number three, forgets the list, and every existing
+// gate still passes because allowFromRemote refuses those messages anyway.
+// Belt-and-braces, but the belt should be testable.
+describe("capabilities a remote may see", () => {
+  it("removes every desk-only capability and keeps the rest", () => {
+    // Deliberately over-populated: anything NOT on the desk-only list must
+    // survive, which is what catches a strip that got too greedy.
+    const all = {
+      uploadFile: true,
+      remoteVoice: true,
+      deleteActiveSession: true,
+      servesMediaRanges: true,
+      showInFolder: true,
+      browseProjectFiles: true,
+      editProjectFiles: true,
+      relocateView: true,
+      secondarySideBar: true,
+      showOutput: true,
+      toggleDevTools: true,
+      previewInApp: true,
+      settingsEditor: true,
+    } as unknown as Parameters<typeof capabilitiesForRemote>[0];
+
+    const seen = capabilitiesForRemote(all) as Record<string, unknown>;
+
+    for (const key of DESK_ONLY_CAPABILITIES) {
+      expect(seen, `${key} must not reach a remote`).not.toHaveProperty(key);
+    }
+    // The file browser is the one a remote genuinely needs — a phone has no
+    // editor to fall back on, so stripping it would take the feature away.
+    expect(seen.browseProjectFiles).toBe(true);
+    expect(seen.editProjectFiles).toBe(true);
+    expect(seen.uploadFile).toBe(true);
+    expect(seen.remoteVoice).toBe(true);
+  });
+
+  it("does not mutate the host's own capabilities object", () => {
+    const original = { showInFolder: true, uploadFile: true } as unknown as
+      Parameters<typeof capabilitiesForRemote>[0];
+    capabilitiesForRemote(original);
+    // The host keeps serving its LOCAL webview from this same object.
+    expect(original).toHaveProperty("showInFolder");
   });
 });

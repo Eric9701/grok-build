@@ -152,6 +152,6 @@ describe("waiting-for-response indicator", () => {
     expect(grokking).toBeTruthy();
     expect(grokking.title).toBe("Waiting for response");
     // The shimmer CSS animates .grokking-label — the span must exist.
-    expect(grokking.querySelector(".grokking-label")?.textContent).toBe("Working");
+    expect(grokking.querySelector(".grokking-label")?.textContent).toBe("Grokking");
   });
 });

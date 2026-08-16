@@ -12,15 +12,26 @@ import {
   deleteSessionDir,
   extractUserQueries,
   fallbackName,
+  findSessionCatalogCwd,
   indexSessions,
   isEmptySession,
   isPathInside,
   listSessions,
   mostRecentSession,
+  normalizeRepoPath,
+  orderedResumeCwdCandidates,
   readContextUsage,
   readSessionEntries,
+  remoteAuthorizedCwds,
+  archivedProjectKeys,
+  expiredArchiveChoiceKeys,
+  newestTranscriptMtime,
+  encodeSessionCatalogLeaf,
   resolveGrokHome,
+  sessionCatalogDirs,
+  sessionDirFor,
   sessionsDirFor,
+  discoverRepos,
   type SessionListEntry,
 } from "../src/sessions";
 
@@ -125,6 +136,14 @@ describe("isEmptySession", () => {
     expect(isEmptySession({ numMessages: 0, pinnedAt: 1, chatHistory: neverTypedInto })).toBe(false);
     expect(isEmptySession({ numMessages: 0, worktreePath: "/work/wt", chatHistory: neverTypedInto })).toBe(false);
     expect(isEmptySession({ numMessages: 0, kind: "subagent", chatHistory: neverTypedInto })).toBe(false);
+  });
+
+  it("never flags a session whose composer draft is persisted for recovery", () => {
+    expect(isEmptySession({
+      numMessages: 0,
+      chatHistory: neverTypedInto,
+      queuedDraft: "recover me after sign-in",
+    })).toBe(false);
   });
 
   it("never flags a session whose history exists but could not be read", () => {
@@ -294,6 +313,279 @@ describe("sessionsDirFor", () => {
     ["..", "%2E%2E"],
   ])("keeps a non-canonical cwd catalog inside the sessions root: %j", (badCwd, leaf) => {
     expect(sessionsDirFor(grokHome, badCwd)).toBe(path.join(grokHome, "sessions", leaf));
+  });
+
+  it("preserves drive-letter case in the catalog leaf (CLI write path)", () => {
+    const lower = sessionsDirFor(grokHome, "c:\\GitHub\\accredia");
+    const upper = sessionsDirFor(grokHome, "C:\\GitHub\\accredia");
+    expect(lower).not.toBe(upper);
+    expect(path.basename(lower)).toBe("c%3A%5CGitHub%5Caccredia");
+    expect(path.basename(upper)).toBe("C%3A%5CGitHub%5Caccredia");
+  });
+});
+
+/**
+ * Real-world Windows bug: the CLI indexes by the cwd *string*, so
+ * `c:\GitHub\accredia` and `C:\GitHub\accredia` become two catalog leaves.
+ * History must merge them on Windows and stay distinct on case-sensitive hosts.
+ */
+describe("session catalog case-aliases", () => {
+  const home = "/tmp/grok-case-home";
+  const sessionsRoot = path.join(home, "sessions");
+  const lowerCwd = "c:\\GitHub\\accredia";
+  const upperCwd = "C:\\GitHub\\accredia";
+  const lowerDir = sessionsDirFor(home, lowerCwd);
+  const upperDir = sessionsDirFor(home, upperCwd);
+
+  function splitIndexFs(): FsLike {
+    const lowerId = "sess-lower-1";
+    const upperId = "sess-upper-1";
+    return buildFs({
+      [sessionsRoot]: { isDir: true },
+      [lowerDir]: { isDir: true, mtimeMs: 10 },
+      [upperDir]: { isDir: true, mtimeMs: 50 },
+      [path.join(lowerDir, lowerId)]: { isDir: true },
+      [path.join(upperDir, upperId)]: { isDir: true },
+      [path.join(lowerDir, lowerId, "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: lowerId, cwd: lowerCwd },
+          session_summary: "from lower c:",
+          updated_at: "2026-01-01T00:00:00Z",
+          num_messages: 4,
+        }),
+        mtimeMs: 10,
+      },
+      [path.join(upperDir, upperId, "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: upperId, cwd: upperCwd },
+          session_summary: "from upper C:",
+          updated_at: "2026-02-01T00:00:00Z",
+          num_messages: 6,
+        }),
+        mtimeMs: 50,
+      },
+    });
+  }
+
+  it("normalizeRepoPath folds Windows drive-letter case", () => {
+    expect(normalizeRepoPath(lowerCwd, "win32")).toBe(normalizeRepoPath(upperCwd, "win32"));
+    expect(normalizeRepoPath(lowerCwd, "linux")).not.toBe(normalizeRepoPath(upperCwd, "linux"));
+  });
+
+  it("sessionCatalogDirs lists both casings as one project on win32", () => {
+    const fs = splitIndexFs();
+    const dirs = sessionCatalogDirs({ fs, grokHome: home, cwd: upperCwd, platform: "win32" });
+    expect(dirs.map((d) => path.normalize(d)).sort()).toEqual(
+      [lowerDir, upperDir].map((d) => path.normalize(d)).sort(),
+    );
+    // Exact encode of the query cwd is first.
+    expect(path.normalize(dirs[0])).toBe(path.normalize(upperDir));
+  });
+
+  it("on Windows, two drive-letter casings resolve to one project with the union of sessions", () => {
+    const fs = splitIndexFs();
+    const index = indexSessions({ fs, grokHome: home, cwd: upperCwd, platform: "win32" });
+    expect(index.map((e) => e.id).sort()).toEqual(["sess-lower-1", "sess-upper-1"]);
+    // Open via the *other* casing — must still see both sides.
+    const entries = listSessions({
+      fs,
+      grokHome: home,
+      cwd: lowerCwd,
+      overrides: {},
+      platform: "win32",
+    });
+    expect(entries.map((e) => e.id).sort()).toEqual(["sess-lower-1", "sess-upper-1"]);
+    expect(entries.map((e) => e.displayName).sort()).toEqual(["from lower c:", "from upper C:"]);
+  });
+
+  it("finds a session stored under the other casing when resuming", () => {
+    const fs = splitIndexFs();
+    // Workspace is uppercase; session only exists under lowercase catalog.
+    expect(
+      findSessionCatalogCwd({
+        fs,
+        grokHome: home,
+        id: "sess-lower-1",
+        candidates: [upperCwd],
+        platform: "win32",
+      }),
+    ).toBe(upperCwd);
+    expect(
+      sessionDirFor(home, upperCwd, "sess-lower-1", { fs, platform: "win32" }),
+    ).toBe(path.join(lowerDir, "sess-lower-1"));
+  });
+
+  // Windows only, and not because of the logic — `platform: "win32"` is injected
+  // below, so the merge itself is decidable anywhere. It is the FIXTURE that
+  // cannot travel: the availability check resolves the decoded cwd through the
+  // real `path` module, so on Linux "c:\GitHub\accredia" resolves to a
+  // nonexistent relative directory and every row is filtered out as unavailable
+  // before the merge is reached.
+  //
+  // Not a coverage hole: the case-INSENSITIVE merge is a Windows behaviour, CI
+  // is Linux, and the case-sensitive counterpart directly below runs everywhere
+  // and asserts the opposite property. Making this portable means injecting a
+  // path module through discoverRepos, which is worth doing when something else
+  // needs it — not for a test whose subject only exists on the platform it
+  // already runs on.
+  it.skipIf(process.platform !== "win32")("discoverRepos merges split casings into one row (max mtime)", () => {
+    // Availability check stats the decoded cwd path — plant both as dirs.
+    const full = buildFs({
+      [sessionsRoot]: { isDir: true },
+      [lowerDir]: { isDir: true, mtimeMs: 10 },
+      [upperDir]: { isDir: true, mtimeMs: 50 },
+      [lowerCwd]: { isDir: true },
+      [upperCwd]: { isDir: true },
+    });
+    const repos = discoverRepos({
+      fs: full,
+      grokHome: home,
+      pins: {},
+      tmpDir: "/tmp",
+      platform: "win32",
+    });
+    const hit = repos.filter((r) => normalizeRepoPath(r.cwd, "win32") === normalizeRepoPath(upperCwd, "win32"));
+    expect(hit).toHaveLength(1);
+    expect(hit[0].updatedAt).toBe(50);
+  });
+
+  it("on a case-sensitive platform, different casings remain distinct projects", () => {
+    const posixHome = "/home/u/.grok";
+    const a = "/Work/Project";
+    const b = "/work/project";
+    const aDir = sessionsDirFor(posixHome, a);
+    const bDir = sessionsDirFor(posixHome, b);
+    const root = path.join(posixHome, "sessions");
+    const fs = buildFs({
+      [root]: { isDir: true },
+      [aDir]: { isDir: true },
+      [bDir]: { isDir: true },
+      [path.join(aDir, "sess-a")]: { isDir: true },
+      [path.join(bDir, "sess-b")]: { isDir: true },
+      [path.join(aDir, "sess-a", "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({ info: { id: "sess-a" }, session_summary: "A", updated_at: "2026-01-01T00:00:00Z", num_messages: 1 }),
+        mtimeMs: 1,
+      },
+      [path.join(bDir, "sess-b", "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({ info: { id: "sess-b" }, session_summary: "B", updated_at: "2026-01-02T00:00:00Z", num_messages: 1 }),
+        mtimeMs: 2,
+      },
+    });
+    expect(indexSessions({ fs, grokHome: posixHome, cwd: a, platform: "linux" }).map((e) => e.id)).toEqual(["sess-a"]);
+    expect(indexSessions({ fs, grokHome: posixHome, cwd: b, platform: "linux" }).map((e) => e.id)).toEqual(["sess-b"]);
+    expect(sessionCatalogDirs({ fs, grokHome: posixHome, cwd: a, platform: "linux" })).toEqual([
+      path.normalize(aDir),
+    ]);
+  });
+
+  it("clearSessions removes sessions from every case-alias leaf", () => {
+    const fs = splitIndexFs();
+    const removed = clearSessions({ fs, grokHome: home, cwd: upperCwd, platform: "win32" });
+    expect(removed.sort()).toEqual(["sess-lower-1", "sess-upper-1"]);
+    expect(indexSessions({ fs, grokHome: home, cwd: upperCwd, platform: "win32" })).toEqual([]);
+  });
+});
+
+describe("orderedResumeCwdCandidates / findSessionCatalogCwd (resume cwd trust)", () => {
+  const workspace = "/work/repo";
+  const evil = "/etc/evil";
+  const sessionId = "sess-real-1";
+
+  it("never includes an untrusted message cwd among candidates", () => {
+    const cands = orderedResumeCwdCandidates({
+      messageCwd: evil,
+      trustedCwds: [workspace],
+      cachedCwd: workspace,
+    });
+    expect(cands).toEqual([workspace]);
+    expect(cands).not.toContain(evil);
+  });
+
+  it("looks first at a message cwd that is already trusted", () => {
+    const other = "/work/other";
+    const cands = orderedResumeCwdCandidates({
+      messageCwd: other,
+      trustedCwds: [workspace, other],
+      cachedCwd: workspace,
+    });
+    expect(cands[0]).toBe(other);
+    expect(cands).toContain(workspace);
+  });
+
+  it("resolves the catalog cwd that actually holds the session id", () => {
+    const dir = path.join(sessionsDirFor(grokHome, workspace), sessionId);
+    const fs: FsLike = buildFs({
+      [path.join(dir, "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({ info: { id: sessionId, cwd: workspace } }),
+      },
+      [dir]: { isDir: true },
+      [sessionsDirFor(grokHome, workspace)]: { isDir: true },
+    });
+    // Forged message cwd must not win even when it would be preferred in order —
+    // it is filtered out of candidates entirely when untrusted.
+    const candidates = orderedResumeCwdCandidates({
+      messageCwd: evil,
+      trustedCwds: [workspace],
+    });
+    expect(findSessionCatalogCwd({ fs, grokHome, id: sessionId, candidates })).toBe(workspace);
+  });
+
+  it("returns undefined when the id only exists under an untrusted path", () => {
+    // Attacker planted a session dir under /etc/evil; host must not adopt it.
+    const evilDir = path.join(sessionsDirFor(grokHome, evil), sessionId);
+    const fs: FsLike = buildFs({
+      [path.join(evilDir, "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({ info: { id: sessionId, cwd: evil } }),
+      },
+      [evilDir]: { isDir: true },
+      [sessionsDirFor(grokHome, evil)]: { isDir: true },
+    });
+    const candidates = orderedResumeCwdCandidates({
+      messageCwd: evil,
+      trustedCwds: [workspace],
+    });
+    expect(candidates).not.toContain(evil);
+    expect(findSessionCatalogCwd({ fs, grokHome, id: sessionId, candidates })).toBeUndefined();
+  });
+
+  it("mutation: trusting messageCwd unconditionally would adopt an evil catalog", () => {
+    const evilDir = path.join(sessionsDirFor(grokHome, evil), sessionId);
+    const fs: FsLike = buildFs({
+      [path.join(evilDir, "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({ info: { id: sessionId, cwd: evil } }),
+      },
+      [evilDir]: { isDir: true },
+      [sessionsDirFor(grokHome, evil)]: { isDir: true },
+    });
+    // The buggy pattern from openSessionReserved: sessionCwd || workspace.
+    const buggyCandidates = [evil, workspace];
+    expect(findSessionCatalogCwd({ fs, grokHome, id: sessionId, candidates: buggyCandidates }))
+      .toBe(evil);
+    // Fixed path: ordered candidates drop evil → no match → no spawn in evil.
+    const fixed = orderedResumeCwdCandidates({
+      messageCwd: evil,
+      trustedCwds: [workspace],
+    });
+    expect(findSessionCatalogCwd({ fs, grokHome, id: sessionId, candidates: fixed }))
+      .toBeUndefined();
+  });
+
+  it("rejects an invalid session id without touching candidates", () => {
+    expect(
+      findSessionCatalogCwd({
+        fs: buildFs({}),
+        grokHome,
+        id: "../escape",
+        candidates: [workspace],
+      }),
+    ).toBeUndefined();
   });
 });
 
@@ -618,6 +910,33 @@ describe("readSessionEntries", () => {
     const fs = buildTwo();
     const out = readSessionEntries({ fs, grokHome, cwd, ids: ["a", "b"], overrides: {} });
     expect(out.map((e) => e.id)).toEqual(["a", "b"]);
+  });
+
+  it("lets the host say a conversation was used just now", () => {
+    // Ordering reads the transcript, and the CLI writes it ~2.1s after a send —
+    // measured against the real binary. Without this the row you just typed
+    // into sits still for that whole wait, and a brand-new conversation is
+    // absent from the list altogether.
+    const fs = buildTwo();
+    const now = Date.parse("2026-03-01T00:00:00Z");
+    const out = readSessionEntries({
+      fs, grokHome, cwd, ids: ["a", "b"], overrides: { a: { activeAt: now } },
+    });
+    expect(out.find((e) => e.id === "a")!.updatedAt).toBe(now);
+    expect(out.find((e) => e.id === "b")!.updatedAt).toBe(Date.parse("2026-02-01T00:00:00Z"));
+  });
+
+  it("never lets a stale activity stamp outrank a newer transcript", () => {
+    // A floor, not an override. It is persisted with the rest of the session
+    // meta, so a value left by an earlier run has to lose to the file the
+    // moment the file is newer — otherwise a conversation nobody has touched
+    // keeps the top of the list.
+    const fs = buildTwo();
+    const out = readSessionEntries({
+      fs, grokHome, cwd, ids: ["b"],
+      overrides: { b: { activeAt: Date.parse("2026-01-15T00:00:00Z") } },
+    });
+    expect(out[0].updatedAt).toBe(Date.parse("2026-02-01T00:00:00Z"));
   });
 
   it("applies customName overrides", () => {
@@ -998,5 +1317,230 @@ describe("isPathInside", () => {
   it("rejects an unrelated absolute path", () => {
     const other = path.sep === "\\" ? "D:\\elsewhere\\x.png" : "/var/elsewhere/x.png";
     expect(isPathInside(root, other)).toBe(false);
+  });
+});
+
+// Opening a conversation rewrites summary.json — the CLI rebuilds
+// system_prompt.txt / prompt_context.json and restamps `updated_at` — without
+// adding a message. Ordering on that made a conversation you merely glanced at
+// jump to the top of Recent and of its project. Measured against a real
+// 1592-session store: 46 sessions were sitting above their true activity for
+// exactly this reason, which is why the owner saw it only "sometimes".
+// events.jsonl moves only when the conversation does.
+describe("session ordering follows the transcript, not a visit", () => {
+  const home = "/home/u/.grok";
+  const cwd = "/work/repo";
+  const dir = sessionsDirFor(home, cwd);
+  const summary = (id: string, updatedAt: string) => JSON.stringify({
+    info: { id, cwd },
+    session_summary: id,
+    updated_at: updatedAt,
+    num_messages: 7,
+  });
+
+  /** `visited` was opened long after its last message; `spoken` was not. */
+  const fsWithBoth = () => buildFs({
+    [path.join(home, "sessions")]: { isDir: true },
+    [dir]: { isDir: true },
+    [path.join(dir, "visited")]: { isDir: true },
+    [path.join(dir, "spoken")]: { isDir: true },
+    // Opened just now, but the transcript is ancient.
+    [path.join(dir, "visited", "summary.json")]: {
+      isDir: false, content: summary("visited", "2026-05-01T00:00:00Z"), mtimeMs: 9000,
+    },
+    [path.join(dir, "visited", "events.jsonl")]: { isDir: false, content: "", mtimeMs: 100 },
+    // Never re-opened; its transcript is the newer one.
+    [path.join(dir, "spoken", "summary.json")]: {
+      isDir: false, content: summary("spoken", "2026-01-01T00:00:00Z"), mtimeMs: 500,
+    },
+    [path.join(dir, "spoken", "events.jsonl")]: { isDir: false, content: "", mtimeMs: 500 },
+  });
+
+  it("indexSessions ranks by transcript mtime, so a visit does not promote", () => {
+    const ids = indexSessions({ fs: fsWithBoth(), grokHome: home, cwd, platform: "linux" })
+      .map((e) => e.id);
+    // summary.json mtime would have put `visited` (9000) first.
+    expect(ids).toEqual(["spoken", "visited"]);
+  });
+
+  it("readSessionEntries reports the transcript time as updatedAt", () => {
+    const entries = readSessionEntries({
+      fs: fsWithBoth(), grokHome: home, cwd, ids: ["visited", "spoken"],
+      overrides: {}, platform: "linux",
+    });
+    const byId = Object.fromEntries(entries.map((e) => [e.id, e.updatedAt]));
+    expect(byId.visited).toBe(100);
+    expect(byId.spoken).toBe(500);
+  });
+
+  it("falls back to summary.json for a conversation with no transcript yet", () => {
+    const fs = buildFs({
+      [path.join(home, "sessions")]: { isDir: true },
+      [dir]: { isDir: true },
+      [path.join(dir, "fresh")]: { isDir: true },
+      [path.join(dir, "fresh", "summary.json")]: {
+        isDir: false, content: summary("fresh", "2026-03-04T05:06:07Z"), mtimeMs: 42,
+      },
+    });
+    expect(indexSessions({ fs, grokHome: home, cwd, platform: "linux" }).map((e) => e.id))
+      .toEqual(["fresh"]);
+    const [entry] = readSessionEntries({
+      fs, grokHome: home, cwd, ids: ["fresh"], overrides: {}, platform: "linux",
+    });
+    expect(entry.updatedAt).toBe(Date.parse("2026-03-04T05:06:07Z"));
+  });
+});
+
+describe("the archive fence", () => {
+  const A = "/work/a";
+  const B = "/work/b";
+  const AWT = "/home/u/.grok/worktrees/a/feat";
+  const k = (c: string) => normalizeRepoPath(c, "linux");
+  const trusted = [
+    { cwd: A, repoCwd: A },
+    { cwd: AWT, repoCwd: A },
+    { cwd: B, repoCwd: B },
+  ];
+  const choice = (cwd: string, archived: boolean, at = 1000) => ({ cwd, at, archived });
+
+  const blocked = (archives: object, openCwds: string[] = []) =>
+    archivedProjectKeys({ archives: archives as never, openCwds, platform: "linux" });
+  const fence = (archivedProjects: ReadonlySet<string>) =>
+    remoteAuthorizedCwds({ trusted, archivedProjects, platform: "linux" });
+
+  it("fences an archived project and everything belonging to it", () => {
+    expect(fence(blocked({ [k(A)]: choice(A, true) }))).toEqual([B]);
+  });
+
+  it("fences by OWNING PROJECT, so a worktree learned later cannot slip past", () => {
+    // The blocked set names projects, and the trusted set carries each cwd's
+    // project with it. Matching exact cwds instead let a worktree the host
+    // discovered after the fence was built walk straight through.
+    const late = [...trusted, { cwd: "/home/u/.grok/worktrees/a/just-made", repoCwd: A }];
+    expect(remoteAuthorizedCwds({
+      trusted: late, archivedProjects: blocked({ [k(A)]: choice(A, true) }), platform: "linux",
+    })).toEqual([B]);
+  });
+
+  it("passes everything through when nothing is archived", () => {
+    expect(fence(blocked({}))).toEqual([A, AWT, B]);
+    // "not archived" is a real stored answer, not the absence of one.
+    expect(fence(blocked({ [k(A)]: choice(A, false) }))).toEqual([A, AWT, B]);
+  });
+
+  it("never fences a project the host has OPEN, worktrees included", () => {
+    // Opening a project does not clear its flag; fencing it anyway would blind
+    // the phone to the conversation the desk is working in.
+    expect(fence(blocked({ [k(A)]: choice(A, true) }, [A]))).toEqual([A, AWT, B]);
+  });
+
+  it("ignores a stored choice with no cwd rather than fencing everything", () => {
+    expect(fence(blocked({ x: { at: 1, archived: true } }))).toEqual([A, AWT, B]);
+  });
+});
+
+describe("expiredArchiveChoiceKeys", () => {
+  const A = "/work/a";
+  const k = (c: string) => normalizeRepoPath(c, "linux");
+  const call = (over: object = {}) =>
+    expiredArchiveChoiceKeys({
+      archives: { [k(A)]: { cwd: A, at: 1000, archived: true } },
+      newestActivityAt: () => 0,
+      platform: "linux",
+      ...over,
+    });
+
+  it("expires a choice once the project has been worked in since", () => {
+    expect(call({ newestActivityAt: () => 2000 })).toEqual([k(A)]);
+  });
+
+  it("keeps a choice when the work predates it", () => {
+    expect(call({ newestActivityAt: () => 999 })).toEqual([]);
+    expect(call({ newestActivityAt: () => 1000 })).toEqual([]);
+  });
+
+  it("keeps a choice for a project with no transcript at all", () => {
+    // 0 means "nothing ever ran here", which is not evidence of work.
+    expect(call({ newestActivityAt: () => 0 })).toEqual([]);
+  });
+
+  it("expires an explicit keep-showing-me choice on the same terms", () => {
+    expect(call({
+      archives: { [k(A)]: { cwd: A, at: 1000, archived: false } },
+      newestActivityAt: () => 2000,
+    })).toEqual([k(A)]);
+  });
+});
+
+describe("newestTranscriptMtime (the evidence a remote cannot forge)", () => {
+  // Fake fs shaped like the real store: <grokHome>/sessions/<encoded-cwd>/<uuid>/
+  const grokHome = "/home/u/.grok";
+  const cwd = "/work/a";
+  const leaf = encodeSessionCatalogLeaf(cwd);
+  const ID1 = "019fd3d2-0000-4000-8000-00000000aaaa";
+  const ID2 = "019fd3d2-0000-4000-8000-00000000bbbb";
+
+  function makeFs(files: Record<string, number>) {
+    const dirs = new Set<string>([
+      `${grokHome}/sessions`,
+      `${grokHome}/sessions/${leaf}`,
+      `${grokHome}/sessions/${leaf}/${ID1}`,
+      `${grokHome}/sessions/${leaf}/${ID2}`,
+    ].map((d) => normalizeRepoPath(d, "linux")));
+    const norm = (p: string) => normalizeRepoPath(p, "linux");
+    const byPath = new Map(Object.entries(files).map(([p, m]) => [norm(p), m]));
+    return {
+      existsSync: (p: string) => dirs.has(norm(p)) || byPath.has(norm(p)),
+      readdirSync: (p: string) =>
+        norm(p) === norm(`${grokHome}/sessions`) ? [leaf]
+        : norm(p) === norm(`${grokHome}/sessions/${leaf}`) ? [ID1, ID2]
+        : [],
+      readFileSync: () => "{}",
+      statSync: (p: string) => {
+        const key = norm(p);
+        if (byPath.has(key)) return { isDirectory: () => false, mtimeMs: byPath.get(key)! };
+        if (dirs.has(key)) return { isDirectory: () => true, mtimeMs: 0 };
+        throw new Error("ENOENT " + p);
+      },
+    } as unknown as FsLike;
+  }
+
+  const run = (files: Record<string, number>) =>
+    newestTranscriptMtime({ fs: makeFs(files), grokHome, cwd, platform: "linux" });
+
+  it("takes the newest transcript across the project's sessions", () => {
+    expect(run({
+      [`${grokHome}/sessions/${leaf}/${ID1}/events.jsonl`]: 500,
+      [`${grokHome}/sessions/${leaf}/${ID2}/events.jsonl`]: 900,
+    })).toBe(900);
+  });
+
+  it("IGNORES summary.json — the thing a mere reload rewrites", () => {
+    // This is the whole point. indexSessions falls back to summary.json so a
+    // brand-new conversation still lists, and that fallback is exactly what let
+    // a reconnecting phone manufacture "this project was worked in" by getting
+    // an empty archived session reloaded.
+    const files = {
+      [`${grokHome}/sessions/${leaf}/${ID1}/summary.json`]: 9_000_000,
+      [`${grokHome}/sessions/${leaf}/${ID2}/summary.json`]: 9_000_000,
+    };
+    expect(run(files)).toBe(0);
+    // ...and the contrast, so this cannot pass because the fixture is wrong:
+    // indexSessions DOES see those files, which is why it must not be reused
+    // for an authorization decision.
+    expect(
+      indexSessions({ fs: makeFs(files), grokHome, cwd, platform: "linux" })[0]?.mtimeMs,
+    ).toBe(9_000_000);
+  });
+
+  it("counts only the transcript when a session has both", () => {
+    expect(run({
+      [`${grokHome}/sessions/${leaf}/${ID1}/events.jsonl`]: 100,
+      [`${grokHome}/sessions/${leaf}/${ID1}/summary.json`]: 9_000_000,
+    })).toBe(100);
+  });
+
+  it("reports nothing for a project that has never been spoken to", () => {
+    expect(run({})).toBe(0);
   });
 });

@@ -14,9 +14,24 @@ import { WEBVIEW_MESSAGE_TYPES, type HostMsg, type WebviewMsg } from "./protocol
  *  hello rather than mis-parsing — clients and extensions update independently. */
 export const REMOTE_PROTO_VERSION = 1;
 
+/** Optional richer-device fields on hello / link/start. */
+export type RelayClientMeta = {
+  clientLabel?: string;
+  platform?: "win" | "mac" | "linux";
+  osLabel?: string;
+};
+
+/** Inputs shared by `buildLinkStartBody` and `helloFrame` for client metadata. */
+export type RelayClientSource = {
+  platform: string;
+  release: string;
+  appName: string;
+  isDesktop: boolean;
+};
+
 /** extension -> relay */
 export type UplinkFrame =
-  | { t: "hello"; proto: number; device?: { name?: string } }
+  | { t: "hello"; proto: number; device?: { name?: string }; client?: RelayClientMeta }
   | { t: "host"; msg: HostMsg }
   | { t: "host-to"; clientIds: string[]; msg: HostMsg }
   | { t: "snapshot"; clientId: string; msgs: HostMsg[] };
@@ -28,8 +43,15 @@ export type RelayFrame =
   | { t: "msg"; clientId: string; msg: WebviewMsg }
   | { t: "clients"; count: number };
 
-export function helloFrame(deviceName?: string): UplinkFrame {
-  return { t: "hello", proto: REMOTE_PROTO_VERSION, ...(deviceName ? { device: { name: deviceName } } : {}) };
+export function helloFrame(deviceName?: string, clientSource?: RelayClientSource): UplinkFrame {
+  const client = clientSource ? relayClientMeta(clientSource) : undefined;
+  const hasClient = !!client && !!(client.clientLabel || client.platform || client.osLabel);
+  return {
+    t: "hello",
+    proto: REMOTE_PROTO_VERSION,
+    ...(deviceName ? { device: { name: deviceName } } : {}),
+    ...(hasClient ? { client } : {}),
+  };
 }
 
 export function hostFrame(msg: HostMsg): UplinkFrame {
@@ -212,6 +234,12 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
       return isRemoteCwd(value.cwd) && typeof value.archived === "boolean"
         ? msg as WebviewMsg
         : null;
+    case "setRepoColor":
+      // Shape only: the host still allowlists the colour id and re-checks the
+      // cwd against the live catalog. Empty string is a valid "none".
+      return isRemoteCwd(value.cwd) && typeof value.color === "string"
+        ? msg as WebviewMsg
+        : null;
     // Shape-checked here like its repo-level sibling rather than riding the
     // `default` passthrough: the host validates too, but a malformed message
     // that reaches the host has already crossed the boundary this parser exists
@@ -238,6 +266,39 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
         : null;
     case "addMentionFile":
       return isRemoteMentionPath(value.relPath) ? msg as WebviewMsg : null;
+    // Project browse/save. cwd must look like a catalog path; relPath must be
+    // relative (or empty for the repo root on list). Host still runs
+    // resolveRemoteFileRoot + resolveTreePath — this only keeps garbage off the wire.
+    case "listProjectDir":
+      return isRemoteCwd(value.cwd) &&
+        (value.relPath === undefined ||
+          value.relPath === "" ||
+          isRemoteMentionPath(value.relPath))
+        ? msg as WebviewMsg
+        : null;
+    case "readProjectFile":
+      return isRemoteCwd(value.cwd) && isRemoteMentionPath(value.relPath)
+        ? msg as WebviewMsg
+        : null;
+    case "writeProjectFile": {
+      // Existing-file save only: stamp + expectedAbsPath are mandatory so the
+      // host can refuse a stale tab or a cross-project relPath collision.
+      if (!isRemoteCwd(value.cwd) || !isRemoteMentionPath(value.relPath)) return null;
+      if (typeof value.text !== "string") return null;
+      if (!isRemoteCwd(value.expectedAbsPath)) return null;
+      const stamp = value.stamp;
+      if (
+        !stamp ||
+        typeof stamp !== "object" ||
+        typeof (stamp as { mtimeMs?: unknown }).mtimeMs !== "number" ||
+        !Number.isFinite((stamp as { mtimeMs: number }).mtimeMs) ||
+        typeof (stamp as { size?: unknown }).size !== "number" ||
+        !Number.isFinite((stamp as { size: number }).size)
+      ) {
+        return null;
+      }
+      return msg as WebviewMsg;
+    }
     case "uploadFile":
       return isRemoteUploadName(value.name) ? msg as WebviewMsg : null;
     case "pasteImage":
@@ -273,9 +334,84 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
 
 /** The relay the extension talks to. Fixed in code on purpose — the pairing
  *  flow, the web portal, and the gear "AFK Pilot" section all assume this one
- *  service, so there is no user setting; change it here (and rebuild) to point
- *  a local build elsewhere (e.g. the staging relay for testing). */
+ *  service, so there is no user SETTING. A development build can override it
+ *  (see {@link resolveRelayUrl}); a published one never can. */
 export const REMOTE_RELAY_URL = "wss://afkpilot.com";
+
+/** Environment variable a DEVELOPMENT build reads instead of the constant. */
+export const RELAY_URL_ENV = "GROK_RELAY_URL";
+
+/**
+ * The relay this build should actually use.
+ *
+ * Production ignores the environment entirely: a packaged desktop app
+ * (`app.isPackaged`) and a published extension (`ExtensionMode.Production`) are
+ * both production, so nobody running a real build can be talked into pointing
+ * their client — and their linked device token — at someone else's relay. That
+ * is the whole reason there is no user setting, and the gate here is what keeps
+ * it true while still letting a build run from source reach staging.
+ *
+ * The alternative was editing the constant and remembering to change it back,
+ * which is how a staging URL reached the public repo once already.
+ *
+ * Anything malformed falls back to the constant rather than throwing: a typo in
+ * a shell variable should cost you a staging session, not a working client.
+ */
+export function resolveRelayUrl(opts: {
+  isProduction: boolean;
+  env?: Record<string, string | undefined>;
+}): string {
+  if (opts.isProduction) return REMOTE_RELAY_URL;
+  const raw = (opts.env ?? {})[RELAY_URL_ENV];
+  if (typeof raw !== "string") return REMOTE_RELAY_URL;
+  const trimmed = raw.trim();
+  // Empty authority, before parsing. ws is a special scheme, so the URL parser
+  // resolves `wss:///relay` to host `relay` — it silently promotes the first
+  // path segment to a hostname. Falling back is the honest reading of a value
+  // that named no host, and it keeps this function's rule ("an authority is
+  // required") true rather than nearly true.
+  if (/^wss?:\/\/\//i.test(trimmed)) return REMOTE_RELAY_URL;
+  // Parsed, not pattern-matched. A prefix test waves through authorities the
+  // URL parser rejects (`wss://relay.test:bad`), and that value reaches
+  // `new WebSocket()` in remote-uplink and throws synchronously — the opposite
+  // of the fallback promised above.
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return REMOTE_RELAY_URL;
+  }
+  // ws/wss only: any other scheme would send a device token somewhere it
+  // cannot go. An authority is required — `wss://` alone names nothing.
+  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") return REMOTE_RELAY_URL;
+  if (!parsed.host) return REMOTE_RELAY_URL;
+  // Credentials in the URL would be logged wherever the relay URL is logged.
+  if (parsed.username || parsed.password) return REMOTE_RELAY_URL;
+  // No query or fragment. Callers append `/uplink` and `/api/…` to this value,
+  // so `wss://relay.test?x=1` would build `wss://relay.test?x=1/uplink` — a dead
+  // endpoint that reads like the relay is down rather than like a bad variable.
+  if (parsed.search || parsed.hash) return REMOTE_RELAY_URL;
+  return `${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(/\/+$/, "");
+}
+
+/**
+ * A relay URL reduced to what is safe to write into a log: scheme and host.
+ *
+ * Everything that logs a relay URL goes through this. A base path is accepted
+ * by {@link resolveRelayUrl} (a relay can live behind a prefix), so the path may
+ * carry something the owner would not want in an output channel or in a pasted
+ * terminal dump — and scheme plus host already answers the only question a log
+ * line is asked here, which is *which relay is this*.
+ */
+export function redactRelayUrl(relayUrl: string): string {
+  try {
+    const u = new URL(String(relayUrl).trim());
+    if (u.host) return `${u.protocol}//${u.host}`;
+  } catch {
+    /* fall through */
+  }
+  return "(unparseable relay url)";
+}
 
 /** ws(s)://relay[/base] + device token -> the uplink endpoint URL. */
 export function buildUplinkUrl(relayUrl: string, token: string): string {
@@ -287,23 +423,85 @@ export function httpBaseFromRelayUrl(relayUrl: string): string {
   return relayUrl.replace(/^ws:/i, "http:").replace(/^wss:/i, "https:").replace(/\/+$/, "");
 }
 
+/** OS string embedded in the legacy device name ("Windows 11", "macOS", …). */
+export function deviceOsLabel(platform: string, release: string): string {
+  if (platform === "win32") {
+    // Windows 11 reports kernel 10.0.22000+; Windows 10 stays below.
+    const build = Number(release.split(".")[2] ?? "0");
+    return build >= 22000 ? "Windows 11" : "Windows 10";
+  }
+  if (platform === "darwin") return "macOS";
+  if (platform === "linux") return "Linux";
+  return platform;
+}
+
 /** "Dell (Windows 11)" — how this machine introduces itself to the relay
  *  (shown on the link-approval page and the portal's device list). Hostname +
  *  a human OS label; the workspace path deliberately stays out of it. */
 export function deviceDisplayName(hostname: string, platform: string, release: string): string {
-  let os: string;
-  if (platform === "win32") {
-    // Windows 11 reports kernel 10.0.22000+; Windows 10 stays below.
-    const build = Number(release.split(".")[2] ?? "0");
-    os = build >= 22000 ? "Windows 11" : "Windows 10";
-  } else if (platform === "darwin") {
-    os = "macOS";
-  } else if (platform === "linux") {
-    os = "Linux";
-  } else {
-    os = platform;
-  }
+  const os = deviceOsLabel(platform, release);
   return hostname ? `${hostname} (${os})` : os;
+}
+
+/** Coarse platform token the relay's richer device rows accept. */
+export function devicePlatformCode(platform: string): "win" | "mac" | "linux" | undefined {
+  if (platform === "win32") return "win";
+  if (platform === "darwin") return "mac";
+  if (platform === "linux") return "linux";
+  return undefined;
+}
+
+/** Client product label for richer device rows. Desktop is never derived
+ *  from `appName` — the desktop host's name would otherwise become
+ *  "Grok Build Desktop extension". */
+export function deviceClientLabel(appName: string, isDesktop: boolean): string {
+  if (isDesktop) return "Desktop app";
+  if (appName === "Visual Studio Code") return "VS Code extension";
+  if (appName === "Cursor") return "Cursor extension";
+  if (appName === "Antigravity") return "Antigravity extension";
+  const name = String(appName || "").trim();
+  return name ? `${name} extension` : "extension";
+}
+
+const RELAY_DEVICE_FIELD_MAX = 64;
+
+/** Relay `/api/link/start` optional fields: trim, drop control chars, max 64. */
+export function sanitizeRelayDeviceField(value: string): string {
+  return String(value).replace(/[\u0000-\u001F\u007F]/g, "").trim().slice(0, RELAY_DEVICE_FIELD_MAX);
+}
+
+export type LinkStartBody = {
+  name: string;
+  installId: string;
+} & RelayClientMeta;
+
+/** Same mapped `clientLabel` / `platform` / `osLabel` as link/start — omit empty. */
+export function relayClientMeta(input: RelayClientSource): RelayClientMeta {
+  const clientLabel = sanitizeRelayDeviceField(deviceClientLabel(input.appName, input.isDesktop));
+  const platform = devicePlatformCode(input.platform);
+  const osLabel = sanitizeRelayDeviceField(deviceOsLabel(input.platform, input.release));
+  return {
+    ...(clientLabel ? { clientLabel } : {}),
+    ...(platform ? { platform } : {}),
+    ...(osLabel ? { osLabel } : {}),
+  };
+}
+
+/** POST `/api/link/start` body. `name` stays the legacy "HOST (Windows 11)"
+ *  form so older relays keep working; the three extra fields are optional. */
+export function buildLinkStartBody(input: {
+  hostname: string;
+  platform: string;
+  release: string;
+  installId: string;
+  appName: string;
+  isDesktop: boolean;
+}): LinkStartBody {
+  return {
+    name: deviceDisplayName(input.hostname, input.platform, input.release),
+    installId: input.installId,
+    ...relayClientMeta(input),
+  };
 }
 
 export const INITIAL_BACKOFF_MS = 1000;

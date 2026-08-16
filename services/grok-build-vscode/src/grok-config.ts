@@ -9,22 +9,62 @@
  * actions server-side. The extension can't see that over ACP (the CLI still
  * reports the ordinary `default`/agent mode), so it reads the file directly to
  * keep the mode button honest.
+ *
+ * Path helpers resolve the standard global / project config locations host-side
+ * (Gear → Config). The renderer names an intent; the host never opens a
+ * renderer-supplied path for these actions.
  */
-
-import { existsSync } from "node:fs";
+import * as nodeFs from "node:fs";
 import * as path from "node:path";
+import { resolveGrokHome } from "./sessions";
+
+/** Stub written when global config is missing (matches prior sidebar behavior). */
+export const GLOBAL_CONFIG_STUB = "# Grok global configuration\n";
+/** Stub written when project config is missing. */
+export const PROJECT_CONFIG_STUB =
+  "# Grok project configuration\n# MCP servers here apply to this workspace only.\n";
+
+/** Absolute path of the user's global Grok config.toml under GROK_HOME. */
+export function globalConfigPath(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return path.join(resolveGrokHome(env, platform), "config.toml");
+}
 
 /** Preferred project config dir, then legacy `.grok`. */
 export const PROJECT_DIR_NAME = ".atlas";
 export const LEGACY_PROJECT_DIR_NAME = ".grok";
 
+/** Absolute path of the project-local `.atlas/config.toml` under `projectCwd`. */
+export function projectConfigPath(projectCwd: string): string {
+  return path.join(projectCwd, PROJECT_DIR_NAME, "config.toml");
+}
+
+export type ConfigFs = {
+  existsSync: (p: string) => boolean;
+  mkdirSync: (p: string, opts?: { recursive?: boolean }) => void;
+  writeFileSync: (p: string, data: string) => void;
+};
+
+/** Create a stub config.toml (and parent dir) when the file is missing. */
+export function ensureConfigToml(
+  absPath: string,
+  stub: string,
+  fs: ConfigFs = nodeFs,
+): void {
+  if (fs.existsSync(absPath)) return;
+  fs.mkdirSync(path.dirname(absPath), { recursive: true });
+  fs.writeFileSync(absPath, stub);
+}
+
 /** Resolve `{cwd}/.atlas/config.toml` or legacy `{cwd}/.grok/config.toml`. */
 export function resolveProjectConfigPath(cwd: string): string | undefined {
   if (!cwd) return undefined;
   const atlas = path.join(cwd, PROJECT_DIR_NAME, "config.toml");
-  if (existsSync(atlas)) return atlas;
+  if (nodeFs.existsSync(atlas)) return atlas;
   const legacy = path.join(cwd, LEGACY_PROJECT_DIR_NAME, "config.toml");
-  if (existsSync(legacy)) return legacy;
+  if (nodeFs.existsSync(legacy)) return legacy;
   return undefined;
 }
 
@@ -32,7 +72,7 @@ export function resolveProjectConfigPath(cwd: string): string | undefined {
 export function resolveGlobalConfigPath(grokHome: string): string | undefined {
   if (!grokHome) return undefined;
   const p = path.join(grokHome, "config.toml");
-  return existsSync(p) ? p : undefined;
+  return nodeFs.existsSync(p) ? p : undefined;
 }
 
 /** True when a `permission_mode` value means "auto-approve everything". The CLI
@@ -75,8 +115,32 @@ export function configForcesAlwaysApprove(input: {
   project?: string;
   global?: string;
 }): boolean {
+  return alwaysApproveSource(input) !== undefined;
+}
+
+/**
+ * WHICH config turned auto-approve on — and the distinction is a security
+ * boundary, not a detail.
+ *
+ * A global `~/.grok/config.toml` is the user's own standing choice, made in
+ * their own TUI. A project `.grok/config.toml` ships inside a repository, so
+ * cloning someone's code is enough to carry it, and it takes precedence. That
+ * means opening an untrusted repo can switch off every permission prompt the
+ * agent would otherwise hit before writing files or running commands.
+ *
+ * grok honours the file itself, server-side, and still reports plain agent mode
+ * over ACP — so this cannot be prevented from here, only noticed. Refusing to
+ * read it would be strictly worse: the CLI would auto-approve anyway and the UI
+ * would show "Agent" while it happened. Noticing is what makes consent possible.
+ */
+export function alwaysApproveSource(input: {
+  project?: string;
+  global?: string;
+}): "project" | "global" | undefined {
   const projectMode = input.project != null ? readUiPermissionMode(input.project) : undefined;
-  const effective =
-    projectMode ?? (input.global != null ? readUiPermissionMode(input.global) : undefined);
-  return isAlwaysApprovePermission(effective);
+  if (projectMode !== undefined) {
+    return isAlwaysApprovePermission(projectMode) ? "project" : undefined;
+  }
+  const globalMode = input.global != null ? readUiPermissionMode(input.global) : undefined;
+  return isAlwaysApprovePermission(globalMode) ? "global" : undefined;
 }

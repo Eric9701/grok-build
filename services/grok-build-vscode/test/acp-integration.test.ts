@@ -1,6 +1,6 @@
 // Integration tests for the ACP wire layer + plan-mode gate.
 //
-// Spawns the fake `grok agent stdio` from test/fixtures/fake-grok-acp.cjs
+// Spawns the fake `atlas agent stdio` from test/fixtures/fake-grok-acp.cjs
 // (~150 lines, encodes only what the protocol requires — not grok version
 // quirks) and drives src/acp.ts AcpClient against it over real JSON-RPC stdio.
 // This catches the bugs the pure tests + DOM tests can't:

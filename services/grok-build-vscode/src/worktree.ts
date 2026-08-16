@@ -33,6 +33,46 @@ export interface WorktreeRecord {
   createdAt?: number;
 }
 
+/**
+ * How a worktree create ended, as far as the host can tell.
+ *
+ * `silent` and `stalled` both mean "no completion event arrived", and they call
+ * for opposite responses — one is an older CLI that never reports, the other is
+ * a copy that genuinely did not finish. Collapsing them into one "timeout" is
+ * what let a half-copied checkout be accepted.
+ */
+export type WorktreeCreateOutcome = "created" | "failed" | "stalled" | "silent";
+
+/**
+ * Whether a `worktree/status` notification belongs to the create we are
+ * waiting on.
+ *
+ * The CLI's PROGRESS notifications carry no `worktreePath` — only the terminal
+ * one does (research/worktree.md) — so a pathless event can only be attributed
+ * when there is exactly one create it could belong to. That is why creates are
+ * serialised rather than correlated: correlation is impossible for the events
+ * that matter most.
+ */
+export function worktreeStatusIsForCreate(
+  event: { worktreePath?: string } | null | undefined,
+  opts: { target?: string; soleCreateInFlight: boolean; sameCwd?: (a: string, b: string) => boolean },
+): boolean {
+  const named = event?.worktreePath?.trim();
+  if (!named) return opts.soleCreateInFlight;
+  if (!opts.target) return false;
+  return (opts.sameCwd ?? pathsEqual)(named, opts.target);
+}
+
+/** Terminal reading of a `worktree/status` notification, or undefined for progress. */
+export function worktreeStatusVerdict(
+  event: { status?: string } | null | undefined,
+): "created" | "failed" | undefined {
+  const value = String(event?.status ?? "").toLowerCase();
+  if (value === "created" || value === "ready" || value === "done") return "created";
+  if (value === "failed" || value === "error") return "failed";
+  return undefined;
+}
+
 export interface WorktreeCreateResult {
   status: string;
   sessionId?: string;
@@ -296,20 +336,152 @@ export function worktreeCwdsForRepo(opts: {
  * A worktree list RPC is scoped to the repo of the ACP client that served it.
  * Replace that repo's rows without erasing registrations learned from clients
  * rooted in other repositories.
+ *
+ * Refreshed rows are filtered through {@link filterWorktreesForSourceRepo} so a
+ * malformed or compromised list cannot inject arbitrary paths into the cache
+ * (and thus into desktop auth roots).
  */
 export function mergeWorktreeRefresh(
   current: WorktreeRecord[],
   sourceRepo: string,
   refreshed: WorktreeRecord[],
+  opts?: { sourceGitRoot?: string },
 ): WorktreeRecord[] {
-  const refreshedPaths = new Set(refreshed.map((record) => normalizeFsPath(record.path)));
+  const trusted = filterWorktreesForSourceRepo(refreshed, sourceRepo, opts);
+  const refreshedPaths = new Set(trusted.map((record) => normalizeFsPath(record.path)));
   return [
     ...current.filter((record) =>
       !pathsEqual(record.sourceRepo, sourceRepo) &&
       !refreshedPaths.has(normalizeFsPath(record.path))
     ),
-    ...refreshed,
+    ...trusted,
   ];
+}
+
+/**
+ * Keep only worktree records that claim the requested repository as their
+ * source. Records without `sourceRepo` are refused — they cannot be attributed
+ * and must not widen auth roots.
+ */
+export function filterWorktreesForSourceRepo(
+  records: readonly WorktreeRecord[],
+  sourceRepo: string,
+  opts?: { sourceGitRoot?: string },
+): WorktreeRecord[] {
+  if (!sourceRepo) return [];
+  const roots = [sourceRepo];
+  if (opts?.sourceGitRoot && !pathsEqual(opts.sourceGitRoot, sourceRepo)) {
+    roots.push(opts.sourceGitRoot);
+  }
+  return records.filter((r) => {
+    if (!r?.path || typeof r.path !== "string") return false;
+    if (!r.sourceRepo) return false;
+    return roots.some((root) => pathsEqual(r.sourceRepo, root));
+  });
+}
+
+/**
+ * Whether an ACP-returned worktree path may enter the cache / session cwd /
+ * auth roots. The path must appear in an authoritative worktree list for the
+ * requested repository (from `git worktree list` or `_x.ai/git/worktree/list`).
+ *
+ * When `claimedSourceGitRoot` is non-empty it must match the source repo (or
+ * its git root). Empty claimed root is allowed (older payloads) as long as the
+ * path is listed.
+ */
+export function worktreePathAuthorizedForRepo(opts: {
+  worktreePath: string;
+  sourceRepo: string;
+  listedWorktreePaths: readonly string[];
+  claimedSourceGitRoot?: string;
+  sourceGitRoot?: string;
+  sameCwd?: (a: string, b: string) => boolean;
+}): boolean {
+  const same = opts.sameCwd ?? pathsEqual;
+  const wt = opts.worktreePath;
+  const source = opts.sourceRepo;
+  if (!wt || typeof wt !== "string" || !source) return false;
+  if (!opts.listedWorktreePaths.some((p) => same(p, wt))) return false;
+  // The main checkout is listed too — create must return a *different* path.
+  if (same(wt, source)) return false;
+  if (opts.sourceGitRoot && same(wt, opts.sourceGitRoot)) return false;
+  const claimed = opts.claimedSourceGitRoot?.trim();
+  if (claimed) {
+    const ok =
+      same(claimed, source) ||
+      (!!opts.sourceGitRoot && same(claimed, opts.sourceGitRoot));
+    if (!ok) return false;
+  }
+  return true;
+}
+
+/**
+ * Where the CLI records which repository a CLONE-mode worktree came from.
+ *
+ * Not every "worktree" the CLI makes is a `git worktree add`. For some repos it
+ * produces a standalone clone instead — its `.git` is a real directory with its
+ * own object store, so the source repo's `git worktree list` will never mention
+ * it, no matter how long we wait. That is not a lag; it is a different thing.
+ * The CLI leaves this file behind naming the source.
+ */
+export const CLONE_WORKTREE_SOURCE_MARKER = ".git/grok-worktree-source";
+
+/**
+ * Read the clone-mode provenance marker and say whether it names `sourceRepo`.
+ *
+ * This is what makes a clone-mode checkout trustable WITHOUT taking the agent's
+ * word for it: the claim is a file the CLI wrote on local disk, checked by us,
+ * against the repo the user actually asked to branch from. An agent that lied
+ * about a path cannot forge a marker inside a directory it does not control —
+ * and if it could write there, it already had the access.
+ *
+ * Pure over an injected reader so it is testable and so the caller decides what
+ * "read a file" means.
+ */
+export function cloneWorktreeSourceMatches(opts: {
+  worktreePath: string;
+  sourceRepo: string;
+  sourceGitRoot?: string;
+  readMarker: (markerPath: string) => string | undefined;
+  joinPath?: (a: string, b: string) => string;
+  sameCwd?: (a: string, b: string) => boolean;
+}): boolean {
+  const { worktreePath, sourceRepo } = opts;
+  if (!worktreePath || !sourceRepo) return false;
+  const same = opts.sameCwd ?? pathsEqual;
+  const join = opts.joinPath ?? ((a, b) => `${a.replace(/[\\/]+$/, "")}/${b}`);
+  let raw: string | undefined;
+  try {
+    raw = opts.readMarker(join(worktreePath, CLONE_WORKTREE_SOURCE_MARKER));
+  } catch {
+    return false;
+  }
+  const claimed = (raw ?? "").trim();
+  if (!claimed) return false;
+  // A marker naming the worktree itself proves nothing about provenance.
+  if (same(claimed, worktreePath)) return false;
+  return same(claimed, sourceRepo) || (!!opts.sourceGitRoot && same(claimed, opts.sourceGitRoot));
+}
+
+/**
+ * Parse `git worktree list --porcelain` stdout into absolute worktree paths.
+ * Pure against the text (no spawn).
+ */
+export function parseGitWorktreeListPorcelain(stdout: string): string[] {
+  if (!stdout || typeof stdout !== "string") return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const line of stdout.split(/\r?\n/)) {
+    // porcelain: "worktree /abs/path"
+    if (!line.startsWith("worktree ")) continue;
+    const p = line.slice("worktree ".length).trim();
+    if (!p) continue;
+    const key = normalizeFsPath(p);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
 }
 
 function belongsToRepo(sourceGitRoot: string | undefined, repoGitRoot: string | undefined): boolean {
@@ -334,6 +506,79 @@ export function mergeSessionIndexes(
   }
   out.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return out;
+}
+
+/** The emitter surface {@link WorktreeCreateSlots} needs from an `AcpClient`. */
+export interface WorktreeSlotClient {
+  on(event: string, fn: (...args: any[]) => void): unknown;
+  off?(event: string, fn: (...args: any[]) => void): unknown;
+}
+
+/**
+ * How many worktree creates are live on each CLI client, and the listeners that
+ * release them.
+ *
+ * Extracted from the watcher because the bug this fixes is a LIFETIME bug, and
+ * a lifetime is the one thing a source-text assertion cannot check. The
+ * watcher's correlation logic stays where it is; only the bookkeeping moved.
+ *
+ * Two properties, and both were wrong before:
+ *
+ *  - **The exit listener is registered when the slot is taken.** `exit` is
+ *    one-shot. Registering it later — at the moment a stalled create decides to
+ *    hold its slot, minutes after the CLI may have died — attaches to an event
+ *    that has already gone, and the slot outlives the process.
+ *  - **The counts are WEAK.** Only ever read by client key, never iterated, so
+ *    the weak form is a drop-in and a slot that is never released costs nothing
+ *    instead of pinning a dead process's listeners and session graph for the
+ *    life of the sidebar. The listener still releases promptly; this is what
+ *    stops a missed release from being a leak.
+ */
+export class WorktreeCreateSlots {
+  private readonly counts = new WeakMap<WorktreeSlotClient, number>();
+
+  /**
+   * Take a slot on `client`, returning its release.
+   *
+   * `release({ keep: true })` drops nothing: a STALLED create is one we stopped
+   * waiting for, not one that ended, so its slot has to outlive the call — and
+   * the exit listener stays behind as the thing that eventually frees it. Every
+   * other release drops the listener and the count together, which is what
+   * keeps an ordinary create from leaving a callback on a reused workspace
+   * client.
+   */
+  take(client: WorktreeSlotClient): (opts?: { keep?: boolean }) => void {
+    this.counts.set(client, (this.counts.get(client) ?? 0) + 1);
+    const onExit = () => this.counts.delete(client);
+    try {
+      client.on("exit", onExit);
+    } catch {
+      /* a client that cannot subscribe is bounded by its own lifetime anyway */
+    }
+    let released = false;
+    return (opts?: { keep?: boolean }) => {
+      // Idempotent: a second release would under-count, and an under-count reads
+      // as "only one create in flight" — which is exactly the state that makes a
+      // pathless progress event trusted when it should not be.
+      if (released) return;
+      released = true;
+      if (opts?.keep) return;
+      try {
+        client.off?.("exit", onExit);
+      } catch {
+        /* best effort — a disposed client has nothing to detach from */
+      }
+      const left = (this.counts.get(client) ?? 1) - 1;
+      if (left > 0) this.counts.set(client, left);
+      else this.counts.delete(client);
+    };
+  }
+
+  /** True when exactly one create is live on `client`, so a notification that
+   *  names no worktree path can only belong to it. */
+  sole(client: WorktreeSlotClient): boolean {
+    return this.counts.get(client) === 1;
+  }
 }
 
 /** Sanitize a user-typed worktree label for the create RPC (no path separators). */

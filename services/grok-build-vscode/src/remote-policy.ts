@@ -10,11 +10,12 @@
 //   - inbound  (remote client -> host): WebviewMsg, gated by capability tier.
 //   - outbound (host -> remote client): HostMsg, mirrored / transformed / suppressed.
 
-import type { HostMsg, WebviewMsg } from "./protocol";
+import type { HostMsg, HostUiCapabilities, WebviewMsg } from "./protocol";
 import { isImageChip, type FileChip } from "./chips";
 import { isPrimerText } from "./grok-primer";
 import { countsAsUserBubble } from "./plan-restore";
 import { historyEventCount } from "./rewind";
+import { cwdIsAuthorized } from "./workspace-auth";
 
 export const REMOTE_HISTORY_USER_LIMIT = 10;
 /** Keep reconnect history comfortably below the relay's 36 MiB WS ceiling. */
@@ -203,6 +204,10 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // Rearranges the remote's own sidebar and touches nothing on disk beyond a
   // globalState note. Nothing here can reach the workspace.
   setRepoArchived: "full",
+  // Host-persisted project colour (globalState / client-state file), same class
+  // as archive/pin: rearranges the remote's rail and touches nothing on disk
+  // beyond that note.
+  setRepoColor: "full",
   // Writes host state (globalState), same as the repo pin — classified with it
   // rather than as a view op, even though nothing is destroyed.
   toggleSessionPin: "full",
@@ -210,6 +215,11 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   renameSession: "view",
   // read-only workspace file-name lookup (the composer's @ popover)
   mentionQuery: "view",
+  // Project file browse (list dir + open one file). The fence is repoScopeFor
+  // + resolveTreePath — not a second root concept. Writes are a separate type
+  // (writeProjectFile) at the mutation tier below.
+  listProjectDir: "view",
+  readProjectFile: "view",
   // input/turn control (propose+)
   send: "propose",
   newSession: "propose",
@@ -217,6 +227,8 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   setMode: "propose",
   setEffort: "propose",
   setModel: "propose",
+  installCodex: "host-local",
+  cancelCodexInstall: "host-local",
   questionAnswer: "propose",
   questionCancel: "propose",
   queueSend: "propose",
@@ -224,18 +236,29 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   clearQueuedSends: "propose",
   steerSend: "propose",
   forkSession: "propose",
-  // Worktree create/apply/remove and rewind are driven by native VS Code UI on
-  // the host (input box for the worktree label, confirms, QuickPick) — a remote
-  // tap would stall on a dialog nobody at the desk can see. Desktop-only until
-  // the flows get remote-capable UI (2026-07-24; the remote client also hides
-  // these gear items).
+  // Worktree create/apply/remove: REVERTED to host-local 2026-08-07, hours
+  // after being widened to "propose" the same day. The widening was safe in
+  // itself — the authorization underneath (git-list, path containment) never
+  // changed. What made it wrong is that the handlers did not act on the
+  // session that asked: `applyWorktree`/`removeWorktree` ran against
+  // `this.focused`, and `newWorktreeSession` against `workspaceRoot()`.
+  //
+  // The session-identity fix has landed for applyWorktree/removeWorktree:
+  // the webview may send an optional `sessionId`, the host refuses a mismatch
+  // against the dispatch-resolved session before any await, and the handlers
+  // act on that session object (not a later re-lookup). newWorktreeSession
+  // remains untargeted — it creates a NEW session; its open question is repo
+  // targeting, not session identity. Widening these three back to "propose"
+  // is a deliberate separate product decision. Until then the rail's ⋯ menu
+  // still hides apply/remove on remote clients, so nothing offers a control
+  // the host will drop.
   newWorktreeSession: "host-local",
   applyWorktree: "host-local",
   removeWorktree: "host-local",
+  // Rewind discards work already on disk — stays host-local. Desktop (local
+  // host) supports it via confirmInChat; remote must not.
   rewindSession: "host-local",
-  // Edit-and-resend is a rewind underneath (native modal confirm), so it carries
-  // the same desktop-only restriction — and it discards code, which a remote tap
-  // must not trigger against a desk nobody is watching.
+  // Edit-and-resend is a rewind underneath, so the same host-local gate.
   editLastMessage: "host-local",
   // The last gate before a rewind reverts files — only the local webview answers.
   uiConfirmAnswer: "host-local",
@@ -244,35 +267,62 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   pasteImage: "propose",
   // Host validates the extension/name/bytes before staging under globalStorage.
   uploadFile: "propose",
+  // Workspace file mutation — same propose tier as upload/send, NOT view. A
+  // read-only remote must not rewrite the desk tree. Existing files only
+  // (create/delete/rename are deliberately out of scope).
+  writeProjectFile: "propose",
   removeChip: "propose",
   toggleChip: "propose",
   // attaches a chip only after an exact host mention-catalog lookup plus
   // lexical + canonical workspace containment — same composer-state class
   // as removeChip/toggleChip
   addMentionFile: "propose",
-  // recheckConnection restarts the CLI session on the host — turn control, not handshake
-  recheckConnection: "propose",
+  // Durable connection mutation is desk-only. Remote clients may only retry an
+  // already-connected provider's session through retryProviderSession.
+  recheckConnection: "host-local",
+  retryProviderSession: "propose",
   // approvals + destructive + host-CLI mutations (full only)
   permissionAnswer: "full",
   exitPlanAnswer: "full",
-  logout: "full",
+  // Provider accounts belong to the desk. A remote may observe providerState,
+  // but it must never clear credentials or open a login terminal on the host.
+  logout: "host-local",
   deleteSession: "full",
   clearAllSessions: "full",
-  updateAtlas: "full",
-  checkAtlasUpdate: "full",
   runInstallCmd: "full",
-  runAtlasLogin: "full",
+  runGrokLogin: "host-local",
   // host-local: native pickers/editors/config/mic on the dev box
+  // Replacing the CLI binary belongs here, not in "full" (2026-08-11). The
+  // binaries live on the desk machine and only the desk can replace them, so a
+  // phone offering it was offering something it has no business doing — and the
+  // remote Version & about page is now purely informational for that reason.
+  // The status still travels: `atlasUpdateStatus` is mirrored, so a phone can
+  // see the CLI is out of date while being unable to act on it.
+  updateAtlas: "host-local",
+  checkAtlasUpdate: "host-local",
   pickModel: "host-local",
   openFile: "host-local",
+  showInFolder: "host-local",
   openUrl: "host-local",
   openText: "host-local",
   openDiff: "host-local",
   exportExpr: "host-local",
+  // Opens a native directory picker on the machine running the host. A remote
+  // could neither see nor answer that dialog, so it would hang a phone on a
+  // control that never resolves.
+  addProjectFolder: "host-local",
+  // Same reasoning, and one more: closing a folder ends every conversation
+  // in it and kills their agents. A remote must never be able to do that to
+  // the machine it is borrowing.
+  removeProjectFolder: "host-local",
   openGlobalConfig: "host-local",
   openProjectConfig: "host-local",
   runMcpList: "host-local",
   showLogs: "host-local",
+  toggleDevTools: "host-local",
+  openSettings: "host-local",
+  openSettingsSurface: "host-local",
+  closeSettingsSurface: "host-local",
   moveView: "host-local",
   dropFile: "host-local",
   pickFile: "host-local",
@@ -290,6 +340,16 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   setProcessingSound: "host-local",
   setReadRepliesAloud: "host-local",
   setSummarizeRepliesAloud: "host-local",
+  // Phone dictation is first-class: the send phrase and dictionary are the
+  // same prefs the remote STT path already consumes. They write host config
+  // (like setAppPurpose), not a desk-only account or file action.
+  setVoiceSendPhrase: "propose",
+  setVoiceKeyterms: "propose",
+  // Remote surface is read-only for telemetry; the desk owns the switch.
+  setTelemetryEnabled: "host-local",
+  // Machine-global disclosure preference in ~/.grok/client-state — the web
+  // client inherits and may set it (host-owned store, not VS Code settings).
+  setAppPurpose: "propose",
   // A remote may spend one extra xAI call to shorten text it is about to speak.
   // The host independently requires that tab's reported TTS + summary prefs.
   summarizeSpeech: "propose",
@@ -302,7 +362,13 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // token — only the local webview may drive them
   remoteSignIn: "host-local",
   remoteSignOut: "host-local",
+  // Desktop gear unlink — native confirm then drop THIS machine's device token.
+  // A remote must never be able to unlink the desk it is driving.
+  unlinkRemoteDevice: "host-local",
   openRemotePortal: "host-local",
+  // Desktop update notice click-through — a phone cannot update the desk.
+  openUpdateRelease: "host-local",
+  restartToUpdate: "host-local",
 };
 
 const TIER_RANK: Record<RemoteTier, number> = { "read-only": 0, propose: 1, full: 2 };
@@ -333,13 +399,29 @@ export function allowRemoteRepoTarget(msg: WebviewMsg, isKnownCwd: (cwd: string)
     case "selectRepo":
     case "toggleRepoPin":
     case "setRepoArchived":
+    case "setRepoColor":
     case "clearAllSessions":
     case "listRepoSessions":
+    // File browse names a cwd. Without this case the default branch returns
+    // true and a remote could claim an arbitrary path that never appeared in
+    // the catalog — the exact trap the comment on this function exists for.
+    case "listProjectDir":
+    case "readProjectFile":
+    // Write names a cwd too. Without this case the default branch returns true
+    // and a remote could claim an arbitrary path — same trap as list/read.
+    case "writeProjectFile":
       return isKnownCwd(msg.cwd);
     case "resumeSession":
     // Same shape as resume: the cwd is optional (the host falls back to its own
     // bounded lookup), but when given it must name a discovered checkout.
+    // Host additionally re-checks the resolved pin home against the *live*
+    // authorized open set before mutating (closed-project pin hole).
     case "toggleSessionPin":
+    // The host discards a remote's `newSession.cwd` outright — newRemoteSession
+    // starts in that tab's own repo — so this is belt to that braces. Listed
+    // because the default branch below returns TRUE, and a cwd-bearing message
+    // that is not named here is one refactor away from being trusted.
+    case "newSession":
       return !msg.cwd || isKnownCwd(msg.cwd);
     default:
       return true;
@@ -392,6 +474,40 @@ export function repoScopeFor(
 
 // ---------- outbound: HostMsg to a remote client ----------
 
+/**
+ * Capabilities that describe THE DESK MACHINE and would be actively misleading
+ * on a phone, so they are removed from the `initialState` a remote receives.
+ *
+ * - `servesMediaRanges` — the desk host's own byte-range serving. A remote gets
+ *   media through the remote media policy instead, so inheriting this would
+ *   make the browser preload video the relay never sends.
+ * - `showInFolder` — would offer "Show in folder" on a phone for a folder that
+ *   only exists on the desk machine.
+ * - `settingsEditor` — would post `openSettingsSurface` for a VS Code tab a
+ *   phone cannot open; remotes use the in-page overlay instead.
+ *
+ * A list rather than a destructure at the call site so there is ONE place to
+ * look when a capability is added, and so the removal is testable without a
+ * whole sidebar. Belt-and-braces: `allowFromRemote` already refuses the
+ * messages these unlock. Capabilities a remote genuinely needs — the file
+ * browser, for one — must NOT be listed here.
+ */
+export const DESK_ONLY_CAPABILITIES = [
+  "servesMediaRanges",
+  "showInFolder",
+  "previewInApp",
+  "settingsEditor",
+] as const satisfies ReadonlyArray<keyof HostUiCapabilities>;
+
+/** `capabilities` as a remote may see them. Pure; see DESK_ONLY_CAPABILITIES. */
+export function capabilitiesForRemote(
+  capabilities: HostUiCapabilities,
+): HostUiCapabilities {
+  const out = { ...capabilities };
+  for (const key of DESK_ONLY_CAPABILITIES) delete out[key];
+  return out;
+}
+
 export type OutboundDisposition =
   /** Pure data — ferry as-is. */
   | "mirror"
@@ -409,9 +525,19 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   voiceTranscript: "mirror",
   voiceError: "mirror",
   initialState: "mirror",
+  providerState: "mirror",
+  codexInstallProgress: "host-local",
+  // Placement is a property of the machine running the extension, and `moveView`
+  // is host-local anyway — a remote could neither act on the hint nor need it.
+  moveViewHint: "host-local",
   showThinking: "mirror",
+  appPurpose: "mirror",
   fontScale: "mirror",
+  telemetryEnabled: "mirror",
   atlasUpdateStatus: "mirror",
+  // Desk-only installer notice / restart — a remote has nothing useful to do with it.
+  updateAvailable: "host-local",
+  updateReady: "host-local",
   initialized: "mirror",
   cliUpdating: "mirror",
   session: "mirror",
@@ -425,6 +551,11 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   chips: "mirror",
   commandsUpdate: "mirror",
   mentionResults: "mirror",
+  // Targeted answers to a phone's list/read/write. absPath on content is
+  // edit-meta only (capability-gated host-side) and round-trips on save.
+  projectDirListing: "mirror",
+  projectFileContent: "mirror",
+  projectFileWriteResult: "mirror",
   userMessage: "mirror",
   agentStart: "mirror",
   thoughtChunk: "mirror",
@@ -460,6 +591,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   hostNotice: "mirror",
   xaiNotification: "mirror",
   subagentUpdate: "mirror",
+  childStream: "mirror",
   runProgress: "mirror",
   commandOutput: "mirror",
   expandCommandOutputs: "mirror",
@@ -490,6 +622,247 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   steerUnavailable: "mirror",
   usage: "mirror",
 };
+
+/**
+ * Whether delivering this HostMsg to a remote client requires a live authorized
+ * project scope (open folder / worktree). Independent of {@link OUTBOUND_DISPOSITION}
+ * (mirror vs host-local): a mirrored transcript is still project data.
+ *
+ * - `none` — device prefs, errors, UI chrome with no project path fields. Always OK.
+ * - `scope` — conversation/session payload; caller must pass the session or
+ *   repo cwd, which must be in the live authorized set.
+ * - `entries` — list frames; every entry's `cwd` must be authorized (empty list OK).
+ * - `message-cwd` — frame carries its own `cwd` field that must be authorized.
+ * - `repos-catalog` — `repos` frame: every entry cwd authorized; selectedCwd /
+ *   activeCwd authorized or empty (empty = unbound after rehome; closed ≠ empty).
+ * - `optional-cwd` — frame carries a `cwd` that is authorized or empty (no
+ *   closed-project leak via reconnect shell).
+ *
+ * Exhaustive over HostMsg so a new type cannot ship without a classification.
+ */
+export type OutboundProjectAuth =
+  | "none"
+  | "scope"
+  | "entries"
+  | "message-cwd"
+  | "repos-catalog"
+  | "optional-cwd";
+
+export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth> = {
+  // Device-global / host chrome — not project data.
+  moveViewHint: "none",
+  showThinking: "none",
+  appPurpose: "none",
+  fontScale: "none",
+  telemetryEnabled: "none",
+  atlasUpdateStatus: "none",
+  updateAvailable: "none",
+  updateReady: "none",
+  cliUpdating: "none",
+  onboarding: "none",
+  providerState: "none",
+  codexInstallProgress: "none",
+  expandCommandOutputs: "none",
+  steerByDefault: "none",
+  soundNotifications: "none",
+  processingSound: "none",
+  readRepliesAloud: "none",
+  summarizeRepliesAloud: "none",
+  moveComposerCaret: "none",
+  remoteStatus: "none",
+  error: "none",
+  hostNotice: "none",
+  focusInput: "none",
+  openModePopover: "none",
+  // Open-folder catalog — project-bearing selectedCwd/activeCwd/entries validated.
+  repos: "repos-catalog",
+  // Safe wipe — no project path fields.
+  clearMessages: "none",
+  // Reconnect shell carries cwd; empty or authorized only.
+  initialState: "optional-cwd",
+  // Session-start chrome; delivered via emit → sendRemoteSession with scope.
+  initialized: "scope",
+  // voiceConfigured is project-scoped (sendPhrase / key resolution per cwd) —
+  // a closed or re-homed tab must not keep the prior project's voice prefs.
+  // Content-bearing voiceSubmit / voiceTranscript / voicePartial use scope so a
+  // closed-project capture cannot land after rehome. voiceState / voiceError are
+  // control chrome without project metadata.
+  voiceState: "none",
+  voiceConfigured: "scope",
+  voicePartial: "scope",
+  voiceSubmit: "scope",
+  voiceTranscript: "scope",
+  voiceError: "none",
+  // History / session lists — empty entries are fine; a closed cwd in an entry is not.
+  sessions: "entries",
+  pinnedSessions: "entries",
+  repoSessions: "message-cwd",
+  sessionName: "message-cwd",
+  // Session-scoped live + restore payload — requires authorized session/repo cwd.
+  session: "scope",
+  sessionDot: "scope",
+  chips: "scope",
+  modelChanged: "scope",
+  modeChanged: "scope",
+  planModeAvailability: "scope",
+  commandsUpdate: "scope",
+  mentionResults: "scope",
+  // Carry the scoped repo cwd; authorize against that field (message-cwd) so a
+  // closed project cannot keep answering file reads after rehome.
+  projectDirListing: "message-cwd",
+  projectFileContent: "message-cwd",
+  projectFileWriteResult: "message-cwd",
+  userMessage: "scope",
+  agentStart: "scope",
+  thoughtChunk: "scope",
+  messageChunk: "scope",
+  userMessageChunk: "scope",
+  media: "scope",
+  imageFull: "scope",
+  speechSummary: "scope",
+  historyReplay: "scope",
+  historyBatch: "scope",
+  permissionHistoryQueue: "scope",
+  planHistoryQueue: "scope",
+  toolCall: "scope",
+  toolCallUpdate: "scope",
+  permissionRequest: "scope",
+  permissionOptions: "scope",
+  permissionResolved: "scope",
+  exitPlanRequest: "scope",
+  planResolved: "scope",
+  questionRequest: "scope",
+  planNotice: "scope",
+  autoCompactNotice: "scope",
+  planBlocked: "scope",
+  promptComplete: "scope",
+  contextUsage: "scope",
+  agentReset: "scope",
+  agentError: "scope",
+  agentEnd: "scope",
+  exit: "scope",
+  setBusy: "scope",
+  summarizing: "scope",
+  sessionContext: "scope",
+  xaiNotification: "scope",
+  subagentUpdate: "scope",
+  childStream: "scope",
+  runProgress: "scope",
+  commandOutput: "scope",
+  setAllToolDetails: "scope",
+  restoreComposer: "scope",
+  truncateMessages: "scope",
+  uiConfirmRequest: "scope",
+  queuedSends: "scope",
+  submitQueuedSend: "scope",
+  steerUnavailable: "scope",
+  usage: "scope",
+};
+
+/**
+ * Frames that carry their own authorization cwd and are therefore ABOUT a
+ * project rather than payload FROM the recipient's conversation.
+ *
+ * This distinction is not cosmetic. The uplink filters recipients to the tab
+ * that owns a delivery's scope, which is right for transcript and wrong here:
+ * the projects rail asks for a preview of a SIBLING project on purpose, so
+ * "the recipient does not own this cwd" is the normal case, not an attack.
+ * Treating them alike silently dropped every `repoSessions` answer over the
+ * relay — the phone's rail then sat on "Update Grok Build to preview" forever
+ * against a host that was perfectly current and had already answered.
+ *
+ * Authorization is unchanged either way: {@link mayDeliverRemoteHostMsg} checks
+ * the frame's OWN `cwd` against the live authorized set and ignores the scope
+ * argument for these types.
+ */
+export function isSelfScopedOutbound(type: HostMsg["type"]): boolean {
+  return OUTBOUND_PROJECT_AUTH[type] === "message-cwd";
+}
+
+/**
+ * Sole authorization predicate for remote HostMsg delivery. Callers pass the
+ * session/repo cwd as `scopeCwd` for `scope` types; list frames are checked
+ * against their entries (and `message-cwd` against the frame's own field).
+ *
+ * Returns false when project/session/transcript data would leave for a closed
+ * folder — independent of whether revoke already cleared per-tab mappings.
+ */
+export function mayDeliverRemoteHostMsg(
+  msg: HostMsg,
+  authorizedCwds: readonly string[],
+  scopeCwd: string | undefined,
+  sameCwd: (a: string, b: string) => boolean,
+): boolean {
+  if (msg.type === "historyBatch") {
+    return msg.messages.every((nested) =>
+      mayDeliverRemoteHostMsg(nested, authorizedCwds, scopeCwd, sameCwd),
+    );
+  }
+  switch (OUTBOUND_PROJECT_AUTH[msg.type]) {
+    case "none":
+      return true;
+    case "entries": {
+      const entries =
+        msg.type === "sessions" || msg.type === "pinnedSessions"
+          ? msg.entries
+          : [];
+      return entries.every(
+        (e) => !e.cwd || cwdIsAuthorized(e.cwd, authorizedCwds, sameCwd),
+      );
+    }
+    case "repos-catalog": {
+      if (msg.type !== "repos") return false;
+      // Empty selected/active is intentional after rehome (unbound tab). A
+      // non-empty closed path is a leak — refuse rather than mirror builders.
+      if (msg.selectedCwd && !cwdIsAuthorized(msg.selectedCwd, authorizedCwds, sameCwd)) {
+        return false;
+      }
+      if (msg.activeCwd && !cwdIsAuthorized(msg.activeCwd, authorizedCwds, sameCwd)) {
+        return false;
+      }
+      return msg.entries.every(
+        (e) => !e.cwd || cwdIsAuthorized(e.cwd, authorizedCwds, sameCwd),
+      );
+    }
+    case "optional-cwd": {
+      if (msg.type !== "initialState") return false;
+      return !msg.cwd || cwdIsAuthorized(msg.cwd, authorizedCwds, sameCwd);
+    }
+    case "message-cwd": {
+      if (msg.type === "repoSessions") {
+        if (!cwdIsAuthorized(msg.cwd, authorizedCwds, sameCwd)) return false;
+        return msg.entries.every(
+          (e) => !e.cwd || cwdIsAuthorized(e.cwd, authorizedCwds, sameCwd),
+        );
+      }
+      if (msg.type === "sessionName") {
+        return cwdIsAuthorized(msg.cwd, authorizedCwds, sameCwd);
+      }
+      // The file-browser answers. They were classified `message-cwd` above but
+      // never handled here, so all three fell through to `false` and every one
+      // was dropped: the panel just sat on "Loading…" forever. The whole remote
+      // file browser was dead at this gate, and nothing caught it because the
+      // button that opens it was separately invisible on the client.
+      //
+      // Same rule as the two above, and the reason this classification exists at
+      // all: a project closed between the request and the answer must not still
+      // be answering reads, so the cwd is authorized against the LIVE set here
+      // rather than trusted from when the request was let in.
+      if (
+        msg.type === "projectDirListing" ||
+        msg.type === "projectFileContent" ||
+        msg.type === "projectFileWriteResult"
+      ) {
+        return cwdIsAuthorized(msg.cwd, authorizedCwds, sameCwd);
+      }
+      return false;
+    }
+    case "scope":
+      return cwdIsAuthorized(scopeCwd, authorizedCwds, sameCwd);
+    default:
+      return false;
+  }
+}
 
 // ---------- media inlining ----------
 

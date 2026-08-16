@@ -41,6 +41,9 @@ import {
   resolveModelId,
   routeSessionUpdate,
   summarizeBackgroundCommand,
+  isForeignSessionUpdate,
+  updateHidesFromScrollback,
+  childStreamFromRoute,
 } from "../src/acp-dispatch";
 
 describe("parseAcpLine", () => {
@@ -84,7 +87,23 @@ describe("parseAcpLine", () => {
     if (r?.kind === "session-update") {
       expect(r.update.sessionUpdate).toBe("agent_message_chunk");
       expect(r.meta).toEqual({ agentTimestampMs: 1_783_845_298_123, isReplay: true });
+      expect(r.sessionId).toBeUndefined();
     }
+  });
+
+  it("keeps params.sessionId on a session/update (the child-stream demux key)", () => {
+    const r = parseAcpLine(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "child-sess-1",
+          update: { sessionUpdate: "agent_message_chunk", content: { text: "hi" } },
+        },
+      }),
+    );
+    expect(r?.kind).toBe("session-update");
+    if (r?.kind === "session-update") expect(r.sessionId).toBe("child-sess-1");
   });
 
   it("recognizes a server->client request (method present)", () => {
@@ -174,6 +193,15 @@ describe("routeSessionUpdate", () => {
   it("handles missing content.text gracefully", () => {
     const r = routeSessionUpdate({ sessionUpdate: "agent_message_chunk" });
     expect(r).toEqual({ event: "messageChunk", text: "" });
+  });
+
+  it("drops user_message_chunk with hideFromScrollback", () => {
+    const r = routeSessionUpdate({
+      sessionUpdate: "user_message_chunk",
+      content: { text: "<system-reminder>wake</system-reminder>" },
+      _meta: { hideFromScrollback: true },
+    });
+    expect(r).toBeNull();
   });
 
   it("routes task_backgrounded / task_completed to their own events (not generic update)", () => {
@@ -347,6 +375,32 @@ describe("autoCompactStartedNote (surface silent automatic compaction)", () => {
     expect(autoCompactStartedNote({ sessionUpdate: "subagent_finished" })).toBeNull();
     expect(autoCompactStartedNote(null)).toBeNull();
     expect(autoCompactStartedNote({})).toBeNull();
+  });
+});
+
+describe("isForeignSessionUpdate / childStreamFromRoute", () => {
+  it("treats a different sessionId as foreign only when both ids are known", () => {
+    expect(isForeignSessionUpdate("child", "parent")).toBe(true);
+    expect(isForeignSessionUpdate("parent", "parent")).toBe(false);
+    expect(isForeignSessionUpdate(undefined, "parent")).toBe(false);
+    expect(isForeignSessionUpdate("child", undefined)).toBe(false);
+    expect(isForeignSessionUpdate("", "parent")).toBe(false);
+  });
+
+  it("maps renderable child routes and drops parent-chrome events", () => {
+    expect(childStreamFromRoute("c1", { event: "messageChunk", text: "hi" })).toEqual({
+      childSessionId: "c1", event: "messageChunk", text: "hi",
+    });
+    expect(childStreamFromRoute("c1", { event: "toolCall", payload: { toolCallId: "t" } })).toEqual({
+      childSessionId: "c1", event: "toolCall", call: { toolCallId: "t" },
+    });
+    expect(childStreamFromRoute("c1", { event: "modeChanged", modeId: "plan" })).toBeNull();
+  });
+
+  it("detects hideFromScrollback on the update object", () => {
+    expect(updateHidesFromScrollback({ _meta: { hideFromScrollback: true } })).toBe(true);
+    expect(updateHidesFromScrollback({ _meta: {} })).toBe(false);
+    expect(updateHidesFromScrollback(null)).toBe(false);
   });
 });
 
@@ -589,15 +643,15 @@ describe("credential vs entitlement classification (#58 — a missing subscripti
   // 401 / internal auth failures → -32000 with one of two FIXED strings;
   // 403 → plain internal_error (-32603) carrying the backend's message —
   // deliberately NOT auth, because the credential was accepted.
-  const SESSION_EXPIRED = "Session expired. Run `grok login` to re-authenticate.";
-  const AUTH_FAILED = "Authentication failed. Run `grok login`, set XAI_API_KEY, or add api_key to ~/.grok/config.toml.";
+  const SESSION_EXPIRED = "Session expired. Run `atlas login` to re-authenticate.";
+  const AUTH_FAILED = "Authentication failed. Run `atlas login`, set XAI_API_KEY, or add api_key to ~/.grok/config.toml.";
   const SUBSCRIPTION_403 = "The model 'grok-build' requires a Grok subscription.";
   // The CLI appends this when XAI_API_KEY is set but a cached OAuth session
   // shadows it — advice the sign-in overlay would exactly invert.
   const SUBSCRIPTION_403_WITH_KEY_HINT =
     SUBSCRIPTION_403 +
     "\n\nYou have an API key set (XAI_API_KEY). Your cached OAuth session is being used instead. " +
-    "To use your API key, run `grok logout` or type /logout in the TUI.";
+    "To use your API key, run `atlas logout` or type /logout in the TUI.";
 
   it("isCredentialError: the structured -32000 auth_required code wins regardless of wording", () => {
     expect(isCredentialError({ code: AUTH_REQUIRED_ERROR_CODE, message: "odd wording" })).toBe(true);
@@ -607,7 +661,7 @@ describe("credential vs entitlement classification (#58 — a missing subscripti
   it("isCredentialError: matches the CLI's fixed credential strings", () => {
     expect(isCredentialError({ code: -32603, data: SESSION_EXPIRED })).toBe(true);
     expect(isCredentialError({ code: -32603, data: AUTH_FAILED })).toBe(true);
-    expect(isCredentialError(new Error("Not logged in. Run `grok login`."))).toBe(true);
+    expect(isCredentialError(new Error("Not logged in. Run `atlas login`."))).toBe(true);
     expect(isCredentialError(new Error("401 Unauthorized"))).toBe(true);
     expect(isCredentialError(new Error("invalid API key"))).toBe(true);
   });
@@ -632,7 +686,7 @@ describe("credential vs entitlement classification (#58 — a missing subscripti
     expect(notice).toMatch(/not a sign-in issue/i);
     expect(notice).toMatch(/doesn't have Atlas access/);
     expect(notice).toContain(SUBSCRIPTION_403);
-    expect(notice).toContain("grok logout"); // the shadowed-key hint must survive verbatim
+    expect(notice).toContain("atlas logout"); // the shadowed-key hint must survive verbatim
   });
 
   it("entitlementNoticeText: generic billing wording is not over-diagnosed as missing access", () => {
@@ -1061,6 +1115,18 @@ describe("sumUsage (session total is derived, not patched)", () => {
       { usage: { inputTokens: 250, outputTokens: 40, modelCalls: 3, costUsdTicks: 25_000_000 } },
     ]);
     expect(out).toEqual({ inputTokens: 350, outputTokens: 50, modelCalls: 4, costUsdTicks: 35_000_000 });
+  });
+
+  it("recognizes Codex image generation only in a Codex provider session", () => {
+    const captured = {
+      toolCallId: "exec-imagegen-1",
+      kind: "other",
+      title: "Image generation",
+      rawInput: { id: "exec-imagegen-1" },
+    };
+    expect(isMediaGenToolCall(captured, "codex")).toBe(true);
+    expect(isMediaGenToolCall(captured, "grok")).toBe(false);
+    expect(isMediaGenToolCall({ ...captured, kind: "execute" }, "codex")).toBe(false);
   });
 
   it("makePermissionCancelledResponse declines without inventing an option id", () => {

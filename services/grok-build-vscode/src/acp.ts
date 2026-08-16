@@ -1,6 +1,7 @@
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface, Interface } from "node:readline";
 import { EventEmitter } from "node:events";
+import * as path from "node:path";
 import {
   collectToolImages,
   contextUsedFromUpdateEnvelope,
@@ -21,6 +22,7 @@ import {
   parseAcpLine,
   resolveModelId,
   routeSessionUpdate,
+  isForeignSessionUpdate,
 } from "./acp-dispatch";
 import {
   PLAN_BLOCKED_CODE,
@@ -31,9 +33,13 @@ import {
   shouldBlockWrite,
 } from "./plan-gate";
 import { resolveGrokHome } from "./sessions";
+import { resolveCodexHome } from "./codex-cli-locator";
+import { inferCodexGeneratedImagePath } from "./media-serve";
 import { filterAdvertisedCommands } from "./slash-filter";
 import { grokCliNeedsShell } from "./cli-process";
 import { resolvedTerminalShellDialect } from "./terminal-manager";
+import type { AcpBackend, AcpProvider, BackendSessionListResult } from "./acp-backend";
+import { buildGrokAgentArgs, grokBackend } from "./grok-backend";
 import {
   parseWorktreeApply,
   parseWorktreeCreate,
@@ -65,6 +71,7 @@ export interface AcpClientOptions {
   effort?: EffortLevel;
   env?: NodeJS.ProcessEnv;
   log: (msg: string) => void;
+  backend?: AcpBackend;
 }
 
 export interface ModelInfo {
@@ -111,6 +118,7 @@ export interface PermissionRequest {
     rawInput?: any;
   };
   options: PermissionOption[];
+  _meta?: any;
 }
 
 export interface ExitPlanRequest {
@@ -158,19 +166,17 @@ type Pending = {
   onResolve?: (value: any) => void;
 };
 
-export function buildGrokAgentArgs(effort?: EffortLevel): string[] {
-  // `--reasoning-effort` is an `agent`-level flag, so it must precede the `stdio`
-  // subcommand (after `stdio` the CLI errors "unexpected argument"). Only the
-  // values grok actually accepts are offered (none|minimal|low|medium|high|xhigh);
-  // the bogus `max` we used to expose made grok exit with code 2 (see #3/#4).
-  return effort ? ["agent", "--reasoning-effort", effort, "stdio"] : ["agent", "stdio"];
-}
+export { buildGrokAgentArgs } from "./grok-backend";
 
 export class AcpClient extends EventEmitter {
   private proc?: ChildProcessWithoutNullStreams;
   private rl?: Interface;
   private nextId = 1;
   private pending = new Map<number, Pending>();
+  private readonly backend: AcpBackend;
+
+  readonly provider: AcpProvider;
+  readonly usesClientPlanGate: boolean;
 
   sessionId?: string;
   currentModelId?: string;
@@ -179,6 +185,7 @@ export class AcpClient extends EventEmitter {
   availableCommands: SlashCommand[] = [];
   lastMeta?: PromptResultMeta;
   private lastContextUsed?: number;
+  private currentSessionTitle?: string;
   /**
    * The session's effective reasoning effort. Seeded from the spawn flag
    * (`opts.effort`), updated by a live `setReasoningEffort`, and CARRIED through a
@@ -220,20 +227,31 @@ export class AcpClient extends EventEmitter {
 
   constructor(private opts: AcpClientOptions) {
     super();
+    this.backend = opts.backend ?? grokBackend;
+    this.provider = this.backend.provider;
+    this.usesClientPlanGate = this.backend.usesClientPlanGate;
     this.currentReasoningEffort = this.opts.effort || undefined;
   }
 
   async start(): Promise<void> {
-    const args = buildGrokAgentArgs(this.opts.effort);
+    const spawnSpec = this.backend.spawn({
+      cliPath: this.opts.cliPath,
+      cwd: this.opts.cwd,
+      effort: this.opts.effort,
+      env: this.opts.env ?? process.env,
+    });
+    const { args } = spawnSpec;
+    const needsShell = this.provider === "grok"
+      ? grokCliNeedsShell(this.opts.cliPath)
+      : spawnSpec.shell;
 
-    this.opts.log(`spawning ${this.opts.cliPath} ${args.join(" ")} (cwd=${this.opts.cwd})`);
+    this.opts.log(`spawning ${spawnSpec.command} ${args.join(" ")} (cwd=${this.opts.cwd})`);
     // Node 18+ refuses to spawn .cmd/.bat without `shell: true` on Windows
     // (CVE-2024-27980). Enable shell mode for those so installs that resolve to
     // a .cmd shim (e.g. some package managers, our test fake-CLI) still work.
-    const needsShell = grokCliNeedsShell(this.opts.cliPath);
-    this.proc = spawn(this.opts.cliPath, args, {
+    this.proc = spawn(spawnSpec.command, args, {
       cwd: this.opts.cwd,
-      env: this.opts.env ?? process.env,
+      env: spawnSpec.env,
       shell: needsShell,
     });
 
@@ -254,7 +272,7 @@ export class AcpClient extends EventEmitter {
       this.emit("stderr", text);
     });
     this.proc.on("exit", (code) => {
-      this.opts.log(`grok exited with code ${code}`);
+      this.opts.log(`${this.provider === "grok" ? "grok" : "codex adapter"} exited with code ${code}`);
       // Drop the process handle so later writes are skipped rather than hitting
       // a destroyed pipe (`this.proc?` alone stays truthy after exit).
       this.proc = undefined;
@@ -267,7 +285,7 @@ export class AcpClient extends EventEmitter {
       for (const [id, p] of this.pending) {
         this.pending.delete(id);
         if (p.timer) clearTimeout(p.timer);
-        p.reject(new Error(`Atlas process exited (code ${code})`));
+        p.reject(new Error(`${this.backend.processName} exited (code ${code})`));
       }
       this.emit("exit", code);
     });
@@ -287,10 +305,11 @@ export class AcpClient extends EventEmitter {
   }
 
   async newSession(modelId?: string): Promise<{ sessionId: string }> {
-    const res = await this.request("session/new", {
+    const raw = await this.request("session/new", {
       cwd: this.opts.cwd,
       mcpServers: [],
     });
+    const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = res.sessionId;
     this.availableModels = (res.models?.availableModels ?? []).map((m: any) => ({
       modelId: m.modelId,
@@ -324,11 +343,12 @@ export class AcpClient extends EventEmitter {
   }
 
   async loadSession(sessionId: string, modelId?: string): Promise<{ sessionId: string }> {
-    const res = await this.request("session/load", {
+    const raw = await this.request("session/load", {
       sessionId,
       cwd: this.opts.cwd,
       mcpServers: [],
     });
+    const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = sessionId;
     if (res?.models?.availableModels) {
       this.availableModels = res.models.availableModels.map((m: any) => ({
@@ -376,13 +396,15 @@ export class AcpClient extends EventEmitter {
       this.currentReasoningEffort &&
       Array.isArray(target?.reasoningEfforts) &&
       target!.reasoningEfforts.includes(this.currentReasoningEffort);
-    const res = await this.request("session/set_model", {
-      sessionId: this.sessionId,
+    const call = this.backend.setModel(this.sessionId, modelId, carry ? this.currentReasoningEffort : undefined);
+    const res = await this.request(call.method, call.params);
+    const state = this.backend.configState(res, {
       modelId,
-      ...(carry ? { _meta: { reasoningEffort: this.currentReasoningEffort } } : {}),
+      reasoningEffort: carry ? this.currentReasoningEffort : undefined,
+      modeId: this.currentModeId,
     });
     const ok = res?._meta?.model?.Ok;
-    if (ok) {
+    if (this.backend.modelSetSucceeded(res)) {
       // grok's set_model echoes a *versioned* id ("grok-build-0.1") that carries no
       // name or context size and isn't in availableModels ("grok-build"). We
       // requested a list id (the picker only ever offers list ids), so anchor to
@@ -390,9 +412,15 @@ export class AcpClient extends EventEmitter {
       // id somehow isn't in the list (e.g. a stale grok.defaultModel) do we fall
       // back to normalizing grok's echo.
       const requestedInList = this.availableModels.some((m) => m.modelId === modelId);
-      this.currentModelId = requestedInList
-        ? modelId
-        : (resolveModelId(ok, this.availableModels) ?? ok);
+      this.currentModelId = this.provider === "grok"
+        ? (requestedInList ? modelId : (resolveModelId(ok, this.availableModels) ?? ok))
+        : (state.modelId ?? modelId);
+      if (this.provider !== "grok") {
+        this.currentReasoningEffort = state.reasoningEffort;
+        this.currentModeId = state.modeId;
+        const current = this.availableModels.find((entry) => entry.modelId === this.currentModelId);
+        if (current) current.reasoningEffort = this.currentReasoningEffort;
+      }
       this.emit("modelChanged", this.currentModelId);
     }
   }
@@ -423,21 +451,42 @@ export class AcpClient extends EventEmitter {
   async setReasoningEffort(level: string): Promise<boolean> {
     if (!this.sessionId) throw new Error("no session");
     if (!level) return false; // "" = unset → cannot be expressed as an override
-    const res = await this.request("session/set_model", {
-      sessionId: this.sessionId,
-      modelId: this.currentModelId,
-      _meta: { reasoningEffort: level },
-    });
-    return !!res?._meta?.model?.Ok;
+    const call = this.backend.setReasoningEffort(this.sessionId, this.currentModelId, level);
+    if (!call) return false;
+    const res = await this.request(call.method, call.params);
+    const accepted = this.backend.modelSetSucceeded(res);
+    if (accepted && this.provider !== "grok") {
+      const state = this.backend.configState(res, {
+        modelId: this.currentModelId,
+        reasoningEffort: level,
+        modeId: this.currentModeId,
+      });
+      this.currentModelId = state.modelId ?? this.currentModelId;
+      this.currentReasoningEffort = state.reasoningEffort;
+      this.currentModeId = state.modeId;
+      const current = this.availableModels.find((entry) => entry.modelId === this.currentModelId);
+      if (current) current.reasoningEffort = this.currentReasoningEffort;
+    }
+    return accepted;
   }
 
   async setMode(modeId: string): Promise<void> {
     if (!this.sessionId) throw new Error("no session");
-    await this.request("session/set_mode", {
-      sessionId: this.sessionId,
+    const call = this.backend.setMode(this.sessionId, modeId);
+    const res = await this.request(call.method, call.params);
+    const state = this.backend.configState(res, {
+      modelId: this.currentModelId,
+      reasoningEffort: this.currentReasoningEffort,
       modeId,
     });
-    // current_mode_update will arrive as a session/update
+    if (this.provider !== "grok" && state.modeId) {
+      this.currentModelId = state.modelId ?? this.currentModelId;
+      this.currentReasoningEffort = state.reasoningEffort;
+      this.currentModeId = state.modeId;
+      const current = this.availableModels.find((entry) => entry.modelId === this.currentModelId);
+      if (current) current.reasoningEffort = this.currentReasoningEffort;
+      this.emit("modeChanged", state.modeId);
+    }
   }
 
   async prompt(textOrBlocks: string | PromptContentBlock[]): Promise<PromptResultMeta> {
@@ -446,14 +495,35 @@ export class AcpClient extends EventEmitter {
       typeof textOrBlocks === "string"
         ? [{ type: "text", text: textOrBlocks }]
         : textOrBlocks;
-    const result = await this.request("session/prompt", {
+    const raw = await this.request("session/prompt", {
       sessionId: this.sessionId,
       prompt,
     });
+    const result = this.backend.normalizePromptResult(raw);
     const meta = extractPromptMeta(result);
     this.lastMeta = meta;
     this.emit("promptComplete", meta);
     return meta;
+  }
+
+  async listSessions(cwd = this.opts.cwd, platform: NodeJS.Platform = process.platform): Promise<BackendSessionListResult> {
+    const result = await this.backend.listSessions((method, params) => this.request(method, params), cwd, platform);
+    if (this.provider !== "codex" || !this.sessionId || result.sessions.some((entry) => entry.sessionId === this.sessionId)) {
+      return result;
+    }
+    return {
+      ...result,
+      sessions: [{ sessionId: this.sessionId, cwd: this.opts.cwd, title: this.currentSessionTitle }, ...result.sessions],
+    };
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    if (this.provider !== "codex") throw new Error("This backend does not support ACP session deletion.");
+    await this.request("session/delete", { sessionId });
+  }
+
+  isCredentialError(error: unknown): boolean {
+    return this.backend.isCredentialError(error);
   }
 
   /**
@@ -703,7 +773,7 @@ export class AcpClient extends EventEmitter {
   /**
    * Tear the process down, resolving only once it has *actually* exited — a
    * caller that must replace the binary (`grok update`) can't race a still-open
-   * Windows file lock on `grok.exe`. `kill()` only signals; the OS releases the
+   * Windows file lock on `atlas.exe`. `kill()` only signals; the OS releases the
    * lock a beat later when the process finishes tearing down. On win32 the grok
    * agent backgrounds subagent / command children that a parent-only kill would
    * orphan (and which keep the executable locked), so kill the whole tree via
@@ -717,6 +787,30 @@ export class AcpClient extends EventEmitter {
     if (!proc || proc.exitCode !== null || proc.signalCode !== null) {
       try { proc?.kill(); } catch { /* already gone */ }
       return Promise.resolve();
+    }
+    if (this.provider === "codex") {
+      return new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve();
+        };
+        const abruptKill = () => {
+          if (process.platform === "win32" && proc.pid !== undefined) {
+            try {
+              const tk = spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"]);
+              tk.on("error", () => { try { proc.kill(); } catch { /* already gone */ } });
+            } catch { try { proc.kill(); } catch { /* already gone */ } }
+          } else {
+            try { proc.kill(); } catch { /* already gone */ }
+          }
+        };
+        const timer = setTimeout(() => { abruptKill(); finish(); }, timeoutMs);
+        proc.once("exit", finish);
+        try { proc.stdin.end(); } catch { abruptKill(); }
+      });
     }
     return new Promise<void>((resolve) => {
       let done = false;
@@ -776,7 +870,7 @@ export class AcpClient extends EventEmitter {
       this.pending.set(id, entry);
       if (!this.writeLine(makeRequest(id, method, params))) {
         this.pending.delete(id);
-        reject(new Error(`Atlas process is not running (${method})`));
+        reject(new Error(`Grok process is not running (${method})`));
         return;
       }
       const timeoutMs = method === "session/prompt" ? 1_800_000 : 120_000;
@@ -811,7 +905,12 @@ export class AcpClient extends EventEmitter {
       if (p) {
         this.pending.delete(ev.id as number);
         if (p.timer) clearTimeout(p.timer);
-        if (ev.error) p.reject(ev.error);
+        if (ev.error) {
+          if (this.provider === "codex" && this.backend.isCredentialError(ev.error)) {
+            this.emit("credentialError", ev.error);
+          }
+          p.reject(ev.error);
+        }
         else {
           try { p.onResolve?.(ev.result); }
           catch (e) { this.opts.log(`[acp] response hook failed: ${(e as Error).message}`); }
@@ -821,20 +920,41 @@ export class AcpClient extends EventEmitter {
       return;
     }
     if (ev.kind === "session-update") {
-      this.handleSessionUpdate(ev.update, ev.meta);
+      this.handleSessionUpdate(ev.update, ev.meta, ev.sessionId);
       return;
     }
     void this.handleServerRequest({ id: ev.id, method: ev.method, params: ev.params });
   }
 
-  private handleSessionUpdate(u: any, meta?: any): void {
-    const contextUsed = contextUsedFromUpdateEnvelope(meta);
-    if (contextUsed !== null && contextUsed !== this.lastContextUsed) {
-      this.lastContextUsed = contextUsed;
-      this.emit("contextUsage", contextUsed);
+  private handleSessionUpdate(u: any, meta?: any, sessionId?: string): void {
+    const foreign = isForeignSessionUpdate(sessionId, this.sessionId);
+    const normalized = this.backend.normalizeUpdate(u, meta);
+    if (!foreign) {
+      if (normalized.sessionTitle) {
+        this.currentSessionTitle = normalized.sessionTitle;
+        this.emit("sessionTitle", normalized.sessionTitle);
+      }
+      if (normalized.contextWindow !== undefined && this.currentModelId) {
+        const model = this.availableModels.find((entry) => entry.modelId === this.currentModelId);
+        if (model) model.totalContextTokens = normalized.contextWindow;
+      }
+    }
+    if (normalized.update === undefined) return;
+    u = normalized.update;
+    meta = normalized.meta;
+    if (!foreign) {
+      const contextUsed = contextUsedFromUpdateEnvelope(meta);
+      if (contextUsed !== null && contextUsed !== this.lastContextUsed) {
+        this.lastContextUsed = contextUsed;
+        this.emit("contextUsage", contextUsed);
+      }
     }
     const r = routeSessionUpdate(u);
     if (!r) return;
+    if (foreign) {
+      this.emit("childStream", { childSessionId: sessionId, route: r, meta });
+      return;
+    }
     if (r.event === "modeChanged") {
       this.currentModeId = r.modeId;
       this.emit("modeChanged", r.modeId);
@@ -870,10 +990,22 @@ export class AcpClient extends EventEmitter {
    */
   private emitToolMedia(payload: any): void {
     const id = payload?.toolCallId;
-    if (isMediaGenToolCall(payload) && typeof id === "string") this.mediaGenCallIds.add(id);
+    if (isMediaGenToolCall(payload, this.provider) && typeof id === "string") this.mediaGenCallIds.add(id);
     const media = collectToolImages(payload);
     if (typeof id === "string" && this.mediaGenCallIds.has(id)) {
       media.push(...extractGeneratedMediaPaths(payload));
+      if (this.provider === "codex" && payload?.status === "completed" && !media.length && this.sessionId) {
+        const inferred = inferCodexGeneratedImagePath(
+          resolveCodexHome(this.opts.env ?? process.env),
+          this.sessionId,
+          id,
+        );
+        if (!inferred) {
+          this.opts.log("[media] refused Codex generated-image ids or resolved path");
+          return;
+        }
+        media.push({ media: "image", kind: "path", path: inferred, mimeType: "image/png" });
+      }
     }
     for (const m of media) this.emit("mediaContent", m);
   }
@@ -895,7 +1027,7 @@ export class AcpClient extends EventEmitter {
         if (isGrokOwnedPlanFile(params.path, grokHome)) {
           this.emit("planFileContent", params.content ?? "");
         }
-        if (shouldBlockWrite(params.path, {
+        if (this.usesClientPlanGate && shouldBlockWrite(params.path, {
           active: this.planActive,
           workspaceRoot: this.opts.cwd,
           grokHome,
@@ -910,7 +1042,7 @@ export class AcpClient extends EventEmitter {
       }
       if (method === "terminal/create") {
         if (!this.terminal) throw new Error("terminal handler not registered");
-        if (shouldBlockTerminal(params.command, {
+        if (this.usesClientPlanGate && shouldBlockTerminal(params.command, {
           active: this.planActive,
           workspaceRoot: this.opts.cwd,
           grokHome: resolveGrokHome(this.opts.env ?? process.env),
@@ -925,7 +1057,7 @@ export class AcpClient extends EventEmitter {
         // hooks, etc.). Plan mode classifies the command against the host's
         // environment, so do not pass agent-supplied overrides to the spawner.
         const createParams = { ...params };
-        if (this.planActive) delete createParams.env;
+        if (this.usesClientPlanGate && this.planActive) delete createParams.env;
         const created = this.terminal.create(createParams);
         this.terminalCommands.set(created.terminalId, params.command);
         this.respondOk(id, created);
@@ -970,11 +1102,15 @@ export class AcpClient extends EventEmitter {
         return;
       }
       if (method === "session/request_permission") {
+        const normalizedParams = this.backend.normalizePermissionParams(params);
         const req: PermissionRequest = {
           id,
-          sessionId: params.sessionId,
-          toolCall: params.toolCall,
-          options: params.options ?? [],
+          sessionId: normalizedParams.sessionId,
+          toolCall: normalizedParams.toolCall,
+          options: normalizedParams.options ?? [],
+          ...(this.provider === "codex" && normalizedParams._meta !== undefined
+            ? { _meta: normalizedParams._meta }
+            : {}),
         };
         this.emit("permissionRequest", req);
         return; // response is async, host calls respondPermission()

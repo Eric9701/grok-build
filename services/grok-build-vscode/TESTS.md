@@ -6,9 +6,29 @@ Three layers:
 2. **Real-grok pre-release suite** (`npm run test:live`, `scripts/live-tests.cjs`) — an **on-demand, run-on-request** gate that spawns the real `grok` binary and drives it over ACP end-to-end: handshake, a **capability-drift probe** (`capabilities` — snapshots advertised `promptCapabilities` and asserts the documented `image:false` baseline; with `vision-prompt` pinning that vision *actually* works, the pair is an advertised-vs-actual drift detector), prompt round-trip, a **mid-turn cancel** (`cancel-mid-turn` — the Stop-button contract: an id-less `session/cancel` settles the in-flight prompt with a cancelled stopReason and the session stays usable, #37), **mid-turn steering** (`interject` — the Steer contract, #52: `_x.ai/interject` reaches the model mid-turn AND the turn still ends uncancelled, so steering never destroys in-flight tool work), **conversation forking** (`session-fork` — #48: a new session id, the parent's history carried into it, loadable), **concurrent sessions** (`parallel-sessions` — two CLI processes on one workspace answer overlapping prompts independently, no cross-talk), session restore, the **plan-mode gate modeled as the two real flows** (primer → plan → `[Plan rejected]` (gate up, 0 workspace mutations + a byte-identical-seed-file containment canary) → `[Plan approved]` (gate down, implementation can land)), image gen, video gen, the two **v1.6.1 notification-rail canaries** — `compact-notification` (after `/compact`, an `auto_compact_completed.tokens_after` arrives on `_x.ai/session_notification` and feeds the real `contextUsedFromCompactNotification`; asserts NO `auto_compact_started` on a manual compact, pinning the auto/manual split) and `effort-live` (set_model `_meta.reasoningEffort` applies live and is confirmed **applied** — not just accepted — by a `model_changed` whose `reasoning_effort` equals the target) — and subagent delegation on BOTH agent families — `subagent` (default model / grok-build agent) and `subagent-composer` (first `*composer*` model) — each of which now **hard-asserts the LIVE `_x.ai/session_notification` lifecycle** (`subagent_spawned` + a matching `subagent_finished` with a finite `duration_ms`; the CLI transmits these as of grok 0.2.101 and the extension fills the card's duration/output from them, incl. Composer whose tool-channel completion carries none). Each **SKIP**s when grok doesn't delegate or the model isn't available. It **reuses the real compiled modules** (`out/acp-dispatch.js`, `out/plan-gate.js`, `out/grok-primer.js`, `media/webview-helpers.js`) so it tests shipped logic, not re-implementations. Non-deterministic / entitlement-gated outcomes **SKIP** (don't fail the gate); only a real regression **FAILS**. It is **never run by `npm test` or CI** — it needs an authenticated `grok` + network + subscription. The **`release.*` scripts now run it by default** (`-SkipLive`/`--skip-live` opts out). Flags: `--smoke` (handshake + capability-drift only), `--quick` (skip slow tests incl. the 4-turn plan-mode), `--only=<name>`, `--skip=<name>`, `GROK_BIN=<path>`. See [CLAUDE.md § Test taxonomy](CLAUDE.md).
 3. **VS Code integration smoke** (`npm run test:integration`, `@vscode/test-electron`) — boots a real VS Code, activates the extension, asserts the contributed commands are registered, and resolves the webview via the **missing-CLI onboarding path** (needs no grok binary), covering host glue the unit suite can't (activation, `getHtml`/CSP, `localResourceRoots`, command registration). Compiles in isolation (`integration/tsconfig.json` → `out-integration/`); `.vscode-test.mjs` drives it. Runs in CI as a **required** job under `xvfb` (validated passing against a real VS Code Extension Host). Still grok-free. Not part of `npm test` (needs a headed/`xvfb` VS Code + an Electron download).
 
+4. **Screens checks** (`npm run e2e:screens`, here **and** in the relay repo) — a real Chromium / real Electron window driven through chat → file panel → open a file → edit, capturing a frame at each step and asserting what layer 1 structurally cannot. The vitest DOM suites run in happy-dom, which has **no layout engine**: rects are zeros and stylesheets never apply, so an icon with no size, a control pushed off-screen, or a panel overlapping the header all satisfy every assertion they can make. The file panel's action row shipped as three EMPTY BOXES through a green suite, three review rounds and a deploy; a human found it in a screenshot. These assert rendered geometry — every painted icon occupies space, the panel starts below the bar holding its toggle, nothing scrolls sideways — and leave the frames in `.screens/` for a person or a model to look at. Grok-free and deterministic, so safe in a gate. The desktop one builds the **grok-qa fixture** (`scripts/qa-fixture.mjs`): a fixed project *and* a fixed session store pointed at via `GROK_HOME`, so the rail has real history in it and frames are comparable between runs.
+5. **Live app smoke** (`npm run smoke:live`) — the desktop app against the **real** grok CLI: start it, send a prompt, wait for the reply, open the file panel on real files, confirm the CLI actually wrote a transcript. Complements (2) rather than repeating it — `test:live` drives the CLI over ACP and proves the *protocol*; this drives the *app* and proves a person can use it. Prints a report and leaves frames to read. **Never in `npm test` or CI** (real CLI, key, network), and it refuses to fall back to the test fixture when no real CLI is present, because a green run against a fake is worse than no run.
+
 Separately, **grok-dependent probes** live as standalone scripts under `research/*.cjs`. They exercise the real CLI's ACP behavior (e.g. confirming `exit_plan_mode` treats any client reply as approval, or capturing the native-Windows media/subagent wire shapes) and are run **manually** — Vitest's `include` glob is `test/**/*.test.ts`, so it never collects them. They're non-destructive (ACK writes without touching disk and run in a temp cwd) and require a `grok` binary on PATH; CI doesn't run them. The probes are the **discovery** tool (capture an undocumented shape once); layer 2 is the **regression** tool (re-verify the shapes still hold before each release).
 
 The goal of layers (1)+(2) is to make the protocol surface and UI logic regression-proof. Layer 1 catches logic regressions on every commit; layer 2 catches CLI-contract drift (a new grok version changing a wire shape) before each release.
+
+## Standing test discipline
+
+- Every branch on `session.provider === …` has explicit coverage for both providers.
+- When a wrapper takes over a function with documented invariants, the wrapper carries the function's contract tests. Mixed history treats Grok consumed-slot pagination as opaque and property-tests exact-once/no-skip output against a full-list oracle across hidden rows, ties, mtime drift, and Codex age mixes.
+- Provider sign-out regressions drive the real `onMessage({type:"logout"})` command path and assert pre-persistence atomic disposal (slow + rejected stores), focused/remote/background draft recovery, detached-tab reconnect replacement, focused-cwd rooting while another project is browsed, and other-provider preservation. A background draft is asserted on both sides of a host restart: parked into globalState by the real logout, handed back by a real `resumeSession` on a **second sidebar sharing the same memento** (against the fake Codex adapter), and never handed back twice. Re-connection drives the real `recheckConnection` and asserts every stranded view is adopted, while a detached view keeps META untouched until its same-provider or other-provider logical tab reconnects and has a composer. History authorization drives the real remote `listSessions` ingress; pagination drives the real DOM message/request path without synthetic scroll events.
+- Draft lifecycle tests also drive New-session parking, remote detach/reconnect,
+  release, failed and successful provider retargeting, the empty-session sweep,
+  and the TTL/LRU selector. The invariant is that `needsProvider` or a draft makes
+  a session non-empty and non-reapable, while META is cleared only after startup.
+- An auth-shaped failure from a background probe is asserted through that probe's own entry point — a gear re-check for the model warm-up, a remote `listSessions` for the history listing — and must change the ACCOUNT's state rather than let a surface degrade silently; Codex uses only `isCodexCredentialError`, so an uncoded `Sign in required` matches while `unauthorized model for project` and billing failures leave it alone.
+- Provider-login tests use Codex's uncoded `Sign in required` shape and drive the
+  real Re-check and login actions, including a delayed successful probe. Remote
+  policy tests prove durable Re-check is refused while retrying an already-connected
+  session remains available.
+- Fixtures for external artifacts mirror the real artifact listing and layout, including multi-platform bundles and the Codex package structure; idealized fixture layouts are insufficient.
+- Every new filesystem or network stream has fault-injection coverage for its asynchronous error paths.
 
 ---
 
@@ -56,14 +76,19 @@ The wire format is the highest-value test surface: ACP changes break everything 
 - Multiple chips concatenate cleanly
 - Files without extensions get an empty fence language
 
-### `test/slash-filter.test.ts` — slash autocomplete + dispatch gate (21 tests)
+### `test/slash-filter.test.ts` — slash autocomplete + dispatch gate
 
 - `getSlashQuery` only activates after `/` at line-start or newline (no false positives on `path/foo/bar`)
 - Empty query returns the full command list
-- Prefix filter is case-insensitive
+- Name filter is case-insensitive substring, prefix matches first then mid-name, stable within each tier (#110)
 - `applySlashPick` replaces only the slash token, preserves trailing text, returns the new caret position
 - `matchSlashCommand` recognizes an advertised command only at position 0 (rejects Unix paths / mid-line slashes)
 - `filterAdvertisedCommands` drops the config-mutating `/always-approve` from both the autocomplete list and the dispatch gate (#31)
+
+### `test/slash-popover.dom.test.ts` — "/" skill/command popover in a real DOM (#110)
+
+- Typing `ui` finds `ux-ui-promax`; `design` finds `web-design`
+- Prefix matches rank above substring matches; non-matches stay out; matching is case-insensitive; no-match hides the popover
 
 ### `test/mention.test.ts` — "@" file autocomplete, pure halves (24 tests)
 
@@ -101,7 +126,7 @@ The wire format is the highest-value test surface: ACP changes break everything 
 - Typing `@`/`@ch` posts `mentionQuery` per keystroke; a mid-word `@` (email) posts nothing
 - `mentionResults` renders name + dimmed-dir rows and shows the popover; stale replies (query moved on / popover closed) are dropped; an empty list hides the popover but keeps the token querying
 - ArrowDown + Enter picks the highlighted file (token rewritten, `addMentionFile` posted, popover hidden) without triggering send/queueSend; clicking a row picks too; Escape closes without touching the text
-- `agentStart` shows the Grokking indicator with the shimmer label span + "Waiting for response" title
+- `agentStart` shows the shared waiting indicator with provider copy (Grokking / Opening AI), and the composer placeholder switches live between Ask Grok and Ask GPT
 
 ### `test/grok-config.test.ts` — config.toml permission-mode reader (15 tests)
 
@@ -239,11 +264,13 @@ happy-dom test locking in the native-Windows regressions this build fixed (plus 
 - **Session rows** — whole row resumes (clicking the meta area, not just the label, posts `resumeSession`); the delete and rename action buttons `stopPropagation` so they don't *also* resume
 - **Mode picker** — offers Agent / Plan / Auto accept, posts `setMode` with the chosen id, closes on select, toggles closed on re-click; disabled only during the startup window (`busyLocked`) but **stays live during a running turn** so Auto accept can be picked mid-run (#64)
 - **Sound notifications (#59)** — the gear → Config & debug switch reflects the setting and posts `setSoundNotifications` on toggle
+- **Settings surface** — shared overlay renders every category, search filters across pages, a toggle posts the same `setShowThinking` message as the gear, and host-local rows stay hidden on remote
 - **Reasoning trace** — a thought chunk renders a collapsed thinking block whose header click toggles the body open/closed (chevron ▶/▼)
 - **Gear settings lock** — the model button shows the friendly name (not the raw id); model + effort controls are disabled while busy/priming and re-enable when busy clears
+- **Remote provider parity** — no `providerState` keeps legacy history rows dot-only; the minimal frame enables glyph+badge overlays only with two connected providers, groups the empty-session picker Grok-first, permits an empty cross-provider pick, scopes a non-empty Codex picker to Codex, never renders account management on the phone, and replaces signed-out login actions with desk guidance
 - **User-message dedup** — a `user_message_chunk` echoed live (grok ≥0.2.33) never doubles the optimistic bubble; only a `session/load` replay drives user bubbles
 - **Welcome version lifecycle** — flips to "Connected · v<version>" only when session start finishes, not at the bare ACP handshake; later busy toggles don't overwrite it
-- **Gear menu** — the Other group's About sub-view (extension + CLI versions, update check) and Config & debug sub-view render and route correctly
+- **Gear menu** — the Other group's About sub-view renders local Grok-only, Codex-only, combined, remote host-reported, and old-host fallback version states; Grok retains update actions while Codex separates binary/adapter versions and stays advise-only
 
 ### `test/projects-rail.dom.test.ts` — the browser's projects rail (56 tests)
 
@@ -271,6 +298,10 @@ posted.
   conversation lives in a worktree, whose cwd is not a catalog row
 - **Search** reaches into Archived and forces it open, rather than answering "No matches"
   while the project sits collapsed below
+- **Global row identity** — duplicate source rows with one session id render once across
+  Pinned/Recent/project groups, while two different ids both named `GPT` select and
+  highlight independently. The real-Electron provider journey repeats this through
+  Codex create/send/list/rename/re-list using adapter cwd casing drift.
 
 ### `test/file-ref.test.ts` — open-file refs + inline-read guard (8 tests)
 
@@ -300,7 +331,10 @@ posted.
 
 ### `test/media-subagent.dom.test.ts` — generated media + subagent card in a real DOM (10 tests)
 
-- `addGeneratedMedia` renders an image as `<img>` and a video as `<video controls>` from the host's `media` message, wires the Copy-path / Open-in-VS-Code hover actions (pinned to the media), and falls back to an open-link button for a remote URL
+- `addGeneratedMedia` renders an image as `<img>` and a video as `<video controls>` from the host's `media` message, wires the Copy-path / Open-in-VS-Code hover actions, replaced by Show-in-folder for both media kinds on a host that advertises it, and falls back to an open-link button for a remote URL
+- The captured Codex image-generation tool sequence reaches that same DOM entry
+  point on VS Code, desktop, and remote. The desktop suite also drives the real
+  Electron window and asserts the app-resource image plus Copy/Show actions.
 - the (deferred) subagent classifier renders a *Subagent: \<type\>* card when fed a delegation shape
 
 ### `test/question-card.dom.test.ts` — `x.ai/ask_user_question` card (12 tests)

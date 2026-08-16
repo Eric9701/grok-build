@@ -1,4 +1,5 @@
 import * as assert from "node:assert";
+import * as cp from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -24,7 +25,16 @@ suite("grok-build extension smoke", () => {
   test("registers its contributed commands", async () => {
     const all = await vscode.commands.getCommands(true);
     // A stable subset that must always exist (the full list lives in package.json).
-    for (const id of ["grok.open", "grok.newSession", "grok.showLogs", "grok.logout"]) {
+    for (const id of [
+      "grok.open",
+      "grok.newSession",
+      "grok.showLogs",
+      "grok.settings",
+      "grok.logout",
+      // The escape hatch for an editor that hid the view somewhere unreachable —
+      // useless if it is not in the palette.
+      "grok.moveView",
+    ]) {
       assert.ok(all.includes(id), `command not registered: ${id}`);
     }
     // The gear-menu "Move view" items depend on these workbench commands
@@ -34,14 +44,26 @@ suite("grok-build extension smoke", () => {
     }
   });
 
+  test("grok.open actually opens the chat", async () => {
+    // The regression this exists for: `grok.open` used to execute a hardcoded
+    // container command, and in an editor that refuses our secondary-side-bar
+    // container that command does not exist — so opening the chat failed with
+    // "command not found" and the extension could not be used at all (#101
+    // follow-up). This assertion is the whole test: it must REJECT nothing.
+    //
+    // It replaces a version that ran `grok.chat.focus`, swallowed any failure,
+    // and then asserted `true` — which would have passed throughout the outage.
+    await vscode.commands.executeCommand("grok.open");
+  });
+
   test("resolving the webview view does not crash (missing-CLI onboarding path)", async () => {
     // Focusing the view triggers resolveWebviewView -> getHtml -> the first posts.
     // With no grok binary on the CI box the extension takes the missing-CLI onboarding
     // branch; reaching the assertion below without an unhandled rejection is the check.
-    await vscode.commands.executeCommand("grok.chat.focus").then(undefined, () => {});
+    await vscode.commands.executeCommand("grok.chat.focus");
     await new Promise((r) => setTimeout(r, 2000)); // let the webview resolve + post
     // A second, lightweight command that touches the sidebar without needing grok.
-    await vscode.commands.executeCommand("grok.showLogs").then(undefined, () => {});
+    await vscode.commands.executeCommand("grok.showLogs");
     assert.ok(true, "webview resolved without throwing");
   });
 
@@ -58,6 +80,21 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
   let repoB = "";
   let grokHome = "";
   const prevGrokHome = process.env.GROK_HOME;
+
+  // A few tests below start a REAL session (a resume or a worktree apply
+  // through the live provider), which needs an installed grok CLI — dev boxes
+  // have one, the CI runner does not. Without it those flows dead-end in the
+  // missing-CLI onboarding with no error posted and time out (first caught
+  // 2026-08-15, the tests' first run on Linux). Skip them loudly there; the
+  // proper fix is a fake ACP CLI provisioned by this fixture, so the flows
+  // run everywhere.
+  const grokCliAvailable = (() => {
+    try {
+      cp.execSync(process.platform === "win32" ? "where grok" : "which grok", { stdio: "ignore" });
+      return true;
+    } catch { return false; }
+  })();
+  const liveSessionTest = grokCliAvailable ? test : test.skip;
 
   const storedSessionDirFor = (cwd: string, id: string) =>
     path.join(grokHome, "sessions", encodeURIComponent(cwd), id);
@@ -850,30 +887,177 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     assert.strictEqual(norm(catalog.selectedCwd), norm(repoB));
   });
 
+  liveSessionTest("a remote resume waits for the first catalog build before refusing a still-warming session", async () => {
+    // RED without the warmup retry: findSessionCatalogCwd misses, the host
+    // immediately sends the permanent-sounding "may have been deleted" error,
+    // and writing the session afterward cannot restore it.
+    const id = `warmup-${Date.now()}`;
+    const clientId = `warmup-tab-${Date.now()}`;
+    const delay = hooks.delayFirstCatalogBuild();
+    const posts: Array<{ msg: any; clientIds?: string[] }> = [];
+    hooks.onPost((_dest: string, msg: any, clientIds?: string[]) => posts.push({ msg, clientIds }));
+    try {
+      hooks.fromRemote({ type: "resumeSession", id, cwd: repoB }, clientId);
+      const began = await Promise.race([
+        delay.started.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000)),
+      ]);
+      writeStoredSession(id);
+      delay.release();
+      assert.ok(began, "the resume must defer the not-found refuse until catalog warmup");
+
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline && hooks.activeRemoteSessionId(clientId) !== id) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      assert.strictEqual(
+        hooks.activeRemoteSessionId(clientId),
+        id,
+        `the session must restore after the catalog warmup: ${JSON.stringify(posts.filter((p) => p.msg?.type === "error"))}`,
+      );
+      assert.ok(!posts.some((p) =>
+        p.clientIds?.includes(clientId) &&
+        p.msg?.type === "error" &&
+        /may have been deleted/.test(p.msg.text)
+      ), JSON.stringify(posts.filter((p) => p.msg?.type === "error")));
+    } finally {
+      delay.release();
+    }
+  });
+
+  liveSessionTest("a remote resume waits for the deferred session-list, not just the catalog post", async () => {
+    // RED if "warmed" is the start/end of postRepoCatalog: the catalog half has
+    // already run, the wait is skipped, and writing the session afterward cannot
+    // restore it. GREEN only when firstBootScanCompleted waits for the deferred
+    // session-list as well.
+    const id = `warmup-list-${Date.now()}`;
+    const clientId = `warmup-list-tab-${Date.now()}`;
+    const delay = hooks.delayFirstCatalogBuild();
+    const posts: Array<{ msg: any; clientIds?: string[] }> = [];
+    hooks.onPost((_dest: string, msg: any, clientIds?: string[]) => posts.push({ msg, clientIds }));
+    try {
+      delay.beginDeferred();
+      const catalogPosted = await Promise.race([
+        delay.started.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000)),
+      ]);
+      assert.ok(catalogPosted, "the deferred first-boot pass must reach catalog-done / session-list-held");
+
+      hooks.fromRemote({ type: "resumeSession", id, cwd: repoB }, clientId);
+      // The resume is async. Give the first lookup a chance to miss (session is
+      // not on disk yet) and either refuse (old warmed-at-catalog) or wait.
+      await new Promise((r) => setTimeout(r, 150));
+      writeStoredSession(id);
+      delay.release();
+
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline && hooks.activeRemoteSessionId(clientId) !== id) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      assert.strictEqual(
+        hooks.activeRemoteSessionId(clientId),
+        id,
+        `the session must restore after the deferred session-list: ${JSON.stringify(posts.filter((p) => p.msg?.type === "error"))}`,
+      );
+      assert.ok(!posts.some((p) =>
+        p.clientIds?.includes(clientId) &&
+        p.msg?.type === "error" &&
+        /may have been deleted/.test(p.msg.text)
+      ), JSON.stringify(posts.filter((p) => p.msg?.type === "error")));
+    } finally {
+      delay.release();
+    }
+  });
+
+  test("a genuinely missing remote resume carries resumeFailed with the requested id", async () => {
+    // RED without the machine-readable field: the error is human text only.
+    const id = `gone-${Date.now()}`;
+    const clientId = `missing-field-${Date.now()}`;
+    const posts: Array<{ msg: any; clientIds?: string[] }> = [];
+    hooks.onPost((_dest: string, msg: any, clientIds?: string[]) => posts.push({ msg, clientIds }));
+    hooks.fromRemote({ type: "selectRepo", cwd: repoB }, clientId);
+    hooks.fromRemote({ type: "resumeSession", id, cwd: repoB }, clientId);
+
+    const deadline = Date.now() + 15000;
+    const missing = () => posts.find((p) =>
+      p.clientIds?.includes(clientId) &&
+      p.msg?.type === "error" &&
+      /may have been deleted/.test(p.msg.text)
+    );
+    while (Date.now() < deadline && !missing()) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const err = missing();
+    assert.ok(err, "a missing session id must surface Could not restore");
+    assert.deepStrictEqual(err!.msg.resumeFailed, { id });
+  });
+
+  test("the already-open-in-another-tab refusal carries resumeFailed", async () => {
+    // RED without the field on the theft refuse.
+    hooks.seedRemoteSession("tab-a", "session-a", repoB, [], true);
+    hooks.seedRemoteSession("tab-b", "session-b", repoB, [], true);
+    const posts: Array<{ msg: any; clientIds?: string[] }> = [];
+    hooks.onPost((_dest: string, msg: any, clientIds?: string[]) => posts.push({ msg, clientIds }));
+    hooks.fromRemote({ type: "resumeSession", id: "session-a", cwd: repoB }, "tab-b");
+
+    const deadline = Date.now() + 15000;
+    const theft = () => posts.find((p) =>
+      p.clientIds?.includes("tab-b") &&
+      p.msg?.type === "error" &&
+      /already open/.test(p.msg.text)
+    );
+    while (Date.now() < deadline && !theft()) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    const err = theft();
+    assert.ok(err, "tab-b must be refused when the session is live in another tab");
+    assert.deepStrictEqual(err!.msg.resumeFailed, { id: "session-a" });
+  });
+
   test("resume never steals another tab's live session or silently blank-starts a missing one", async () => {
+    // Own the preconditions here. Earlier tests leave tab-a/session-a and
+    // tab-b/session-b set up, but an intervening selectRepo can still be
+    // finishing its auto-open and would overwrite a borrowed seed — this test
+    // is about theft/missing-id refusal, not suite ordering.
+    hooks.seedRemoteSession("tab-a", "session-a", repoB, [], true);
+    hooks.seedRemoteSession("tab-b", "session-b", repoB, [], true);
+
     const posts: Array<{ msg: any; clientIds?: string[] }> = [];
     hooks.onPost((_dest: string, msg: any, clientIds?: string[]) => posts.push({ msg, clientIds }));
 
     hooks.fromRemote({ type: "resumeSession", id: "session-a", cwd: repoB }, "tab-b");
     hooks.fromRemote({ type: "selectRepo", cwd: repoB }, "tab-missing");
     hooks.fromRemote({ type: "resumeSession", id: "deleted-session", cwd: repoB }, "tab-missing");
-    await new Promise((r) => setTimeout(r, 100));
 
-    assert.ok(posts.some((p) =>
+    // selectRepo auto-opens newest (or starts a blank session) before the
+    // serialized resume of a missing id can run. That open is unbounded under
+    // the missing-CLI path — a fixed sleep (100ms, then 400ms) only delayed the
+    // flake. Wait for the product outcomes, not the clock.
+    const theftRefused = () => posts.some((p) =>
       p.clientIds?.includes("tab-b") &&
       p.msg?.type === "error" &&
       /already open/.test(p.msg.text)
-    ));
+    );
+    // Match the missing-id wording specifically — selectRepo's auto-open can
+    // itself emit "Could not restore … already open" when the newest row is
+    // live in another tab, and that must not satisfy this wait.
+    const missingRefused = () => posts.some((p) =>
+      p.clientIds?.includes("tab-missing") &&
+      p.msg?.type === "error" &&
+      /may have been deleted/.test(p.msg.text)
+    );
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline && !(theftRefused() && missingRefused())) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    assert.ok(theftRefused(), "tab-b must be refused when the session is live in another tab");
     assert.ok(posts.some((p) =>
       p.clientIds?.includes("tab-b") &&
       p.msg?.type === "sessions" &&
       p.msg.activeId === "session-b"
     ), "a refused selection must correct the tab back to its authoritative active session");
-    assert.ok(posts.some((p) =>
-      p.clientIds?.includes("tab-missing") &&
-      p.msg?.type === "error" &&
-      /Could not restore/.test(p.msg.text)
-    ));
+    assert.ok(missingRefused(), "a missing session id must surface Could not restore, not hang behind selectRepo");
     assert.ok(!posts.some((p) =>
       p.clientIds?.includes("tab-missing") &&
       p.msg?.type === "sessions" &&
@@ -1453,6 +1637,131 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     hooks.remoteClientLeft(clientId);
   });
 
+  test("an image tag is numbered by its position in this message, not by the session", async () => {
+    // grok resolves `[Image #N]` against the images attached to the message it
+    // is reading, numbered from 1 — an index from an earlier message matches
+    // nothing (research/image-index-probe.cjs). The old session-scoped counter
+    // therefore sent a conversation's second image out as `[Image #2]` on a
+    // message carrying one image, and every image_edit on it was refused. The
+    // chip below is seeded with a stale high index, which is exactly what that
+    // counter produced. The pure renumbering has its own unit tests; what this
+    // covers is the wiring — that the send really does renumber before building
+    // the prompt, and that the bubble the user reads agrees with the tag.
+    const suffix = Date.now();
+    const clientId = `image-index-${suffix}`;
+    const id = `image-index-session-${suffix}`;
+    const text = "make it green";
+    const imgPath = path.join(repoB, `staged-${suffix}.png`);
+    fs.writeFileSync(imgPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const posts: Array<{ msg: any; clientIds?: string[] }> = [];
+    hooks.onPost((_dest: string, msg: any, clientIds?: string[]) => posts.push({ msg, clientIds }));
+    const model = hooks.seedRemoteQueuedDispatch(clientId, id, repoB, text, [{
+      id: `stale-index-${suffix}`,
+      path: imgPath,
+      relPath: "Image #7",
+      hidden: false,
+      imageIndex: 7,
+      mimeType: "image/png",
+    }]);
+    const dispatch = posts.find((post) =>
+      post.clientIds?.includes(clientId) &&
+      post.msg?.type === "submitQueuedSend"
+    )?.msg;
+    assert.ok(dispatch?.id, JSON.stringify(posts));
+
+    hooks.fromRemote({ type: "send", text, queuedSendId: dispatch.id }, clientId);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    assert.strictEqual(model.promptCount(), 1, "the send must reach the CLI");
+    const blocks = model.lastPromptBlocks();
+    assert.ok(blocks, "the prompt blocks must have been captured");
+    const textBlock: any = blocks!.find((block: any) => block.type === "text");
+    const imageBlocks = blocks!.filter((block: any) => block.type === "image");
+    assert.strictEqual(imageBlocks.length, 1, "one visible image chip, one image block");
+    assert.ok(
+      /\[Image #1\]/.test(textBlock.text),
+      `the tag must name this message's first image, got: ${textBlock.text}`,
+    );
+    assert.ok(
+      !/\[Image #7\]/.test(textBlock.text),
+      `the stale session-scoped index must not survive, got: ${textBlock.text}`,
+    );
+
+    // …and the bubble the user reads must carry the same number as the tag, or
+    // the disagreement is invisible until someone reads a transcript.
+    const bubble = [...posts].reverse().find((post) => post.msg?.type === "userMessage")?.msg;
+    assert.ok(bubble, JSON.stringify(posts.map((post) => post.msg?.type)));
+    assert.deepStrictEqual(bubble.chips.map((chip: any) => chip.imageIndex), [1]);
+    assert.deepStrictEqual(bubble.chips.map((chip: any) => chip.relPath), ["Image #1"]);
+
+    hooks.remoteClientLeft(clientId);
+  });
+
+  test("sending bumps the conversation up its project's rail immediately", async () => {
+    // The send IS the activity: the rail must not wait for the CLI to write a
+    // transcript (~2s) before admitting you are working in this conversation.
+    // `noteSessionActivity` stamps `activeAt` and re-posts — but it called
+    // `refreshRemoteRepoPreview(undefined, cwd)`, whose first line is
+    // `if (!clientId || !cwd) return`, so the remote rail was never told at all.
+    const suffix = Date.now();
+    const clientId = `rail-bump-${suffix}`;
+    const id = `rail-bump-session-${suffix}`;
+    const text = "wake the rail up";
+    // Its OWN repo. Sharing repoB put ~30 sessions from other tests in the
+    // list, most of them written without an `updated_at` and so defaulting to
+    // "now" — which makes "ranks first" unsatisfiable no matter what the code
+    // does. An isolated catalog is the only way this assertion means anything.
+    const repoRail = path.join(hooks.workspaceRoot(), `.int-rail-${suffix}`);
+    fs.mkdirSync(repoRail, { recursive: true });
+    // An OLD conversation with NEWER ones above it — the realistic shape, and
+    // the only one where the bump is observable at all.
+    writeStoredSession(id, repoRail, "2020-01-01T00:00:00.000Z");
+    writeStoredSession(`rail-newer-a-${suffix}`, repoRail, "2021-01-01T00:00:00.000Z");
+    writeStoredSession(`rail-newer-b-${suffix}`, repoRail, "2022-01-01T00:00:00.000Z");
+    const posts: Array<{ msg: any; clientIds?: string[] }> = [];
+    hooks.onPost((_dest: string, msg: any, clientIds?: string[]) => posts.push({ msg, clientIds }));
+    const model = hooks.seedRemoteQueuedDispatch(clientId, id, repoRail, text);
+    const dispatch = posts.find((post) =>
+      post.clientIds?.includes(clientId) &&
+      post.msg?.type === "submitQueuedSend"
+    )?.msg;
+    assert.ok(dispatch?.id, JSON.stringify(posts.map((p) => p.msg?.type)));
+
+    posts.length = 0;
+    hooks.fromRemote({ type: "send", text, queuedSendId: dispatch.id }, clientId);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.strictEqual(model.promptCount(), 1, "the send must reach the CLI");
+
+    // The list the rail renders from has to be re-posted by the send itself.
+    // Only lists for THIS repo. Other tests' sessions keep arriving as
+    // `repoSessions` previews for their own catalogs, and the last post overall
+    // is routinely one of those.
+    const sameRepo = (value: unknown) =>
+      typeof value === "string" &&
+      path.resolve(value).toLowerCase() === path.resolve(repoRail).toLowerCase();
+    const listed = posts.filter((post) =>
+      post.msg?.type === "sessions" ||
+      (post.msg?.type === "repoSessions" && sameRepo(post.msg.cwd)));
+    assert.ok(
+      listed.length > 0,
+      `sending must re-post the session list — got ${JSON.stringify(posts.map((p) => p.msg?.type))}`,
+    );
+    // …and the conversation just sent to must be at the top of it.
+    const withEntries = listed.filter((post) => Array.isArray(post.msg.entries) && post.msg.entries.length);
+    assert.ok(
+      withEntries.length > 0,
+      `the re-posted list must carry entries — got ${JSON.stringify(listed.map((p) => p.msg.type))}`,
+    );
+    // The LAST list posted is the state the rail ends in. Earlier ones can
+    // legitimately predate the activity stamp.
+    const final = withEntries[withEntries.length - 1].msg;
+    assert.strictEqual(
+      final.entries[0].id, id,
+      `${final.type}: the conversation just sent to must rank first — got ${JSON.stringify(final.entries.slice(0, 5).map((e: any) => e.id))}`,
+    );
+    hooks.remoteClientLeft(clientId);
+  });
+
   test("switching repos disposes a primer-only remote session before dropping its mapping", async () => {
     const id = `primer-only-${Date.now()}`;
     writeStoredSession(id);
@@ -1636,7 +1945,116 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
       p.clientIds?.length === 1 &&
       p.clientIds[0] === "requester"
     ));
+    const provoked = posts.filter((p) => p.msg?.type === "hostNotice" || p.msg?.type === "error");
+    assert.ok(!provoked.some((p) => p.dest === "local"));
+  });
+
+  test("forkSession with a matching sessionId proceeds for that tab", async () => {
+    hooks.seedRemoteSession("fork-match", "fork-match-session", repoB);
+    const posts: Array<{ dest: string; msg: any; clientIds?: string[] }> = [];
+    hooks.onPost((dest: string, msg: any, clientIds?: string[]) => posts.push({ dest, msg, clientIds }));
+
+    hooks.fromRemote({ type: "forkSession", sessionId: "fork-match-session" }, "fork-match");
+    await new Promise((r) => setTimeout(r, 100));
+
+    assert.ok(posts.some((p) =>
+      p.msg?.type === "hostNotice" &&
+      /Nothing to fork/.test(p.msg.text) &&
+      p.clientIds?.length === 1 &&
+      p.clientIds[0] === "fork-match"
+    ));
+    assert.ok(!posts.some((p) =>
+      p.msg?.type === "hostNotice" && /no longer focused/.test(p.msg.text)
+    ));
+  });
+
+  test("forkSession with a different sessionId is refused for that tab only", async () => {
+    hooks.seedRemoteSession("fork-stale", "fork-stale-session", repoB);
+    const posts: Array<{ dest: string; msg: any; clientIds?: string[] }> = [];
+    hooks.onPost((dest: string, msg: any, clientIds?: string[]) => posts.push({ dest, msg, clientIds }));
+
+    hooks.fromRemote({ type: "forkSession", sessionId: "some-other-session" }, "fork-stale");
+    await new Promise((r) => setTimeout(r, 100));
+
+    assert.ok(posts.some((p) =>
+      p.msg?.type === "hostNotice" &&
+      p.msg.text === "That conversation is no longer focused — nothing was changed." &&
+      p.clientIds?.length === 1 &&
+      p.clientIds[0] === "fork-stale"
+    ));
+    assert.ok(!posts.some((p) =>
+      p.msg?.type === "hostNotice" && /Nothing to fork/.test(p.msg.text)
+    ));
     assert.ok(!posts.some((p) => p.dest === "local"));
+  });
+
+  test("forkSession without a sessionId still proceeds (old client)", async () => {
+    hooks.seedRemoteSession("fork-legacy", "fork-legacy-session", repoB);
+    const posts: Array<{ dest: string; msg: any; clientIds?: string[] }> = [];
+    hooks.onPost((dest: string, msg: any, clientIds?: string[]) => posts.push({ dest, msg, clientIds }));
+
+    hooks.fromRemote({ type: "forkSession" }, "fork-legacy");
+    await new Promise((r) => setTimeout(r, 100));
+
+    assert.ok(posts.some((p) =>
+      p.msg?.type === "hostNotice" &&
+      /Nothing to fork/.test(p.msg.text) &&
+      p.clientIds?.length === 1 &&
+      p.clientIds[0] === "fork-legacy"
+    ));
+    assert.ok(!posts.some((p) =>
+      p.msg?.type === "hostNotice" && /no longer focused/.test(p.msg.text)
+    ));
+  });
+
+  test("local applyWorktree/removeWorktree with a stale sessionId are refused", async () => {
+    const worktree = path.join(hooks.workspaceRoot(), ".int-stale-wt");
+    const probe = hooks.seedFocusedWorktreeSession("focused-wt", {
+      path: worktree,
+      label: "Stale fixture",
+      sourceGitRoot: hooks.workspaceRoot(),
+    });
+    const posts: Array<{ dest: string; msg: any; clientIds?: string[] }> = [];
+    hooks.onPost((dest: string, msg: any, clientIds?: string[]) => posts.push({ dest, msg, clientIds }));
+
+    hooks.fromLocal({ type: "applyWorktree", sessionId: "not-the-focused-session" });
+    hooks.fromLocal({ type: "removeWorktree", sessionId: "not-the-focused-session" });
+    await new Promise((r) => setTimeout(r, 100));
+
+    const refusals = posts.filter((p) =>
+      p.dest === "local" &&
+      p.msg?.type === "hostNotice" &&
+      p.msg.text === "That conversation is no longer focused — nothing was changed."
+    );
+    assert.strictEqual(refusals.length, 2);
+    assert.ok(!posts.some((p) => p.dest === "remote"));
+    assert.strictEqual(probe.applyCount(), 0);
+    assert.strictEqual(probe.removeCount(), 0);
+    probe.restore();
+  });
+
+  liveSessionTest("local applyWorktree/removeWorktree with a matching sessionId run on the focused session", async () => {
+    const worktree = path.join(hooks.workspaceRoot(), ".int-match-wt");
+    const probe = hooks.seedFocusedWorktreeSession("focused-wt-match", {
+      path: worktree,
+      label: "Match fixture",
+      sourceGitRoot: hooks.workspaceRoot(),
+    });
+    const posts: Array<{ dest: string; msg: any }> = [];
+    hooks.onPost((dest: string, msg: any) => posts.push({ dest, msg }));
+
+    hooks.fromLocal({ type: "applyWorktree", sessionId: "focused-wt-match" });
+    hooks.fromLocal({ type: "removeWorktree", sessionId: "focused-wt-match" });
+    await new Promise((r) => setTimeout(r, 100));
+
+    assert.ok(!posts.some((p) =>
+      p.msg?.type === "hostNotice" && /no longer focused/.test(p.msg.text)
+    ));
+    assert.strictEqual(probe.applyCount(), 1);
+    assert.strictEqual(probe.lastApplyPath(), worktree);
+    assert.strictEqual(probe.removeCount(), 1);
+    assert.strictEqual(probe.lastRemovePath(), worktree);
+    probe.restore();
   });
 
   test("a remote New session immediately carries its selected worktree binding", async () => {
@@ -1747,5 +2165,385 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     hooks.fromRemote({ type: "toggleSessionPin", id: "race-a", cwd: repoB, pinned: false }, "race-tab");
     hooks.fromRemote({ type: "toggleSessionPin", id: "race-b", cwd: repoB, pinned: false }, "race-tab");
     await new Promise((r) => setTimeout(r, 1500));
+  });
+});
+
+// ── VS Code host adapter: real URI encode / closeDiff / content provider ─────
+// The unit suite cannot import vscode-host (needs the vscode module). These
+// tests run under a real Extension Host and must fail if toVsCodeUri /
+// fromVsCodeUri / closeDiffTabs are broken. `npm run test:integration` compiles
+// the extension to out/ first, so we load the built adapter from there.
+suite("VS Code host adapter URI surface", () => {
+  type PortableUri = {
+    scheme: string;
+    authority: string;
+    path: string;
+    query: string;
+    fragment: string;
+    fsPath: string;
+    toString(): string;
+  };
+
+  // Compiled extension output (CommonJS) — not recompiled by integration/tsconfig.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const hostMod = require("../out/vscode-host") as {
+    createVsCodeHost: (output: vscode.OutputChannel) => {
+      asRelativePath(uri: PortableUri): string;
+      fs: {
+        readFile(uri: PortableUri): Promise<Uint8Array>;
+        writeFile(uri: PortableUri, content: Uint8Array): Promise<void>;
+        createDirectory(uri: PortableUri): Promise<void>;
+        stat(uri: PortableUri): Promise<{ type: number; ctime: number; mtime: number; size: number }>;
+        delete(uri: PortableUri, options?: { recursive?: boolean; useTrash?: boolean }): Promise<void>;
+      };
+      openDiff(
+        left: PortableUri,
+        right: PortableUri,
+        title: string,
+        options?: { preview?: boolean; preserveFocus?: boolean },
+      ): Thenable<void>;
+      closeDiffTabs(original: PortableUri, modified: PortableUri): void;
+      registerTextDocumentContentProvider(
+        scheme: string,
+        provider: { provideTextDocumentContent(uri: { path: string; toString(): string }): string },
+      ): { dispose(): void };
+    };
+    createVsCodeHostContext: (context: vscode.ExtensionContext) => {
+      extensionUri: PortableUri;
+      globalStorageUri: PortableUri;
+      extensionId: string;
+    };
+    wrapWebview: (webview: vscode.Webview) => {
+      options: { enableScripts?: boolean; localResourceRoots?: PortableUri[] };
+      asWebviewUri(uri: PortableUri): string;
+    };
+    toVsCodeUri: (u: PortableUri) => vscode.Uri;
+    fromVsCodeUri: (u: vscode.Uri) => PortableUri;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { Uri } = require("../out/host") as {
+    Uri: {
+      from(components: {
+        scheme: string;
+        path: string;
+        authority?: string;
+        query?: string;
+        fragment?: string;
+        fsPath?: string;
+      }): PortableUri;
+      file(fsPath: string): PortableUri;
+      joinPath(base: PortableUri, ...pathSegments: string[]): PortableUri;
+    };
+  };
+
+  const { createVsCodeHost, createVsCodeHostContext, wrapWebview, toVsCodeUri, fromVsCodeUri } = hostMod;
+  let output: vscode.OutputChannel;
+  let host: ReturnType<typeof createVsCodeHost>;
+
+  suiteSetup(() => {
+    output = vscode.window.createOutputChannel("Grok adapter integration");
+    host = createVsCodeHost(output);
+  });
+
+  suiteTeardown(() => {
+    output?.dispose();
+  });
+
+  test("authority survives fromVsCodeUri → toVsCodeUri", () => {
+    const remote = vscode.Uri.from({
+      scheme: "vscode-remote",
+      authority: "ssh-remote+dev.example",
+      path: "/home/me/proj/src/main.ts",
+    });
+    const portable = fromVsCodeUri(remote);
+    assert.strictEqual(portable.scheme, "vscode-remote");
+    assert.strictEqual(portable.authority, "ssh-remote+dev.example");
+    assert.strictEqual(portable.path, "/home/me/proj/src/main.ts");
+    assert.strictEqual(portable.fsPath, remote.fsPath);
+
+    const back = toVsCodeUri(portable);
+    assert.strictEqual(back.scheme, remote.scheme);
+    assert.strictEqual(back.authority, remote.authority);
+    assert.strictEqual(back.path, remote.path);
+    assert.strictEqual(back.toString(), remote.toString());
+  });
+
+  test("query, fragment, and fsPath survive fromVsCodeUri → toVsCodeUri", () => {
+    const remote = vscode.Uri.from({
+      scheme: "vscode-remote",
+      authority: "ssh-remote+dev.example",
+      path: "/home/me/proj/doc.md",
+      query: "view=preview&x=1",
+      fragment: "section-2",
+    });
+    const portable = fromVsCodeUri(remote);
+    assert.strictEqual(portable.query, "view=preview&x=1");
+    assert.strictEqual(portable.fragment, "section-2");
+    assert.strictEqual(portable.fsPath, remote.fsPath, "must keep VS Code's real fsPath");
+
+    const back = toVsCodeUri(portable);
+    assert.strictEqual(back.query, remote.query);
+    assert.strictEqual(back.fragment, remote.fragment);
+    assert.strictEqual(back.path, remote.path);
+    assert.strictEqual(back.authority, remote.authority);
+    // Round-trip again: fsPath must still match the original VS Code value.
+    const again = fromVsCodeUri(back);
+    assert.strictEqual(again.fsPath, remote.fsPath);
+    assert.strictEqual(again.query, remote.query);
+    assert.strictEqual(again.fragment, remote.fragment);
+  });
+
+  test("content-provider key round-trip preserves path special characters", async () => {
+    const scheme = `grok-int-cp-${Date.now()}`;
+    const specialPath = "/0/before/my file#x%y?.ts";
+    let seenPath = "";
+    let seenToString = "";
+    const reg = host.registerTextDocumentContentProvider(scheme, {
+      provideTextDocumentContent(uri) {
+        seenPath = uri.path;
+        seenToString = uri.toString();
+        return "provider-body";
+      },
+    });
+    try {
+      const portable = Uri.from({ scheme, path: specialPath });
+      const vsUri = toVsCodeUri(portable);
+      // VS Code asks the provider via the real vscode.Uri; our adapter must
+      // convert back with fromVsCodeUri so the path is decoded, not percent-form.
+      const doc = await vscode.workspace.openTextDocument(vsUri);
+      assert.strictEqual(doc.getText(), "provider-body");
+      assert.strictEqual(seenPath, specialPath, `provider saw path ${JSON.stringify(seenPath)}`);
+      // Portable toString and the provider's portable uri must agree on encoding.
+      assert.strictEqual(seenToString, portable.toString());
+      assert.strictEqual(vsUri.toString(), portable.toString());
+    } finally {
+      reg.dispose();
+    }
+  });
+
+  test("closeDiffTabs matches tabs whose filenames contain space, #, %, ?", async () => {
+    const scheme = `grok-int-diff-${Date.now()}`;
+    const fileName = "my file#x%y?.ts";
+    const reg = host.registerTextDocumentContentProvider(scheme, {
+      provideTextDocumentContent() {
+        return "diff-side";
+      },
+    });
+    try {
+      const left = Uri.from({ scheme, path: `/0/before/${fileName}` });
+      const right = Uri.from({ scheme, path: `/0/after/${fileName}` });
+
+      // Broken dual-encoder would open a tab whose VS Code string is percent-
+      // encoded, then fail to close it when comparing against a bare portable
+      // toString() that disagreed. Both sides must go through toVsCodeUri.
+      await host.openDiff(left, right, "adapter special-char diff", {
+        preview: true,
+        preserveFocus: true,
+      });
+      await new Promise((r) => setTimeout(r, 300));
+
+      const leftKey = toVsCodeUri(left).toString();
+      const rightKey = toVsCodeUri(right).toString();
+      const countMatching = () => {
+        let n = 0;
+        for (const group of vscode.window.tabGroups.all) {
+          for (const tab of group.tabs) {
+            const input = tab.input;
+            if (
+              input instanceof vscode.TabInputTextDiff &&
+              input.original.toString() === leftKey &&
+              input.modified.toString() === rightKey
+            ) {
+              n++;
+            }
+          }
+        }
+        return n;
+      };
+
+      assert.ok(
+        countMatching() >= 1,
+        `expected an open diff tab for keys ${leftKey} / ${rightKey}`,
+      );
+
+      host.closeDiffTabs(left, right);
+      await new Promise((r) => setTimeout(r, 400));
+
+      assert.strictEqual(
+        countMatching(),
+        0,
+        "closeDiffTabs must close the special-character diff tab (same-encoder compare)",
+      );
+    } finally {
+      reg.dispose();
+    }
+  });
+
+  test("asRelativePath with a workspace Uri returns a relative path", () => {
+    const folders = vscode.workspace.workspaceFolders;
+    assert.ok(folders?.length, "integration fixture must open a workspace folder");
+    const folder = folders![0]!;
+    // Build a portable Uri from the real workspace folder URI (preserves scheme).
+    const childVs = vscode.Uri.joinPath(folder.uri, "README.md");
+    const portable = fromVsCodeUri(childVs);
+    const rel = host.asRelativePath(portable);
+    // Must not fall through to the absolute path.
+    assert.ok(
+      !path.isAbsolute(rel) || rel === "README.md" || rel.endsWith(`${path.sep}README.md`) || rel.endsWith("/README.md"),
+      `asRelativePath should be relative, got ${JSON.stringify(rel)}`,
+    );
+    assert.ok(
+      /README\.md$/i.test(rel.replace(/\\/g, "/")),
+      `expected README.md in relative path, got ${JSON.stringify(rel)}`,
+    );
+    // Path-only form must still work for local file workspaces (this fixture is file://).
+    if (folder.uri.scheme === "file") {
+      const viaFile = host.asRelativePath(Uri.file(childVs.fsPath));
+      assert.strictEqual(viaFile, rel);
+    }
+  });
+
+  test("createVsCodeHostContext preserves Uri identity (not path strings)", async () => {
+    // Build a shim ExtensionContext whose URIs are remote — proves the adapter
+    // stores fromVsCodeUri results, not .fsPath. A flatten-to-path revert makes
+    // extensionUri/globalStorageUri undefined (or non-Uri) and fails.
+    const remoteExt = vscode.Uri.from({
+      scheme: "vscode-remote",
+      authority: "ssh-remote+box",
+      path: "/home/me/.vscode-server/extensions/pawelhuryn.grok-vscode-phuryn",
+    });
+    const remoteStorage = vscode.Uri.from({
+      scheme: "vscode-remote",
+      authority: "ssh-remote+box",
+      path: "/home/me/.vscode-server/data/User/globalStorage/pawelhuryn.grok-vscode-phuryn",
+    });
+    const shim = {
+      secrets: {
+        get: async () => undefined,
+        store: async () => {},
+        delete: async () => {},
+      },
+      globalStorageUri: remoteStorage,
+      extensionUri: remoteExt,
+      extension: {
+        id: "PawelHuryn.grok-vscode-phuryn",
+        packageJSON: { version: "0.0.0-test" },
+      },
+      extensionMode: vscode.ExtensionMode.Test,
+      globalState: {
+        get: () => undefined,
+        update: async () => {},
+        keys: () => [],
+      },
+      subscriptions: [],
+    } as unknown as vscode.ExtensionContext;
+
+    const ctx = createVsCodeHostContext(shim);
+    assert.strictEqual(ctx.extensionUri.scheme, "vscode-remote");
+    assert.strictEqual(ctx.extensionUri.authority, "ssh-remote+box");
+    assert.strictEqual(ctx.globalStorageUri.scheme, "vscode-remote");
+    assert.strictEqual(ctx.globalStorageUri.authority, "ssh-remote+box");
+    // Flattening would only keep .fsPath strings — those fields must not exist.
+    assert.strictEqual(
+      (ctx as { extensionPath?: unknown }).extensionPath,
+      undefined,
+      "extensionPath string field must not be restored (use extensionUri)",
+    );
+    assert.strictEqual(
+      (ctx as { globalStoragePath?: unknown }).globalStoragePath,
+      undefined,
+      "globalStoragePath string field must not be restored (use globalStorageUri)",
+    );
+    // Round-trip through toVsCodeUri keeps remote identity for asWebviewUri/fs.
+    const backExt = toVsCodeUri(ctx.extensionUri);
+    assert.strictEqual(backExt.scheme, "vscode-remote");
+    assert.strictEqual(backExt.authority, "ssh-remote+box");
+    const media = Uri.joinPath(ctx.extensionUri, "media", "chat.css");
+    assert.strictEqual(media.scheme, "vscode-remote");
+    assert.strictEqual(media.authority, "ssh-remote+box");
+    assert.ok(media.path.endsWith("/media/chat.css"), media.path);
+  });
+
+  test("localResourceRoots + asWebviewUri preserve non-file scheme via wrapWebview", () => {
+    // Real webview panel — construct vscode-remote roots without a real remote.
+    // Flattening to path + Uri.file would rewrite scheme to "file" on read-back.
+    const panel = vscode.window.createWebviewPanel(
+      "grokUriBoundaryTest",
+      "URI boundary",
+      vscode.ViewColumn.One,
+      { enableScripts: true, localResourceRoots: [] },
+    );
+    try {
+      const wv = wrapWebview(panel.webview);
+      const remoteRoot = Uri.from({
+        scheme: "vscode-remote",
+        authority: "ssh-remote+box",
+        path: "/home/me/.vscode-server/extensions/ext/media",
+        fsPath: "/home/me/.vscode-server/extensions/ext/media",
+      });
+      const localRoot = Uri.file(path.join(path.dirname(path.dirname(__filename)), "media"));
+      wv.options = {
+        enableScripts: true,
+        localResourceRoots: [remoteRoot, localRoot],
+      };
+      const roots = wv.options.localResourceRoots ?? [];
+      const remote = roots.find((r) => r.scheme === "vscode-remote");
+      assert.ok(
+        remote,
+        `remote root must survive options set/get; got ${JSON.stringify(roots.map((r) => r.scheme + "://" + r.authority))}`,
+      );
+      assert.strictEqual(remote!.authority, "ssh-remote+box");
+      assert.ok(remote!.path.includes("/media"), remote!.path);
+
+      // asWebviewUri must accept the portable remote Uri (toVsCodeUri path).
+      // If the adapter does Uri.file(uri.fsPath), VS Code still returns a string
+      // — but the *input* scheme is lost. We assert toVsCodeUri of the same Uri
+      // keeps scheme, and that asWebviewUri does not throw on a remote Uri.
+      const asset = Uri.joinPath(remoteRoot, "chat.css");
+      assert.strictEqual(toVsCodeUri(asset).scheme, "vscode-remote");
+      const src = wv.asWebviewUri(asset);
+      assert.ok(typeof src === "string" && src.length > 0, "asWebviewUri must return a string");
+      // A correct remote-preserving call yields a webview resource URI; a file
+      // rewrite of a remote path often still produces a string, so the scheme
+      // check on toVsCodeUri above is the hard gate. Also reject empty.
+      assert.ok(!src.startsWith("file:"), `webview URI should not be raw file: ${src}`);
+    } finally {
+      panel.dispose();
+    }
+  });
+
+  test("host.fs round-trip uses Uri (toVsCodeUri), not path strings", async () => {
+    // Write under a temp file Uri via host.fs — proves HostFileSystem takes Uri
+    // and the adapter reaches workspace.fs. A path-string signature would not
+    // compile; a Uri.file-only adapter still works for file:// — so also assert
+    // toVsCodeUri preserves a non-file scheme for the same call shape.
+    const dir = path.join(require("os").tmpdir(), `grok-fs-uri-${Date.now()}`);
+    const dirUri = Uri.file(dir);
+    const fileUri = Uri.file(path.join(dir, "probe.txt"));
+    try {
+      await host.fs.createDirectory(dirUri);
+      await host.fs.writeFile(fileUri, Buffer.from("uri-fs-probe", "utf8"));
+      const bytes = await host.fs.readFile(fileUri);
+      assert.strictEqual(Buffer.from(bytes).toString("utf8"), "uri-fs-probe");
+      const st = await host.fs.stat(fileUri);
+      assert.ok(st.size > 0);
+
+      // Non-file scheme must survive the encoder the adapter uses for fs.
+      const remoteStorage = Uri.from({
+        scheme: "vscode-remote",
+        authority: "ssh-remote+box",
+        path: "/home/me/.vscode-server/data/User/globalStorage/ext/plan-reviews/x",
+        fsPath: "/home/me/.vscode-server/data/User/globalStorage/ext/plan-reviews/x",
+      });
+      const vs = toVsCodeUri(remoteStorage);
+      assert.strictEqual(vs.scheme, "vscode-remote", "host.fs must convert via toVsCodeUri, not Uri.file");
+      assert.strictEqual(vs.authority, "ssh-remote+box");
+    } finally {
+      try {
+        await host.fs.delete(dirUri, { recursive: true, useTrash: false });
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
   });
 });

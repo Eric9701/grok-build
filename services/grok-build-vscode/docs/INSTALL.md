@@ -54,3 +54,5 @@ npm run compile
 ## Multi-IDE
 
 Same VSIX works in VS Code and Cursor (ACP `atlas agent stdio`).
+
+Standalone Desktop packaging notes (optional): [desktop.md](desktop.md).

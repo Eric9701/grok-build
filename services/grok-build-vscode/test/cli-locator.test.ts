@@ -12,13 +12,24 @@ import {
   isLockedBinaryError,
   isGrokVersionBelowRequired,
   isStdioBrokenGrokVersion,
+  decidePlanModeAvailability,
+  probeVersionOutput,
+  readCliBinaryIdentity,
+  lookupCachedCliVersion,
+  storeCachedCliVersion,
+  resolvePlanModeAvailability,
+  cliVersionCacheKey,
+  PLAN_MODE_UNVERIFIED_REASON,
+  CLI_VERSION_CACHE_KEY,
   GROK_REQUIRED_VERSION,
   GROK_STDIO_DOWNGRADE_TARGET,
+  type CliBinaryIdentity,
+  type CliVersionCache,
 } from "../src/cli-locator";
 
 const IS_WIN = process.platform === "win32";
 const PATH_SEP = IS_WIN ? ";" : ":";
-const FAKE_BIN_NAME = IS_WIN ? "grok.cmd" : "grok";
+const FAKE_BIN_NAME = IS_WIN ? "atlas.cmd" : "grok";
 
 describe("locateGrokCli", () => {
   let tmpDir: string;
@@ -54,7 +65,11 @@ describe("locateGrokCli", () => {
       const result = locateGrokCli("");
       // Either ~/.grok/bin/grok wins (if installed) or PATH lookup finds the fake.
       const found = result?.toLowerCase();
-      expect(found === fakeBin.toLowerCase() || !!found?.includes("grok")).toBe(true);
+      expect(
+        found === fakeBin.toLowerCase() ||
+          !!found?.includes("grok") ||
+          !!found?.includes("atlas"),
+      ).toBe(true);
     } finally {
       process.env.PATH = originalPath;
     }
@@ -170,6 +185,347 @@ describe("required grok behavior floor", () => {
       expect(isGrokVersionBelowRequired(`grok ${version} (x) [stable]`)).toBe(false);
     }
     expect(isGrokVersionBelowRequired("grok (dev build)")).toBe(false);
+  });
+});
+
+describe("decidePlanModeAvailability (#105 — verified-old vs unverified)", () => {
+  it("enables Plan for the floor and newer (including 1.0.0)", () => {
+    for (const version of ["0.2.117", "0.2.118", "1.0.0"]) {
+      expect(decidePlanModeAvailability(`grok ${version} (x) [stable]`)).toEqual({
+        available: true,
+        verified: true,
+      });
+    }
+  });
+
+  it("disables Plan with a latched verified-old reason for a parseable below-floor CLI", () => {
+    const decision = decidePlanModeAvailability("grok 0.2.100 (x) [stable]");
+    expect(decision).toEqual({
+      available: false,
+      verified: true,
+      installed: "0.2.100",
+      reason: `Plan mode requires Grok CLI ${GROK_REQUIRED_VERSION} or newer; installed version is 0.2.100.`,
+    });
+    // Distinct from the unverified copy — users must not conclude "too old" from a probe miss.
+    expect(decision.reason).toContain("installed version is");
+    expect(decision.reason).not.toMatch(/could not verify/i);
+  });
+
+  it("fails closed but marks unverified when the banner cannot be parsed", () => {
+    for (const banner of ["", "grok (dev build)", "not a version"]) {
+      const decision = decidePlanModeAvailability(banner);
+      expect(decision.available).toBe(false);
+      expect(decision.verified).toBe(false);
+      if (decision.available || decision.verified) throw new Error("expected unverified");
+      expect(decision.reason).toBe(PLAN_MODE_UNVERIFIED_REASON);
+      expect(decision.reason).toMatch(/could not verify/i);
+      expect(decision.reason).toMatch(/timed out/i);
+      expect(decision.reason).toMatch(/reload/i);
+      expect(decision.reason).toContain(GROK_REQUIRED_VERSION);
+      expect(decision.reason).not.toContain("installed version is");
+    }
+  });
+
+  it("keeps the two unavailable reasons distinguishable", () => {
+    const old = decidePlanModeAvailability("grok 0.2.50 (x)");
+    const unverified = decidePlanModeAvailability("");
+    expect(old.available).toBe(false);
+    expect(unverified.available).toBe(false);
+    expect(old.verified).toBe(true);
+    expect(unverified.verified).toBe(false);
+    if (!old.available && old.verified && !unverified.available && !unverified.verified) {
+      expect(old.reason).not.toBe(unverified.reason);
+      expect(old.reason).toContain("installed version is 0.2.50");
+      expect(unverified.reason).toBe(PLAN_MODE_UNVERIFIED_REASON);
+      expect(unverified.reason).toMatch(/could not verify/i);
+      expect(unverified.reason).toMatch(/timed out/i);
+      expect(unverified.reason).toMatch(/reload/i);
+    }
+  });
+});
+
+describe("probeVersionOutput (#105 — retry empty probe, latch parseable)", () => {
+  it("returns the first parseable answer without retrying", async () => {
+    let calls = 0;
+    const sleeps: number[] = [];
+    const out = await probeVersionOutput(
+      async () => {
+        calls += 1;
+        return "grok 0.2.50 (x) [stable]";
+      },
+      async (ms) => { sleeps.push(ms); },
+    );
+    expect(out).toBe("grok 0.2.50 (x) [stable]");
+    expect(calls).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("retries once after backoff when the first read is empty, then succeeds", async () => {
+    let calls = 0;
+    const sleeps: number[] = [];
+    const out = await probeVersionOutput(
+      async () => {
+        calls += 1;
+        return calls === 1 ? "" : "grok 1.0.0 (x) [stable]";
+      },
+      async (ms) => { sleeps.push(ms); },
+      50,
+    );
+    expect(out).toBe("grok 1.0.0 (x) [stable]");
+    expect(calls).toBe(2);
+    expect(sleeps).toEqual([50]);
+    // End state after fail-then-succeed: Plan available (the behaviour that matters).
+    expect(decidePlanModeAvailability(out)).toEqual({ available: true, verified: true });
+  });
+
+  it("retries unparseable output once and stays fail-closed if still empty", async () => {
+    let calls = 0;
+    const out = await probeVersionOutput(
+      async () => {
+        calls += 1;
+        return "";
+      },
+      async () => {},
+    );
+    expect(out).toBe("");
+    expect(calls).toBe(2);
+    const decision = decidePlanModeAvailability(out);
+    expect(decision.available).toBe(false);
+    expect(decision.verified).toBe(false);
+  });
+
+  it("does not retry a parseable below-floor CLI however many times asked", async () => {
+    // Simulate "user reaches for Plan" N times: each probe sees a stable old banner.
+    for (let i = 0; i < 3; i++) {
+      let calls = 0;
+      const out = await probeVersionOutput(
+        async () => {
+          calls += 1;
+          return "grok 0.2.100 (x) [stable]";
+        },
+        async () => { throw new Error("sleep should not run for parseable output"); },
+      );
+      expect(calls).toBe(1);
+      const decision = decidePlanModeAvailability(out);
+      expect(decision).toMatchObject({ available: false, verified: true, installed: "0.2.100" });
+    }
+  });
+});
+
+describe("resolvePlanModeAvailability (#105 — cache fallback)", () => {
+  const identity: CliBinaryIdentity = { path: cliVersionCacheKey("/home/.grok/bin/grok"), mtimeMs: 1_700_000_000_000, size: 50_000 };
+  const newEnough = "grok 0.2.117 (x) [stable]";
+  const old = "grok 0.2.100 (x) [stable]";
+  const cache: CliVersionCache = {
+    [identity.path]: { mtimeMs: identity.mtimeMs, size: identity.size, versionOutput: newEnough },
+  };
+
+  it("keeps Plan available when the probe times out but a matching cache exists", async () => {
+    let calls = 0;
+    const result = await resolvePlanModeAvailability({
+      readOnce: async () => {
+        calls += 1;
+        return "";
+      },
+      sleep: async () => {},
+      identity,
+      cache,
+    });
+    expect(calls).toBe(2);
+    expect(result.usedCache).toBe(true);
+    expect(result.nextCache).toBeUndefined();
+    expect(result.decision).toEqual({ available: true, verified: false });
+  });
+
+  it("fails closed with the retryable unverified reason when there is no cache", async () => {
+    const result = await resolvePlanModeAvailability({
+      readOnce: async () => "",
+      sleep: async () => {},
+      identity,
+    });
+    expect(result.usedCache).toBe(false);
+    expect(result.nextCache).toBeUndefined();
+    expect(result.decision).toEqual({
+      available: false,
+      verified: false,
+      reason: PLAN_MODE_UNVERIFIED_REASON,
+    });
+    expect(result.decision.available).toBe(false);
+    if (!result.decision.available && !result.decision.verified) {
+      expect(result.decision.reason).toMatch(/timed out/i);
+      expect(result.decision.reason).toMatch(/reload/i);
+    }
+  });
+
+  it("gates off a cached below-floor version when the live probe fails", async () => {
+    const oldCache: CliVersionCache = {
+      [identity.path]: { mtimeMs: identity.mtimeMs, size: identity.size, versionOutput: old },
+    };
+    const result = await resolvePlanModeAvailability({
+      readOnce: async () => "",
+      sleep: async () => {},
+      identity,
+      cache: oldCache,
+    });
+    expect(result.usedCache).toBe(true);
+    expect(result.decision).toEqual({
+      available: false,
+      verified: false,
+      reason: PLAN_MODE_UNVERIFIED_REASON,
+    });
+    if (!result.decision.available && !result.decision.verified) {
+      expect(result.decision.reason).toMatch(/timed out/i);
+      expect(result.decision.reason).toMatch(/reload/i);
+      expect(result.decision.reason).not.toContain("installed version is");
+    }
+  });
+
+  it("gates off a live old version even when the cache says the floor", async () => {
+    const result = await resolvePlanModeAvailability({
+      readOnce: async () => old,
+      sleep: async () => { throw new Error("sleep should not run for parseable output"); },
+      identity,
+      cache,
+    });
+    expect(result.usedCache).toBe(false);
+    expect(result.decision).toMatchObject({ available: false, verified: true, installed: "0.2.100" });
+    expect(result.nextCache?.[identity.path]?.versionOutput).toBe(old);
+  });
+
+  it("ignores the cache when the binary identity changed", async () => {
+    const result = await resolvePlanModeAvailability({
+      readOnce: async () => "",
+      sleep: async () => {},
+      identity: { ...identity, mtimeMs: 9_999, size: 99 },
+      cache,
+    });
+    expect(result.usedCache).toBe(false);
+    expect(result.decision).toEqual({
+      available: false,
+      verified: false,
+      reason: PLAN_MODE_UNVERIFIED_REASON,
+    });
+  });
+
+  it("writes the cache after a successful probe and does not persist a failed one", async () => {
+    const written = await resolvePlanModeAvailability({
+      readOnce: async () => newEnough,
+      sleep: async () => { throw new Error("sleep should not run for parseable output"); },
+      identity,
+    });
+    expect(written.usedCache).toBe(false);
+    expect(written.nextCache?.[identity.path]).toEqual({
+      mtimeMs: identity.mtimeMs,
+      size: identity.size,
+      versionOutput: newEnough,
+    });
+
+    const failed = await resolvePlanModeAvailability({
+      readOnce: async () => "",
+      sleep: async () => {},
+      identity,
+      cache: written.nextCache,
+    });
+    expect(failed.usedCache).toBe(true);
+    expect(failed.nextCache).toBeUndefined();
+    expect(failed.decision).toEqual({ available: true, verified: false });
+  });
+
+  it("replaces a cache-derived verdict when a later live probe succeeds, both directions", async () => {
+    const goodCache: CliVersionCache = {
+      [identity.path]: { mtimeMs: identity.mtimeMs, size: identity.size, versionOutput: newEnough },
+    };
+    const cachedGood = await resolvePlanModeAvailability({
+      readOnce: async () => "",
+      sleep: async () => {},
+      identity,
+      cache: goodCache,
+    });
+    expect(cachedGood).toMatchObject({ usedCache: true, decision: { available: true, verified: false } });
+
+    const liveOld = await resolvePlanModeAvailability({
+      readOnce: async () => old,
+      sleep: async () => { throw new Error("sleep should not run for parseable output"); },
+      identity,
+      cache: goodCache,
+    });
+    expect(liveOld.usedCache).toBe(false);
+    expect(liveOld.decision).toMatchObject({ available: false, verified: true, installed: "0.2.100" });
+    expect(liveOld.nextCache?.[identity.path]?.versionOutput).toBe(old);
+
+    const oldCache: CliVersionCache = {
+      [identity.path]: { mtimeMs: identity.mtimeMs, size: identity.size, versionOutput: old },
+    };
+    const cachedOld = await resolvePlanModeAvailability({
+      readOnce: async () => "",
+      sleep: async () => {},
+      identity,
+      cache: oldCache,
+    });
+    expect(cachedOld).toMatchObject({
+      usedCache: true,
+      decision: { available: false, verified: false, reason: PLAN_MODE_UNVERIFIED_REASON },
+    });
+
+    const liveNew = await resolvePlanModeAvailability({
+      readOnce: async () => newEnough,
+      sleep: async () => { throw new Error("sleep should not run for parseable output"); },
+      identity,
+      cache: oldCache,
+    });
+    expect(liveNew.usedCache).toBe(false);
+    expect(liveNew.decision).toEqual({ available: true, verified: true });
+    expect(liveNew.nextCache?.[identity.path]?.versionOutput).toBe(newEnough);
+  });
+});
+
+describe("cli version cache identity", () => {
+  it("keys Windows paths case-insensitively and Unix paths as normalized", () => {
+    if (IS_WIN) {
+      expect(cliVersionCacheKey("C:\\Users\\A\\.grok\\bin\\grok.exe"))
+        .toBe(cliVersionCacheKey("c:\\users\\a\\.grok\\bin\\grok.exe"));
+    } else {
+      expect(cliVersionCacheKey("/home/a/.grok/bin/grok")).toBe("/home/a/.grok/bin/grok");
+    }
+  });
+
+  it("returns identity from stat and drops unreadable or non-finite stamps", () => {
+    expect(readCliBinaryIdentity("/x/grok", () => ({ mtimeMs: 10, size: 20 }))).toEqual({
+      path: cliVersionCacheKey("/x/grok"),
+      mtimeMs: 10,
+      size: 20,
+    });
+    expect(readCliBinaryIdentity("/x/grok", () => { throw new Error("ENOENT"); })).toBeUndefined();
+    expect(readCliBinaryIdentity("/x/grok", () => ({ mtimeMs: Number.NaN, size: 20 }))).toBeUndefined();
+    expect(readCliBinaryIdentity("")).toBeUndefined();
+  });
+
+  it("lookup requires a matching identity and a parseable banner", () => {
+    const identity: CliBinaryIdentity = { path: cliVersionCacheKey("/x/grok"), mtimeMs: 1, size: 2 };
+    const cache: CliVersionCache = {
+      [identity.path]: { mtimeMs: 1, size: 2, versionOutput: "grok 0.2.117 (x)" },
+    };
+    expect(lookupCachedCliVersion(cache, identity)).toBe("grok 0.2.117 (x)");
+    expect(lookupCachedCliVersion(cache, { ...identity, size: 3 })).toBeUndefined();
+    expect(lookupCachedCliVersion(undefined, identity)).toBeUndefined();
+    expect(lookupCachedCliVersion({ [identity.path]: { mtimeMs: 1, size: 2, versionOutput: "" } }, identity)).toBeUndefined();
+  });
+
+  it("store writes only parseable banners and does not mutate the previous store", () => {
+    const identity: CliBinaryIdentity = { path: cliVersionCacheKey("/x/grok"), mtimeMs: 1, size: 2 };
+    const prev: CliVersionCache = { "/other": { mtimeMs: 9, size: 9, versionOutput: "grok 0.2.118 (x)" } };
+    const next = storeCachedCliVersion(prev, identity, "grok 0.2.117 (x)");
+    expect(next).toEqual({
+      "/other": prev["/other"],
+      [identity.path]: { mtimeMs: 1, size: 2, versionOutput: "grok 0.2.117 (x)" },
+    });
+    expect(prev[identity.path]).toBeUndefined();
+    expect(storeCachedCliVersion(prev, identity, "")).toBeUndefined();
+    expect(storeCachedCliVersion(prev, undefined, "grok 0.2.117 (x)")).toBeUndefined();
+  });
+
+  it("names the persisted globalState key", () => {
+    expect(CLI_VERSION_CACHE_KEY).toBe("atlas.cliVersionCache");
   });
 });
 

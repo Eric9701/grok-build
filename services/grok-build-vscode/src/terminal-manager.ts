@@ -91,7 +91,7 @@ function whichOnPath(name: string): string | undefined {
   }
 }
 
-/** How to pick the Windows host shell — `grok.terminalShell` (#46). */
+/** How to pick the Windows host shell — `atlas.terminalShell` (#46). */
 export type ShellPreference = "auto" | "cmd";
 
 /**
@@ -113,7 +113,7 @@ export type ShellPreference = "auto" | "cmd";
  * `-NoProfile`: profile-defined functions/modules are exactly what users expect
  * commands to reach (and what standalone grok reaches).
  *
- * `pref = "cmd"` is the escape hatch (`grok.terminalShell`): force cmd.exe on
+ * `pref = "cmd"` is the escape hatch (`atlas.terminalShell`): force cmd.exe on
  * Windows (a no-op on POSIX, where it's `/bin/sh` either way) for anyone the
  * PowerShell default bites — e.g. the `powershell.exe` 5.1 fallback rejects
  * `&&` chains and collapses non-zero native exits to 1 (pwsh 7 does neither).
@@ -169,13 +169,26 @@ export function resolvedTerminalShellDialect(): "posix" | "powershell" | "cmd" {
   return base.includes("pwsh") || base.includes("powershell") ? "powershell" : "cmd";
 }
 
+/**
+ * VS Code language id for a command opened via View all. Unknown dialects
+ * return undefined so the untitled editor can detect instead of guessing.
+ */
+export function commandLanguageForDialect(
+  dialect: "posix" | "powershell" | "cmd" | string | undefined,
+): string | undefined {
+  if (dialect === "powershell") return "powershell";
+  if (dialect === "posix") return "shellscript";
+  if (dialect === "cmd") return "bat";
+  return undefined;
+}
+
 // Shell resolution runs a `where` subprocess, so cache it for the process
 // lifetime instead of paying that cost on every `terminal/create`.
 let shellPreference: ShellPreference = "auto";
 let cachedTerminalShell: string | true | undefined;
 
 /**
- * Apply the `grok.terminalShell` preference (host reads config → calls this on
+ * Apply the `atlas.terminalShell` preference (host reads config → calls this on
  * startup + on change). Clears the cache so the next command re-resolves.
  */
 export function setTerminalShellPreference(pref: ShellPreference): void {

@@ -9,6 +9,11 @@ import {
   buildUplinkUrl,
   httpBaseFromRelayUrl,
   deviceDisplayName,
+  deviceOsLabel,
+  devicePlatformCode,
+  deviceClientLabel,
+  sanitizeRelayDeviceField,
+  buildLinkStartBody,
   nextBackoffMs,
   INITIAL_BACKOFF_MS,
   MAX_BACKOFF_MS,
@@ -18,6 +23,33 @@ describe("uplink frame builders", () => {
   it("hello carries the protocol version and optional device name", () => {
     expect(helloFrame("dev-box")).toEqual({ t: "hello", proto: REMOTE_PROTO_VERSION, device: { name: "dev-box" } });
     expect(helloFrame()).toEqual({ t: "hello", proto: REMOTE_PROTO_VERSION });
+  });
+
+  it("hello carries the client object with the same mapped values as link/start", () => {
+    const src = {
+      hostname: "Dell",
+      platform: "win32",
+      release: "10.0.26200",
+      installId: "abc",
+      appName: "Visual Studio Code",
+      isDesktop: false,
+    };
+    const body = buildLinkStartBody(src);
+    expect(helloFrame("Dell (Windows 11)", src)).toEqual({
+      t: "hello",
+      proto: REMOTE_PROTO_VERSION,
+      device: { name: "Dell (Windows 11)" },
+      client: {
+        clientLabel: body.clientLabel,
+        platform: body.platform,
+        osLabel: body.osLabel,
+      },
+    });
+    expect(helloFrame("Dell (Windows 11)", src).client).toEqual({
+      clientLabel: "VS Code extension",
+      platform: "win",
+      osLabel: "Windows 11",
+    });
   });
 
   it("host/snapshot wrap protocol messages verbatim", () => {
@@ -77,6 +109,7 @@ describe("parseRelayFrame", () => {
   const traversalMessages = [
     ["selectRepo cwd", { type: "selectRepo", cwd: "../.." }],
     ["toggleRepoPin cwd", { type: "toggleRepoPin", cwd: "..\\..", pinned: true }],
+    ["setRepoColor cwd", { type: "setRepoColor", cwd: "..\\..", color: "blue" }],
     ["resumeSession id", { type: "resumeSession", id: "../.." }],
     ["resumeSession cwd", { type: "resumeSession", id: "safe-session", cwd: "/work/../escape" }],
     ["renameSession id", { type: "renameSession", id: "..\\..", name: "renamed" }],
@@ -84,6 +117,22 @@ describe("parseRelayFrame", () => {
     ["clearAllSessions cwd", { type: "clearAllSessions", cwd: "../.." }],
     ["addMentionFile relPath", { type: "addMentionFile", relPath: "../../secret.txt" }],
     ["uploadFile name", { type: "uploadFile", name: "../../secret.md", data: "YQ==" }],
+    ["writeProjectFile relPath", {
+      type: "writeProjectFile",
+      cwd: "/work/a",
+      relPath: "../../secret.txt",
+      text: "x",
+      stamp: { mtimeMs: 1, size: 1 },
+      expectedAbsPath: "/work/a/secret.txt",
+    }],
+    ["writeProjectFile expectedAbsPath", {
+      type: "writeProjectFile",
+      cwd: "/work/a",
+      relPath: "a.ts",
+      text: "x",
+      stamp: { mtimeMs: 1, size: 1 },
+      expectedAbsPath: "/work/../escape",
+    }],
   ] as const;
 
   it.each(traversalMessages)(
@@ -258,21 +307,49 @@ describe("parseRelayFrame", () => {
     for (const msg of [
       { type: "selectRepo", cwd: "/work/repo" },
       { type: "toggleRepoPin", cwd: "C:\\work\\repo", pinned: true },
+      { type: "setRepoColor", cwd: "/work/repo", color: "coral" },
+      { type: "setRepoColor", cwd: "/work/repo", color: "" },
       { type: "resumeSession", id: "019f-session_1", cwd: "\\\\server\\share\\repo" },
       { type: "renameSession", id: "019f-session_1", name: "renamed" },
       { type: "deleteSession", id: "019f-session_1" },
       { type: "clearAllSessions", cwd: "/work/repo" },
       { type: "addMentionFile", relPath: "src/file.ts" },
       { type: "uploadFile", name: "Quarterly Notes.pdf", data: "YQ==" },
+      {
+        type: "writeProjectFile",
+        cwd: "/work/repo",
+        relPath: "src/file.ts",
+        text: "hello\n",
+        stamp: { mtimeMs: 1_700_000_000_000, size: 6 },
+        expectedAbsPath: "/work/repo/src/file.ts",
+      },
     ]) {
       expect(parseRelayFrame(wrap(msg)), JSON.stringify(msg)).not.toBeNull();
     }
+    // Missing stamp / non-finite numbers must not pass the wire gate.
+    expect(parseRelayFrame(wrap({
+      type: "writeProjectFile",
+      cwd: "/work/repo",
+      relPath: "a.ts",
+      text: "x",
+      expectedAbsPath: "/work/repo/a.ts",
+    }))).toBeNull();
+    expect(parseRelayFrame(wrap({
+      type: "writeProjectFile",
+      cwd: "/work/repo",
+      relPath: "a.ts",
+      text: "x",
+      stamp: { mtimeMs: NaN, size: 1 },
+      expectedAbsPath: "/work/repo/a.ts",
+    }))).toBeNull();
   });
 
   it("drops malformed filesystem selectors and accepts a valid ready token", () => {
     const wrap = (msg: unknown) => JSON.stringify({ t: "msg", clientId: "c1", msg });
     expect(parseRelayFrame(wrap({ type: "selectRepo", cwd: {} }))).toBeNull();
     expect(parseRelayFrame(wrap({ type: "toggleRepoPin", cwd: "/a", pinned: "yes" }))).toBeNull();
+    expect(parseRelayFrame(wrap({ type: "setRepoColor", cwd: "/a", color: 7 }))).toBeNull();
+    expect(parseRelayFrame(wrap({ type: "setRepoColor", cwd: "..\\..", color: "blue" }))).toBeNull();
     expect(parseRelayFrame(wrap({ type: "resumeSession", id: "s", cwd: [] }))).toBeNull();
     expect(parseRelayFrame(wrap({ type: "clearAllSessions", cwd: 42 }))).toBeNull();
     expect(parseRelayFrame(wrap({ type: "ready", tabToken: "short" }))).toBeNull();
@@ -313,6 +390,77 @@ describe("deviceDisplayName", () => {
 
   it("falls back to just the OS label when the hostname is empty", () => {
     expect(deviceDisplayName("", "win32", "10.0.26200")).toBe("Windows 11");
+  });
+});
+
+describe("richer device-row link/start fields", () => {
+  it("reuses the same OS string the legacy name already embeds", () => {
+    expect(deviceOsLabel("win32", "10.0.26200")).toBe("Windows 11");
+    expect(deviceOsLabel("win32", "10.0.19045")).toBe("Windows 10");
+    expect(deviceOsLabel("darwin", "23.5.0")).toBe("macOS");
+    expect(deviceOsLabel("linux", "6.1.0")).toBe("Linux");
+    expect(deviceDisplayName("Dell", "win32", "10.0.26200")).toBe("Dell (Windows 11)");
+  });
+
+  it("maps process.platform to win|mac|linux", () => {
+    expect(devicePlatformCode("win32")).toBe("win");
+    expect(devicePlatformCode("darwin")).toBe("mac");
+    expect(devicePlatformCode("linux")).toBe("linux");
+    expect(devicePlatformCode("freebsd")).toBeUndefined();
+  });
+
+  it("labels desktop as Desktop app and maps editor appName", () => {
+    expect(deviceClientLabel("Grok Build Desktop", true)).toBe("Desktop app");
+    expect(deviceClientLabel("Visual Studio Code", false)).toBe("VS Code extension");
+    expect(deviceClientLabel("Cursor", false)).toBe("Cursor extension");
+    expect(deviceClientLabel("Antigravity", false)).toBe("Antigravity extension");
+    expect(deviceClientLabel("VSCodium", false)).toBe("VSCodium extension");
+  });
+
+  it("keeps the legacy name and adds optional clientLabel/platform/osLabel", () => {
+    expect(buildLinkStartBody({
+      hostname: "Dell",
+      platform: "win32",
+      release: "10.0.26200",
+      installId: "abc",
+      appName: "Visual Studio Code",
+      isDesktop: false,
+    })).toEqual({
+      name: "Dell (Windows 11)",
+      installId: "abc",
+      clientLabel: "VS Code extension",
+      platform: "win",
+      osLabel: "Windows 11",
+    });
+    expect(buildLinkStartBody({
+      hostname: "Mac",
+      platform: "darwin",
+      release: "23.5.0",
+      installId: "abc:desktop",
+      appName: "Grok Build Desktop",
+      isDesktop: true,
+    })).toEqual({
+      name: "Mac (macOS)",
+      installId: "abc:desktop",
+      clientLabel: "Desktop app",
+      platform: "mac",
+      osLabel: "macOS",
+    });
+  });
+
+  it("sanitizes optional fields to trim / max-64 / no control chars", () => {
+    expect(sanitizeRelayDeviceField("  VS Code extension\u0000  ")).toBe("VS Code extension");
+    expect(sanitizeRelayDeviceField("x".repeat(80))).toHaveLength(64);
+    const body = buildLinkStartBody({
+      hostname: "box",
+      platform: "linux",
+      release: "6.1.0",
+      installId: "id",
+      appName: `  ${"N".repeat(80)}\n`,
+      isDesktop: false,
+    });
+    expect(body.clientLabel!.length).toBeLessThanOrEqual(64);
+    expect(body.clientLabel).not.toMatch(/[\u0000-\u001F]/);
   });
 });
 

@@ -58,7 +58,7 @@ function isXaiIssuerKey(topKey: string): boolean {
 }
 
 /**
- * Pull the reusable API token the grok CLI stores after `grok login`, from the
+ * Pull the reusable API token the grok CLI stores after `atlas login`, from the
  * text of `~/.grok/auth.json` — the same value a user can paste into the Voice
  * key field (confirmed working for STT, #51). The file is an object keyed by an
  * `<issuer-url>::<uuid>`; each entry carries a `key` (the token) and an optional
@@ -85,10 +85,10 @@ export function extractGrokAuthKey(authJsonText: string, now: number = Date.now(
 
 /**
  * Resolve the xAI key used for Speech-to-Text. Order: the explicit
- * `grok.voiceApiKey` setting wins; then env vars (the caller passes a map that
+ * `atlas.voiceApiKey` setting wins; then env vars (the caller passes a map that
  * layers workspace .env over process.env — a dedicated `GROK_VOICE_API_KEY` is
  * preferred over the generic `XAI_API_KEY`); finally `authKey`, the token the
- * CLI stored at `grok login` (`~/.grok/auth.json`, via `extractGrokAuthKey`), so
+ * CLI stored at `atlas login` (`~/.grok/auth.json`, via `extractGrokAuthKey`), so
  * Voice works without a separate paid key (#51).
  */
 export function resolveVoiceKey(opts: {
@@ -205,17 +205,63 @@ export interface SttStreamParams {
   /** Optional language code. The streaming endpoint uses this to enable
    *  Inverse Text Normalization; omitting it preserves spoken-form text. */
   language?: string;
-  /** Bias terms (e.g. the "grok send" send-phrase) so the model spells them
+  /** Bias terms (e.g. the "atlas send" send-phrase) so the model spells them
    *  right — directly fixes mishearings. Repeatable; ≤100 terms, ≤50 chars each. */
   keyterms?: string[];
 }
 
 /** The documented keyterm ceiling ("≤100 terms, ≤50 chars each"). */
 export const MAX_STT_KEYTERMS = 100;
+/** Per-term character cap, matching the SpaceXAI streaming keyterm limit. */
+export const MAX_VOICE_KEYTERM_CHARS = 50;
+
+/** Trim a send-phrase edit. Empty disables hands-free send. */
+export function sanitizeVoiceSendPhrase(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** Normalize a user-edited dictionary: strings only, trimmed, 50-char, unique, capped. */
+export function sanitizeVoiceKeyterms(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const term = item.trim().slice(0, MAX_VOICE_KEYTERM_CHARS);
+    if (!term) continue;
+    const key = term.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(term);
+    if (out.length >= MAX_STT_KEYTERMS) break;
+  }
+  return out;
+}
 
 export interface VoiceSettingInspect<T> {
   defaultValue?: T;
   globalValue?: T;
+  workspaceValue?: T;
+  workspaceFolderValue?: T;
+}
+
+/**
+ * Write the scope that produced the displayed voice value.
+ *
+ * Settings show the resource-effective config (`voiceSettingForRepo`). A
+ * workspace / folder override is what the user is looking at, so an edit must
+ * update that override — writing User/global would leave the displayed value
+ * unchanged. Repos outside the window workspace already display User/default,
+ * so they stay on global even if the open window has its own override.
+ */
+export function voiceSettingWriteTarget(
+  inspect: VoiceSettingInspect<unknown> | undefined,
+  repoIsInWorkspace: boolean,
+): "global" | "workspace" | "workspaceFolder" {
+  if (!repoIsInWorkspace) return "global";
+  if (inspect?.workspaceFolderValue !== undefined) return "workspaceFolder";
+  if (inspect?.workspaceValue !== undefined) return "workspace";
+  return "global";
 }
 
 /**
@@ -332,13 +378,13 @@ export interface VoiceCommandResult {
 }
 
 /**
- * Detect a trailing "send" voice command (default phrase "grok send") so a user
+ * Detect a trailing "send" voice command (default phrase "atlas send") so a user
  * can dictate and submit hands-free. Only a *trailing* match counts, and the
  * default phrase is two words specifically so it doesn't fire on a message that
  * merely ends in "send". An empty phrase disables detection. Pure + testable.
  */
 /** Regex fragment for one phrase word, tolerating common STT confusions —
- *  notably "send" ⇄ "sent" (xAI's STT often hears "grok send" as "grok sent"). */
+ *  notably "send" ⇄ "sent" (xAI's STT often hears "atlas send" as "atlas sent"). */
 export function phraseWordPattern(word: string): string {
   const lower = word.toLowerCase();
   if (lower === "send" || lower === "sent") return "sen[dt]";
@@ -350,19 +396,19 @@ export function parseVoiceCommand(transcript: string, sendPhrase: string = DEFAU
   const phrase = (sendPhrase || "").trim();
   if (!phrase) return { text: t, send: false };
   // Build a tolerant trailing matcher from the phrase words: STT may insert a
-  // comma between words ("…fix the bug, grok send") and may hear "send" as
+  // comma between words ("…fix the bug, atlas send") and may hear "send" as
   // "sent" (see phraseWordPattern). Trailing punctuation after the phrase is
-  // captured separately and kept on the message — "…today grok send?" → "…today?".
+  // captured separately and kept on the message — "…today atlas send?" → "…today?".
   const words = phrase.split(/\s+/).map(phraseWordPattern);
   const re = new RegExp(`[\\s,]*\\b${words.join("[,\\s]+")}\\b([\\s.!?…]*)$`, "i");
   const m = re.exec(t);
   if (!m) return { text: t, send: false };
   const before = t.slice(0, m.index).replace(/[\s,]+$/, "");
   // Keep at most one trailing sentence mark. If the message ALREADY ends in
-  // punctuation ("…today? grok send?"), keep that and drop the command's
+  // punctuation ("…today? atlas send?"), keep that and drop the command's
   // trailing punctuation — otherwise we'd get "??", "..", "?.", "!?", etc.
   // Only when there was no punctuation before do we adopt the command's mark
-  // ("…today grok send?" → "…today?").
+  // ("…today atlas send?" → "…today?").
   let text = before;
   if (before && !/[.!?…]$/.test(before)) {
     const punct = (m[1] || "").replace(/[^.!?…]/g, "");

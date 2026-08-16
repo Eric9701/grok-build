@@ -26,6 +26,12 @@ const readline = require("readline");
 // allowed; anything else (incl. the bogus `max`) exits 2 like the CLI does.
 const VALID_EFFORT = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
 const argv = process.argv.slice(2);
+// Desktop host + sidebar call `grok --version` before agent stdio. Answer with a
+// supported banner so Plan availability is not falsely disabled in e2e runs.
+if (argv.length === 1 && argv[0] === "--version") {
+  process.stdout.write("grok 0.2.117 (fake-acp) [stable]\n");
+  process.exit(0);
+}
 function argvOk(a) {
   if (a.length === 2) return a[0] === "agent" && a[1] === "stdio";
   if (a.length === 4) return a[0] === "agent" && a[1] === "--reasoning-effort" && VALID_EFFORT.has(a[2]) && a[3] === "stdio";
@@ -59,7 +65,9 @@ function callClient(method, params) {
   });
 }
 
-const SESSION_ID = "fake-session-1";
+const SESSION_ID = process.env.FAKE_SESSION_ID_FROM_PID === "1"
+  ? `fake-session-${process.pid}`
+  : "fake-session-1";
 const PLAN_PATH = process.env.FAKE_PLAN_PATH || "/tmp/fake-grok-home/.grok/sessions/cwd-x/sess-y/plan.md";
 const WORKSPACE_FILE = (process.env.FAKE_WORKSPACE_ROOT || "/tmp/fake-workspace") + "/file.ts";
 const RELATIVE_WORKSPACE_FILE = "relative-file.ts";

@@ -9,7 +9,7 @@
 // #45: under Auto accept (no permission card), an edit still has to be reviewable
 // in chat. Every edit row shows an always-visible `+A −R` count (rolled up onto
 // the collapsed group header too) and an expandable inline diff — computed from
-// the region grok sends (oldText/newText) — sharing the command IN/OUT expand
+// the region atlas sends (oldText/newText) — sharing the command IN/OUT expand
 // machinery. The native "open diff →" link stays.
 import { describe, it, expect } from "vitest";
 import { bootWebview, dispatch, click } from "./webview-harness";
@@ -135,7 +135,7 @@ describe("single-edit tool group stays expandable + reviewable (#30, #45)", () =
     dispatch(window, {
       type: "initialState",
       effort: "", cwd: "/w", useCtrlEnter: false, extVersion: "0",
-      showThinking: false, expandCommandOutputs: true,
+      showThinking: false, expandCommandOutputs: true, appPurpose: "coding",
     });
     dispatch(window, { type: "toolCall", call: EDIT_CALL });
     dispatch(window, { type: "toolCallUpdate", call: { toolCallId: "tc1", content: [DIFF] } });
@@ -353,7 +353,7 @@ describe("a manual expand of a running tool group survives the batch closing", (
     dispatch(window, {
       type: "initialState",
       effort: "", cwd: "/w", useCtrlEnter: false, extVersion: "0",
-      showThinking: false, expandCommandOutputs: true, // would auto-open this group at close
+      showThinking: false, expandCommandOutputs: true, appPurpose: "coding", // would auto-open this group at close
     });
     dispatch(window, { type: "toolCall", call: EDIT_CALL });
     dispatch(window, { type: "toolCallUpdate", call: { toolCallId: "tc1", content: [DIFF] } });
