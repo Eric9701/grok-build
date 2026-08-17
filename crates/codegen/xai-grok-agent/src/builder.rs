@@ -360,11 +360,10 @@ impl AgentBuilder {
         self
     }
     /// Mark this session as non-interactive (headless / SDK / stdio /
-    /// generic-ACP). Suppresses prompt sections that only make sense when
-    /// a human is typing into the TUI prompt input (e.g. the `! <command>`
-    /// shell-prefix tip and the `<user_guide>` TUI pointer), and stamps
-    /// `non_interactive` into the ask_user_question params so an unanswered
-    /// questionnaire returns no-operator text instead of "user declined".
+    /// generic-ACP). Stamps `non_interactive` into the ask_user_question
+    /// params so an unanswered questionnaire returns no-operator text
+    /// instead of "user declined". Atlas path guidance in `<user_guide>`
+    /// stays in the prompt — ACP / VS Code sessions need it too.
     pub fn with_is_non_interactive(mut self, value: bool) -> Self {
         self.is_non_interactive = value;
         self

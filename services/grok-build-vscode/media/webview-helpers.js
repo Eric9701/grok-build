@@ -25,7 +25,7 @@
   // directions (and that chat.js actually handles every host type).
   const HOST_MESSAGE_TYPES = [
     "initialState", "moveViewHint", "providerState", "codexInstallProgress", "planModeAvailability", "showThinking", "appPurpose", "fontScale", "atlasUpdateStatus", "updateAvailable", "updateReady", "telemetryEnabled", "initialized",
-    "cliUpdating", "session", "sessionName", "modelChanged", "modeChanged", "openModePopover",
+    "cliUpdating", "session", "localModels", "sessionName", "modelChanged", "modeChanged", "openModePopover",
     "voiceState", "voiceConfigured", "voicePartial", "voiceSubmit", "voiceTranscript",
     "voiceError", "chips", "commandsUpdate", "mentionResults", "projectDirListing", "projectFileContent", "projectFileWriteResult", "userMessage", "agentStart", "thoughtChunk",
     "messageChunk", "media", "userMessageChunk", "historyReplay", "historyBatch", "permissionHistoryQueue",
@@ -40,7 +40,7 @@
     "ready", "remotePreferences", "send", "newSession", "cancel", "pickModel", "setMode", "removeChip",
     "toggleChip", "openFile", "showInFolder", "openUrl", "openText", "openDiff", "exportExpr", "setEffort",
     "addProjectFolder", "removeProjectFolder",
-    "openGlobalConfig", "openProjectConfig", "runMcpList", "showLogs", "toggleDevTools", "openSettings", "openSettingsSurface", "closeSettingsSurface", "moveView",
+    "openGlobalConfig", "openProjectConfig", "listLocalModels", "addLocalModel", "editLocalModel", "removeLocalModel", "runMcpList", "showLogs", "toggleDevTools", "openSettings", "openSettingsSurface", "closeSettingsSurface", "moveView",
     "setShowThinking", "setAppPurpose", "setExpandCommandOutputs",
     "dropFile", "permissionAnswer", "exitPlanAnswer", "questionAnswer", "questionCancel",
     "setModel", "installCodex", "cancelCodexInstall", "runInstallCmd", "runGrokLogin", "logout", "checkAtlasUpdate", "updateAtlas",
@@ -126,13 +126,33 @@
     return new Date(ts).toLocaleDateString();
   }
 
-  // Resolve a model ID to its user-facing name (e.g. "grok-build" → "Grok Build")
+  // Product copy on the page. SuperGrok is an xAI plan name and stays.
+  function brandUserFacingText(text) {
+    return String(text)
+      .replace(/\bGrok Build Desktop\b/gi, "Atlas Desktop")
+      .replace(/\bGrok Build CLI\b/gi, "Atlas CLI")
+      .replace(/\bGrok Build\b/gi, "Atlas")
+      .replace(/\bGrok CLI\b/gi, "Atlas CLI");
+  }
+
+  function brandModelDisplayName(name, modelId) {
+    const id = String(modelId || "").trim();
+    const rawName = String(name || "").trim();
+    if (!rawName) return /^grok-build$/i.test(id) ? "Atlas" : id;
+    let branded = brandUserFacingText(rawName);
+    if (/^Grok\b/i.test(branded) && !/^SuperGrok\b/i.test(branded)) {
+      branded = branded.replace(/^Grok\b/i, "Atlas");
+    }
+    return branded;
+  }
+
+  // Resolve a model ID to its user-facing name (e.g. "grok-build" → "Atlas")
   // using the availableModels list from session/new. Falls back to the ID when
   // the model isn't in the list or has no name, so the label is never blank.
   function modelDisplayName(modelId, availableModels) {
     if (!modelId) return "";
     const m = (availableModels || []).find((x) => x && x.modelId === modelId);
-    return (m && m.name) || modelId;
+    return brandModelDisplayName(m && m.name, modelId);
   }
 
   // Mic button state machine for voice control:
@@ -474,7 +494,7 @@
     if (typeof failureText !== "string" || !failureText) return null;
     if (!/Zero Data Retention/i.test(failureText)) return null;
     if (!/upload_url/i.test(failureText)) return null;
-    return "Grok CLI /settings → Privacy → Coding data, retention, and training → Opt in.";
+    return "Atlas CLI /settings → Privacy → Coding data, retention, and training → Opt in.";
   }
 
   // Scannable program label for a command tool row: the executable (first token,
@@ -1354,7 +1374,7 @@
     return header.join("\n") + (body ? body + "\n" : "");
   }
 
-  const api = { FILE_EXTS, HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, isKnownHostMessage, getMentionQuery, applyMentionPick, looksLikeFileRef, formatRelativeTime, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, commandProgramLabel, commandTextPreview, extractToolResultOutput, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, panelReclampOnResizeAllowed, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents };
+  const api = { FILE_EXTS, HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, isKnownHostMessage, getMentionQuery, applyMentionPick, looksLikeFileRef, formatRelativeTime, brandUserFacingText, brandModelDisplayName, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, commandProgramLabel, commandTextPreview, extractToolResultOutput, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, panelReclampOnResizeAllowed, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

@@ -1686,6 +1686,9 @@ pub(crate) fn set_terminal_title(title: &str) {
         let _ = execute!(stderr, SetTitle(full));
     });
 }
+/// Product name shown in the terminal/tab title (startup + session suffix).
+const TERMINAL_TITLE_PRODUCT: &str = "atlas";
+
 /// Sanitized/truncated window title. Strips control characters: crossterm's
 /// `SetTitle` emits the string raw inside an OSC sequence, so an embedded
 /// BEL/ESC (titles can arrive from grok.com conversation metadata) would
@@ -1694,10 +1697,12 @@ pub(crate) fn set_terminal_title(title: &str) {
 fn terminal_title_string(title: &str) -> String {
     let sanitized: String = title.chars().filter(|c| !c.is_control()).collect();
     if sanitized.is_empty() {
-        "grok".into()
+        TERMINAL_TITLE_PRODUCT.into()
     } else {
-        let truncated: String = sanitized.chars().take(80 - 6).collect();
-        format!("{} - grok", truncated)
+        let suffix = format!(" - {TERMINAL_TITLE_PRODUCT}");
+        let budget = 80usize.saturating_sub(suffix.chars().count());
+        let truncated: String = sanitized.chars().take(budget).collect();
+        format!("{truncated}{suffix}")
     }
 }
 fn set_panic_hook(mode: ScreenMode) {
@@ -1774,11 +1779,11 @@ mod tests {
     fn terminal_title_strips_control_characters() {
         assert_eq!(
             terminal_title_string("evil\x07\x1b]52;c;payload\x07title"),
-            "evil]52;c;payloadtitle - grok"
+            "evil]52;c;payloadtitle - atlas"
         );
-        assert_eq!(terminal_title_string("\x07\x1b\x00"), "grok");
-        assert_eq!(terminal_title_string(""), "grok");
-        assert_eq!(terminal_title_string("My chat"), "My chat - grok");
+        assert_eq!(terminal_title_string("\x07\x1b\x00"), "atlas");
+        assert_eq!(terminal_title_string(""), "atlas");
+        assert_eq!(terminal_title_string("My chat"), "My chat - atlas");
     }
     #[test]
     fn hunk_tracker_mode_nothing_set_is_none() {

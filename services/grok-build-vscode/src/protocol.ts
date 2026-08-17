@@ -216,6 +216,8 @@ export type HostMsg =
   | { type: "cliUpdating" }
   // `worktree` gates the gear's Apply/Remove worktree items to worktree sessions.
   | { type: "session"; sessionId: string; models: ModelInfo[]; currentModelId: string | undefined; worktree?: boolean; provider?: "grok" | "codex" }
+  /** User-appended `[model.*]` tables from the global Atlas config (no api_key). */
+  | { type: "localModels"; models: Array<{ id: string; model?: string; name?: string; description?: string; baseUrl?: string; envKey?: string; hasApiKey: boolean; contextWindow?: number }> }
   // The focused conversation's display name, using the same precedence as a
   // history row. It is separate from `sessions` because VS Code does not keep
   // that browser-only list populated while the history popover is closed.
@@ -509,6 +511,13 @@ export type WebviewMsg =
   /** Close one project folder. It leaves the rail; nothing leaves the disk. */
   | { type: "removeProjectFolder"; cwd?: string }
   | { type: "openGlobalConfig" }
+  /** Refresh the Settings list of user-appended `[model.*]` entries. */
+  | { type: "listLocalModels" }
+  /** Host-driven wizard: add a local model to `~/.atlas/config.toml`. */
+  | { type: "addLocalModel" }
+  /** Host-driven wizard: edit an existing user `[model.<id>]` table. */
+  | { type: "editLocalModel"; id: string }
+  | { type: "removeLocalModel"; id: string }
   | { type: "openProjectConfig" }
   | { type: "runMcpList" }
   | { type: "showLogs" }
@@ -708,7 +717,7 @@ export type WebviewMsg =
 // union without failing the build.
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   initialState: true, moveViewHint: true, providerState: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, atlasUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true,
-  initialized: true, cliUpdating: true, session: true, sessionName: true, modelChanged: true,
+  initialized: true, cliUpdating: true, session: true, localModels: true, sessionName: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
   chips: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, userMessage: true, agentStart: true,
@@ -732,6 +741,7 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true,
   addProjectFolder: true, removeProjectFolder: true,
   openProjectConfig: true, runMcpList: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, moveView: true,
+  listLocalModels: true, addLocalModel: true, editLocalModel: true, removeLocalModel: true,
   setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true,
   setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, summarizeSpeech: true, requestImageFull: true, composerFocus: true,
   dropFile: true, permissionAnswer: true, exitPlanAnswer: true, questionAnswer: true,

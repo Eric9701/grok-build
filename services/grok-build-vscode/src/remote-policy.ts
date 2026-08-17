@@ -316,6 +316,10 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // the machine it is borrowing.
   removeProjectFolder: "host-local",
   openGlobalConfig: "host-local",
+  listLocalModels: "host-local",
+  addLocalModel: "host-local",
+  editLocalModel: "host-local",
+  removeLocalModel: "host-local",
   openProjectConfig: "host-local",
   runMcpList: "host-local",
   showLogs: "host-local",
@@ -541,6 +545,9 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   initialized: "mirror",
   cliUpdating: "mirror",
   session: "mirror",
+  // Config.toml `[model.*]` editing is desk-only; the list may still contain
+  // endpoint URLs, so it is not mirrored to a phone.
+  localModels: "host-local",
   // Conversation names are already exposed in the remote history list, so
   // the focused-name update has the same display-only sensitivity.
   sessionName: "mirror",
@@ -661,6 +668,8 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   cliUpdating: "none",
   onboarding: "none",
   providerState: "none",
+  // Desk-only config.toml `[model.*]` list — not project data, not mirrored.
+  localModels: "none",
   codexInstallProgress: "none",
   expandCommandOutputs: "none",
   steerByDefault: "none",

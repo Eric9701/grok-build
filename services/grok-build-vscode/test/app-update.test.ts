@@ -211,41 +211,50 @@ describe("pre-releases count", () => {
 });
 
 describe("where the update button sends people", () => {
-  it("goes to our own update page, never the GitHub release page", () => {
-    // The release page is a developer artifact — .dmg, .zip, .exe, .blockmap and
-    // a .vsix with nothing saying which is yours.
-    const url = desktopUpdatePageUrl("3.2.4");
-    expect(url.startsWith("https://afkpilot.com/desktop-update")).toBe(true);
+  const emptyEnv = {};
+
+  it("goes to the Atlas CLI host, never GitHub or afkpilot.com", () => {
+    const url = desktopUpdatePageUrl("3.2.4", emptyEnv);
+    expect(url.startsWith("http://10.218.220.237:22255/atlas/cli")).toBe(true);
     expect(url).not.toContain("github.com");
+    expect(url).not.toContain("afkpilot.com");
   });
 
   it("carries the running version and nothing else", () => {
-    // This URL is compiled into every installed copy and can never be changed
-    // for builds already out there, so it stays generic: the app says where it
-    // is, the page decides what to show. Anything more specific baked in here
-    // would be a decision we could not take back.
-    expect(desktopUpdatePageUrl("3.2.4")).toBe("https://afkpilot.com/desktop-update?from=3.2.4");
-    expect(desktopUpdatePageUrl("")).toBe("https://afkpilot.com/desktop-update");
-    expect(desktopUpdatePageUrl(null)).toBe("https://afkpilot.com/desktop-update");
-    expect(desktopUpdatePageUrl("3.2.4 &x=1")).toContain("from=3.2.4%20%26x%3D1");
+    expect(desktopUpdatePageUrl("3.2.4", emptyEnv)).toBe(
+      "http://10.218.220.237:22255/atlas/cli?from=3.2.4",
+    );
+    expect(desktopUpdatePageUrl("", emptyEnv)).toBe("http://10.218.220.237:22255/atlas/cli");
+    expect(desktopUpdatePageUrl(null, emptyEnv)).toBe("http://10.218.220.237:22255/atlas/cli");
+    expect(desktopUpdatePageUrl("3.2.4 &x=1", emptyEnv)).toContain("from=3.2.4%20%26x%3D1");
+  });
+
+  it("follows GROK_CLI_BASE_URL when set", () => {
+    const env = { GROK_CLI_BASE_URL: "http://example:9/atlas/cli/" };
+    expect(desktopUpdatePageUrl("1.0.0", env)).toBe("http://example:9/atlas/cli?from=1.0.0");
   });
 });
 
 describe("generic feed URL selection", () => {
-  it("points Windows at /update/win/ so electron-updater fetches latest.yml", () => {
-    expect(desktopUpdateFeedBase("win32")).toBe("https://afkpilot.com/update/win/");
-    expect(desktopUpdateFeedConfig("win32")).toEqual({
+  const emptyEnv = {};
+
+  it("points Windows and macOS at /atlas/cli/ so electron-updater fetches latest.yml / latest-mac.yml", () => {
+    expect(desktopUpdateFeedBase("win32", emptyEnv)).toBe("http://10.218.220.237:22255/atlas/cli/");
+    expect(desktopUpdateFeedConfig("win32", emptyEnv)).toEqual({
       provider: "generic",
-      url: "https://afkpilot.com/update/win/",
+      url: "http://10.218.220.237:22255/atlas/cli/",
+    });
+    expect(desktopUpdateFeedBase("darwin", emptyEnv)).toBe("http://10.218.220.237:22255/atlas/cli/");
+    expect(desktopUpdateFeedConfig("darwin", emptyEnv)).toEqual({
+      provider: "generic",
+      url: "http://10.218.220.237:22255/atlas/cli/",
     });
   });
 
-  it("points macOS at /update/mac/ so electron-updater fetches latest-mac.yml", () => {
-    expect(desktopUpdateFeedBase("darwin")).toBe("https://afkpilot.com/update/mac/");
-    expect(desktopUpdateFeedConfig("darwin")).toEqual({
-      provider: "generic",
-      url: "https://afkpilot.com/update/mac/",
-    });
+  it("uses GROK_CLI_BASE_URL as the feed origin", () => {
+    const env = { GROK_CLI_BASE_URL: "http://10.1.2.3:80/atlas/cli/" };
+    expect(desktopUpdateFeedBase("win32", env)).toBe("http://10.1.2.3:80/atlas/cli/");
+    expect(desktopUpdateFeedBase("darwin", env)).toBe("http://10.1.2.3:80/atlas/cli/");
   });
 
   it("has no in-app feed on Linux", () => {
@@ -399,6 +408,7 @@ describe("attachDesktopAutoUpdate", () => {
       platform: "win32",
       currentVersion: "3.7.0",
       packaged: true,
+      env: {},
       ui: {
         postNotice: (v) => notices.push(v),
         postReady: (v) => ready.push(v),
@@ -407,7 +417,7 @@ describe("attachDesktopAutoUpdate", () => {
       },
     });
     await session.check();
-    expect(updater.feed).toEqual({ provider: "generic", url: "https://afkpilot.com/update/win/" });
+    expect(updater.feed).toEqual({ provider: "generic", url: "http://10.218.220.237:22255/atlas/cli/" });
     expect(updater.setFeedCalls).toBe(1);
     expect(updater.autoDownload).toBe(true);
     expect(updater.autoInstallOnAppQuit).toBe(true);
@@ -429,6 +439,7 @@ describe("attachDesktopAutoUpdate", () => {
       platform: "darwin",
       currentVersion: "3.7.0",
       packaged: true,
+      env: {},
       ui: {
         postNotice: (version, url) => notices.push({ version, url }),
         postReady: () => {},
@@ -437,9 +448,9 @@ describe("attachDesktopAutoUpdate", () => {
       },
     });
     await session.check();
-    expect(updater.feed).toEqual({ provider: "generic", url: "https://afkpilot.com/update/mac/" });
+    expect(updater.feed).toEqual({ provider: "generic", url: "http://10.218.220.237:22255/atlas/cli/" });
     expect(notices).toEqual([
-      { version: "3.8.0", url: "https://afkpilot.com/desktop-update?from=3.7.0" },
+      { version: "3.8.0", url: "http://10.218.220.237:22255/atlas/cli?from=3.7.0" },
     ]);
     expect(session.getState().phase).toBe("failed");
   });
@@ -457,6 +468,7 @@ describe("attachDesktopAutoUpdate", () => {
       platform: "win32",
       currentVersion: "3.7.0",
       packaged: true,
+      env: {},
       ui: {
         postNotice: (v) => notices.push(v),
         postReady: () => {},
@@ -480,6 +492,7 @@ describe("attachDesktopAutoUpdate", () => {
       platform: "win32",
       currentVersion: "3.7.0",
       packaged: false,
+      env: {},
       ui: {
         postNotice: (v) => notices.push(v),
         postReady: () => {},
@@ -504,6 +517,7 @@ describe("attachDesktopAutoUpdate", () => {
       currentVersion: "3.7.0",
       packaged: false,
       forceDev: true,
+      env: {},
       ui: {
         postNotice: () => {},
         postReady: () => {},
@@ -529,6 +543,7 @@ describe("attachDesktopAutoUpdate", () => {
       currentVersion: "3.7.0",
       packaged: true,
       forceDev: true,
+      env: {},
       ui: {
         postNotice: () => {},
         postReady: () => {},
@@ -538,7 +553,7 @@ describe("attachDesktopAutoUpdate", () => {
     });
     await session.check();
     expect(updater.setFeedCalls).toBe(1);
-    expect(updater.feed).toEqual({ provider: "generic", url: "https://afkpilot.com/update/mac/" });
+    expect(updater.feed).toEqual({ provider: "generic", url: "http://10.218.220.237:22255/atlas/cli/" });
     expect(updater.forceDevUpdateConfig).toBeUndefined();
   });
 
@@ -553,6 +568,7 @@ describe("attachDesktopAutoUpdate", () => {
       platform: "win32",
       currentVersion: "3.7.0",
       packaged: true,
+      env: {},
       ui: {
         postNotice: () => {},
         postReady: () => {},
@@ -573,6 +589,7 @@ describe("attachDesktopAutoUpdate", () => {
       platform: "win32",
       currentVersion: "3.7.0",
       packaged: true,
+      env: {},
       ui: {
         postNotice: () => {},
         postReady: () => {},
@@ -595,14 +612,14 @@ describe("app-update source gates", () => {
     expect(src).toMatch(/quitAndInstall\(true, true\)/);
   });
 
-  it("documents the relay feed service and unpackaged-only dev yml", () => {
+  it("documents the Atlas CLI feed and unpackaged-only dev yml", () => {
     const spec = fs.readFileSync(path.join(root, "docs", "desktop-update-spec.md"), "utf8");
     expect(spec).toMatch(/### Feed service/);
-    expect(spec).toMatch(/selected independently/i);
-    expect(spec).toMatch(/10–15 min TTL|10-15 min TTL/);
-    expect(spec).toMatch(/installers but no yml/);
-    expect(spec).toMatch(/last three installer-bearing/);
-    expect(spec).toMatch(/objects\.githubusercontent\.com/);
+    expect(spec).toMatch(/atlas\/cli/);
+    expect(spec).toMatch(/GROK_CLI_BASE_URL/);
+    expect(spec).toMatch(/10\.218\.220\.237:22255/);
+    expect(spec).toMatch(/latest\.yml/);
+    expect(spec).toMatch(/latest-mac\.yml/);
     expect(spec).toMatch(/trust boundary/);
     expect(spec).toMatch(/unpackaged only/i);
     expect(spec).toMatch(/packaged build never reads `dev-app-update\.yml`/i);

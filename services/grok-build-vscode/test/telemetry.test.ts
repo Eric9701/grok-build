@@ -326,7 +326,7 @@ describe("the three hosts are distinguishable in analytics", () => {
     const ev = buildSessionStartEvent(
       props(DESKTOP_APP_SHORT_NAME, "desktop"), sys, "s-1", "2026-08-07T00:00:00.000Z",
     );
-    expect(ev.props.host).toBe("Grok Build Desktop");
+    expect(ev.props.host).toBe("Atlas Desktop");
     expect(ev.props.hostKind).toBe("desktop");
   });
 

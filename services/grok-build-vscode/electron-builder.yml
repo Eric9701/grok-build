@@ -3,7 +3,7 @@
 # Does not affect the VS Code VSIX path (npm run package).
 
 appId: com.productcompass.grok-build-desktop
-productName: Grok Build Desktop
+productName: Atlas Desktop
 copyright: Copyright © Paweł Huryn
 
 # Keep installers out of the extension tree; never ship this folder in the VSIX.
@@ -18,7 +18,7 @@ extraMetadata:
   # rcedit stamps `description` as the .exe FileDescription, which is the label
   # Windows shows in Task Manager and the UAC prompt. package.json's is the
   # marketplace blurb — a 300-character paragraph in a column meant for a name.
-  description: Grok Build Desktop (Community)
+  description: Atlas Desktop
 
 # Layout inside app.asar (or app/ when --dir):
 #   package.json, out/**, media/**, resources/**, LICENSE, node_modules/{ws,jpeg-js,@agentclientprotocol/codex-acp}
@@ -61,12 +61,12 @@ artifactName: Grok-Build-Desktop-${version}-${os}-${arch}.${ext}
 
 # Generate latest.yml / latest-mac.yml only. Upload stays in
 # desktop-release.yml — every dist* script passes `--publish never`.
-# Client feed is the relay (setFeedURL), not this URL; per-platform
-# blocks bake a matching app-update.yml so a missed setFeedURL still
-# hits the right directory.
+# Client feed is Atlas `/atlas/cli` (same host as CLI updates). Win and mac
+# share that directory: electron-updater appends latest.yml vs latest-mac.yml.
+# Baked app-update.yml matches so a missed setFeedURL still hits the CLI host.
 publish:
   provider: generic
-  url: https://afkpilot.com/update/win
+  url: http://10.218.220.237:22255/atlas/cli
 
 # App icon. Round, with transparency outside the disc: the square version sat on
 # an opaque white tile, which reads as a sticker on a dark Windows taskbar and
@@ -115,12 +115,12 @@ mac:
     # prompt the user — macOS terminates the process, and it presents as a
     # crash rather than as a permissions problem.
     NSMicrophoneUsageDescription: >-
-      Grok Build Desktop uses the microphone for voice input in chat.
+      Atlas Desktop uses the microphone for voice input in chat.
   # Both arches in ONE electron-builder invocation so latest-mac.yml lists
   # both zips. A second arch job would overwrite the first (#5592).
   publish:
     provider: generic
-    url: https://afkpilot.com/update/mac
+    url: http://10.218.220.237:22255/atlas/cli
   target:
     - target: dmg
       arch:
@@ -136,7 +136,7 @@ dmg:
   # called "Grok Build Desktop <version>", and the second one races the first's
   # unmount — hdiutil detach then fails on a volume that is already gone or
   # still busy, which is what killed the first macOS run.
-  title: Grok Build Desktop ${version} ${arch}
+  title: Atlas Desktop ${version} ${arch}
 
 win:
   # An explicit multi-size .ico rather than relying on the PNG conversion, so
@@ -154,7 +154,7 @@ win:
   verifyUpdateCodeSignature: false
   publish:
     provider: generic
-    url: https://afkpilot.com/update/win
+    url: http://10.218.220.237:22255/atlas/cli
   target:
     - target: nsis
       arch:
@@ -171,8 +171,8 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: Grok Build Desktop
-  uninstallDisplayName: Grok Build Desktop (Community)
+  shortcutName: Atlas Desktop
+  uninstallDisplayName: Atlas Desktop
   artifactName: Grok-Build-Desktop-${version}-${os}-${arch}.${ext}
 
 linux:

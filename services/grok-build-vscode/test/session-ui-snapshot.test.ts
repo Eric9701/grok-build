@@ -51,12 +51,12 @@ describe("sessionUiSnapshot", () => {
     const session = new Session();
     session.planModeAvailable = false;
     session.planModeVersionVerified = false;
-    session.planModeUnavailableReason = "Could not verify the installed Grok CLI version.";
+    session.planModeUnavailableReason = "Could not verify the installed Atlas CLI version.";
 
     expect(sessionUiSnapshot(session, "agent")).toContainEqual({
       type: "planModeAvailability",
       available: false,
-      reason: "Could not verify the installed Grok CLI version.",
+      reason: "Could not verify the installed Atlas CLI version.",
       recheckable: true,
     });
   });

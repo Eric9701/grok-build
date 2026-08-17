@@ -202,6 +202,23 @@ releases_dir = "./releases"
 3. 需要升级时再下载 `GET /cli/grok-{ver}-{os}-{arch}[.exe]`
 4. 安装完成后本地缓存版本信息（含 stable 指针，用于显示 `[stable]` / `[alpha]`）
 
+## Desktop 应用更新
+
+Atlas Desktop（electron-updater）与 CLI **共用** `cli_update_base_url` /
+`GROK_CLI_BASE_URL`（默认 `http://10.218.220.237:22255/atlas/cli`）。
+
+把 `dist-desktop/latest.yml`、`latest-mac.yml` 以及对应安装包
+（`Grok-Build-Desktop-<ver>-win-x64.exe`、`…-mac-arm64.zip`、`…-mac-x64.zip`）
+拷进 `releases/`。`files[].url` 用相对文件名即可，客户端会解析成
+`GET /atlas/cli/<文件名>`。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/atlas/cli/latest.yml` | Windows electron-updater 通道 |
+| GET | `/atlas/cli/latest-mac.yml` | macOS electron-updater 通道 |
+
+删除 `latest.yml` 可立即停掉 Windows 自动更新。
+
 ## 推荐发布 checklist
 
 - [ ] 确认二进制 `--version` 与 `-Version` 一致

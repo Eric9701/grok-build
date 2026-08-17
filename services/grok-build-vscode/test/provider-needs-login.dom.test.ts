@@ -77,7 +77,8 @@ describe("model picker for an agent that needs a sign-in", () => {
     click(h.window, $(h.doc, "gear-btn"));
     click(h.window, modelBtn(h.doc));
 
-    expect(popoverText(h.doc)).toContain("Grok Build");
+    expect(popoverText(h.doc)).toContain("Atlas");
+    expect(popoverText(h.doc)).not.toContain("Grok Build");
     expect(popoverText(h.doc)).not.toContain("GPT-5.6 Sol");
     expect([...h.doc.querySelectorAll(".model-provider-heading")].map((el) => el.textContent))
       .toEqual(["Atlas", "Codex"]);

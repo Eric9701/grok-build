@@ -126,6 +126,24 @@ describe("settings catalog", () => {
     expect(remoteRows.some((row) => row.id === "voiceSendPhrase")).toBe(true);
     expect(remoteRows.some((row) => row.id === "telemetryRemote")).toBe(true);
     expect(remoteRows.some((row) => row.id === "telemetryDesktop")).toBe(false);
+    expect(remoteRows.some((row) => row.id === "addLocalModel")).toBe(false);
+    expect(remoteRows.some((row) => row.id === "localModelsIntro")).toBe(false);
+  });
+
+  it("lists local models under Providers on the desk and hides them remotely", () => {
+    const api = loadSettings();
+    const snapshot = api.defaultSnapshot({
+      localModels: [
+        { id: "local-llama", name: "Local Llama", model: "llama-3.1", baseUrl: "http://127.0.0.1:11434/v1", hasApiKey: false },
+      ],
+    });
+    const localIds = api.visibleRows(snapshot, api.defaultEnv(fullEnv())).map((row) => row.id);
+    expect(localIds).toContain("addLocalModel");
+    expect(localIds).toContain("localModelsIntro");
+    expect(localIds).toContain("localModel:local-llama");
+    const remoteIds = api.visibleRows(snapshot, api.defaultEnv(fullEnv({ isRemote: true }))).map((row) => row.id);
+    expect(remoteIds).not.toContain("addLocalModel");
+    expect(remoteIds).not.toContain("localModel:local-llama");
   });
 
   it("gives every category a nav icon and folds Chat into General", () => {

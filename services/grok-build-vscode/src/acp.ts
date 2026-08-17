@@ -33,12 +33,14 @@ import {
   shouldBlockWrite,
 } from "./plan-gate";
 import { resolveGrokHome } from "./sessions";
+import { atlasAcpMeta } from "./grok-config";
 import { resolveCodexHome } from "./codex-cli-locator";
 import { inferCodexGeneratedImagePath } from "./media-serve";
 import { filterAdvertisedCommands } from "./slash-filter";
 import { grokCliNeedsShell } from "./cli-process";
 import { resolvedTerminalShellDialect } from "./terminal-manager";
 import type { AcpBackend, AcpProvider, BackendSessionListResult } from "./acp-backend";
+import { brandModelDisplayName, brandUserFacingText } from "./brand-copy";
 import { buildGrokAgentArgs, grokBackend } from "./grok-backend";
 import {
   parseWorktreeApply,
@@ -89,6 +91,20 @@ export interface ModelInfo {
    *  (the CLI gates the flag on this menu but not the `_meta` override, so an
    *  off-menu level could reach the backend and 400). */
   reasoningEfforts?: string[];
+}
+
+function advertisedModel(m: any): ModelInfo {
+  return {
+    modelId: m.modelId,
+    name: brandModelDisplayName(m.name, m.modelId),
+    description: typeof m.description === "string" ? brandUserFacingText(m.description) : m.description,
+    totalContextTokens: m._meta?.totalContextTokens,
+    supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
+    reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
+    reasoningEfforts: Array.isArray(m._meta?.reasoningEfforts)
+      ? m._meta.reasoningEfforts.map((e: any) => e?.value).filter((v: unknown): v is string => typeof v === "string")
+      : undefined,
+  };
 }
 
 export interface SlashCommand {
@@ -300,6 +316,7 @@ export class AcpClient extends EventEmitter {
         fs: { readTextFile: true, writeTextFile: true },
         terminal: true,
       },
+      ...(this.provider === "grok" ? { _meta: atlasAcpMeta() } : {}),
     });
     this.emit("initialized", init);
   }
@@ -308,20 +325,11 @@ export class AcpClient extends EventEmitter {
     const raw = await this.request("session/new", {
       cwd: this.opts.cwd,
       mcpServers: [],
+      ...(this.provider === "grok" ? { _meta: atlasAcpMeta() } : {}),
     });
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = res.sessionId;
-    this.availableModels = (res.models?.availableModels ?? []).map((m: any) => ({
-      modelId: m.modelId,
-      name: m.name,
-      description: m.description,
-      totalContextTokens: m._meta?.totalContextTokens,
-      supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
-      reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
-      reasoningEfforts: Array.isArray(m._meta?.reasoningEfforts)
-        ? m._meta.reasoningEfforts.map((e: any) => e?.value).filter((v: unknown): v is string => typeof v === "string")
-        : undefined,
-    }));
+    this.availableModels = (res.models?.availableModels ?? []).map(advertisedModel);
     this.currentModelId = resolveModelId(res.models?.currentModelId, this.availableModels);
     // The active session effort is authoritative from the advertised current
     // model (grok stamps SessionHandle.reasoning_effort onto it); fall back to
@@ -351,17 +359,7 @@ export class AcpClient extends EventEmitter {
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = sessionId;
     if (res?.models?.availableModels) {
-      this.availableModels = res.models.availableModels.map((m: any) => ({
-        modelId: m.modelId,
-        name: m.name,
-        description: m.description,
-        totalContextTokens: m._meta?.totalContextTokens,
-        supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
-        reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
-      reasoningEfforts: Array.isArray(m._meta?.reasoningEfforts)
-        ? m._meta.reasoningEfforts.map((e: any) => e?.value).filter((v: unknown): v is string => typeof v === "string")
-        : undefined,
-      }));
+      this.availableModels = res.models.availableModels.map(advertisedModel);
     }
     this.currentModelId =
       resolveModelId(res?.models?.currentModelId, this.availableModels) ?? this.currentModelId;
@@ -380,6 +378,39 @@ export class AcpClient extends EventEmitter {
       }
     }
     return { sessionId };
+  }
+
+  /** Re-resolve `[model.*]` from config.toml (CLI config watcher fallback). */
+  async reloadModelsFromConfig(): Promise<boolean> {
+    try {
+      await this.request("x.ai/internal/reload_models", {});
+      return true;
+    } catch (err) {
+      if (!isMethodNotFoundError(err)) {
+        this.opts.log(`[acp] reload_models failed: ${(err as Error).message}`);
+        return false;
+      }
+      try {
+        await this.request("_x.ai/internal/reload_models", {});
+        return true;
+      } catch (err2) {
+        this.opts.log(`[acp] reload_models failed: ${(err2 as Error).message}`);
+        return false;
+      }
+    }
+  }
+
+  applyModelsUpdate(params: any): void {
+    const models = params?.availableModels ?? params?.models?.availableModels;
+    if (Array.isArray(models)) this.availableModels = models.map(advertisedModel);
+    const current = params?.currentModelId ?? params?.models?.currentModelId;
+    if (typeof current === "string" && current) {
+      this.currentModelId = resolveModelId(current, this.availableModels) ?? current;
+    }
+    this.emit("modelsUpdate", {
+      models: this.availableModels,
+      currentModelId: this.currentModelId,
+    });
   }
 
   async setModel(modelId: string): Promise<void> {
@@ -870,7 +901,7 @@ export class AcpClient extends EventEmitter {
       this.pending.set(id, entry);
       if (!this.writeLine(makeRequest(id, method, params))) {
         this.pending.delete(id);
-        reject(new Error(`Grok process is not running (${method})`));
+        reject(new Error(`Atlas process is not running (${method})`));
         return;
       }
       const timeoutMs = method === "session/prompt" ? 1_800_000 : 120_000;
@@ -1138,6 +1169,14 @@ export class AcpClient extends EventEmitter {
         };
         this.emit("questionRequest", req);
         return; // response is async — host calls respondQuestion()/respondQuestionCancelled()
+      }
+      if (
+        method === "x.ai/models/update" ||
+        method === "_x.ai/models/update"
+      ) {
+        this.applyModelsUpdate(params);
+        if (id != null) this.respondOk(id, {});
+        return;
       }
       if (
         method === "_x.ai/session_notification" ||

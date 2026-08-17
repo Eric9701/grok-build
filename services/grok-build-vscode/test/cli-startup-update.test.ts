@@ -97,7 +97,7 @@ describe("CLI startup compatibility", () => {
     expect(compatibility).toContain("Continuing best-effort with the current binary");
     expect(compatibility).toContain("planModeAvailable: false");
     // Unverified copy must not lead with the "requires X or newer" floor line alone.
-    expect(compatibility).toMatch(/Could not verify the Grok CLI version/);
+    expect(compatibility).toMatch(/Could not verify the Atlas CLI version/);
     expect(compatibility).toMatch(/failed or timed out/);
     expect(compatibility).toMatch(/reload the window to retry/);
     // A later Plan pick re-probes instead of forcing a session restart (#105).

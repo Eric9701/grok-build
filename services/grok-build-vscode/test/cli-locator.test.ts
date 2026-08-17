@@ -204,7 +204,7 @@ describe("decidePlanModeAvailability (#105 — verified-old vs unverified)", () 
       available: false,
       verified: true,
       installed: "0.2.100",
-      reason: `Plan mode requires Grok CLI ${GROK_REQUIRED_VERSION} or newer; installed version is 0.2.100.`,
+      reason: `Plan mode requires Atlas CLI ${GROK_REQUIRED_VERSION} or newer; installed version is 0.2.100.`,
     });
     // Distinct from the unverified copy — users must not conclude "too old" from a probe miss.
     expect(decision.reason).toContain("installed version is");

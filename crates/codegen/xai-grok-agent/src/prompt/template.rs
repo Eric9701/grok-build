@@ -729,22 +729,36 @@ mod tests {
     // is the authoritative check; this one just catches syntax drift.
 
     // ── is_non_interactive gating ──────────────────────────────────
-    // Headless / SDK / stdio / generic-ACP sessions have no human typing
-    // into a TUI prompt, so the `! <command>` shell-prefix tip and the
-    // `<user_guide>` TUI pointer are noise. Those sections must drop out
-    // when `is_non_interactive=true` and remain when it's false.
+    // Headless / SDK / stdio / ACP (including the VS Code plugin) still
+    // need Atlas path guidance, so `<user_guide>` stays in both modes.
+    // The header still switches interactive vs autonomous.
 
     #[test]
     fn interactive_renders_shell_prefix_tip_and_user_guide() {
         // The `! <command>` shell-prefix tip was removed from the minimal
-        // prompt. The <user_guide> block still renders for interactive
-        // sessions only, so that's what we assert here.
+        // prompt. The <user_guide> block must name Atlas paths.
         let mut p = default_placeholders();
         p["is_non_interactive"] = serde_json::json!(false);
         let prompt = render_base(&default_renderer(), &p);
         assert!(
             prompt.contains("<user_guide>"),
             "interactive prompt must keep the <user_guide> block"
+        );
+        assert!(
+            prompt.contains("~/.atlas/docs/user-guide/"),
+            "interactive prompt must point at Atlas user-guide, not ~/.grok"
+        );
+        assert!(
+            prompt.contains(".atlas/config.toml"),
+            "interactive prompt must name project-local .atlas/config.toml"
+        );
+        assert!(
+            !prompt.contains("~/.grok/docs/user-guide/"),
+            "interactive prompt must not send the agent to ~/.grok/docs"
+        );
+        assert!(
+            !prompt.contains(".grok/"),
+            "interactive prompt must not send the agent to .grok/ for new config"
         );
         assert!(
             prompt.contains("interactive CLI tool"),
@@ -757,7 +771,7 @@ mod tests {
     }
 
     #[test]
-    fn non_interactive_suppresses_shell_prefix_tip_and_user_guide() {
+    fn non_interactive_keeps_user_guide_and_declares_autonomous() {
         let mut p = default_placeholders();
         p["is_non_interactive"] = serde_json::json!(true);
         let prompt = render_base(&default_renderer(), &p);
@@ -766,8 +780,20 @@ mod tests {
             "non-interactive prompt must suppress the shell-prefix tip"
         );
         assert!(
-            !prompt.contains("<user_guide>"),
-            "non-interactive prompt must suppress the <user_guide> block"
+            prompt.contains("<user_guide>"),
+            "ACP / headless prompt must keep Atlas <user_guide> paths"
+        );
+        assert!(
+            prompt.contains("~/.atlas/docs/user-guide/"),
+            "non-interactive prompt must point at Atlas user-guide"
+        );
+        assert!(
+            prompt.contains(".atlas/config.toml"),
+            "non-interactive prompt must name project-local .atlas/config.toml"
+        );
+        assert!(
+            !prompt.contains(".grok/"),
+            "non-interactive prompt must not send the agent to .grok/"
         );
         assert!(
             prompt.contains("autonomous agent"),

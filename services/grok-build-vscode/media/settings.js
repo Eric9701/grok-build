@@ -35,9 +35,8 @@
   const GITHUB_ISSUE_FEATURE_URL = GITHUB_REPO_URL + "/issues/new?labels=enhancement";
   const SUPPORT_MAILTO = "mailto:support@productcompass.pm";
   const ABOUT_DISCLAIMER =
-    "Unofficial · community-built · MIT | " +
-    "A VS Code UI for SpaceXAI’s Grok Build CLI - not affiliated with or endorsed by SpaceXAI (formerly xAI). " +
-    "Grok, Grok Build, and xAI are trademarks of xAI; this project uses those names only to describe what it’s compatible with.";
+    "Atlas for VS Code · enterprise build | " +
+    "GUI for Atlas CLI. Compatible with the Atlas enterprise proxy.";
 
   const TELEMETRY_COPY =
     "Anonymous usage stats only: a single session-start event with an anonymous install id — never prompts, code, file paths or names, and no identity. The IP address is discarded, never stored.";
@@ -223,7 +222,7 @@
       id: "showThinking",
       category: "general",
       title: "Show thinking traces",
-      description: "Show Grok's reasoning traces in chat, including on already-loaded sessions.",
+      description: "Show Atlas's reasoning traces in chat, including on already-loaded sessions.",
       kind: "toggle",
       defaultValue: false,
       visible: (s) => purposeOf(s) === "coding",
@@ -283,7 +282,7 @@
       actionLabel: "Open voice settings",
       describe: (s) => (s && s.voiceConfigured)
         ? "Voice is ready on this machine."
-        : "Voice needs a key or a signed-in Grok account before the mic can start.",
+        : "Voice needs a key or a signed-in Atlas account before the mic can start.",
       visible: (s, env) => !!(env && !env.isRemote && !env.isDesktop),
       message: () => ({ type: "openSettings", section: "atlas.voiceApiKey" }),
     },
@@ -335,7 +334,7 @@
       id: "soundNotifications",
       category: "notifications",
       title: "Sound notifications",
-      description: "Play a short sound when a turn finishes or errors, only when the Grok panel is not focused.",
+      description: "Play a short sound when a turn finishes or errors, only when the Atlas panel is not focused.",
       kind: "toggle",
       defaultValue: false,
       get: (s) => !!(s && s.soundNotifications),
@@ -354,7 +353,7 @@
     {
       id: "providerGrok",
       category: "providers",
-      title: "Grok",
+      title: "Atlas",
       description: "",
       kind: "action",
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
@@ -386,7 +385,7 @@
     {
       id: "providerGrokStatus",
       category: "providers",
-      title: "Grok",
+      title: "Atlas",
       description: "",
       kind: "status",
       visible: (s, env) => !!(env && env.isRemote && env.providersKnown),
@@ -400,6 +399,24 @@
       kind: "status",
       visible: (s, env) => !!(env && env.isRemote && env.providersKnown),
       describe: (s) => providerDescription(providerOf(s, "codex")),
+    },
+    {
+      id: "localModelsIntro",
+      category: "providers",
+      title: "Local models",
+      description: "Append OpenAI-compatible or Ollama models to the Atlas CLI catalog (~/.atlas/config.toml). They appear in the model picker after the CLI reloads.",
+      kind: "status",
+      hostLocal: true,
+    },
+    {
+      id: "addLocalModel",
+      category: "providers",
+      title: "Add local model",
+      description: "Write a [model.*] table to the global Atlas config. The CLI merges it over the remote catalog.",
+      kind: "action",
+      actionLabel: "Add…",
+      hostLocal: true,
+      message: () => ({ type: "addLocalModel" }),
     },
     {
       id: "continueRemotely",
@@ -473,7 +490,7 @@
       id: "openGlobalConfig",
       category: "advanced",
       title: "Open global config",
-      description: "Open the user-level Grok config file on this machine.",
+      description: "Open the user-level Atlas config file on this machine.",
       kind: "action",
       actionLabel: "Open",
       hostLocal: true,
@@ -483,7 +500,7 @@
       id: "openProjectConfig",
       category: "advanced",
       title: "Open project config",
-      description: "Open this project's Grok config file.",
+      description: "Open this project's Atlas config file.",
       kind: "action",
       actionLabel: "Open",
       hostLocal: true,
@@ -493,7 +510,7 @@
       id: "runMcpList",
       category: "advanced",
       title: "MCP servers",
-      description: "List the MCP servers configured for the Grok CLI.",
+      description: "List the MCP servers configured for the Atlas CLI.",
       kind: "action",
       actionLabel: "Open",
       hostLocal: true,
@@ -503,7 +520,7 @@
       id: "showLogs",
       category: "advanced",
       title: "Show logs",
-      description: "Open the host log for this Grok client.",
+      description: "Open the host log for this Atlas client.",
       kind: "action",
       actionLabel: (s, env) => logsLabel(env),
       hostLocal: true,
@@ -524,18 +541,18 @@
       id: "openVsCodeSettings",
       category: "advanced",
       title: "Open VS Code settings",
-      description: "Open the host Settings editor focused on Grok.",
+      description: "Open the host Settings editor focused on Atlas.",
       kind: "action",
       actionLabel: "Open",
       hostLocal: true,
       visible: (s, env) => !!(env && !env.isDesktop),
-      message: () => ({ type: "openSettings", section: "grok" }),
+      message: () => ({ type: "openSettings", section: "atlas" }),
     },
     {
       id: "moveView",
       category: "advanced",
       title: "Move view",
-      description: "Open the editor's own picker so you can move the Grok chat to another dock.",
+      description: "Open the editor's own picker so you can move the Atlas chat to another dock.",
       kind: "action",
       actionLabel: "Move view…",
       hostLocal: true,
@@ -577,7 +594,7 @@
     {
       id: "aboutHostProduct",
       category: "about",
-      title: (s) => (s && s.hostKind === "desktop") ? "Grok Build Desktop" : "Grok Build extension",
+      title: (s) => (s && s.hostKind === "desktop") ? "Atlas Desktop" : "Atlas extension",
       kind: "value",
       visible: (s, env) => remoteAbout(s, env),
       get: (s) => versionLabel(s && s.extVersion),
@@ -593,7 +610,7 @@
     {
       id: "aboutGrokCli",
       category: "about",
-      title: "Grok Build CLI",
+      title: "Atlas CLI",
       kind: "value",
       visible: (s, env) => {
         if (remoteAbout(s, env) && hasReportedProviderVersions(s)) return !!grokProvider(s);
@@ -647,7 +664,7 @@
     {
       id: "aboutAtlasUpdateStatus",
       category: "about",
-      title: "Grok Build CLI updates",
+      title: "Atlas CLI updates",
       kind: "status",
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env),
       describe: (s) => atlasUpdateStatusText(s),
@@ -666,20 +683,20 @@
     {
       id: "aboutUpdateGrok",
       category: "about",
-      title: "Update Grok Build CLI",
-      description: "Download and install the latest Grok Build CLI on this machine.",
+      title: "Update Atlas CLI",
+      description: "Download and install the latest Atlas CLI on this machine.",
       kind: "action",
-      actionLabel: "Update Grok Build CLI",
+      actionLabel: "Update Atlas CLI",
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env) && canUpdateGrok(s),
       message: () => ({ type: "updateAtlas" }),
     },
     {
       id: "aboutUpdateGrokBlocked",
       category: "about",
-      title: "Update Grok Build CLI",
+      title: "Update Atlas CLI",
       description: "Updates are paused for compatibility.",
       kind: "action",
-      actionLabel: "Update Grok Build CLI",
+      actionLabel: "Update Atlas CLI",
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env) && grokUpdateBlocked(s),
       enabled: () => false,
       message: () => ({ type: "updateAtlas" }),
@@ -725,7 +742,7 @@
     {
       id: "aboutRepo",
       category: "about",
-      title: "phuryn/grok-build-vscode",
+      title: "Atlas source repository",
       description: "Source repository on GitHub.",
       kind: "action",
       actionLabel: "Open",
@@ -768,8 +785,30 @@
     return row.localOnly === true;
   }
 
+  function localModelRows(snapshot) {
+    const list = (snapshot && snapshot.localModels) || [];
+    return list.map((model) => {
+      const bits = [model.model || model.id, model.baseUrl, model.envKey ? `env ${model.envKey}` : (model.hasApiKey ? "API key set" : "")]
+        .filter(Boolean);
+      return {
+        id: "localModel:" + model.id,
+        category: "providers",
+        title: model.name || model.id,
+        description: bits.join(" · "),
+        kind: "action",
+        actionLabel: "Edit…",
+        hostLocal: true,
+        message: () => ({ type: "editLocalModel", id: model.id }),
+      };
+    });
+  }
+
+  function allRows(snapshot) {
+    return ROWS.concat(localModelRows(snapshot));
+  }
+
   function visibleRows(snapshot, env) {
-    return ROWS.filter((row) => rowVisible(row, snapshot, env));
+    return allRows(snapshot).filter((row) => rowVisible(row, snapshot, env));
   }
 
   function visibleCategories(snapshot, env) {
@@ -918,6 +957,7 @@
       voiceKeyterms: [],
       telemetryEnabled: true,
       providers: [],
+      localModels: [],
       extVersion: "",
       cliVersion: "",
       hostKind: "",
@@ -1477,7 +1517,7 @@
       });
       navSelect.onchange = () => selectCategory(navSelect.value);
       body.querySelectorAll(".settings-row").forEach((el) => {
-        const row = ROWS.find((r) => r.id === el.dataset.id);
+        const row = allRows(snapshot).find((r) => r.id === el.dataset.id);
         if (!row) return;
         if (row.kind === "toggle") {
           const sw = el.querySelector(".settings-switch");

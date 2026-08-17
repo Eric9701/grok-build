@@ -155,7 +155,7 @@ Identity attributes (`user.id`, and `organization.id` / `team.id` /
 once authentication completes. `prompt.id` (per-prompt UUID) appears on
 events only, never metrics.
 
-## Metrics (meter scope `ai.xai.grok_code`)
+## Metrics (meter scope `ai.xai.atlas_code`)
 
 | Metric | Unit | Attributes |
 |---|---|---|

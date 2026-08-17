@@ -85,6 +85,34 @@ func TestMissingChannelIs404(t *testing.T) {
 	}
 }
 
+func TestServeDesktopLatestYml(t *testing.T) {
+	dir := t.TempDir()
+	body := []byte("version: 3.10.0\n")
+	if err := os.WriteFile(filepath.Join(dir, "latest.yml"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := chi.NewRouter()
+	h := NewHandler(dir)
+	r.Get("/cli/*", h.ServeHTTP)
+
+	req := httptest.NewRequest(http.MethodGet, "/cli/latest.yml", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/x-yaml; charset=utf-8" {
+		t.Fatalf("content-type=%q", ct)
+	}
+	if rec.Header().Get("Content-Disposition") != "" {
+		t.Fatalf("yml must not be served as an attachment")
+	}
+	if rec.Body.String() != string(body) {
+		t.Fatalf("body=%q", rec.Body.String())
+	}
+}
+
 func TestRejectPathTraversal(t *testing.T) {
 	dir := t.TempDir()
 	r := chi.NewRouter()

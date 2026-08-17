@@ -176,7 +176,7 @@ export const CLI_VERSION_CACHE_KEY = "atlas.cliVersionCache";
  * fix (pick Plan again / reload) so it does not read as a permanent "too old".
  */
 export const PLAN_MODE_UNVERIFIED_REASON =
-  `Could not verify the installed Grok CLI version, so Plan mode is unavailable. ` +
+  `Could not verify the installed Atlas CLI version, so Plan mode is unavailable. ` +
   `The version check failed or timed out — a first run after install can be slow. ` +
   `Pick Plan again or reload the window to retry. ` +
   `Once verified, Plan requires ${GROK_REQUIRED_VERSION} or newer.`;
@@ -269,7 +269,7 @@ export function decidePlanModeAvailability(versionOutput: string): PlanModeAvail
       verified: true,
       installed,
       reason:
-        `Plan mode requires Grok CLI ${GROK_REQUIRED_VERSION} or newer; ` +
+        `Plan mode requires Atlas CLI ${GROK_REQUIRED_VERSION} or newer; ` +
         `installed version is ${installed}.`,
     };
   }

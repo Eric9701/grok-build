@@ -1,7 +1,7 @@
 {
   "name": "atlas-vscode",
   "displayName": "Atlas for VS Code",
-  "description": "GUI for Atlas CLI (ACP client). Multiple sessions, worktrees, plan mode, images/videos, Mermaid, and LaTeX. Compatible with Atlas enterprise proxy (/atlas/v1). Uses GROK_* env vars for CLI home and proxy. Fair Source (FSL-1.1-MIT).",
+  "description": "GUI for Atlas CLI (ACP client). Multiple sessions, worktrees, plan mode, images/videos, Mermaid, and LaTeX. Compatible with Atlas enterprise proxy (/atlas/v1). Fair Source (FSL-1.1-MIT).",
   "version": "3.10.0",
   "publisher": "PawelHuryn",
   "author": {
@@ -258,7 +258,7 @@
         "atlas.cliPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the grok binary. Empty = auto-discover (~/.atlas/bin/atlas, then ~/.grok/bin/grok, then PATH)."
+          "description": "Path to the Atlas binary. Empty = auto-discover (~/.atlas/bin/atlas, then ~/.grok/bin/grok, then PATH)."
         },
         "atlas.codexCliPath": {
           "type": "string",
@@ -308,7 +308,7 @@
             "xhigh"
           ],
           "enumDescriptions": [
-            "CLI default (no flag passed to grok agent stdio)",
+            "CLI default (no flag passed to atlas agent stdio)",
             "None",
             "Minimal",
             "Low — faster, lighter reasoning",
@@ -317,7 +317,7 @@
             "XHigh — deepest reasoning, slowest"
           ],
           "default": "",
-          "description": "Reasoning effort passed as --reasoning-effort to grok agent stdio. Values match the grok CLI's accepted set (none, minimal, low, medium, high, xhigh). Applies live on recent CLIs (grok 0.2.101+); older CLIs, and resetting to the model default, restart the session."
+          "description": "Reasoning effort passed as --reasoning-effort to atlas agent stdio. Values match the Atlas CLI's accepted set (none, minimal, low, medium, high, xhigh). Applies live on recent CLIs; older CLIs, and resetting to the model default, restart the session."
         },
         "atlas.useCtrlEnterToSend": {
           "type": "boolean",
@@ -392,7 +392,7 @@
         "atlas.voiceApiKey": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Optional override key for voice Speech-to-Text (`api.x.ai/v1/stt`). **Leave empty and it just works** — the extension reuses your `grok login` token automatically. Set this (or `GROK_VOICE_API_KEY` / `XAI_API_KEY` in your workspace `.env`) only to use a dedicated [console.x.ai](https://console.x.ai) developer key instead. Setup + costs: [docs/voice-setup.md](https://github.com/PawelHuryn/grok-vscode/blob/main/docs/voice-setup.md)."
+          "markdownDescription": "Optional override key for voice Speech-to-Text (`api.x.ai/v1/stt`). **Leave empty and it just works** — the extension reuses your `atlas login` token automatically. Set this (or `GROK_VOICE_API_KEY` / `XAI_API_KEY` in your workspace `.env`) only to use a dedicated [console.x.ai](https://console.x.ai) developer key instead. Setup + costs: [docs/voice-setup.md](https://github.com/PawelHuryn/grok-vscode/blob/main/docs/voice-setup.md)."
         },
         "atlas.ffmpegPath": {
           "type": "string",

@@ -144,9 +144,20 @@ import {
 import {
   alwaysApproveSource,
   configForcesAlwaysApprove,
+  ensureConfigToml,
+  GLOBAL_CONFIG_STUB,
   globalConfigPath,
   projectConfigPath,
 } from "./grok-config";
+import {
+  isValidLocalModelId,
+  listUserLocalModels,
+  LocalModelError,
+  removeUserLocalModel,
+  upsertUserLocalModel,
+  type LocalModelDraft,
+  type LocalModelView,
+} from "./local-models";
 import { sessionScopedRoots } from "./auth-roots";
 import { fileUriToPath, parseFileRef, shouldReadFileInline } from "./file-ref";
 import {
@@ -290,6 +301,7 @@ import {
   parseAppPurpose,
   type AppPurpose,
 } from "./app-purpose";
+import { brandModelDisplayName } from "./brand-copy";
 
 // HostMsg (host -> webview) and WebviewMsg (webview -> host) both live in
 // src/protocol.ts now — the single source of truth for the message contract,
@@ -696,6 +708,10 @@ export class GrokSidebar {
     "setVoiceKeyterms",
     "setTelemetryEnabled",
     "openGlobalConfig",
+    "listLocalModels",
+    "addLocalModel",
+    "editLocalModel",
+    "removeLocalModel",
     "openProjectConfig",
     "runMcpList",
     "showLogs",
@@ -1100,7 +1116,7 @@ export class GrokSidebar {
       void this.onMessage(m, "local").catch((e) => {
         const msg = (e as Error)?.message ?? String(e);
         this.host.appendLine(`[webview] ${m.type} failed: ${msg}`);
-        void this.host.showErrorMessage(`Grok: ${m.type} failed — ${msg}`);
+        void this.host.showErrorMessage(`Atlas: ${m.type} failed — ${msg}`);
       });
     });
     this.restorePersistedDraft(this.focused);
@@ -1225,7 +1241,7 @@ export class GrokSidebar {
       void this.onProjectsRailMessage(m).catch((e) => {
         const msg = (e as Error)?.message ?? String(e);
         this.host.appendLine(`[projects-rail] ${m.type} failed: ${msg}`);
-        void this.host.showErrorMessage(`Grok Projects: ${m.type} failed — ${msg}`);
+        void this.host.showErrorMessage(`Atlas Projects: ${m.type} failed — ${msg}`);
       });
     });
   }
@@ -1309,7 +1325,7 @@ export class GrokSidebar {
         void this.trackAttach(this.pickFileFromComputer());
       } else {
         void this.host.showInformationMessage(
-          "Grok: open a file in the editor first, then run this command.",
+          "Atlas: open a file in the editor first, then run this command.",
         );
       }
       return;
@@ -1362,7 +1378,7 @@ export class GrokSidebar {
       !this.focused.hasHistory,
     );
     const items = models.map((m) => ({
-      label: `${m.provider === "grok" ? "Grok" : "Codex"} · ${m.name ?? m.modelId}`,
+      label: `${m.provider === "grok" ? "Atlas" : "Codex"} · ${brandModelDisplayName(m.name, m.modelId)}`,
       description: m.provider === this.focused.provider && m.modelId === this.focused.client!.currentModelId ? "$(check) current" : "",
       detail: m.description,
       modelId: m.modelId,
@@ -1394,8 +1410,8 @@ export class GrokSidebar {
     if (!client || session.priming) return;
     if (provider !== session.provider) {
       if (session.hasHistory) {
-        const current = session.provider === "codex" ? "Codex" : "Grok";
-        const requested = provider === "codex" ? "Codex" : "Grok";
+        const current = session.provider === "codex" ? "Codex" : "Atlas";
+        const requested = provider === "codex" ? "Codex" : "Atlas";
         this.reportRequester(
           requester,
           "warning",
@@ -1404,7 +1420,7 @@ export class GrokSidebar {
         return;
       }
       if (!this.connectedProviders().includes(provider)) {
-        this.reportRequester(requester, "warning", `${provider === "codex" ? "Codex" : "Grok"} is not connected.`);
+        this.reportRequester(requester, "warning", `${provider === "codex" ? "Codex" : "Atlas"} is not connected.`);
         return;
       }
       const oldProvider = session.provider;
@@ -1641,7 +1657,7 @@ Only continue if you trust this code.`,
     this.alwaysApproveNoticeShown = true;
     const OPEN = "Open config.toml";
     void this.host.showInformationMessage(
-      'Grok: "always-approve" is set in your grok config.toml, so tool actions are auto-approved for every session (CLI and extension). The mode shows "Auto accept" to reflect this — the extension can\'t override a global config setting per-session.',
+      'Atlas: "always-approve" is set in your Atlas config.toml, so tool actions are auto-approved for every session (CLI and extension). The mode shows "Auto accept" to reflect this — the extension can\'t override a global config setting per-session.',
       OPEN,
     ).then((pick) => {
       if (pick !== OPEN) return;
@@ -1690,7 +1706,7 @@ Only continue if you trust this code.`,
           this.reportRequester(
             requester,
             "warning",
-            session.planModeUnavailableReason ?? "Plan mode is unavailable for this Grok CLI version.",
+            session.planModeUnavailableReason ?? "Plan mode is unavailable for this Atlas CLI version.",
           );
           return;
         }
@@ -1699,7 +1715,7 @@ Only continue if you trust this code.`,
         this.reportRequester(
           requester,
           "warning",
-          session.planModeUnavailableReason ?? "Plan mode is unavailable for this Grok CLI version.",
+          session.planModeUnavailableReason ?? "Plan mode is unavailable for this Atlas CLI version.",
         );
         return;
       }
@@ -1948,7 +1964,7 @@ Only continue if you trust this code.`,
     this.emit(session, {
       type: "planNotice",
       text:
-        `${session.planModeUnavailableReason ?? "Plan mode is unavailable for this Grok CLI version."} ` +
+        `${session.planModeUnavailableReason ?? "Plan mode is unavailable for this Atlas CLI version."} ` +
         "Returning to Agent mode; write and terminal actions remain blocked until the planning turn stops and Agent mode is confirmed.",
     });
 
@@ -1986,7 +2002,7 @@ Only continue if you trust this code.`,
         type: "error",
         text:
           `Could not leave unavailable Plan mode: ${e?.message ?? e}. ` +
-          "Write and terminal actions remain blocked for safety. Update Grok Build or start a new session.",
+          "Write and terminal actions remain blocked for safety. Update Atlas or start a new session.",
       });
     });
   }
@@ -2273,7 +2289,7 @@ Only continue if you trust this code.`,
         this.reportRequester(
           requester,
           "warning",
-          "Steering needs a newer Grok Build CLI — your message was queued instead. Update via Settings → About.",
+          "Steering needs a newer Atlas CLI — your message was queued instead. Update via Settings → About.",
         );
         return;
       }
@@ -2319,7 +2335,7 @@ Only continue if you trust this code.`,
         this.reportRequester(
           requester,
           "warning",
-          "Forking needs a newer Grok Build CLI. Update via Settings → About.",
+          "Forking needs a newer Atlas CLI. Update via Settings → About.",
         );
         return;
       }
@@ -2413,7 +2429,7 @@ Only continue if you trust this code.`,
       const points = await session.client.listRewindPoints();
       if (points === "unsupported") {
         return void this.host.showWarningMessage(
-          "Editing a sent message needs a newer Grok Build CLI. Update via Settings → About.",
+          "Editing a sent message needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
       // If the wire's user-facing list no longer matches what the user sees, the
@@ -2424,14 +2440,14 @@ Only continue if you trust this code.`,
           `[rewind] map mismatch: ${userFacingRewindPoints(points).length} wire points vs ${totalUserBubbles} visible messages`,
         );
         return void this.host.showWarningMessage(
-          "Grok's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
+          "Atlas's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
         );
       }
       const target = resolveEditRewindTarget(points, userBubbleIndex);
       if (!target) {
         const copy = "Copy text to composer";
         const pick = await this.host.showInformationMessage(
-          "Grok has no restore point for this message, so it can't be rolled back. You can still copy the text and send it again.",
+          "Atlas has no restore point for this message, so it can't be rolled back. You can still copy the text and send it again.",
           copy,
         );
         if (pick === copy) this.emit(session, { type: "restoreComposer", text });
@@ -2458,7 +2474,7 @@ Only continue if you trust this code.`,
       });
       if (result === "unsupported") {
         return void this.host.showWarningMessage(
-          "Editing a sent message needs a newer Grok Build CLI. Update via Settings → About.",
+          "Editing a sent message needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
       if (!result.success) {
@@ -2502,7 +2518,7 @@ Only continue if you trust this code.`,
       const points = await session.client.listRewindPoints();
       if (points === "unsupported") {
         return void this.host.showWarningMessage(
-          "Rewind needs a newer Grok Build CLI. Update via Settings → About.",
+          "Rewind needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
 
@@ -2514,7 +2530,7 @@ Only continue if you trust this code.`,
           `[rewind] map mismatch: ${userFacingRewindPoints(points).length} wire points vs ${totalUserBubbles} visible messages`,
         );
         return void this.host.showWarningMessage(
-          "Grok's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
+          "Atlas's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
         );
       }
       let target: ReturnType<typeof resolveUserBubbleRewind> = null;
@@ -2581,7 +2597,7 @@ Only continue if you trust this code.`,
       });
       if (result === "unsupported") {
         return void this.host.showWarningMessage(
-          "Rewind needs a newer Grok Build CLI. Update via Settings → About.",
+          "Rewind needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
       if (!result.success) {
@@ -2800,7 +2816,7 @@ Only continue if you trust this code.`,
           // otherwise spin a short-lived ACP client just for the create RPC.
           const creator = await this.clientForWorktreeCreate(sourcePath);
           if (!creator) {
-            return void this.host.showErrorMessage("Could not start Grok to create a worktree.");
+            return void this.host.showErrorMessage("Could not start Atlas to create a worktree.");
           }
           const { client, disposeAfter } = creator;
           // Disposed after the LAST validation query, not here and not at the
@@ -2849,7 +2865,7 @@ Only continue if you trust this code.`,
             if (created === "unsupported") {
               watch.cancel();
               return void this.host.showWarningMessage(
-                "Worktrees need a newer Grok Build CLI. Update via Settings → About.",
+                "Worktrees need a newer Atlas CLI. Update via Settings → About.",
               );
             }
             const wtPath = created.worktreePath;
@@ -2871,7 +2887,7 @@ Only continue if you trust this code.`,
             const outcome = await watch.settled(wtPath);
             if (outcome === "failed") {
               return void this.host.showErrorMessage(
-                `Worktree "${wtLabel}" was not created: the Grok CLI reported it failed.`,
+                `Worktree "${wtLabel}" was not created: the Atlas CLI reported it failed.`,
               );
             }
             if (outcome === "stalled") {
@@ -3283,7 +3299,7 @@ Only continue if you trust this code.`,
     const wt = session.worktree;
     if (!wt) {
       return void this.host.showInformationMessage(
-        "This session is not in a worktree. Start one with Grok: New Worktree Session.",
+        "This session is not in a worktree. Start one with Atlas: New Worktree Session.",
       );
     }
     if (!session.client?.sessionId) {
@@ -3301,7 +3317,7 @@ Only continue if you trust this code.`,
       const r = await session.client.applyWorktree(wt.path);
       if (r === "unsupported") {
         return void this.host.showWarningMessage(
-          "Apply worktree needs a newer Grok Build CLI. Update via Settings → About.",
+          "Apply worktree needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
       const n = r.files?.length ?? 0;
@@ -3353,7 +3369,7 @@ Only continue if you trust this code.`,
       if (!client) {
         const tmp = await this.clientForWorktreeCreate(this.workspaceRoot());
         if (!tmp) {
-          return void this.host.showErrorMessage("Could not start Grok to remove the worktree.");
+          return void this.host.showErrorMessage("Could not start Atlas to remove the worktree.");
         }
         client = tmp.client;
         disposeAfter = tmp.disposeAfter;
@@ -3393,7 +3409,7 @@ Only continue if you trust this code.`,
       }
       if (r === "unsupported") {
         return void this.host.showWarningMessage(
-          "Remove worktree needs a newer Grok Build CLI. Update via Settings → About.",
+          "Remove worktree needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
       // WHO OWNED IT — captured before the records that answer that are erased.
@@ -5241,7 +5257,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /**
-   * Sign out of the Grok CLI (`atlas logout` — clears `~/.grok/auth.json`). The
+   * Sign out of the Atlas CLI (`atlas logout` — clears `~/.grok/auth.json`). The
    * CLI owns auth, so we shell out to it, tear down the live session, and drop
    * the webview back to the auth-required onboarding state. Resolves issue #13.
    */
@@ -5281,14 +5297,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       return;
     }
     const choice = await this.host.showWarningMessage(
-      "Sign out of Grok? This clears the CLI's cached credentials.",
+      "Sign out of Atlas? This clears the CLI's cached credentials.",
       { modal: true },
       "Sign Out",
     );
     if (choice !== "Sign Out") return;
     // shellPath/shellArgs, not sendText — a quoted path typed into PowerShell
     // is a parser error (see runMcpList).
-    this.host.createTerminal({ name: "Grok Logout", shellPath: cliPath, shellArgs: ["logout"] });
+    this.host.createTerminal({ name: "Atlas Logout", shellPath: cliPath, shellArgs: ["logout"] });
     await this.finishProviderLogout("grok");
   }
 
@@ -5298,7 +5314,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     try {
       await this.persistProviderConnections();
     } catch (error) {
-      const providerName = provider === "codex" ? "Codex" : "Grok";
+      const providerName = provider === "codex" ? "Codex" : "Atlas";
       const detail = errorDetail(error);
       this.host.appendLine(`[providers] ${providerName} signed out, but saving connection state failed: ${detail}`);
       await this.host.showErrorMessage(
@@ -5328,7 +5344,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // instead, and reconnecting any provider adopts them.
     const needsProvider = connected.length === 0;
     const replacementProvider = (cwd: string) => this.defaultProviderForProject(cwd);
-    const providerName = provider === "codex" ? "Codex" : "Grok";
+    const providerName = provider === "codex" ? "Codex" : "Atlas";
     const detachedReplacements: Session[] = [];
     const detachedSessions = this.remoteClients.replaceDetachedActiveWhere(
       (session) => session.provider === provider,
@@ -5728,13 +5744,13 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // Unverified: log + optional toast once at session start; a later Plan pick
     // re-probes without forcing a restart (#105).
     const message =
-      `Could not verify the Grok CLI version (the check failed or timed out — a first run after install can be slow). ` +
+      `Could not verify the Atlas CLI version (the check failed or timed out — a first run after install can be slow). ` +
       `Plan mode is unavailable until it can be checked. Pick Plan again or reload the window to retry. ` +
       `Continuing best-effort with the current binary.`;
     this.host.appendLine(message);
     if (notify) {
       void this.host.showWarningMessage(
-        `Could not verify the Grok CLI version (the check failed or timed out — a first run after install can be slow). ` +
+        `Could not verify the Atlas CLI version (the check failed or timed out — a first run after install can be slow). ` +
           `Pick Plan again or reload the window to retry.`,
       );
     }
@@ -5769,7 +5785,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.host.getConfiguration("grok").get<string>("cliPath", ""),
     );
     if (!cliPath) return false;
-    this.host.appendLine("Re-checking Grok CLI version for Plan mode…");
+    this.host.appendLine("Re-checking Atlas CLI version for Plan mode…");
     // Silent: the initial session-start probe already notified; a second toast
     // on every pick would turn a transient into noise.
     const compatibility = await this.planModeCompatibility(cliPath, { notify: false });
@@ -5816,8 +5832,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (stdout?.trim()) this.host.appendLine(stdout.trim());
       if (stderr?.trim()) this.host.appendLine(stderr.trim());
       const detail = reason === "proactive"
-        ? `Grok CLI ${fromVersion} has a known Windows startup issue (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET}.`
-        : `Grok CLI ${fromVersion} failed to start a session (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET} and retrying.`;
+        ? `Atlas CLI ${fromVersion} has a known Windows startup issue (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET}.`
+        : `Atlas CLI ${fromVersion} failed to start a session (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET} and retrying.`;
       void this.host.showInformationMessage(detail);
       return true;
     } catch (e) {
@@ -5887,7 +5903,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const policy = grokUpdatePolicy(await this.readGrokVersion(cliPath), process.platform);
     if (!policy.allow) {
       void this.host.showInformationMessage(
-        policy.note ?? "Grok CLI updates are paused for compatibility.",
+        policy.note ?? "Atlas CLI updates are paused for compatibility.",
       );
       return;
     }
@@ -5902,7 +5918,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     ).length;
     if (busy > 0) {
       const choice = await this.host.showWarningMessage(
-        `Updating the Grok Build CLI will stop ${busy} session${busy === 1 ? "" : "s"} currently in progress. Continue?`,
+        `Updating the Atlas CLI will stop ${busy} session${busy === 1 ? "" : "s"} currently in progress. Continue?`,
         { modal: true },
         "Update Anyway",
       );
@@ -5953,7 +5969,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         this.host.appendLine(`grok update failed: ${msg}`);
         if (notifyFailure) {
-          void this.host.showWarningMessage(`Grok Build update failed: ${msg}`);
+          void this.host.showWarningMessage(`Atlas update failed: ${msg}`);
         }
         return false;
       }
@@ -6329,6 +6345,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         provider: session.provider,
       });
     });
+    client.on("modelsUpdate", () => {
+      if (gen !== session.gen) return;
+      this.cacheProviderModels(session.provider, client.availableModels, client.currentModelId);
+      const sessionId = client.sessionId ?? session.activeSessionId;
+      if (!sessionId) return;
+      this.emit(session, {
+        type: "session",
+        sessionId,
+        models: this.modelsForSession(session, client.availableModels, client.currentModelId, !session.hasHistory),
+        currentModelId: client.currentModelId,
+        worktree: !!session.worktree,
+        provider: session.provider,
+      });
+    });
     client.on("sessionTitle", (title: string) => {
       if (gen !== session.gen || !title.trim()) return;
       const sid = client.sessionId ?? session.activeSessionId;
@@ -6473,7 +6503,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       const exit = snap.exit_code ?? snap.exitCode ?? snap.status?.exitCode;
       const ok = exit == null || exit === 0;
       const label = summarizeBackgroundCommand(cmd);
-      const text = `Grok background task ${ok ? "completed" : `exited (code ${exit})`}${label ? `: ${label}` : ""}`;
+      const text = `Atlas background task ${ok ? "completed" : `exited (code ${exit})`}${label ? `: ${label}` : ""}`;
       this.host.appendLine(`[task] ${text}`);
       void this.host.showInformationMessage(text, "Show Logs").then((choice) => {
         if (choice === "Show Logs") this.host.showOutput();
@@ -6972,12 +7002,12 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.emit(session, {
           type: "error",
           text:
-            `Failed to start Grok: ${msg}. This matches the Grok CLI 0.2.61–0.2.70 stdio ` +
+            `Failed to start Atlas: ${msg}. This matches the Atlas CLI 0.2.61–0.2.70 stdio ` +
             `regression (issue #22, fixed after 0.2.70). Workaround: run ` +
             `\`grok update --version ${GROK_STDIO_DOWNGRADE_TARGET}\` in a terminal, then start a new session.`,
         });
       } else {
-        this.emit(session, { type: "error", text: `Failed to start ${session.provider === "codex" ? "Codex" : "Grok"}: ${msg}` });
+        this.emit(session, { type: "error", text: `Failed to start ${session.provider === "codex" ? "Codex" : "Atlas"}: ${msg}` });
       }
       return undefined;
     }
@@ -7520,6 +7550,18 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         await this.host.openGlobalConfig();
         break;
       }
+      case "listLocalModels":
+        this.postLocalModels();
+        break;
+      case "addLocalModel":
+        await this.promptAddLocalModel();
+        break;
+      case "editLocalModel":
+        await this.promptEditLocalModel(msg.id);
+        break;
+      case "removeLocalModel":
+        await this.promptRemoveLocalModel(msg.id);
+        break;
       case "openProjectConfig": {
         // Intent only — host resolves project .grok/config.toml from session cwd.
         await this.host.openProjectConfig(this.sessionCwd(session));
@@ -7537,8 +7579,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         );
         const mcpCwd = this.sessionCwd(session);
         const term = mcpCli
-          ? this.host.createTerminal({ name: "Grok MCP", shellPath: mcpCli, shellArgs: ["mcp", "list"], cwd: mcpCwd })
-          : this.host.createTerminal("Grok MCP");
+          ? this.host.createTerminal({ name: "Atlas MCP", shellPath: mcpCli, shellArgs: ["mcp", "list"], cwd: mcpCwd })
+          : this.host.createTerminal("Atlas MCP");
         term.show();
         if (!mcpCli) term.sendText("grok mcp list");
         break;
@@ -7635,15 +7677,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // dispatcher authorizes on "the message came from the main frame", not
         // on a user gesture, and this is cheap where a general fix is not.
         if (!(await this.confirmHostExecute(
-          "Install the Grok Build CLI?",
+          "Install the Atlas CLI?",
           "This runs the official installer from x.ai in a terminal.",
           "Install",
         ))) break;
-        const term = this.host.createTerminal("Install Grok");
+        const term = this.host.createTerminal("Install Atlas");
         term.show();
         // Windows ships a native CLI installed via PowerShell; the default VS Code
         // terminal there is PowerShell, so use its syntax. Everything else is POSIX.
-        const done = "Done. Click 'Re-check connection' in the Grok sidebar.";
+        const done = "Done. Click 'Re-check connection' in the Atlas sidebar.";
         term.sendText(
           process.platform === "win32"
             ? `irm https://x.ai/cli/install.ps1 | iex; Write-Host "\`n${done}"`
@@ -7668,7 +7710,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // shellPath/shellArgs, not sendText — a quoted path typed into
         // PowerShell is a parser error (see runMcpList).
         const term = this.host.createTerminal({
-          name: provider === "codex" ? "Codex Login" : "Grok Login",
+          name: provider === "codex" ? "Codex Login" : "Atlas Login",
           shellPath: cliPath,
           shellArgs: ["login"],
         });
@@ -7729,7 +7771,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (!this.connectedProviders().includes(provider)) {
           if (requester) this.sendRemoteRequester(requester, {
             type: "error",
-            text: `${provider === "codex" ? "Codex" : "Grok"} must be connected at the desk before a remote session can be retried.`,
+            text: `${provider === "codex" ? "Codex" : "Atlas"} must be connected at the desk before a remote session can be retried.`,
           });
           break;
         }
@@ -7746,7 +7788,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       case "updateAtlas":
         if (!(await this.confirmHostExecute(
-          "Update the Grok Build CLI?",
+          "Update the Atlas CLI?",
           "This runs the CLI's own updater.",
           "Update",
         ))) break;
@@ -9252,7 +9294,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       } catch (e) {
         // Per-file: one unreadable pick must not abort the rest of a multi-select.
         this.host.appendLine(`[image] could not attach ${filePath}: ${(e as Error).message}`);
-        void this.host.showErrorMessage(`Grok: could not attach ${path.basename(filePath)} — ${(e as Error).message}`);
+        void this.host.showErrorMessage(`Atlas: could not attach ${path.basename(filePath)} — ${(e as Error).message}`);
       }
     }
     this.revealAndFocusComposer();
@@ -10171,7 +10213,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // immediately clickable. `selection` opens a whole-file diff on the edit
     // instead of at line 1 (#66) — harmless at 0 when expansion fell back.
     const at = sides.firstChangedLine;
-    await this.host.openDiff(left, right, `Grok proposed: ${base}`, {
+    await this.host.openDiff(left, right, `Atlas proposed: ${base}`, {
       preview: true,
       preserveFocus: true,
       selection: {
@@ -10584,20 +10626,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   ): Promise<void> {
     try {
       if (!isVisionMime(mimeType)) {
-        this.reportRequester(requester, "error", `Grok: unsupported image type ${mimeType} — use PNG, JPEG, GIF, or WebP.`);
+        this.reportRequester(requester, "error", `Atlas: unsupported image type ${mimeType} — use PNG, JPEG, GIF, or WebP.`);
         return;
       }
       const bytes = Buffer.from(base64, "base64");
       if (bytes.length === 0) return;
       if (bytes.length > MAX_VISION_IMAGE_BYTES) {
-        this.reportRequester(requester, "error", "Grok: pasted image exceeds the 20 MiB vision limit.");
+        this.reportRequester(requester, "error", "Atlas: pasted image exceeds the 20 MiB vision limit.");
         return;
       }
       const session = await this.stageImageAttachment(bytes, mimeType, undefined, owner, previewId);
       if (session === this.focused) this.revealAndFocusComposer();
     } catch (e) {
       this.host.appendLine(`[image] paste failed: ${(e as Error).message}`);
-      this.reportRequester(requester, "error", `Grok: could not attach the pasted image — ${(e as Error).message}`);
+      this.reportRequester(requester, "error", `Atlas: could not attach the pasted image — ${(e as Error).message}`);
     }
   }
 
@@ -10765,7 +10807,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (bare) {
       this.emit(session, {
         type: "error",
-        text: "Grok is mid-turn — that command was not run. Try again when the turn finishes.",
+        text: "Atlas is mid-turn — that command was not run. Try again when the turn finishes.",
       });
       return;
     }
@@ -13511,7 +13553,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.oauthShadowWarningShown = true;
     void this.state.update(OAUTH_SHADOW_WARNING_KEY, true);
     void this.host.showWarningMessage(
-      "Grok is using its cached OAuth session, so XAI_API_KEY is currently ignored. To use the API key, run `atlas logout`, then start a new session.",
+      "Atlas is using its cached OAuth session, so XAI_API_KEY is currently ignored. To use the API key, run `atlas logout`, then start a new session.",
     );
   }
 
@@ -13751,7 +13793,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.host.appendLine(`[remote] ${m.type} failed: ${detail}`);
         this.sendRemoteRequester(requester, {
           type: "error",
-          text: `Grok: ${m.type} failed — ${detail}`,
+          text: `Atlas: ${m.type} failed — ${detail}`,
         });
       });
     } catch (e) {
@@ -14191,6 +14233,184 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 </html>`;
   }
 
+  private readGlobalConfigToml(): string {
+    try {
+      return fs.readFileSync(globalConfigPath(), "utf8");
+    } catch {
+      return "";
+    }
+  }
+
+  private writeGlobalConfigToml(text: string): void {
+    const absPath = globalConfigPath();
+    ensureConfigToml(absPath, GLOBAL_CONFIG_STUB);
+    fs.writeFileSync(absPath, text, "utf8");
+  }
+
+  private loadUserLocalModels(): LocalModelView[] {
+    return listUserLocalModels(this.readGlobalConfigToml());
+  }
+
+  private postLocalModels(): void {
+    const models = this.loadUserLocalModels();
+    const message: HostMsg = { type: "localModels", models };
+    this.view?.webview.postMessage(message);
+    void this.settingsEditor?.webview.postMessage(message);
+  }
+
+  private persistLocalModel(draft: LocalModelDraft): void {
+    ensureConfigToml(globalConfigPath(), GLOBAL_CONFIG_STUB);
+    const next = upsertUserLocalModel(this.readGlobalConfigToml(), draft);
+    this.writeGlobalConfigToml(next);
+  }
+
+  private async reloadCliModels(): Promise<void> {
+    for (const session of this.pool) {
+      if (session.provider !== "grok" || !session.client) continue;
+      try {
+        await session.client.reloadModelsFromConfig();
+      } catch (e) {
+        this.host.appendLine(`[local-models] catalog reload: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  private async promptAddLocalModel(): Promise<void> {
+    const id = await this.host.showInputBox({
+      title: "Add local model",
+      prompt: "Picker id (letters, digits, dots, underscores, hyphens)",
+      placeHolder: "local-llama",
+      ignoreFocusOut: true,
+    });
+    if (id == null) return;
+    const trimmed = id.trim();
+    if (!isValidLocalModelId(trimmed)) {
+      void this.host.showErrorMessage(`Invalid model id "${trimmed}".`);
+      return;
+    }
+    await this.promptUpsertLocalModel({ id: trimmed }, false);
+  }
+
+  private async promptEditLocalModel(id: string): Promise<void> {
+    const current = this.loadUserLocalModels().find((model) => model.id === id);
+    if (!current) {
+      void this.host.showErrorMessage(`No local model named "${id}".`);
+      return;
+    }
+    const pick = await this.host.showQuickPick(
+      [
+        { label: "Edit fields", action: "edit" as const },
+        { label: "Remove this model", action: "remove" as const },
+      ],
+      { title: current.name || current.id, placeHolder: "What do you want to do?" },
+    );
+    if (!pick) return;
+    if (pick.action === "remove") {
+      await this.promptRemoveLocalModel(id);
+      return;
+    }
+    await this.promptUpsertLocalModel({
+      id: current.id,
+      model: current.model,
+      name: current.name,
+      description: current.description,
+      baseUrl: current.baseUrl,
+      envKey: current.envKey,
+      contextWindow: current.contextWindow,
+    }, true);
+  }
+
+  private async promptRemoveLocalModel(id: string): Promise<void> {
+    const pick = await this.host.showWarningMessage(
+      `Remove local model "${id}" from Atlas config?`,
+      "Remove",
+    );
+    if (pick !== "Remove") return;
+    try {
+      ensureConfigToml(globalConfigPath(), GLOBAL_CONFIG_STUB);
+      this.writeGlobalConfigToml(removeUserLocalModel(this.readGlobalConfigToml(), id));
+    } catch (e) {
+      void this.host.showErrorMessage(e instanceof LocalModelError ? e.message : (e as Error).message);
+      return;
+    }
+    this.postLocalModels();
+    await this.reloadCliModels();
+  }
+
+  private async promptUpsertLocalModel(seed: LocalModelDraft, editing: boolean): Promise<void> {
+    const title = editing ? `Edit ${seed.id}` : `Add ${seed.id}`;
+    const name = await this.host.showInputBox({
+      title,
+      prompt: "Display name",
+      value: seed.name || seed.id,
+      ignoreFocusOut: true,
+    });
+    if (name == null) return;
+    const model = await this.host.showInputBox({
+      title,
+      prompt: "API model id (sent to the endpoint)",
+      value: seed.model || seed.id,
+      ignoreFocusOut: true,
+    });
+    if (model == null) return;
+    const baseUrl = await this.host.showInputBox({
+      title,
+      prompt: "Base URL (OpenAI-compatible). Leave empty to inherit Atlas endpoints.",
+      value: seed.baseUrl || "",
+      placeHolder: "http://127.0.0.1:11434/v1",
+      ignoreFocusOut: true,
+    });
+    if (baseUrl == null) return;
+    const envKey = await this.host.showInputBox({
+      title,
+      prompt: "Env var holding the API key (preferred). Leave empty to skip.",
+      value: seed.envKey || "",
+      placeHolder: "OPENAI_API_KEY",
+      ignoreFocusOut: true,
+    });
+    if (envKey == null) return;
+    const apiKey = await this.host.showInputBox({
+      title,
+      prompt: editing
+        ? "API key (leave empty to keep the existing key)"
+        : "API key (optional if an env var is set)",
+      password: true,
+      ignoreFocusOut: true,
+    });
+    if (apiKey == null) return;
+    const windowText = await this.host.showInputBox({
+      title,
+      prompt: "Context window in tokens. Leave empty for the CLI default.",
+      value: seed.contextWindow ? String(seed.contextWindow) : "",
+      ignoreFocusOut: true,
+    });
+    if (windowText == null) return;
+    const trimmedWindow = windowText.trim();
+    const contextWindow = trimmedWindow ? Number(trimmedWindow) : (editing ? 0 : undefined);
+    if (trimmedWindow && (!Number.isFinite(contextWindow) || (contextWindow ?? 0) <= 0)) {
+      void this.host.showErrorMessage("Context window must be a positive number.");
+      return;
+    }
+    const draft: LocalModelDraft = {
+      id: seed.id,
+      name: name.trim() || undefined,
+      model: model.trim() || undefined,
+      baseUrl: baseUrl.trim() || undefined,
+      envKey: envKey.trim() || undefined,
+      contextWindow,
+    };
+    if (apiKey.trim()) draft.apiKey = apiKey.trim();
+    try {
+      this.persistLocalModel(draft);
+    } catch (e) {
+      void this.host.showErrorMessage(e instanceof LocalModelError ? e.message : (e as Error).message);
+      return;
+    }
+    this.postLocalModels();
+    await this.reloadCliModels();
+    void this.host.showInformationMessage(`Saved local model "${draft.id}" to Atlas config.`);
+  }
+
   /**
    * Open the shared settings surface as a VS Code editor tab.
    *
@@ -14208,7 +14428,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     const panel = this.host.openEditorWebview({
       viewType: "atlas.settings",
-      title: "Grok Settings",
+      title: "Atlas Settings",
       localResourceRoots: [
         Uri.joinPath(this.context.extensionUri, "media"),
         Uri.joinPath(this.context.extensionUri, "resources"),
@@ -14279,6 +14499,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         hostKind: "extension" as const,
         hostName: deviceDisplayName(os.hostname(), process.platform, os.release()),
         grokUpdate: null,
+        localModels: this.loadUserLocalModels(),
       },
       category: opts.category || "general",
       env: {
@@ -14305,7 +14526,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';" />
 <link rel="stylesheet" href="${mediaUri("settings.css")}" />
-<title>Grok Settings</title>
+<title>Atlas Settings</title>
 </head>
 <body class="settings-page">
   <div id="settings-root"></div>
@@ -14339,6 +14560,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         if (msg.type === "providerState" && Array.isArray(msg.providers)) {
           surface.update({ providers: msg.providers });
         }
+        if (msg.type === "localModels" && Array.isArray(msg.models)) {
+          surface.update({ localModels: msg.models });
+        }
         if (msg.type === "settingsCategory" && msg.category) surface.setCategory(msg.category);
       });
     })();
@@ -14369,9 +14593,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ? `
   <aside id="projects-rail" class="projects-rail" aria-label="Projects">
     <div class="rail-top">
-      <span class="rail-brand" title="Grok Build Desktop">
+      <span class="rail-brand" title="Atlas Desktop">
         <span class="mark" style="--rail-mark:url('${railMark}')" aria-hidden="true"></span>
-        <span class="wordmark"><b>Grok</b> <span class="dim">Build</span></span>
+        <span class="wordmark"><b>Atlas</b></span>
       </span>
       <button id="desk-rail-toggle" class="rail-icon-btn" type="button" title="Hide projects" aria-label="Hide projects" aria-expanded="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
@@ -14472,8 +14696,8 @@ ${openMain}
 ${fileShellOpen}
   <main id="messages" class="messages">
     <div class="welcome" id="welcome">
-      <span class="welcome-mark" role="img" aria-label="Grok" style="--welcome-mark:url('${resourceUri("grok-icon.svg")}')"></span>
-      <h2>Grok Build (Community)</h2>
+      <span class="welcome-mark" role="img" aria-label="Atlas" style="--welcome-mark:url('${resourceUri("grok-icon.svg")}')"></span>
+      <h2>Atlas</h2>
       <p class="welcome-byline muted">by Paweł Huryn (<a href="https://www.productcompass.pm/" class="muted-link">The Product Compass</a>)</p>
       <p id="welcome-version" class="muted welcome-status-busy"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span>Starting</span></p>
       <div id="welcome-onboarding"></div>
@@ -14486,7 +14710,7 @@ ${fileShellOpen}
       <div id="attachments" class="attachments"></div>
       <div class="composer-input-wrap">
         <div id="input-highlight" class="input-highlight" aria-hidden="true" dir="auto"></div>
-        <textarea id="input" placeholder="Ask Grok..." rows="2" dir="auto"></textarea>
+        <textarea id="input" placeholder="Ask Atlas..." rows="2" dir="auto"></textarea>
         <button id="mic-btn" class="mic-btn" title="Voice control"></button>
       </div>
       <div class="composer-toolbar">

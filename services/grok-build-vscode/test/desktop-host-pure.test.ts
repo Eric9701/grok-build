@@ -356,7 +356,7 @@ describe("document-view helpers", () => {
 
   it("buildDiffViewerHtml marks differing lines and focuses a line", () => {
     const html = buildDiffViewerHtml(
-      "Grok proposed: foo.ts",
+      "Atlas proposed: foo.ts",
       "before",
       "a\nb",
       "after",
@@ -401,7 +401,7 @@ describe("document-view helpers", () => {
     expect(huge.length).toBe(cap + 10);
 
     const diffHtml = buildDiffViewerHtml(
-      "Grok proposed: big.ts",
+      "Atlas proposed: big.ts",
       "before",
       huge,
       "after",
@@ -1200,6 +1200,11 @@ describe("app-resource serve policy (no credential leak)", () => {
 describe("webview message schema validation", () => {
   it("accepts known well-formed messages", () => {
     expect(parseWebviewMsg({ type: "ready" })).toEqual({ type: "ready" });
+    expect(parseWebviewMsg({ type: "listLocalModels" })).toEqual({ type: "listLocalModels" });
+    expect(parseWebviewMsg({ type: "addLocalModel" })).toEqual({ type: "addLocalModel" });
+    expect(parseWebviewMsg({ type: "editLocalModel", id: "local-llama" })?.type).toBe("editLocalModel");
+    expect(parseWebviewMsg({ type: "removeLocalModel" })).toBeNull();
+    expect(parseWebviewMsg({ type: "removeLocalModel", id: "local-llama" })?.type).toBe("removeLocalModel");
     expect(parseWebviewMsg({ type: "send", text: "hi" })).toEqual({
       type: "send",
       text: "hi",
@@ -1211,7 +1216,7 @@ describe("webview message schema validation", () => {
     expect(parseWebviewMsg({ type: "installCodex" })?.type).toBe("installCodex");
     expect(parseWebviewMsg({ type: "cancelCodexInstall" })?.type).toBe("cancelCodexInstall");
     expect(parseWebviewMsg({ type: "restartToUpdate" })).toEqual({ type: "restartToUpdate" });
-    expect(parseWebviewMsg({ type: "openUpdateRelease", url: "https://afkpilot.com/desktop-update" })?.type)
+    expect(parseWebviewMsg({ type: "openUpdateRelease", url: "http://10.218.220.237:22255/atlas/cli" })?.type)
       .toBe("openUpdateRelease");
     expect(parseWebviewMsg({ type: "unlinkRemoteDevice" })).toEqual({ type: "unlinkRemoteDevice" });
     expect(parseWebviewMsg({ type: "setVoiceSendPhrase", value: "ok send" })).toEqual({
@@ -1822,8 +1827,8 @@ describe("desktop DevTools gate (non-production only)", () => {
 });
 
 describe("desktop branding and menu", () => {
-  it("names the product Grok Build Desktop (Community) and links this repo only", () => {
-    expect(DESKTOP_APP_FULL_NAME).toBe("Grok Build Desktop (Community)");
+  it("names the product Atlas Desktop and links this repo only", () => {
+    expect(DESKTOP_APP_FULL_NAME).toBe("Atlas Desktop");
     expect(DESKTOP_PUBLIC_REPO_URL).toBe(
       "https://github.com/phuryn/grok-build-vscode",
     );
@@ -1977,7 +1982,7 @@ describe("desktop theme prefs (userData file)", () => {
 describe("external terminal plans (not silent no-ops)", () => {
   it("Windows CLI plan uses cmd start (visible) and can launch .cmd", () => {
     const plan = planOpenCliInTerminal(
-      "Grok Login",
+      "Atlas Login",
       "C:\\Users\\x\\.grok\\bin\\grok.cmd",
       ["login"],
       "C:\\ws",
@@ -1991,9 +1996,9 @@ describe("external terminal plans (not silent no-ops)", () => {
     expect(plan.args).toContain("login");
   });
 
-  it("Install Grok command opens a visible PowerShell on Windows", () => {
+  it("Install Atlas command opens a visible PowerShell on Windows", () => {
     const plan = planRunCommandInTerminal(
-      "Install Grok",
+      "Install Atlas",
       'irm https://x.ai/cli/install.ps1 | iex',
       undefined,
       "win32",

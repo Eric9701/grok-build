@@ -783,7 +783,7 @@ describe("desktop Electron app (real window + fake CLI)", () => {
     });
     expect(chrome).toEqual({
       hasTop: true,
-      brandText: "Grok Build",
+      brandText: "Atlas",
       toggleInTop: true,
       searchInWrap: true,
       hasFoot: true,

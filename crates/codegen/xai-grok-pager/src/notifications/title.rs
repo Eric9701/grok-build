@@ -847,7 +847,7 @@ mod tests {
         mgr.update(&state);
         assert_eq!(
             mgr.last_title,
-            "Thinking - proj - grok-3 - workspace - grok"
+            "Thinking - proj - grok-3 - workspace - atlas"
         );
     }
 

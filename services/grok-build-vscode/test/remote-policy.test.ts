@@ -93,6 +93,11 @@ describe("remote-policy classification tables", () => {
     expect(INBOUND_DISPOSITION.remoteSignOut).toBe("host-local");
     expect(INBOUND_DISPOSITION.unlinkRemoteDevice).toBe("host-local");
     expect(INBOUND_DISPOSITION.openRemotePortal).toBe("host-local");
+    expect(INBOUND_DISPOSITION.listLocalModels).toBe("host-local");
+    expect(INBOUND_DISPOSITION.addLocalModel).toBe("host-local");
+    expect(INBOUND_DISPOSITION.editLocalModel).toBe("host-local");
+    expect(INBOUND_DISPOSITION.removeLocalModel).toBe("host-local");
+    expect(OUTBOUND_DISPOSITION.localModels).toBe("host-local");
     expect(OUTBOUND_DISPOSITION.remoteStatus).toBe("host-local");
     expect(OUTBOUND_DISPOSITION.readRepliesAloud).toBe("host-local");
     expect(OUTBOUND_DISPOSITION.summarizeRepliesAloud).toBe("host-local");

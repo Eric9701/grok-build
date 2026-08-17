@@ -252,7 +252,7 @@ describe("unavailable Plan recovery", () => {
   it("tells the user the gate stays raised when returning to Agent fails", () => {
     expect(recoverUnavailablePlanMode).toContain("write and terminal actions remain blocked until the planning turn stops and Agent mode is confirmed");
     expect(recoverUnavailablePlanMode).toContain("Write and terminal actions remain blocked for safety");
-    expect(recoverUnavailablePlanMode).toContain("Update Grok Build or start a new session");
+    expect(recoverUnavailablePlanMode).toContain("Update Atlas or start a new session");
     expect(recoverUnavailablePlanMode).toContain("Could not finish leaving unavailable Plan mode promptly");
   });
 

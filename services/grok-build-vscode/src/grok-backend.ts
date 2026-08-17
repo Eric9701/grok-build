@@ -9,7 +9,7 @@ export function buildGrokAgentArgs(effort?: EffortLevel): string[] {
 
 export const grokBackend: AcpBackend = {
   provider: "grok",
-  processName: "Grok process",
+  processName: "Atlas process",
   usesClientPlanGate: true,
   spawn(options: BackendSpawnOptions) {
     return {

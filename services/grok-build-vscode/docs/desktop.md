@@ -156,18 +156,18 @@ cert is available.
 
 ## Auto-update
 
-Packaged Windows and macOS builds check a relay-served generic feed
-(`https://afkpilot.com/update/win/latest.yml` and
-`…/mac/latest-mac.yml`) on start and every 12 hours, download in the
+Packaged Windows and macOS builds check the Atlas CLI host
+(`http://10.218.220.237:22255/atlas/cli/latest.yml` and
+`…/latest-mac.yml`, overridable with `GROK_CLI_BASE_URL`) on start and every 12 hours, download in the
 background, and install on quit or when the rail button says **Restart to
 update**. Check or download failure is silent and falls back to the
-**Update available** notice (opens `https://afkpilot.com/desktop-update`).
+**Update available** notice (opens the same `/atlas/cli` origin).
 No GitHub provider — a vsix-only release would stall that feed.
 
 `electron-builder.yml` has a generic `publish` block so `latest.yml` /
-`latest-mac.yml` are generated; `dist*` still uses `--publish never` and
-the workflow attaches those yml files to the GitHub Release. Windows
-signature verification is off until an Authenticode cert lands.
+`latest-mac.yml` are generated; `dist*` still uses `--publish never`.
+Copy those yml files plus the installers into atlas-server `releases/`.
+Windows signature verification is off until an Authenticode cert lands.
 
 Full contract (relay rewrite rules, dual-arch `latest-mac.yml`, local
 `dev-app-update.yml` test): [desktop-update-spec.md](desktop-update-spec.md).

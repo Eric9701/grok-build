@@ -288,6 +288,30 @@ mod tests {
     }
 
     #[test]
+    fn mcp_guide_names_atlas_project_config() {
+        let doc = USER_GUIDE
+            .iter()
+            .find(|d| d.filename == "07-mcp-servers.md")
+            .expect("MCP servers guide");
+        assert!(
+            doc.content.contains(".atlas/config.toml"),
+            "project MCP config must be .atlas/config.toml"
+        );
+        assert!(
+            doc.content.contains("~/.atlas/config.toml"),
+            "global MCP config must be ~/.atlas/config.toml"
+        );
+        assert!(
+            !doc.content.contains(".grok/config.toml"),
+            "MCP guide must not send readers to legacy .grok/config.toml"
+        );
+        assert!(
+            doc.content.contains("--scope project"),
+            "MCP guide must document project scope"
+        );
+    }
+
+    #[test]
     fn user_guide_entries_have_no_duplicates() {
         let mut seen = std::collections::HashSet::new();
         for doc in USER_GUIDE {

@@ -760,7 +760,7 @@ describe("mode picker (the plan-gate entry path)", () => {
 
   it("disables only Plan with the host's version reason, then re-enables it", () => {
     const { window, posted, doc } = bootWebview();
-    const reason = "Plan mode requires Grok CLI 0.2.117 or newer; installed version is 0.2.100.";
+    const reason = "Plan mode requires Atlas CLI 0.2.117 or newer; installed version is 0.2.100.";
     dispatch(window, { type: "planModeAvailability", available: false, reason });
 
     const modeBtn = $(doc, "mode-btn") as HTMLButtonElement;
@@ -790,7 +790,7 @@ describe("mode picker (the plan-gate entry path)", () => {
   it("keeps Plan clickable when the host marks an unverified probe recheckable (#105)", () => {
     const { window, posted, doc } = bootWebview();
     const reason =
-      "Could not verify the installed Grok CLI version, so Plan mode is unavailable. " +
+      "Could not verify the installed Atlas CLI version, so Plan mode is unavailable. " +
       "The version check failed or timed out — a first run after install can be slow. " +
       "Pick Plan again or reload the window to retry. " +
       "Once verified, Plan requires 0.2.117 or newer.";
@@ -940,7 +940,7 @@ describe("gear settings lock (model + effort disabled while busy / priming)", ()
   it("shows the user-facing model name on the gear button, not the raw id", () => {
     const { window, doc } = bootWithModels();
     click(window, $(doc, "gear-btn"));
-    expect(modelBtn(doc).textContent).toContain("Grok Build");
+    expect(modelBtn(doc).textContent).toContain("Atlas");
     expect(modelBtn(doc).textContent).not.toContain("grok-build");
   });
 
@@ -1486,7 +1486,7 @@ describe("Grokking… indicator (waiting placeholder)", () => {
     const el = grokking(doc);
     expect(el).not.toBeNull();
     const label = el!.querySelector(".grokking-label") as HTMLElement;
-    expect(label.textContent).toBe("Grokking");
+    expect(label.textContent).toBe("Working");
     // The orbit icon is Grokking's motion — no blink-dots here (those are for
     // Thinking / tools); and NOT expandable: no chevron, no body, not .thinking.
     expect(el!.querySelector(".grokking-icon svg")).not.toBeNull();
@@ -1871,7 +1871,7 @@ describe("gear menu — Other group + About / Settings", () => {
     const text = overlay.textContent || "";
     expect(text).toContain("This extension");
     expect(text).toContain("v1.4.0");
-    expect(text).toContain("Grok Build CLI");
+    expect(text).toContain("Atlas CLI");
     expect(text).toContain("v0.2.33");
     expect(types(h.posted)).toContain("checkAtlasUpdate");
   });
@@ -1888,7 +1888,7 @@ describe("gear menu — Other group + About / Settings", () => {
     const overlay = openAbout(h);
 
     const text = overlay.textContent || "";
-    expect(text).toContain("Grok Build CLI");
+    expect(text).toContain("Atlas CLI");
     expect(text).toContain("v0.2.117");
     expect(text).toContain("Codex CLI");
     expect(text).toContain("v0.146.0");
@@ -1988,7 +1988,7 @@ describe("gear menu — Other group + About / Settings", () => {
       });
       const overlay = aboutSurface(h);
       const text = overlay.textContent || "";
-      expect(text).toContain("Grok Build CLI");
+      expect(text).toContain("Atlas CLI");
       expect(text).toContain("Codex CLI");
       expect(text).toContain("Codex ACP adapter");
       expect(text).toContain("Codex update available");
@@ -2038,7 +2038,7 @@ describe("gear menu — Other group + About / Settings", () => {
     dispatch(h.window, { type: "atlasUpdateStatus", current: "0.2.3", latest: "0.2.3", updateAvailable: false });
 
     const text = overlay.textContent || "";
-    expect(text).toContain("Grok Build CLI");
+    expect(text).toContain("Atlas CLI");
     expect(text).toContain("v0.2.3");
     expect(overlay.querySelector('[data-id="aboutGrokCli"]')!.textContent).not.toContain("—");
   });

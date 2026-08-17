@@ -25,7 +25,7 @@ string order).
 
 When newer, the host posts a host-local `updateAvailable` frame
 `{ version, url }`. The URL is always `desktopUpdatePageUrl(current)` —
-`https://afkpilot.com/desktop-update?from=<version>` — never the GitHub
+`http://10.218.220.237:22255/atlas/cli?from=<version>` — never the GitHub
 release page. The rail button says **Update available**; the panel opens
 that page (`openUpdateRelease`, host-local inbound).
 
@@ -40,83 +40,58 @@ rail button, now labelled **Restart to update**.
 
 ### Client feed (generic provider)
 
-Do **not** use the GitHub provider. Point `electron-updater` at:
+Do **not** use the GitHub provider. Point `electron-updater` at the same
+host Atlas CLI already uses (`GROK_CLI_BASE_URL`, default
+`http://10.218.220.237:22255/atlas/cli`):
 
 | Platform | Generic `url` (directory, trailing slash) | File the updater GETs |
 |---|---|---|
-| Windows (`win32`) | `https://afkpilot.com/update/win/` | `https://afkpilot.com/update/win/latest.yml` |
-| macOS (`darwin`) | `https://afkpilot.com/update/mac/` | `https://afkpilot.com/update/mac/latest-mac.yml` |
+| Windows (`win32`) | `http://10.218.220.237:22255/atlas/cli/` | `…/atlas/cli/latest.yml` |
+| macOS (`darwin`) | `http://10.218.220.237:22255/atlas/cli/` | `…/atlas/cli/latest-mac.yml` |
+
+Win and mac share one directory: atlas-server `/cli/*` only serves a
+single path segment, so `latest.yml` / `latest-mac.yml` sit next to CLI
+binaries in `releases/`. `GROK_CLI_BASE_URL` overrides the origin at
+runtime (`setFeedURL`); the baked `app-update.yml` uses the same default.
 
 Those paths are `desktopUpdateFeedBase` / `desktopUpdateFeedConfig` in
 `src/desktop/app-update.ts`. Linux has no feed; the client stays on the
 phase-1 notice.
 
-`allowPrerelease` is irrelevant: the relay chooses which release's yml to
-serve. The client does not filter channels.
+`allowPrerelease` is irrelevant: whichever `latest.yml` you publish is
+what the client installs. The client does not filter channels.
 
 ### Relay contract
 
-The relay (separate repo) must serve the two GETs above as
-`application/x-yaml` (or `text/yaml` / `text/plain`). Each response is the
-`electron-builder` `latest.yml` / `latest-mac.yml` of the **newest GitHub
-Release that has desktop installer assets**, rewritten as follows.
+Serve `GET /atlas/cli/latest.yml` and `GET /atlas/cli/latest-mac.yml` as
+`application/x-yaml` (or `text/yaml` / `text/plain`). Each file is the
+`electron-builder` channel yml. Keep `sha512` / `size`. Prefer
+**relative** `files[].url` names (the installer basename) so
+electron-updater resolves them against `/atlas/cli/` — the same static
+tree that already hosts `grok-{ver}-{os}-{arch}` CLI binaries.
 
-Keep every field `electron-builder` emitted except URL rewriting:
-
-- `version` — `X.Y.Z`, no `v` prefix.
-- `releaseDate` — ISO timestamp, unchanged.
-- `files[]` — one entry per updater artifact. **Preserve `sha512` and
-  `size` byte-for-byte.** Rewrite `files[].url` from the builder's
-  relative artifact name to the **absolute GitHub asset download URL**:
-
-  `https://github.com/phuryn/grok-build-vscode/releases/download/<tag>/<filename>`
-
-  `<tag>` is the release tag (`v3.7.0`). `<filename>` is the asset name
-  (`Atlas-Build-Desktop-3.7.0-win-x64.exe`). `new URL(absolute, base)` in
-  electron-updater then downloads from GitHub, not from the relay.
-
-- Legacy top-level `path` / `sha512` (only if the builder emitted them):
-  if `path` is a relative artifact name, rewrite it the same way; keep
-  `sha512`. Modern clients read `files[]` first.
-
-- Do **not** invent blockmap entries. electron-updater derives
-  `{fileUrl}.blockmap` from the rewritten installer URL. Those assets
-  already sit on the same GitHub release.
+Do **not** invent blockmap entries. electron-updater derives
+`{fileUrl}.blockmap` from the installer URL; drop those files next to
+the installer in `releases/` if you want delta updates.
 
 Windows `latest.yml` must list the NSIS installer
-(`Atlas-Build-Desktop-<version>-win-x64.exe`). macOS `latest-mac.yml` must
+(`Grok-Build-Desktop-<version>-win-x64.exe`). macOS `latest-mac.yml` must
 list **both** zip archives (`…-mac-arm64.zip` and `…-mac-x64.zip`).
-Squirrel.Mac updates from the zip, not the dmg. A yml that only has one
-arch is a failed build, not a feed the relay should publish.
-
-A vsix-only release is not a desktop latest. Keep serving the previous
-installer-bearing yml until a new desktop build is attached.
+Squirrel.Mac updates from the zip, not the dmg.
 
 404, empty body, or unparseable YAML: the client logs and falls back to
 the phase-1 notice. Do not serve HTML error pages with status 200.
 
 ### Feed service
 
-The relay fetches the GitHub Releases API on demand and caches the rewritten
-yml in memory (~10–15 min TTL, positive and negative). There is deliberately
-no stale-serve: past the TTL a failed refresh is a real error status (with a
-short backoff), so deleting the yml assets from a release — the operator
-kill-switch for a bad unsigned update — takes effect within one TTL, and no
-copy older than that is ever served. Each platform feed is
-selected independently: the newest non-draft
-release that carries that platform's yml asset plus its required artifacts.
-A half-failed release matrix therefore leaves one platform on the older
-version — correct, not an error. A release with installers but no yml
-asset is skipped. The workflow prunes ymls only from releases older than
-the last three installer-bearing tags, which the newest-selection never
-serves.
+Put the yml files and installer artifacts in atlas-server `releases/`
+(same directory as CLI channel pointers). A missing yml is a 404 and
+the client falls back to the GitHub notice. Deleting `latest.yml` is the
+operator kill-switch for a bad Windows update.
 
 Any check or download failure (not just 404) falls back to the phase-1
-notice. The rewritten `files[].url` values 302 to
-`objects.githubusercontent.com`; electron-updater follows those redirects.
-
-With Windows signature verification off, the relay feed and the GitHub
-release account are the trust boundary for what gets installed on quit.
+notice. With Windows signature verification off, the atlas-server
+`/atlas/cli` tree is the trust boundary for what gets installed on quit.
 
 ### What this repo emits
 

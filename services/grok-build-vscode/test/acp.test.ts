@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { AcpClient, buildGrokAgentArgs } from "../src/acp";
+import { ATLAS_ACP_RULES } from "../src/grok-config";
 
 // Unit tests for AcpClient internals that don't need a real subprocess. We
 // stand up the client with a fake writable proc and drive `request`/`onLine`
@@ -216,6 +217,48 @@ describe("AcpClient Plan terminal environment", () => {
   });
 });
 
+describe("AcpClient models/update", () => {
+  it("refreshes availableModels and currentModelId from the catalog notification", async () => {
+    const { client, written } = clientWithFakeProc();
+    const seen: Array<{ models: { modelId: string; name: string }[]; currentModelId?: string }> = [];
+    client.on("modelsUpdate", (payload) => seen.push(payload));
+
+    (client as any).onLine(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "x.ai/models/update",
+      params: {
+        currentModelId: "local-llama",
+        availableModels: [
+          { modelId: "grok-build", name: "Grok Build" },
+          { modelId: "local-llama", name: "Local Llama", _meta: { totalContextTokens: 32000 } },
+        ],
+      },
+    }));
+
+    expect(client.currentModelId).toBe("local-llama");
+    expect(client.availableModels.map((m) => m.modelId)).toEqual(["grok-build", "local-llama"]);
+    expect(client.availableModels.find((m) => m.modelId === "local-llama")?.totalContextTokens).toBe(32000);
+    expect(client.availableModels.find((m) => m.modelId === "grok-build")?.name).toBe("Atlas");
+    expect(seen).toHaveLength(1);
+    expect(seen[0].currentModelId).toBe("local-llama");
+    expect(written).toEqual([]);
+  });
+
+  it("accepts the underscored _x.ai/models/update method name", () => {
+    const { client } = clientWithFakeProc();
+    (client as any).onLine(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "_x.ai/models/update",
+      params: {
+        currentModelId: "ollama-qwen",
+        availableModels: [{ modelId: "ollama-qwen", name: "Qwen" }],
+      },
+    }));
+    expect(client.currentModelId).toBe("ollama-qwen");
+    expect(client.availableModels.map((m) => m.modelId)).toEqual(["ollama-qwen"]);
+  });
+});
+
 describe("AcpClient.request timer lifecycle", () => {
   it("clears the per-request timeout when the response arrives (no leaked timer)", async () => {
     vi.useFakeTimers();
@@ -233,6 +276,23 @@ describe("AcpClient.request timer lifecycle", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("AcpClient Atlas project-config rules", () => {
+  it("session/new includes _meta.rules pointing at .atlas, not .grok", async () => {
+    const { client, written } = clientWithFakeProc();
+    const pending = client.newSession();
+    const req = JSON.parse(written[0]);
+    expect(req.method).toBe("session/new");
+    expect(req.params._meta.rules).toBe(ATLAS_ACP_RULES);
+    expect(req.params._meta.rules).toContain(".atlas/config.toml");
+    (client as any).onLine(JSON.stringify({
+      jsonrpc: "2.0",
+      id: req.id,
+      result: { sessionId: "s1", models: { availableModels: [], currentModelId: null } },
+    }));
+    await pending;
   });
 });
 

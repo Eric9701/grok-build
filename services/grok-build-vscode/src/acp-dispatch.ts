@@ -6,6 +6,7 @@
  * a child process.
  */
 
+import { brandUserFacingText } from "./brand-copy";
 import { fileUriToPath } from "./file-ref";
 
 export type DispatchEvent =
@@ -779,7 +780,7 @@ export function rateLimitNoticeText(err: unknown): string {
     .replace(/^subscription:free-usage-exhausted:?\s*/i, "")
     .trim();
   const body = raw && !/^rate ?limited\.?$/i.test(raw) ? raw : GENERIC_RATE_LIMIT_TEXT;
-  return `Usage limit reached \u{2014} not a sign-in issue. ${body}`;
+  return brandUserFacingText(`Usage limit reached \u{2014} not a sign-in issue. ${body}`);
 }
 
 /**
@@ -797,7 +798,7 @@ export function entitlementNoticeText(err: unknown): string {
   const noAccess = /\bsubscription\b|\bentitl/i.test(detail)
     ? "This account doesn't have Atlas access (check with your administrator — or sign out to use an XAI_API_KEY instead). "
     : "";
-  return `Not a sign-in issue \u{2014} signing in again won't fix this. ${noAccess}${detail}`;
+  return brandUserFacingText(`Not a sign-in issue \u{2014} signing in again won't fix this. ${noAccess}${detail}`);
 }
 
 /**
@@ -810,7 +811,7 @@ export function promptErrorText(err: unknown): string {
   if (isRateLimitError(err)) return rateLimitNoticeText(err);
   const detail = errorDetail(err);
   if (!isCredentialError(err) && isAuthErrorText(detail)) return entitlementNoticeText(err);
-  return detail;
+  return brandUserFacingText(detail);
 }
 
 /**

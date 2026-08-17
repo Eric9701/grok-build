@@ -134,7 +134,7 @@ const ALLOWED_HOSTS = new Set<string>([
   "Visual Studio Code - Insiders",
   "Cursor",
   "Antigravity",
-  "Grok Build Desktop",
+  "Atlas Desktop",
   "VSCodium",
   "Code - OSS",
 ]);

@@ -19,10 +19,10 @@ import * as path from "node:path";
 import { resolveGrokHome } from "./sessions";
 
 /** Stub written when global config is missing (matches prior sidebar behavior). */
-export const GLOBAL_CONFIG_STUB = "# Grok global configuration\n";
+export const GLOBAL_CONFIG_STUB = "# Atlas global configuration\n";
 /** Stub written when project config is missing. */
 export const PROJECT_CONFIG_STUB =
-  "# Grok project configuration\n# MCP servers here apply to this workspace only.\n";
+  "# Atlas project configuration\n# MCP servers here apply to this workspace only.\n";
 
 /** Absolute path of the user's global Grok config.toml under GROK_HOME. */
 export function globalConfigPath(
@@ -35,6 +35,17 @@ export function globalConfigPath(
 /** Preferred project config dir, then legacy `.grok`. */
 export const PROJECT_DIR_NAME = ".atlas";
 export const LEGACY_PROJECT_DIR_NAME = ".grok";
+
+/**
+ * Folded into ACP `_meta.rules` so the VS Code / Desktop agent uses `.atlas`
+ * even when an older CLI prompt still names the legacy `.grok` tree.
+ */
+export const ATLAS_ACP_RULES =
+  "Atlas project-local MCP servers, plugins, and permission rules belong in `.atlas/config.toml` in the current project (create `.atlas/` if it does not exist). User-guide docs are under `~/.atlas/docs/user-guide/`. Write to `~/.atlas/config.toml` only for a global setting the user asked for. Do not list, create, or search `.grok/` or `~/.grok/` for new configuration.";
+
+export function atlasAcpMeta(): { rules: string } {
+  return { rules: ATLAS_ACP_RULES };
+}
 
 /** Absolute path of the project-local `.atlas/config.toml` under `projectCwd`. */
 export function projectConfigPath(projectCwd: string): string {

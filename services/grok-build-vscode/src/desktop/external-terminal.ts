@@ -32,7 +32,7 @@ export function planOpenCliInTerminal(
   if (!shellPath) {
     return { kind: "unsupported", reason: "no CLI path" };
   }
-  const safeTitle = (title || "Grok").replace(/["\r\n]/g, "");
+  const safeTitle = (title || "Atlas").replace(/["\r\n]/g, "");
   if (platform === "win32") {
     // `start "title" /D cwd command args` — title is required so a quoted path
     // is not eaten as the window title.
@@ -87,7 +87,7 @@ export function planRunCommandInTerminal(
   if (!text) {
     return { kind: "unsupported", reason: "empty command" };
   }
-  const safeTitle = (title || "Grok").replace(/["\r\n]/g, "");
+  const safeTitle = (title || "Atlas").replace(/["\r\n]/g, "");
   if (platform === "win32") {
     // PowerShell keeps the window open so the user can read install output.
     const args = ["/c", "start", safeTitle];

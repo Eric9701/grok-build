@@ -80,6 +80,8 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "removeProjectFolder":
     case "openGlobalConfig":
     case "openProjectConfig":
+    case "listLocalModels":
+    case "addLocalModel":
     case "runMcpList":
     case "showLogs":
     case "toggleDevTools":
@@ -91,6 +93,10 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       if (raw.category !== undefined && !isString(raw.category)) return null;
       break;
     case "closeSettingsSurface":
+      break;
+    case "editLocalModel":
+    case "removeLocalModel":
+      if (!isString(raw.id)) return null;
       break;
     case "runInstallCmd":
     case "installCodex":

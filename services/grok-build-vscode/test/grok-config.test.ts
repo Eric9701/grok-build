@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import * as path from "node:path";
 import {
+  atlasAcpMeta,
+  ATLAS_ACP_RULES,
   configForcesAlwaysApprove,
   ensureConfigToml,
   globalConfigPath,
@@ -130,8 +132,15 @@ describe("config path helpers (host-resolved intents)", () => {
     );
   });
 
-  it("projectConfigPath is <cwd>/.grok/config.toml", () => {
+  it("projectConfigPath is <cwd>/.atlas/config.toml", () => {
     expect(projectConfigPath("/work/repo")).toBe(path.join("/work/repo", ".atlas", "config.toml"));
+  });
+
+  it("atlasAcpMeta names project .atlas/config.toml and forbids .grok lookup", () => {
+    expect(atlasAcpMeta()).toEqual({ rules: ATLAS_ACP_RULES });
+    expect(ATLAS_ACP_RULES).toContain(".atlas/config.toml");
+    expect(ATLAS_ACP_RULES).toContain("~/.atlas/docs/user-guide/");
+    expect(ATLAS_ACP_RULES).toMatch(/Do not list, create, or search/);
   });
 
   it("ensureConfigToml creates a stub when missing and leaves an existing file", () => {

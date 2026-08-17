@@ -231,7 +231,7 @@
     const id = provider === "codex" ? "codex" : "grok";
     const glyph = document.createElement("span");
     glyph.className = "provider-glyph provider-" + id;
-    glyph.title = id === "codex" ? "Codex" : "Grok";
+    glyph.title = id === "codex" ? "Codex" : "Atlas";
     glyph.setAttribute("aria-label", glyph.title);
     glyph.innerHTML = `<svg class="provider-logo" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="${PROVIDER_LOGO_PATHS[id]}"></path></svg>`;
     const badge = document.createElement("span");

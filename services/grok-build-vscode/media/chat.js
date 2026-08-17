@@ -261,7 +261,7 @@
   // Canonical low→high ORDER for known effort ids, and the FALLBACK ladder when a
   // model advertises no menu (`max` is not a real grok level — see #3/#4).
   const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"];
-  const GROK_ACTIVITY_VERB = "Grokking";
+  const GROK_ACTIVITY_VERB = "Working";
   const CODEX_ACTIVITY_VERB = "Opening AI";
   const COMPOSER_PLACEHOLDER = {
     grok: "Ask Atlas\u2026",
@@ -309,6 +309,7 @@
     onboardingInfo: {},
     codexInstall: { phase: "idle", receivedBytes: 0, totalBytes: 0, reason: "" },
     availableModels: [],
+    localModels: [],
     currentModeId: "agent",
     effort: "",
     cwd: "",
@@ -2255,6 +2256,7 @@
       hostKind: state.hostKind,
       hostName: state.hostName,
       grokUpdate: state.grokUpdate,
+      localModels: Array.isArray(state.localModels) ? state.localModels : [],
     };
   }
 
@@ -2383,6 +2385,7 @@
       onClose: closeSettingsOverlay,
     });
     settingsSurface.focusSearch();
+    vscode.postMessage({ type: "listLocalModels" });
   }
 
   function openAllSettings() {
@@ -2903,7 +2906,7 @@
       const el = document.createElement("div");
       const active = m.modelId === state.currentModelId && (!m.provider || m.provider === state.activeProvider);
       el.className = "toolbar-popover-item" + (active ? " active" : "");
-      el.innerHTML = `<span>${escapeHtml(truncate(m.name || m.modelId, 28))}</span>${active ? '<span class="popover-check">✓</span>' : ""}`;
+      el.innerHTML = `<span>${escapeHtml(truncate(modelDisplayName(m.modelId, [m]) || m.modelId, 28))}</span>${active ? '<span class="popover-check">✓</span>' : ""}`;
       el.title = m.modelId;
       el.onclick = (e) => {
         e.stopPropagation();
@@ -11456,7 +11459,7 @@
     "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
     "steerByDefault", "steerUnavailable", "soundNotifications", "processingSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
-    "providerState", "remoteStatus", "telemetryEnabled", "atlasUpdateStatus", "initialized",
+    "providerState", "remoteStatus", "telemetryEnabled", "atlasUpdateStatus", "initialized", "localModels",
   ]);
 
   function handleHostMessage(msg) {
@@ -11792,6 +11795,10 @@
         if (m?.totalContextTokens) state.contextWindow = m.totalContextTokens;
         updateDonut(0);
         reportRemotePreferences();
+        break;
+      }
+      case "localModels": {
+        state.localModels = Array.isArray(msg.models) ? msg.models : [];
         break;
       }
       case "sessionName": {

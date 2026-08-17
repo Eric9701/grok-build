@@ -105,7 +105,7 @@ export function modelsForConnectedProviders(
       out.push({
         provider,
         modelId: "",
-        name: provider === "grok" ? "Grok default" : "Codex default",
+        name: provider === "grok" ? "Atlas default" : "Codex default",
         description: "Uses this agent's default model",
         defaultImplied: true,
       });

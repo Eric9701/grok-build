@@ -201,15 +201,15 @@ describe("modelDisplayName", () => {
   ];
 
   it("resolves a model ID to its user-facing name", () => {
-    expect(modelDisplayName("grok-build", models)).toBe("Grok Build");
+    expect(modelDisplayName("grok-build", models)).toBe("Atlas");
     expect(modelDisplayName("grok-composer-2.5-fast", models)).toBe("Composer 2.5 Fast");
   });
 
   it("falls back to the ID when the model is unknown or unnamed", () => {
     expect(modelDisplayName("grok-mystery", models)).toBe("grok-mystery");
-    expect(modelDisplayName("grok-build", [{ modelId: "grok-build" }])).toBe("grok-build");
-    expect(modelDisplayName("grok-build", [])).toBe("grok-build");
-    expect(modelDisplayName("grok-build", undefined)).toBe("grok-build");
+    expect(modelDisplayName("grok-build", [{ modelId: "grok-build" }])).toBe("Atlas");
+    expect(modelDisplayName("grok-build", [])).toBe("Atlas");
+    expect(modelDisplayName("grok-build", undefined)).toBe("Atlas");
   });
 
   it("returns '' for a falsy model ID", () => {
@@ -1147,7 +1147,7 @@ describe("mediaGenZeroRetentionHint", () => {
 
   it("returns the CLI Opt-in path only for the ZDR + upload_url signature", () => {
     expect(mediaGenZeroRetentionHint(ZDR)).toBe(
-      "Grok CLI /settings → Privacy → Coding data, retention, and training → Opt in.",
+      "Atlas CLI /settings → Privacy → Coding data, retention, and training → Opt in.",
     );
   });
 

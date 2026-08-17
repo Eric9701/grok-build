@@ -24,7 +24,7 @@ describe("desktop update rail affordance", () => {
     dispatch(h.window, {
       type: "updateAvailable",
       version: "3.8.0",
-      url: "https://afkpilot.com/desktop-update?from=3.7.0",
+      url: "http://10.218.220.237:22255/atlas/cli?from=3.7.0",
     });
     const btn = h.doc.getElementById("rail-update-btn") as HTMLButtonElement;
     expect(btn).toBeTruthy();
@@ -37,7 +37,7 @@ describe("desktop update rail affordance", () => {
     click(h.window, open);
     expect(h.posted).toContainEqual({
       type: "openUpdateRelease",
-      url: "https://afkpilot.com/desktop-update?from=3.7.0",
+      url: "http://10.218.220.237:22255/atlas/cli?from=3.7.0",
     });
   });
 
@@ -47,7 +47,7 @@ describe("desktop update rail affordance", () => {
     dispatch(h.window, {
       type: "updateAvailable",
       version: "3.8.0",
-      url: "https://afkpilot.com/desktop-update?from=3.7.0",
+      url: "http://10.218.220.237:22255/atlas/cli?from=3.7.0",
     });
     expect(h.doc.getElementById("rail-update-btn")!.textContent).toBe("Update available");
     dispatch(h.window, { type: "updateReady", version: "3.8.0" });

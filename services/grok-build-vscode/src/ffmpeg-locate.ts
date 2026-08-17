@@ -153,7 +153,7 @@ export function describeFfmpegProblem(r: FfmpegResolution, hint?: FfmpegInstallH
         "."
       );
     case "configured-missing":
-      return `No ffmpeg at ${r.configured} — check grok.ffmpegPath.`;
+      return `No ffmpeg at ${r.configured} — check atlas.ffmpegPath.`;
     default:
       return (
         "ffmpeg is required to record the microphone and was not found." +

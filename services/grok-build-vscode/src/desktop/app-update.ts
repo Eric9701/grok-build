@@ -1,9 +1,10 @@
 /**
  * Desktop update helpers — pure, no network, no Electron.
  *
- * Packaged win32/darwin run electron-updater against the relay generic feed
- * (`desktopUpdateFeedConfig`). Check/download failure falls back to the GitHub
- * Releases notice. The updater itself is injected; this module never imports it.
+ * Packaged win32/darwin run electron-updater against the Atlas CLI host
+ * (`desktopUpdateFeedConfig`, same origin as `GROK_CLI_BASE_URL`). Check/download
+ * failure falls back to the GitHub Releases notice. The updater itself is
+ * injected; this module never imports it.
  * Contract: docs/desktop-update-spec.md.
  */
 
@@ -128,20 +129,34 @@ export function noticeIfUpdateAvailable(
 }
 
 /**
- * Where the "Update available" button sends people.
- *
- * NOT the GitHub release page, which is a developer artifact: a wall of `.dmg`,
- * `.zip`, `.exe`, `.blockmap` and a `.vsix`, with no indication which one you
- * want. This page detects the platform and offers one button.
- *
- * The URL is deliberately generic and carries only the running version, because
- * it is compiled into every installed copy and can never be changed for builds
- * already in the wild. Everything else the page shows is derived server-side,
- * so its content can be rewritten forever without another release.
+ * Same default as Atlas CLI (`DEFAULT_CLI_BASE_URL` / `endpoints.cli_update_base_url`).
+ * electron-updater treats this as a generic-provider directory and appends
+ * `latest.yml` (win32) or `latest-mac.yml` (darwin).
  */
-export function desktopUpdatePageUrl(currentVersion: string | null | undefined): string {
+export const DEFAULT_DESKTOP_UPDATE_FEED_ORIGIN = "http://10.218.220.237:22255/atlas/cli";
+
+/** Env Atlas CLI already uses for the update host. Trailing slashes are stripped. */
+export const DESKTOP_UPDATE_FEED_ORIGIN_ENV = "GROK_CLI_BASE_URL";
+
+/** Resolve the generic-provider directory origin (no trailing slash). */
+export function desktopUpdateFeedOrigin(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const raw = String(env[DESKTOP_UPDATE_FEED_ORIGIN_ENV] || "").trim();
+  if (raw) return raw.replace(/\/+$/, "");
+  return DEFAULT_DESKTOP_UPDATE_FEED_ORIGIN;
+}
+
+/**
+ * Where the "Update available" button sends people — the Atlas CLI update
+ * host, not GitHub and not afkpilot.com.
+ */
+export function desktopUpdatePageUrl(
+  currentVersion: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const v = String(currentVersion || "").trim();
-  const base = "https://afkpilot.com/desktop-update";
+  const base = desktopUpdateFeedOrigin(env);
   return v ? `${base}?from=${encodeURIComponent(v)}` : base;
 }
 
@@ -152,26 +167,29 @@ export const DESKTOP_RELEASES_API_URL =
 /** How often a long-running desk re-checks (12 hours). */
 export const DESKTOP_UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
-/** Relay origin for generic-provider channel files. Trailing path is per-platform. */
-export const DESKTOP_UPDATE_FEED_ORIGIN = "https://afkpilot.com/update";
+/** @deprecated Use {@link desktopUpdateFeedOrigin}; kept as the baked default. */
+export const DESKTOP_UPDATE_FEED_ORIGIN = DEFAULT_DESKTOP_UPDATE_FEED_ORIGIN;
 
 /**
  * Generic-provider directory for this platform (trailing slash). electron-updater
  * appends `latest.yml` (win32) or `latest-mac.yml` (darwin). Null on Linux.
+ * Win and mac share the Atlas `/atlas/cli/` directory — atlas-server only
+ * serves a single path segment, so channel files sit next to CLI binaries.
  */
 export function desktopUpdateFeedBase(
   platform: NodeJS.Platform | string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  if (platform === "win32") return `${DESKTOP_UPDATE_FEED_ORIGIN}/win/`;
-  if (platform === "darwin") return `${DESKTOP_UPDATE_FEED_ORIGIN}/mac/`;
-  return null;
+  if (platform !== "win32" && platform !== "darwin") return null;
+  return `${desktopUpdateFeedOrigin(env)}/`;
 }
 
 /** `setFeedURL` payload, or null when this platform has no in-app updater. */
 export function desktopUpdateFeedConfig(
   platform: NodeJS.Platform | string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
 ): { provider: "generic"; url: string } | null {
-  const url = desktopUpdateFeedBase(platform);
+  const url = desktopUpdateFeedBase(platform, env);
   if (!url) return null;
   return { provider: "generic", url };
 }
@@ -319,10 +337,12 @@ export function attachDesktopAutoUpdate(opts: {
   currentVersion: string;
   packaged: boolean;
   forceDev?: boolean;
+  env?: NodeJS.ProcessEnv;
   ui: DesktopUpdateUi;
 }): DesktopUpdateSession {
   let state = initialAppUpdateState();
   let configured = false;
+  const env = opts.env ?? process.env;
   const enabled = desktopAutoUpdateEnabled(opts);
 
   const apply = (event: AppUpdateEvent): AppUpdateState => {
@@ -336,7 +356,7 @@ export function attachDesktopAutoUpdate(opts: {
     try {
       const notice = await opts.ui.fetchNotice();
       if (isReady()) return;
-      if (notice) opts.ui.postNotice(notice.version, desktopUpdatePageUrl(opts.currentVersion));
+      if (notice) opts.ui.postNotice(notice.version, desktopUpdatePageUrl(opts.currentVersion, env));
     } catch (e) {
       opts.ui.log(`[update] notice fallback failed: ${updaterLogLine(e)}`);
     }
@@ -344,7 +364,7 @@ export function attachDesktopAutoUpdate(opts: {
 
   const configure = (): boolean => {
     if (configured) return true;
-    const feed = desktopUpdateFeedConfig(opts.platform);
+    const feed = desktopUpdateFeedConfig(opts.platform, env);
     if (!feed) return false;
     opts.updater.autoDownload = true;
     opts.updater.autoInstallOnAppQuit = true;

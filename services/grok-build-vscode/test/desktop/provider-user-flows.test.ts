@@ -360,7 +360,7 @@ describe("provider user flows: shared real Electron app", () => {
     const { page } = flow;
     const tiles = page.locator(".onb-agent-tile");
     await waitCount(page, tiles, 2);
-    expect(await tiles.first().innerText()).toContain("Grok");
+    expect(await tiles.first().innerText()).toContain("Atlas");
     expect(await tiles.first().getAttribute("class")).toMatch(/primary/);
 
     await connectFromOnboarding(page, "grok");

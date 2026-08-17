@@ -350,7 +350,7 @@ describe("media-gen Zero Data Retention failure hint", () => {
   const ZDR =
     'Video generation failed with HTTP 400 Bad Request: {"code":"invalid-argument","error":"Zero Data Retention teams must provide output.upload_url for video generation."}';
   const HINT =
-    "Grok CLI /settings → Privacy → Coding data, retention, and training → Opt in.";
+    "Atlas CLI /settings → Privacy → Coding data, retention, and training → Opt in.";
 
   it("appends the CLI Opt-in path on a media-gen ZDR failure (update title:null)", () => {
     // Live shape: tool_call carries the title; the failed update has title:null

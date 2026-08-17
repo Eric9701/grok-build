@@ -166,8 +166,8 @@ describe("VSIX excludes desktop app", () => {
     // stays in the workflow. A GitHub provider would stall on vsix-only tags.
     expect(builder).not.toMatch(/^publish:\s*null\s*$/m);
     expect(builder).toMatch(/provider:\s*generic/);
-    expect(builder).toMatch(/afkpilot\.com\/update\/win/);
-    expect(builder).toMatch(/afkpilot\.com\/update\/mac/);
+    expect(builder).toMatch(/10\.218\.220\.237:22255\/atlas\/cli/);
+    expect(builder).not.toMatch(/afkpilot\.com\/update/);
     expect(builder).toMatch(/verifyUpdateCodeSignature:\s*false/);
     expect(builder).not.toMatch(/publisherName:/);
     for (const s of ["dist", "dist:mac", "dist:win"]) {
@@ -258,7 +258,7 @@ describe("desktop artifact naming (electron-builder.yml)", () => {
     expect(yml).toMatch(
       /artifactName:\s*Grok-Build-Desktop-\$\{version\}-\$\{os\}-\$\{arch\}\.\$\{ext\}/,
     );
-    expect(yml).toMatch(/productName:\s*Grok Build Desktop/);
+    expect(yml).toMatch(/productName:\s*Atlas Desktop/);
     expect(yml).toMatch(/extraMetadata:[\s\S]*main:\s*out\/desktop\/main\.js/);
   });
 

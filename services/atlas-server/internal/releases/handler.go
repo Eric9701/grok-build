@@ -17,6 +17,7 @@ import (
 //
 //	stable | alpha | enterprise   — plain-text semver
 //	grok-{version}-{platform}[.exe]
+//	latest.yml / latest-mac.yml   — optional Desktop electron-updater feeds
 //	install.ps1 / install.sh / install-enterprise.* — optional bootstrap scripts
 type Handler struct {
 	Dir string
@@ -81,11 +82,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch name {
-	case "stable", "alpha", "enterprise":
+	lower := strings.ToLower(name)
+	switch {
+	case name == "stable" || name == "alpha" || name == "enterprise":
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	case "install.ps1", "install.sh", "install-enterprise.ps1", "install-enterprise.sh":
+	case strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".yaml"):
+		// Desktop electron-updater channel files (latest.yml / latest-mac.yml).
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Content-Type", "application/x-yaml; charset=utf-8")
+	case name == "install.ps1" || name == "install.sh" || name == "install-enterprise.ps1" || name == "install-enterprise.sh":
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	default:
