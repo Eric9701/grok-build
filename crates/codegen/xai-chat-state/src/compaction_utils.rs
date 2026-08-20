@@ -967,6 +967,9 @@ pub fn sanitize_compacted_history(items: Vec<ConversationItem>) -> SanitizeResul
 pub struct HistoryRepairReport {
     /// Duplicate `ToolResult` entries removed.
     pub duplicates_removed: usize,
+    /// Duplicate assistant `tool_calls[].id` values rewritten (Kimi/GLM
+    /// native ids reused across turns).
+    pub duplicate_call_ids_rewritten: usize,
     /// `tool_call_id`s of orphaned/displaced `ToolResult`s stripped — the
     /// shape behind "unexpected `tool_use_id` found in `tool_result` blocks".
     pub stripped_tool_result_ids: Vec<String>,
@@ -977,17 +980,20 @@ impl HistoryRepairReport {
     /// Whether the repair modified the conversation.
     pub fn changed(&self) -> bool {
         self.duplicates_removed > 0
+            || self.duplicate_call_ids_rewritten > 0
             || !self.stripped_tool_result_ids.is_empty()
             || self.synthetic_results_inserted > 0
     }
 }
 /// Repair provider tool-pairing violations in a conversation (e.g. orphaned
 /// `ToolResult`s left by a torn JSONL line, which 400 on every request).
-/// Three passes: [`dedup_duplicate_tool_results`],
-/// [`strip_displaced_tool_results`], then [`repair_dangling_tool_calls`] to
-/// backfill synthetic results for calls the stripping left unanswered.
-/// Pure and idempotent.
+/// Four passes: [`rewrite_duplicate_tool_call_ids`],
+/// [`dedup_duplicate_tool_results`], [`strip_displaced_tool_results`], then
+/// [`repair_dangling_tool_calls`] to backfill synthetic results for calls
+/// the stripping left unanswered. Pure and idempotent.
 pub fn repair_history(items: &mut Vec<ConversationItem>) -> HistoryRepairReport {
+    let duplicate_call_ids_rewritten =
+        xai_grok_sampling_types::rewrite_duplicate_tool_call_ids(items);
     let duplicates_removed = xai_grok_sampling_types::dedup_duplicate_tool_results(items);
     let stripped_tool_result_ids = strip_displaced_tool_results(items);
     let synthetic_results_inserted = xai_grok_sampling_types::repair_dangling_tool_calls(
@@ -998,6 +1004,7 @@ pub fn repair_history(items: &mut Vec<ConversationItem>) -> HistoryRepairReport 
     );
     HistoryRepairReport {
         duplicates_removed,
+        duplicate_call_ids_rewritten,
         stripped_tool_result_ids,
         synthetic_results_inserted,
     }

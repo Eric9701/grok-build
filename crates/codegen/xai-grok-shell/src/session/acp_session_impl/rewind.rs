@@ -580,6 +580,7 @@ impl SessionActor {
             tracing::warn!(
                 session_id = %self.session_info.id.0,
                 duplicates_removed = report.duplicates_removed,
+                duplicate_call_ids_rewritten = report.duplicate_call_ids_rewritten,
                 stripped_tool_result_ids = ?report.stripped_tool_result_ids,
                 synthetic_results_inserted = report.synthetic_results_inserted,
                 "session history repaired"

@@ -214,6 +214,50 @@ fn test_multiple_tool_calls_roundtrip() {
 }
 
 #[test]
+fn conversation_to_chat_messages_rewrites_duplicate_kimi_ids() {
+    let items = vec![
+        ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: "run_terminal_command:128".into(),
+            name: "run_terminal_command".to_string(),
+            arguments: "{}".into(),
+        }]),
+        ConversationItem::tool_result("run_terminal_command:128", "first"),
+        ConversationItem::user("hello"),
+        ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: "run_terminal_command:128".into(),
+            name: "run_terminal_command".to_string(),
+            arguments: "{}".into(),
+        }]),
+        ConversationItem::tool_result("run_terminal_command:128", "second"),
+    ];
+    let messages = conversation_to_chat_messages(items);
+    let assistant_ids: Vec<Option<String>> = messages
+        .iter()
+        .filter(|m| !m.tool_calls.is_empty())
+        .map(|m| m.tool_calls[0].id.clone())
+        .collect();
+    let tool_ids: Vec<Option<String>> = messages
+        .iter()
+        .filter_map(|m| m.tool_call_id.clone())
+        .map(Some)
+        .collect();
+    assert_eq!(
+        assistant_ids,
+        vec![
+            Some("run_terminal_command:128".to_string()),
+            Some("call_dup1_run_terminal_command_128".to_string()),
+        ]
+    );
+    assert_eq!(
+        tool_ids,
+        vec![
+            Some("run_terminal_command:128".to_string()),
+            Some("call_dup1_run_terminal_command_128".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn test_assistant_with_content_and_tool_calls() {
     // Assistant can have both text content and tool calls
     let assistant = AssistantItem {

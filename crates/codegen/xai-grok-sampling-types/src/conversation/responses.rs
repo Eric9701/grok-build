@@ -83,6 +83,7 @@ pub fn response_to_conversation_items(response: rs::Response) -> Vec<Conversatio
     }
 
     tracing::info!(model_id = %model_id, ?model_fingerprint, ?reasoning_effort, "response_to_conversation_items setting model metadata on AssistantItem");
+    uniquify_tool_calls(&mut tool_calls);
     items.push(ConversationItem::Assistant(AssistantItem {
         content: Arc::<str>::from(content),
         tool_calls,

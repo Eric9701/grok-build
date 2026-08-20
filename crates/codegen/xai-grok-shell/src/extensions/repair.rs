@@ -45,6 +45,8 @@ pub(crate) struct RepairSessionResponse {
     pub resident: bool,
     /// Duplicate `ToolResult` entries removed.
     pub duplicates_removed: usize,
+    /// Duplicate assistant tool-call ids rewritten.
+    pub duplicate_call_ids_rewritten: usize,
     /// `tool_call_id`s of orphaned/displaced `ToolResult`s stripped.
     pub stripped_tool_result_ids: Vec<String>,
     /// Synthetic `ToolResult`s inserted for unanswered tool calls.
@@ -58,6 +60,7 @@ impl RepairSessionResponse {
             dry_run,
             resident,
             duplicates_removed: report.duplicates_removed,
+            duplicate_call_ids_rewritten: report.duplicate_call_ids_rewritten,
             stripped_tool_result_ids: report.stripped_tool_result_ids,
             synthetic_results_inserted: report.synthetic_results_inserted,
         }
@@ -137,6 +140,7 @@ async fn repair_on_disk(grok_root: &std::path::Path, session_id: &str, dry_run: 
         tracing::warn!(
             session_id,
             duplicates_removed = report.duplicates_removed,
+            duplicate_call_ids_rewritten = report.duplicate_call_ids_rewritten,
             stripped_tool_result_ids = ?report.stripped_tool_result_ids,
             synthetic_results_inserted = report.synthetic_results_inserted,
             "session history repaired on disk"
@@ -216,6 +220,7 @@ mod tests {
         assert_eq!(v["dryRun"], false);
         assert_eq!(v["strippedToolResultIds"], serde_json::json!(["call_LOST"]));
         assert_eq!(v["duplicatesRemoved"], 0);
+        assert_eq!(v["duplicateCallIdsRewritten"], 0);
         assert_eq!(v["syntheticResultsInserted"], 0);
 
         // The rewritten file must reload as a valid conversation with the

@@ -1,6 +1,6 @@
 # Skills + SDD light coupling under ask-atlas Main Flow
 
-We fuse `services/skills` (ask-atlas Main Flow) with `atlas-sdd` (Role Executors + Enterprise Spec Baseline) by **Light Coupling**: keep skill and agent bodies separate; cross-link routers; hand off only through the **Documents Contract** (`documents/…`). ask-atlas remains the sole orchestrator; SDD never becomes a second trunk. Enterprise standards live in plugin `spec/` with per-repo **Project Override** and optional **Compliance Mode** (`standard` vs `enterprise-strict` in business-repo config). Ops/data roles are **Side Ramps**. Closing review is **Enterprise-Aware Review** (Standards include enterprise `spec/`).
+We fuse `services/skills` (ask-atlas Main Flow) with `atlas-sdd` (Role Executors + Enterprise Spec Baseline) by **Light Coupling**: keep skill and agent bodies separate; cross-link routers; hand off only through the **Documents Contract** (`documents/…`). ask-atlas remains the sole orchestrator; SDD never becomes a second trunk. Enterprise standards live in plugin `spec/` with per-repo **Project Override** and optional **Compliance Mode** (`standard` vs `enterprise-strict` in business-repo config). Architecture (`2`), ops (`7`), and data (`8`) roles are **Side Ramps**. Closing review is **Enterprise-Aware Review** (Standards include enterprise `spec/`).
 
 ## Status
 

@@ -195,12 +195,12 @@ VS Code 侧边栏另有 UI，不是斜杠：`+` 新会话、底部 Agent / Plan 
 /ask-atlas …出需求文档
 → 按提示先 /grill-with-docs（父会话多轮）
 → Role 1 写 documents/requirements-analyst/
-→ 「设计文档」先 Role 2 再 Role 3
+→ 「设计文档」Role 3（可引用已有架构；没有则让用户指定或跳过，不强制 Role 2）
 → 「实现代码」Role 4（红绿）
 → 父会话 /code-review
 ```
 
-`/ask-atlas` 里的「需求文档 / 设计文档 / 实现代码」表示**当前阶段**，不是直接召唤会写那种文件的单个角色。
+`/ask-atlas` 里的「需求文档 / 设计文档 / 实现代码」表示**当前阶段**，不是直接召唤会写那种文件的单个角色。「设计文档」走详细设计（Role 3）；架构（Role 2）只有你明确说「架构设计」才跑。
 
 ---
 

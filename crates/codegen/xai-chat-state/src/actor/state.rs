@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use xai_grok_sampling_types::{
     ConversationItem, DanglingToolCallReason, SamplingConfig, TokenUsage, ToolSpec,
-    dedup_duplicate_tool_results, repair_dangling_tool_calls,
+    dedup_duplicate_tool_results, repair_dangling_tool_calls, rewrite_duplicate_tool_call_ids,
 };
 
 use crate::types::Credentials;
@@ -227,6 +227,13 @@ impl ChatState {
     /// lack matching `ToolResult` entries. Without this, the in-memory state
     /// would carry broken conversation history until the next `build_request`.
     pub fn new(mut conversation: Vec<ConversationItem>, sampling_config: SamplingConfig) -> Self {
+        let rewritten = rewrite_duplicate_tool_call_ids(&mut conversation);
+        if rewritten > 0 {
+            tracing::info!(
+                rewritten_count = rewritten,
+                "Rewrote duplicate tool call ids in initial conversation"
+            );
+        }
         let deduped = dedup_duplicate_tool_results(&mut conversation);
         if deduped > 0 {
             tracing::info!(

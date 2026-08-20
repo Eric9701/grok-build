@@ -188,7 +188,10 @@ pub fn conversation_item_to_chat_message(item: ConversationItem) -> ChatRequestM
 /// `reasoning_content` of the following `Assistant`; a `BackendToolCall` in
 /// between does not break the fold, any other item clears it, and reasoning
 /// with no following assistant is dropped.
-pub fn conversation_to_chat_messages(items: Vec<ConversationItem>) -> Vec<ChatRequestMessage> {
+pub fn conversation_to_chat_messages(mut items: Vec<ConversationItem>) -> Vec<ChatRequestMessage> {
+    // Kimi/GLM native ids like `run_terminal_command:128` are not globally
+    // unique; rewrite later occurrences before they hit the wire.
+    rewrite_duplicate_tool_call_ids(&mut items);
     let mut out: Vec<ChatRequestMessage> = Vec::with_capacity(items.len());
     let mut pending_reasoning: Vec<String> = Vec::new();
 
@@ -229,7 +232,7 @@ impl From<ChatResponseMessage> for ConversationItem {
         // sibling item instead.
         let content = msg.content.unwrap_or_default();
 
-        let tool_calls: Vec<ToolCall> = msg
+        let mut tool_calls: Vec<ToolCall> = msg
             .tool_calls
             .into_iter()
             .map(|tc| ToolCall {
@@ -238,6 +241,7 @@ impl From<ChatResponseMessage> for ConversationItem {
                 arguments: Arc::<str>::from(tc.function.arguments),
             })
             .collect();
+        uniquify_tool_calls(&mut tool_calls);
 
         ConversationItem::Assistant(AssistantItem {
             content: Arc::<str>::from(content),

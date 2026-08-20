@@ -44,6 +44,16 @@ func (u *User) ToProfile() UserProfile {
 	}
 }
 
+// UserDetail is an extended user record for admin user management.
+type UserDetail struct {
+	UserID      string `json:"userId"`
+	Email       string `json:"email"`
+	FirstName   string `json:"firstName"`
+	LastName    string `json:"lastName"`
+	MachineCode string `json:"machineCode"`
+	CreatedAt   string `json:"createdAt"`
+}
+
 var (
 	ErrUserNotFound      = errors.New("user not found")
 	ErrUserExists        = errors.New("user already exists")

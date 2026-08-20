@@ -33,20 +33,20 @@ A Role Executor calls the Skill tool or `/` command for a mapped `services/skill
 _Avoid_: Skill Absorption (pasting skill steps into agent `.md`); treating skill output as a second formal artifact tree outside `documents/`; Role 1 running a second interview (`ask_user_question`) instead of parent grill
 
 **Compliance Mode**:
-Per-repo setting for how strictly Role Executors are required. Default is **standard** (design docs optional if equivalent `documents/detailed-design/` already exists before code; grill/to-spec may stay on Main Flow). **enterprise-strict** forces the full SDD role chain after grilling (1→2→3→4→6); Roles may still use Role-Scoped Skill Invocation; Main Flow skills outside the chain stay limited to grill and closing code-review. User nouns (需求文档 / 设计文档 / 实现代码) name the **current stage**, not a Role shortcut.
-_Avoid_: One global mandate for every repo; silent “sort of enterprise” without a named mode; banning `/tdd` inside Role 4 under strict; mapping 「设计文档」 straight to Role 3
+Per-repo setting for how strictly Role Executors are required. Default is **standard** (design docs optional if equivalent `documents/detailed-design/` already exists before code; grill/to-spec may stay on Main Flow). **enterprise-strict** forces the SDD role chain after grilling (**1→3→4→6**); **Role 2 (architecture) is optional** in both modes. Roles may still use Role-Scoped Skill Invocation; Main Flow skills outside the chain stay limited to grill and closing code-review. User nouns (需求文档 / 设计文档 / 实现代码) name the **current stage**, not a Role shortcut. 「设计文档」/「详细设计」→ Role 3; 「架构」/「架构设计」→ optional Role 2.
+_Avoid_: One global mandate for every repo; silent “sort of enterprise” without a named mode; banning `/tdd` inside Role 4 under strict; forcing Role 2 before Role 3; treating a missing architecture doc as a blocker
 
 **Documents Contract**:
-The sole hard handoff tree under the business repo: `documents/requirements-analyst/`, `documents/detailed-design/`, `documents/test-cases/` (and ops/data dirs when those roles run). CONTEXT.md, ADRs, and tickets are upstream drafts until bridged here.
-_Avoid_: Dual-track formal artifacts; issue tracker as the only SDD handoff; leaving `documents/` optional when a Role Executor ran
+The sole hard handoff tree under the business repo: `documents/requirements-analyst/`, `documents/detailed-design/`, `documents/test-cases/` (and ops/data dirs when those roles run). Architecture under `documents/architecture-design/` is **optional input** to Role 3, not a required contract path. CONTEXT.md, ADRs, and tickets are upstream drafts until bridged here.
+_Avoid_: Dual-track formal artifacts; issue tracker as the only SDD handoff; leaving `documents/` optional when a Role Executor ran; requiring `documents/architecture-design/` before detailed design
 
 **Enterprise-Aware Review**:
 code-review Standards axis checks Enterprise Spec Baseline (relevant subset) plus Project Override plus a Fowler smell baseline; Spec axis still checks the originating ticket/spec.
 _Avoid_: Standards that ignore plugin `spec/`; replacing Standards entirely with the QA Role Executor
 
 **Side Ramp**:
-Role Executors for ops (`7`) and data engineering (`8`) that join only when the user intent is deploy/ops or warehouse/ETL — not part of the default 1→…→6 chain.
-_Avoid_: Running ops/data on every feature by default
+Role Executors that join only on explicit user intent — architecture (`2`) when they ask for 架构/架构设计; ops (`7`) for deploy/ops; data (`8`) for warehouse/ETL. Not part of the default 1→3→4→6 chain.
+_Avoid_: Running architecture/ops/data on every feature by default; inserting Role 2 between requirements and detailed design
 
 **Bridge Sync**:
 At Main Flow phase boundaries, the session copies or writes agreed content from CONTEXT/tickets/specs into the Documents Contract before spawning a Role Executor. Role Executors read `documents/`; they do not own the bridge. Skill Invocation output is informal until Bridge Sync.

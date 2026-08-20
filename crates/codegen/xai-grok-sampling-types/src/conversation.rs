@@ -14,6 +14,7 @@ pub use responses::{
     extra_tool_entries, patch_reasoning_text_types, response_to_conversation_items,
 };
 
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 const STRUCTURED_OUTPUT_SCHEMA_NAME: &str = "structured_output";
@@ -2184,6 +2185,106 @@ fn synthetic_dangling_result_text(name: &str, reason: DanglingToolCallReason) ->
     }
 }
 
+/// Make every assistant `tool_calls[].id` unique across the conversation.
+///
+/// Kimi / GLM / Moonshot emit native ids such as `run_terminal_command:128`.
+/// Those ids are often unique only inside one model response, and two parallel
+/// calls of the same tool can share one id. The next Chat Completions request
+/// then 400s with `invalid_request_error: tool call id X is duplicated`.
+///
+/// The first occurrence of an id is kept so the model's own counter can
+/// continue. Later occurrences become `call_dup{n}_{sanitized}` and matching
+/// [`ToolResult`]s are remapped in encounter order.
+///
+/// Must run **before** [`dedup_duplicate_tool_results`]: two results that
+/// share a native id belong to two distinct calls after this rewrite.
+pub fn rewrite_duplicate_tool_call_ids(conversation: &mut [ConversationItem]) -> usize {
+    let mut used: HashSet<String> = HashSet::new();
+    let mut pending: HashMap<String, VecDeque<String>> = HashMap::new();
+    let mut rewritten = 0;
+
+    for item in conversation.iter_mut() {
+        match item {
+            ConversationItem::Assistant(a) => {
+                for tc in &mut a.tool_calls {
+                    let original = tc.id.as_ref().to_string();
+                    if original.is_empty() {
+                        continue;
+                    }
+                    let assigned = if used.insert(original.clone()) {
+                        original.clone()
+                    } else {
+                        rewritten += 1;
+                        let mut n = 1u32;
+                        loop {
+                            let candidate = rewritten_tool_call_id(&original, n);
+                            if used.insert(candidate.clone()) {
+                                tc.id = Arc::<str>::from(candidate.as_str());
+                                break candidate;
+                            }
+                            n = n.saturating_add(1);
+                        }
+                    };
+                    pending.entry(original).or_default().push_back(assigned);
+                }
+            }
+            ConversationItem::ToolResult(tr) => {
+                if let Some(queue) = pending.get_mut(&tr.tool_call_id)
+                    && let Some(mapped) = queue.pop_front()
+                {
+                    tr.tool_call_id = mapped;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    rewritten
+}
+
+/// Rewrite duplicate ids inside a single assistant `tool_calls` list.
+///
+/// Use this on ingest (stream complete / non-streaming response) so two
+/// parallel calls of the same tool do not share an id while still in flight.
+pub fn uniquify_tool_calls(tool_calls: &mut [ToolCall]) -> usize {
+    let mut used: HashSet<String> = HashSet::new();
+    let mut rewritten = 0;
+    for tc in tool_calls.iter_mut() {
+        let original = tc.id.as_ref().to_string();
+        if original.is_empty() {
+            continue;
+        }
+        if used.insert(original.clone()) {
+            continue;
+        }
+        rewritten += 1;
+        let mut n = 1u32;
+        loop {
+            let candidate = rewritten_tool_call_id(&original, n);
+            if used.insert(candidate.clone()) {
+                tc.id = Arc::<str>::from(candidate.as_str());
+                break;
+            }
+            n = n.saturating_add(1);
+        }
+    }
+    rewritten
+}
+
+fn rewritten_tool_call_id(original: &str, occurrence: u32) -> String {
+    let sanitized: String = original
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("call_dup{occurrence}_{sanitized}")
+}
+
 /// Remove duplicate `ToolResult` entries for the same `tool_call_id`.
 ///
 /// When a tool call is cancelled (e.g. Ctrl-C or crash) and then later the
@@ -2220,7 +2321,7 @@ pub fn dedup_duplicate_tool_results(conversation: &mut Vec<ConversationItem>) ->
             // Within [start..end), find duplicates by tool_call_id.
             // Keep the *last* occurrence of each id (the real result).
             if end > start {
-                let mut seen = std::collections::HashMap::<String, usize>::new();
+                let mut seen = HashMap::<String, usize>::new();
                 let mut to_remove = Vec::<usize>::new();
 
                 for (idx, item) in conversation.iter().enumerate().take(end).skip(start) {
@@ -4484,6 +4585,89 @@ mod tests {
         // Second run should be a no-op.
         assert_eq!(dedup_duplicate_tool_results(&mut conv), 0);
         assert_eq!(conv.len(), 2);
+    }
+
+    // ====================================================================
+    // rewrite_duplicate_tool_call_ids tests
+    // ====================================================================
+
+    #[test]
+    fn rewrite_kimi_native_id_reused_across_turns() {
+        // Kimi/GLM: `run_terminal_command:128` in two assistant messages.
+        let mut conv = vec![
+            assistant_with_calls(&[("run_terminal_command:128", "run_terminal_command")]),
+            ConversationItem::tool_result("run_terminal_command:128", "first"),
+            ConversationItem::user("hello"),
+            assistant_with_calls(&[("run_terminal_command:128", "run_terminal_command")]),
+            ConversationItem::tool_result("run_terminal_command:128", "second"),
+        ];
+        assert_eq!(rewrite_duplicate_tool_call_ids(&mut conv), 1);
+        assert_matches!(&conv[0], ConversationItem::Assistant(a) => {
+            assert_eq!(a.tool_calls[0].id.as_ref(), "run_terminal_command:128");
+        });
+        assert_matches!(&conv[1], ConversationItem::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, "run_terminal_command:128");
+            assert_eq!(tr.content.as_ref(), "first");
+        });
+        assert_matches!(&conv[3], ConversationItem::Assistant(a) => {
+            assert_eq!(
+                a.tool_calls[0].id.as_ref(),
+                "call_dup1_run_terminal_command_128"
+            );
+        });
+        assert_matches!(&conv[4], ConversationItem::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, "call_dup1_run_terminal_command_128");
+            assert_eq!(tr.content.as_ref(), "second");
+        });
+        assert_eq!(rewrite_duplicate_tool_call_ids(&mut conv), 0);
+    }
+
+    #[test]
+    fn rewrite_parallel_same_native_id_in_one_assistant() {
+        let mut conv = vec![
+            assistant_with_calls(&[
+                ("run_terminal_command:128", "run_terminal_command"),
+                ("run_terminal_command:128", "run_terminal_command"),
+            ]),
+            ConversationItem::tool_result("run_terminal_command:128", "cmd-a"),
+            ConversationItem::tool_result("run_terminal_command:128", "cmd-b"),
+        ];
+        assert_eq!(rewrite_duplicate_tool_call_ids(&mut conv), 1);
+        assert_matches!(&conv[0], ConversationItem::Assistant(a) => {
+            assert_eq!(a.tool_calls[0].id.as_ref(), "run_terminal_command:128");
+            assert_eq!(
+                a.tool_calls[1].id.as_ref(),
+                "call_dup1_run_terminal_command_128"
+            );
+        });
+        assert_matches!(&conv[1], ConversationItem::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, "run_terminal_command:128");
+            assert_eq!(tr.content.as_ref(), "cmd-a");
+        });
+        assert_matches!(&conv[2], ConversationItem::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, "call_dup1_run_terminal_command_128");
+            assert_eq!(tr.content.as_ref(), "cmd-b");
+        });
+    }
+
+    #[test]
+    fn uniquify_tool_calls_rewrites_later_duplicates() {
+        let mut calls = vec![
+            ToolCall {
+                id: "run_terminal_command:128".into(),
+                name: "run_terminal_command".into(),
+                arguments: "{}".into(),
+            },
+            ToolCall {
+                id: "run_terminal_command:128".into(),
+                name: "run_terminal_command".into(),
+                arguments: "{}".into(),
+            },
+        ];
+        assert_eq!(uniquify_tool_calls(&mut calls), 1);
+        assert_eq!(calls[0].id.as_ref(), "run_terminal_command:128");
+        assert_eq!(calls[1].id.as_ref(), "call_dup1_run_terminal_command_128");
+        assert_eq!(uniquify_tool_calls(&mut calls), 0);
     }
 
     // ========== strip_images tests ==========

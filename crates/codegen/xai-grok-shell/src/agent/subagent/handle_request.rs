@@ -694,6 +694,7 @@ pub(crate) async fn run_shell_child(
     // Captured for the task/agent/artifact report built at completion, since
     // the originals are moved into the coordinator tracker / prompt command.
     let report_child_cwd = tracker_child_cwd.clone();
+    // Catalog id, matching main-session task_report.model.
     let report_model_id = tracker_model_id.clone();
     let report_prompt = task_prompt_text.clone();
     let initial_child_tokens = xai_chat_state::estimate_conversation_tokens(&forked_conversation);

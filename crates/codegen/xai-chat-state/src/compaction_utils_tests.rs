@@ -1456,6 +1456,38 @@ fn repair_history_is_noop_and_idempotent_on_valid_history() {
     assert!(!repair_history(&mut corrupted).changed());
 }
 #[test]
+fn repair_history_rewrites_kimi_native_duplicate_call_ids() {
+    let mut items = vec![
+        ConversationItem::user("prompt"),
+        ConversationItem::assistant_tool_calls(vec![call("run_terminal_command:128")]),
+        ConversationItem::tool_result("run_terminal_command:128", "first"),
+        ConversationItem::user("hello"),
+        ConversationItem::assistant_tool_calls(vec![call("run_terminal_command:128")]),
+        ConversationItem::tool_result("run_terminal_command:128", "second"),
+    ];
+    let report = repair_history(&mut items);
+    assert!(report.changed());
+    assert_eq!(report.duplicate_call_ids_rewritten, 1);
+    assert_eq!(report.duplicates_removed, 0);
+    match &items[4] {
+        ConversationItem::Assistant(a) => {
+            assert_eq!(
+                a.tool_calls[0].id.as_ref(),
+                "call_dup1_run_terminal_command_128"
+            );
+        }
+        other => panic!("expected assistant, got {other:?}"),
+    }
+    match &items[5] {
+        ConversationItem::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, "call_dup1_run_terminal_command_128");
+            assert_eq!(tr.content.as_ref(), "second");
+        }
+        other => panic!("expected tool result, got {other:?}"),
+    }
+    assert!(!repair_history(&mut items).changed());
+}
+#[test]
 fn wrap_user_query_wraps_text() {
     let result = wrap_user_query("hello world");
     assert_eq!(result, "<user_query>\nhello world\n</user_query>");

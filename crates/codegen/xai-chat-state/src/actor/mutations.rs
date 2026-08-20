@@ -2,7 +2,7 @@
 
 use xai_grok_sampling_types::{
     ContentPart, ConversationItem, DanglingToolCallReason, dedup_duplicate_tool_results,
-    repair_dangling_tool_calls,
+    repair_dangling_tool_calls, rewrite_duplicate_tool_call_ids,
 };
 
 use super::ChatStateActor;
@@ -107,6 +107,13 @@ impl ChatStateActor {
         reason: DanglingToolCallReason,
     ) {
         self.rewrite_history(HistoryRewrite::IntegrityRepair, |conversation| {
+            let rewritten = rewrite_duplicate_tool_call_ids(conversation);
+            if rewritten > 0 {
+                tracing::info!(
+                    rewritten_count = rewritten,
+                    "Rewrote duplicate tool call ids in conversation"
+                );
+            }
             let deduped = dedup_duplicate_tool_results(conversation);
             if deduped > 0 {
                 tracing::info!(
@@ -115,13 +122,14 @@ impl ChatStateActor {
                 );
             }
             let repaired = repair_dangling_tool_calls(conversation, reason);
-            if repaired > 0 || deduped > 0 {
+            if repaired > 0 || deduped > 0 || rewritten > 0 {
                 tracing::info!(
                     repaired_count = repaired,
+                    rewritten_count = rewritten,
                     "Repaired dangling tool calls in conversation"
                 );
             }
-            repaired + deduped
+            repaired + deduped + rewritten
         });
     }
 
@@ -151,6 +159,7 @@ impl ChatStateActor {
         if report.changed() {
             tracing::warn!(
                 duplicates_removed = report.duplicates_removed,
+                duplicate_call_ids_rewritten = report.duplicate_call_ids_rewritten,
                 stripped_tool_result_ids = ?report.stripped_tool_result_ids,
                 synthetic_results_inserted = report.synthetic_results_inserted,
                 "History repair modified the conversation"

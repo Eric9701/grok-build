@@ -866,7 +866,10 @@ impl SessionActor {
             TurnSubagentScopeGuard::new(self.current_prompt_id.clone(), prompt_id.to_string());
         self.open_subagent_spawn_admission();
         let turn_model_id = self.current_model_id().await;
-        let turn_model_id_for_report = turn_model_id.clone();
+        let turn_model_id_for_report = crate::agent::models::catalog_id_for_task_report(
+            &self.models_manager.models(),
+            &turn_model_id,
+        );
         let doom_event_model = turn_model_id.clone();
         let turn_timer = std::time::Instant::now();
         let mut result = {
@@ -1880,6 +1883,9 @@ impl SessionActor {
     /// those (`subagent_depth > 0`) and synthetic auto-wake prompts — except
     /// [`PromptOrigin::PlanResume`], which is a real model turn after plan
     /// approval / revise.
+    ///
+    /// `turn_model_id` is the catalog id (picker / config.toml key), not the
+    /// upstream routing slug used for sampling / OTLP.
     async fn maybe_post_main_turn_task_report(
         &self,
         prompt_id: &str,

@@ -67,6 +67,7 @@ func New(cfg config.Config, st store.Store, users store.UserStore, pages Pages) 
 	if ms, ok := users.(store.ManagedModelStore); ok {
 		managedStore = ms
 	}
+	usersAdminH := admin.NewUsersHandler(users)
 	modelsAdminH := admin.NewModelsHandler(authH, managedStore, crypto.ResolveModelSecret())
 	inferenceH := inference.NewHandler(data, up).WithManagedModels(authH, managedStore, users)
 	proxyH := proxy.NewHandler(data, up)
@@ -90,6 +91,8 @@ func New(cfg config.Config, st store.Store, users store.UserStore, pages Pages) 
 	r.Get("/admin/models/", redirectToPathPrefix)
 	r.Get("/admin/groups", redirectToPathPrefix)
 	r.Get("/admin/groups/", redirectToPathPrefix)
+	r.Get("/admin/users", redirectToPathPrefix)
+	r.Get("/admin/users/", redirectToPathPrefix)
 
 	r.Route(config.PathPrefix, func(r chi.Router) {
 		r.Get("/healthz", healthz)
@@ -174,6 +177,9 @@ func New(cfg config.Config, st store.Store, users store.UserStore, pages Pages) 
 
 			r.Post("/crypto/encrypt", modelsAdminH.Encrypt)
 			r.Post("/crypto/decrypt", modelsAdminH.Decrypt)
+
+			r.Post("/users", usersAdminH.CreateUser)
+			r.Get("/users/all", usersAdminH.ListAllUsers)
 		})
 
 		r.Get("/admin/task-reports", serveTaskReportsPage)
@@ -182,6 +188,8 @@ func New(cfg config.Config, st store.Store, users store.UserStore, pages Pages) 
 		r.Get("/admin/models/", serveModelsPage)
 		r.Get("/admin/groups", serveGroupsPage)
 		r.Get("/admin/groups/", serveGroupsPage)
+		r.Get("/admin/users", serveUsersPage)
+		r.Get("/admin/users/", serveUsersPage)
 	})
 
 	return r
@@ -194,6 +202,11 @@ func serveTaskReportsPage(w http.ResponseWriter, r *http.Request) {
 
 func serveModelsPage(w http.ResponseWriter, r *http.Request) {
 	path := resolveWebPath("web/admin/models/index.html")
+	http.ServeFile(w, r, path)
+}
+
+func serveUsersPage(w http.ResponseWriter, r *http.Request) {
+	path := resolveWebPath("web/admin/users/index.html")
 	http.ServeFile(w, r, path)
 }
 

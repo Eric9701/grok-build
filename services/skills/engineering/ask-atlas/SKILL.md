@@ -93,9 +93,9 @@ Off the main flow entirely.
 
 When the **atlas-sdd** plugin is installed and work must follow enterprise SDD stages, spawn Role Executors via Task (`atlas-sdd:…`). `sdd-workflow` only maps a **stage** to a role — it is not a second Main Flow trunk.
 
-Nouns in the user message name the **current stage**, not a Role that writes that file. 「需求文档」「设计文档」「实现代码」 still walk the gates below in order.
+Nouns in the user message name the **current stage**, not a Role that writes that file. 「需求文档」→ Role 1. 「设计文档」/「详细设计」→ Role 3. 「实现代码」→ Role 4. 「架构」/「架构设计」→ optional Role 2 (not a required gate).
 
-Walk the gates. A gate whose completion criterion is unmet is the whole turn: do that gate, then stop. Spawn a Role only when its gate is the one that is open.
+Walk the **required** gates in order (Grill → Requirements → Detailed design → Implement → Close). A required gate whose completion criterion is unmet is the whole turn: do that gate, then stop. Spawn a Role only when its gate is the one that is open. Do **not** insert Role 2 between Requirements and Detailed design.
 
 ### Gate — Grill
 
@@ -109,17 +109,23 @@ Walk the gates. A gate whose completion criterion is unmet is the whole turn: do
 
 **If not done:** spawn `atlas-sdd:1-requirement-analyst-agent` with `run_in_background: false`. Prompt it to formalize into the Documents Contract. Role 1 does not interview; gaps come back here for more grill.
 
-### Gate — Architecture (Role 2)
+### Side Ramp — Architecture (Role 2, optional)
 
-**Done when:** Role 2 has produced its architecture artifact for this work.
+**Not a required gate.** Architecture documents are optional input to Role 3. Do **not** spawn Role 2 after requirements, and do **not** spawn it because the user said 「设计文档」or「详细设计」.
 
-**If not done:** spawn `atlas-sdd:2-architect-design-agent` (`run_in_background: false`). 「设计文档」 opens this gate first, then Role 3. Prompt Role 2 to invoke `codebase-design` (and `prototype` / `wayfinder` when the question needs them).
+**Spawn Role 2 only when:** the user explicitly asks for 架构 / 架构设计 / architecture (or `/2-architect-design`). Then spawn `atlas-sdd:2-architect-design-agent` (`run_in_background: false`). Prompt Role 2 to invoke `codebase-design` (and `prototype` / `wayfinder` when the question needs them).
 
 ### Gate — Detailed design (Role 3)
 
 **Done when:** `documents/detailed-design/` has the artifact for this work.
 
-**If not done:** spawn `atlas-sdd:3-program-design-agent` (`run_in_background: false`). Prompt it to invoke `codebase-design` before writing the document.
+**If not done:**
+
+1. Look for an architecture reference to pass into Role 3: a path the user already gave, or existing files under `documents/architecture-design/` (including module-local trees such as `**/documents/architecture-design/`).
+2. If none is found: **ask the user to specify an architecture document path, or confirm there is none** (they may skip). Do **not** spawn Role 2. If the path is unknown, this ask is the whole turn.
+3. After a path is known or the user confirmed skip: spawn `atlas-sdd:3-program-design-agent` (`run_in_background: false`). Prompt it to invoke `codebase-design` before writing the document. If an architecture path exists, tell Role 3 to **reference** it (do not contradict it); if skipped, proceed from requirements and record assumptions.
+
+「设计文档」opens **this** gate (after requirements), not Role 2.
 
 ### Gate — Implement (Role 4)
 

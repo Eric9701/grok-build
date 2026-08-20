@@ -471,6 +471,28 @@ func (m *MySQLStore) SetMachineCodeIfEmpty(userID, machineCode string) error {
 	return nil
 }
 
+// ListUsersDetail returns all users with full detail for admin management.
+func (m *MySQLStore) ListUsersDetail() ([]UserDetail, error) {
+	rows, err := m.db.Query(
+		`SELECT user_id, email, first_name, last_name, COALESCE(machine_code,''), created_at FROM users ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []UserDetail
+	for rows.Next() {
+		var u UserDetail
+		var t time.Time
+		if err := rows.Scan(&u.UserID, &u.Email, &u.FirstName, &u.LastName, &u.MachineCode, &t); err != nil {
+			return nil, err
+		}
+		u.CreatedAt = t.Format(time.RFC3339)
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
 func randomHexToken(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {

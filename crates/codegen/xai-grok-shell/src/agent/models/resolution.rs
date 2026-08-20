@@ -16,6 +16,19 @@ pub(crate) fn resolve_catalog_key(
         .map(|(key, _)| acp::ModelId::new(key.clone()))
 }
 
+/// Catalog id for `task_report.model` (picker / config.toml key).
+///
+/// Sampler / OTLP still use the routing slug (`info.model`); reports use this
+/// so main-session and subagent rows share the same identifier.
+pub(crate) fn catalog_id_for_task_report(
+    models: &IndexMap<String, ModelEntry>,
+    routing_or_catalog: &str,
+) -> String {
+    resolve_catalog_key(models, &acp::ModelId::new(routing_or_catalog))
+        .map(|id| id.0.to_string())
+        .unwrap_or_else(|| routing_or_catalog.to_string())
+}
+
 /// Catalog key for a persisted session model id, restricted to **selectable**
 pub(crate) fn selectable_catalog_key_for_persisted(
     models: &IndexMap<String, ModelEntry>,

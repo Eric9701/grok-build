@@ -335,6 +335,113 @@
       max-height: min(28rem, 60vh);
       overflow: auto;
     }
+    .kv {
+      display: grid;
+      grid-template-columns: minmax(7rem, 10rem) 1fr;
+      gap: 0.55rem 1rem;
+      align-items: start;
+    }
+    .kv dt {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .kv dd {
+      margin: 0;
+      min-width: 0;
+      word-break: break-word;
+    }
+    .detail-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.2rem;
+      background: rgba(12, 12, 12, 0.44);
+      backdrop-filter: blur(4px);
+    }
+    .detail-dialog {
+      width: min(72rem, 100%);
+      max-height: min(88vh, 56rem);
+      overflow: auto;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 24px 72px rgba(0, 0, 0, 0.22);
+    }
+    .detail-head {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1rem 1.15rem;
+      background: color-mix(in srgb, var(--bg-elev) 90%, transparent);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(8px);
+    }
+    .detail-title {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .detail-subtitle {
+      margin: 0.3rem 0 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    .detail-body {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      padding: 1rem 1.15rem 1.15rem;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+    }
+    @media (max-width: 860px) {
+      .detail-grid { grid-template-columns: 1fr; }
+    }
+    .detail-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--bg) 34%, var(--bg-elev));
+      overflow: hidden;
+    }
+    .detail-card h3 {
+      margin: 0;
+      padding: 0.8rem 0.95rem;
+      font-size: 0.88rem;
+      font-weight: 700;
+      border-bottom: 1px solid var(--line);
+    }
+    .detail-card .section-body {
+      padding: 0.9rem 0.95rem;
+    }
+    .detail-pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: 0.82rem/1.5 var(--mono);
+    }
+    .artifact-list {
+      margin: 0;
+      padding-left: 1rem;
+    }
+    .artifact-list li + li { margin-top: 0.55rem; }
+    .click-hint {
+      color: var(--muted);
+      font-size: 0.78rem;
+      margin-left: 0.4rem;
+    }
     @keyframes rise {
       from { opacity: 0; transform: translateY(6px); }
       to { opacity: 1; transform: none; }
@@ -423,7 +530,7 @@
         <div class="panel">
           <div class="panel-head">
             <h2>最近任务</h2>
-            <span class="hint">最多 50 条</span>
+            <span class="hint">最多 50 条 <span class="click-hint">点击行看详情</span></span>
           </div>
           <div class="panel-body scroll" id="userReportsTable"></div>
         </div>
@@ -431,10 +538,26 @@
     </section>
   </div>
 
+  <div id="reportDetailOverlay" class="detail-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+    <div class="detail-dialog">
+      <div class="detail-head">
+        <div>
+          <h2 class="detail-title" id="detailTitle">任务详情</h2>
+          <p class="detail-subtitle" id="detailSubtitle"></p>
+        </div>
+        <div class="actions">
+          <button type="button" id="closeReportDetail">关闭</button>
+        </div>
+      </div>
+      <div class="detail-body" id="reportDetailBody"></div>
+    </div>
+  </div>
+
   <script>
     const $ = (id) => document.getElementById(id);
     const errEl = $("error");
     let currentUser = null; // { id, email } when in per-user view
+    let currentDetailReport = null;
 
     function todayLocal() {
       const d = new Date();
@@ -490,6 +613,105 @@
       if (success) { cls = "status-ok"; label = status || "completed"; }
       else if (status === "cancelled") { cls = "status-cancel"; }
       return `<span class="badge ${cls}">${esc(label)}</span>`;
+    }
+
+    function fmtWhen(ts) {
+      return (ts || "").replace("T", " ").replace(/\.\d+Z?$/, "").replace(/Z$/, "");
+    }
+
+    function field(value) {
+      const text = value == null || value === "" ? "—" : String(value);
+      return `<span title="${esc(text)}">${esc(text)}</span>`;
+    }
+
+    function preBlock(value) {
+      const text = value == null || value === "" ? "—" : String(value);
+      return `<pre class="detail-pre">${esc(text)}</pre>`;
+    }
+
+    function artifactMarkup(artifacts) {
+      if (!artifacts || !artifacts.length) return `<p class="empty" style="padding:0">暂无产物</p>`;
+      return `<ul class="artifact-list">` + artifacts.map((a) => `
+        <li>
+          <div><span class="mono">${esc(a.kind || "artifact")}</span></div>
+          <div title="${esc(a.path || "")}">${esc(a.path || "—")}</div>
+        </li>
+      `).join("") + `</ul>`;
+    }
+
+    function openReportDetail(report) {
+      currentDetailReport = report || null;
+      if (!report) return;
+      $("detailTitle").textContent = report.description || "任务详情";
+      $("detailSubtitle").innerHTML =
+        `${statusBadge(report.status, report.success)} <span class="mono" style="margin-left:0.45rem">${esc(report.subagentType || "—")}</span>`;
+      $("reportDetailBody").innerHTML = `
+        <div class="detail-grid">
+          <section class="detail-card">
+            <h3>基础信息</h3>
+            <div class="section-body">
+              <dl class="kv">
+                <dt>ID</dt><dd>${field(report.id)}</dd>
+                <dt>用户</dt><dd>${field(report.email || report.userId)}</dd>
+                <dt>User ID</dt><dd class="mono">${field(report.userId)}</dd>
+                <dt>Team ID</dt><dd class="mono">${field(report.teamId)}</dd>
+                <dt>Agent</dt><dd class="mono">${field(report.subagentType)}</dd>
+                <dt>Model</dt><dd class="mono">${field(report.model)}</dd>
+                <dt>状态</dt><dd>${statusBadge(report.status, report.success)}</dd>
+                <dt>创建时间</dt><dd>${field(fmtWhen(report.createdAt))}</dd>
+                <dt>开始时间</dt><dd>${field(fmtWhen(report.startedAt))}</dd>
+                <dt>完成时间</dt><dd>${field(fmtWhen(report.completedAt))}</dd>
+              </dl>
+            </div>
+          </section>
+          <section class="detail-card">
+            <h3>执行指标</h3>
+            <div class="section-body">
+              <dl class="kv">
+                <dt>耗时</dt><dd>${field(fmtDuration(report.durationMs))}</dd>
+                <dt>工具调用</dt><dd>${field(fmt(report.toolCalls))}</dd>
+                <dt>Turns</dt><dd>${field(fmt(report.turns))}</dd>
+                <dt>Tokens</dt><dd>${field(fmt(report.tokensUsed))}</dd>
+                <dt>产物数</dt><dd>${field(fmt(report.artifactCount))}</dd>
+                <dt>客户端版本</dt><dd class="mono">${field(report.clientVersion)}</dd>
+                <dt>客户端 IP</dt><dd class="mono">${field(report.clientIp)}</dd>
+                <dt>Subagent ID</dt><dd class="mono">${field(report.subagentId)}</dd>
+                <dt>Parent Session</dt><dd class="mono">${field(report.parentSessionId)}</dd>
+                <dt>Child Session</dt><dd class="mono">${field(report.childSessionId)}</dd>
+              </dl>
+            </div>
+          </section>
+          <section class="detail-card">
+            <h3>工作目录</h3>
+            <div class="section-body">
+              <dl class="kv">
+                <dt>CWD</dt><dd class="mono">${field(report.cwd)}</dd>
+                <dt>Worktree</dt><dd class="mono">${field(report.worktreePath)}</dd>
+              </dl>
+            </div>
+          </section>
+          <section class="detail-card">
+            <h3>产物</h3>
+            <div class="section-body">
+              ${artifactMarkup(report.artifacts)}
+            </div>
+          </section>
+        </div>
+        <section class="detail-card">
+          <h3>Prompt</h3>
+          <div class="section-body">${preBlock(report.prompt)}</div>
+        </section>
+        <section class="detail-card">
+          <h3>错误信息</h3>
+          <div class="section-body">${preBlock(report.error)}</div>
+        </section>
+      `;
+      $("reportDetailOverlay").classList.remove("hidden");
+    }
+
+    function closeReportDetail() {
+      currentDetailReport = null;
+      $("reportDetailOverlay").classList.add("hidden");
     }
 
     function setLoading(targetIds, on) {
@@ -613,12 +835,12 @@
         $("userReportsTable").innerHTML = `<p class="empty">暂无明细</p>`;
         return;
       }
-      const rows = reports.map((r) => {
+      const rows = reports.map((r, i) => {
         const arts = (r.artifacts || []).map((a) => a.path).join(", ");
-        const when = (r.createdAt || "").replace("T", " ").replace(/\.\d+Z?$/, "").replace(/Z$/, "");
+        const when = fmtWhen(r.createdAt);
         const model = r.model || "—";
         return `
-        <tr>
+        <tr class="clickable" data-report-idx="${i}">
           <td class="truncate" title="${esc(r.description || "")}">${esc(r.description || "—")}</td>
           <td><span class="mono">${esc(r.subagentType)}</span></td>
           <td class="truncate" title="${esc(model)}"><span class="mono">${esc(model)}</span></td>
@@ -637,6 +859,9 @@
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
+      $("userReportsTable").querySelectorAll("tr.clickable").forEach((tr) => {
+        tr.addEventListener("click", () => openReportDetail(reports[Number(tr.dataset.reportIdx)]));
+      });
     }
 
     function esc(s) {
@@ -730,6 +955,13 @@
     $("backOverall").addEventListener("click", () => {
       showOverall();
       loadOverall().catch((e) => showErr(String(e.message || e)));
+    });
+    $("closeReportDetail").addEventListener("click", closeReportDetail);
+    $("reportDetailOverlay").addEventListener("click", (e) => {
+      if (e.target === $("reportDetailOverlay")) closeReportDetail();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && currentDetailReport) closeReportDetail();
     });
 
     loadOverall().catch((e) => showErr(String(e.message || e)));

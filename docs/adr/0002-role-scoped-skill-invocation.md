@@ -1,6 +1,6 @@
 # Role-Scoped Skill Invocation under Light Coupling
 
-We extend **Light Coupling** so atlas-sdd **Role Executors** may **invoke** mapped skills from `services/skills` (Skill tool or `/` command) during a stage, without absorbing skill bodies into agent `.md` files. ask-atlas remains the sole Main Flow router; `sdd-workflow` only orchestrates Roles. Formal handoff stays the **Documents Contract**. Under **enterprise-strict**, the 1→2→3→4→6 Role chain is mandatory after grill, but Roles may still invoke mapped skills (e.g. `/tdd` in Role 4); closing `/code-review` stays on Main Flow and stays complementary to the QA Role.
+We extend **Light Coupling** so atlas-sdd **Role Executors** may **invoke** mapped skills from `services/skills` (Skill tool or `/` command) during a stage, without absorbing skill bodies into agent `.md` files. ask-atlas remains the sole Main Flow router; `sdd-workflow` only orchestrates Roles. Formal handoff stays the **Documents Contract**. Under **enterprise-strict**, the **1→3→4→6** Role chain is mandatory after grill (Role 2 architecture remains optional; see ADR 0004); Roles may still invoke mapped skills (e.g. `/tdd` in Role 4); closing `/code-review` stays on Main Flow and stays complementary to the QA Role.
 
 ## Status
 

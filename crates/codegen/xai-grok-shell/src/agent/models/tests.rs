@@ -2301,6 +2301,29 @@ fn resolve_catalog_key_prefers_exact_key_match() {
 }
 
 #[test]
+fn catalog_id_for_task_report_maps_routing_slug_to_catalog_key() {
+    let mut models = IndexMap::new();
+    models.insert(
+        "arch-qwen3.8-max".to_string(),
+        make_model_entry("qwen3.8-max"),
+    );
+    models.insert("grok-4.3".to_string(), make_model_entry("grok-4.3"));
+
+    assert_eq!(
+        catalog_id_for_task_report(&models, "qwen3.8-max"),
+        "arch-qwen3.8-max"
+    );
+    assert_eq!(
+        catalog_id_for_task_report(&models, "arch-qwen3.8-max"),
+        "arch-qwen3.8-max"
+    );
+    assert_eq!(
+        catalog_id_for_task_report(&models, "unknown-model"),
+        "unknown-model"
+    );
+}
+
+#[test]
 fn resolve_catalog_key_last_slug_match_wins() {
     let mut models = IndexMap::new();
     models.insert(
