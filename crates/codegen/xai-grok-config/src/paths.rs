@@ -1,9 +1,8 @@
 //! Filesystem locations for Atlas (historically "grok") config files and binaries.
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
-static GROK_HOME: OnceLock<PathBuf> = OnceLock::new();
+pub use xai_grok_home::{default_grok_home, grok_home, user_grok_home};
 
 /// Project-local config directory name (preferred).
 pub const PROJECT_DIR_NAME: &str = ".atlas";
@@ -15,65 +14,6 @@ const CLAUDE_MANAGED_SETTINGS_PATH: &str =
     "/Library/Application Support/ClaudeCode/managed-settings.json";
 #[cfg(target_os = "linux")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
-
-/// The default user Atlas directory (`~/.atlas`, canonicalized) used when
-/// `GROK_HOME` is unset. Exposed so callers (e.g. display helpers) can detect
-/// whether [`grok_home()`] is the default without duplicating the computation.
-///
-/// Uses [`dunce::canonicalize`] instead of [`std::fs::canonicalize`]: on
-/// Windows, std returns a verbatim path (`\\?\C:\Users\...`) which external
-/// tools choke on — e.g. `git clone` rejects `\\?\` destinations with
-/// "Invalid argument", breaking marketplace cache clones under
-/// `~/.atlas/marketplace-cache`. `dunce` strips the prefix whenever the path
-/// is safely representable in legacy form; on non-Windows it is identical to
-/// `std::fs::canonicalize`.
-///
-/// Keep the dunce canonicalization in sync with the hand-rolled duplicate in
-/// `xai_fast_worktree::db::resolve_grok_home` (deliberately standalone crate).
-///
-/// If `~/.atlas` does not exist but legacy `~/.grok` does, returns the legacy
-/// path so existing installs keep working until the user migrates.
-pub fn default_grok_home() -> PathBuf {
-    #[allow(deprecated)]
-    let home = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let home = dunce::canonicalize(&home).unwrap_or(home);
-    let atlas = home.join(".atlas");
-    if atlas.exists() {
-        return atlas;
-    }
-    let legacy = home.join(".grok");
-    if legacy.exists() {
-        return legacy;
-    }
-    atlas
-}
-
-/// Per-user config directory: `$GROK_HOME` or `~/.atlas` (legacy `~/.grok`).
-/// Created if needed.
-pub fn grok_home() -> PathBuf {
-    GROK_HOME
-        .get_or_init(|| {
-            let grok_home = if let Ok(v) = std::env::var("GROK_HOME") {
-                PathBuf::from(v)
-            } else {
-                default_grok_home()
-            };
-            let _ = std::fs::create_dir_all(&grok_home);
-            grok_home
-        })
-        .clone()
-}
-
-/// The user-global Atlas home, but only when one genuinely resolves: `Some` when
-/// `$GROK_HOME` is set or a home directory is found, `None` otherwise. Unlike
-/// [`grok_home()`], this never falls back to a cwd-relative `.atlas`, so callers
-/// that *scan* user-global resources (hooks, marketplace sources, ...) don't
-/// mistake a project's `.atlas` tree for the user-global one when no home resolves.
-pub fn user_grok_home() -> Option<PathBuf> {
-    #[allow(deprecated)]
-    let resolvable = std::env::var_os("GROK_HOME").is_some() || std::env::home_dir().is_some();
-    resolvable.then(grok_home)
-}
 
 /// Canonical application path: `$GROK_HOME/bin/atlas` (Unix) or `atlas.exe` (Windows).
 pub fn grok_application() -> PathBuf {
@@ -391,20 +331,6 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             assert_eq!(decode_cwd_from_dirname(&dir).as_deref(), Some(cwd));
         }
-    }
-
-    #[test]
-    fn default_grok_home_has_no_verbatim_prefix() {
-        // On Windows, std::fs::canonicalize returns `\\?\C:\...` verbatim
-        // paths that external tools (notably `git clone`) reject. The dunce
-        // canonicalization must yield a plain path. No-op assertion on Unix.
-        let home = default_grok_home();
-        assert!(!home.to_string_lossy().starts_with(r"\\?\"));
-        let name = home.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        assert!(
-            name == ".atlas" || name == ".grok",
-            "expected .atlas or legacy .grok, got {home:?}"
-        );
     }
 
     #[cfg(unix)]

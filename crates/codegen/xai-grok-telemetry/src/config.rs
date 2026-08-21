@@ -133,6 +133,9 @@ pub struct TelemetryConfig {
     /// External OTLP transport: `http/protobuf` | `grpc`.
     #[serde(alias = "otel_transport")]
     pub otel_protocol: Option<String>,
+    pub otel_certificate: Option<String>,
+    pub otel_client_certificate: Option<String>,
+    pub otel_client_key: Option<String>,
     /// External OTEL content gate (admins can pin to `false` via requirements).
     pub otel_log_user_prompts: Option<bool>,
     /// External OTEL content gate (admins can pin to `false` via requirements).
@@ -171,6 +174,9 @@ impl Default for TelemetryConfig {
             otel_logs_exporter: None,
             otel_endpoint: None,
             otel_protocol: None,
+            otel_certificate: None,
+            otel_client_certificate: None,
+            otel_client_key: None,
             otel_log_user_prompts: None,
             otel_log_tool_details: None,
         }
