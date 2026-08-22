@@ -260,6 +260,34 @@
       position: sticky;
       top: 0;
     }
+    th.sortable {
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    th.sortable:hover { color: var(--accent); }
+    th.sortable.active { color: var(--accent); }
+    th.sortable .sort-ind {
+      display: inline-block;
+      margin-left: 0.2rem;
+      font-size: 0.65rem;
+      opacity: 0.45;
+    }
+    th.sortable.active .sort-ind { opacity: 1; }
+    th.sortable {
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    th.sortable:hover { color: var(--accent); }
+    th.sortable.active { color: var(--accent); }
+    th.sortable .sort-ind {
+      display: inline-block;
+      margin-left: 0.2rem;
+      opacity: 0.35;
+      font-size: 0.85em;
+    }
+    th.sortable.active .sort-ind { opacity: 1; }
     td.num { font-variant-numeric: tabular-nums; font-weight: 550; }
     tr.clickable { cursor: pointer; transition: background 0.12s; }
     tr.clickable:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
@@ -479,7 +507,7 @@
         <div class="panel">
           <div class="panel-head">
             <h2>按人排行</h2>
-            <span class="hint">点击行下钻</span>
+            <span class="hint">点表头按任务/Tokens 排序 · 点行下钻</span>
           </div>
           <div class="panel-body" id="usersTable"></div>
         </div>
@@ -657,6 +685,7 @@
                 <dt>Team ID</dt><dd class="mono">${field(report.teamId)}</dd>
                 <dt>Agent</dt><dd class="mono">${field(report.subagentType)}</dd>
                 <dt>Model</dt><dd class="mono">${field(report.model)}</dd>
+                <dt>Routing</dt><dd class="mono">${field(report.modelRouting)}</dd>
                 <dt>状态</dt><dd>${statusBadge(report.status, report.success)}</dd>
                 <dt>创建时间</dt><dd>${field(fmtWhen(report.createdAt))}</dd>
                 <dt>开始时间</dt><dd>${field(fmtWhen(report.startedAt))}</dd>
@@ -740,12 +769,39 @@
       ).join("");
     }
 
+    let usersRankData = [];
+    let usersSortKey = "count"; // count | tokensUsed
+    let usersSortDir = "desc"; // asc | desc
+
+    function sortUsers(users) {
+      const key = usersSortKey;
+      const dir = usersSortDir === "asc" ? 1 : -1;
+      return [...users].sort((a, b) => {
+        const av = Number(a[key] || 0);
+        const bv = Number(b[key] || 0);
+        if (av !== bv) return (av - bv) * dir;
+        // tie-break: other metric, then email
+        const other = key === "count" ? "tokensUsed" : "count";
+        const ao = Number(a[other] || 0);
+        const bo = Number(b[other] || 0);
+        if (ao !== bo) return (bo - ao);
+        return String(a.email || a.userId || "").localeCompare(String(b.email || b.userId || ""));
+      });
+    }
+
+    function sortInd(key) {
+      if (usersSortKey !== key) return `<span class="sort-ind">↕</span>`;
+      return `<span class="sort-ind">${usersSortDir === "asc" ? "↑" : "↓"}</span>`;
+    }
+
     function renderUsers(users) {
-      if (!users || !users.length) {
+      if (users) usersRankData = users;
+      if (!usersRankData || !usersRankData.length) {
         $("usersTable").innerHTML = `<p class="empty">暂无上报数据</p>`;
         return;
       }
-      const rows = users.map((u, i) => `
+      const sorted = sortUsers(usersRankData);
+      const rows = sorted.map((u, i) => `
         <tr class="clickable" data-user-id="${esc(u.userId)}" data-email="${esc(u.email || "")}">
           <td><span class="rank">${i + 1}</span></td>
           <td>
@@ -761,11 +817,27 @@
         <div class="scroll">
           <table>
             <thead><tr>
-              <th>#</th><th>用户</th><th>任务</th><th>成功</th><th>产物</th><th>Tokens</th>
+              <th>#</th><th>用户</th>
+              <th class="sortable ${usersSortKey === "count" ? "active" : ""}" data-sort="count">任务${sortInd("count")}</th>
+              <th>成功</th><th>产物</th>
+              <th class="sortable ${usersSortKey === "tokensUsed" ? "active" : ""}" data-sort="tokensUsed">Tokens${sortInd("tokensUsed")}</th>
             </tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </div>`;
+      $("usersTable").querySelectorAll("th.sortable").forEach((th) => {
+        th.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const key = th.dataset.sort;
+          if (usersSortKey === key) {
+            usersSortDir = usersSortDir === "desc" ? "asc" : "desc";
+          } else {
+            usersSortKey = key;
+            usersSortDir = "desc";
+          }
+          renderUsers();
+        });
+      });
       $("usersTable").querySelectorAll("tr.clickable").forEach((tr) => {
         tr.addEventListener("click", () => openUser(tr.dataset.userId, tr.dataset.email));
       });
@@ -839,11 +911,13 @@
         const arts = (r.artifacts || []).map((a) => a.path).join(", ");
         const when = fmtWhen(r.createdAt);
         const model = r.model || "—";
+        const routing = r.modelRouting || "—";
         return `
         <tr class="clickable" data-report-idx="${i}">
           <td class="truncate" title="${esc(r.description || "")}">${esc(r.description || "—")}</td>
           <td><span class="mono">${esc(r.subagentType)}</span></td>
           <td class="truncate" title="${esc(model)}"><span class="mono">${esc(model)}</span></td>
+          <td class="truncate" title="${esc(routing)}"><span class="mono">${esc(routing)}</span></td>
           <td>${statusBadge(r.status, r.success)}</td>
           <td class="num">${fmt(r.artifactCount)}</td>
           <td class="truncate" title="${esc(arts)}">${esc(arts || "—")}</td>
@@ -855,7 +929,7 @@
       $("userReportsTable").innerHTML = `
         <table>
           <thead><tr>
-            <th>任务</th><th>Agent</th><th>Model</th><th>状态</th><th>产物</th><th>路径</th><th>耗时</th><th>版本</th><th>时间</th>
+            <th>任务</th><th>Agent</th><th>Model</th><th>Routing</th><th>状态</th><th>产物</th><th>路径</th><th>耗时</th><th>版本</th><th>时间</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>`;

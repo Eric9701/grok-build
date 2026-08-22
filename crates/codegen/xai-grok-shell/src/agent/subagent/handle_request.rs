@@ -699,6 +699,10 @@ pub(crate) async fn run_shell_child(
     let report_child_cwd = tracker_child_cwd.clone();
     // Catalog id, matching main-session task_report.model.
     let report_model_id = tracker_model_id.clone();
+    let report_model_routing = crate::agent::models::routing_name_for_task_report(
+        &ctx.available_models,
+        &report_model_id,
+    );
     let report_prompt = task_prompt_text.clone();
     let initial_child_tokens = xai_chat_state::estimate_conversation_tokens(&forked_conversation);
     let model_entry = crate::agent::config::find_model_by_id(
@@ -1498,6 +1502,7 @@ pub(crate) async fn run_shell_child(
             child_session_id: result.child_session_id.clone(),
             subagent_type: request.subagent_type.clone(),
             model: (!report_model_id.is_empty()).then(|| report_model_id.clone()),
+            model_routing: report_model_routing,
             description: request.description.clone(),
             prompt,
             status: status.to_string(),

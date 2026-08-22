@@ -2361,6 +2361,31 @@ fn catalog_id_for_task_report_maps_routing_slug_to_catalog_key() {
 }
 
 #[test]
+fn routing_name_for_task_report_maps_catalog_key_and_omits_unknown() {
+    let mut models = IndexMap::new();
+    models.insert(
+        "arch-qwen3.8-max".to_string(),
+        make_model_entry("qwen3.8-max"),
+    );
+    models.insert("grok-4.3".to_string(), make_model_entry("grok-4.3"));
+
+    assert_eq!(
+        routing_name_for_task_report(&models, "arch-qwen3.8-max").as_deref(),
+        Some("qwen3.8-max")
+    );
+    assert_eq!(
+        routing_name_for_task_report(&models, "qwen3.8-max").as_deref(),
+        Some("qwen3.8-max")
+    );
+    assert_eq!(
+        routing_name_for_task_report(&models, "grok-4.3").as_deref(),
+        Some("grok-4.3")
+    );
+    assert_eq!(routing_name_for_task_report(&models, "unknown-model"), None);
+    assert_eq!(routing_name_for_task_report(&models, ""), None);
+}
+
+#[test]
 fn resolve_catalog_key_last_slug_match_wins() {
     let mut models = IndexMap::new();
     models.insert(

@@ -229,7 +229,7 @@ pub(crate) async fn fetch_lanes(
         }
         local.retain(|s| Path::new(&s.info.cwd).is_absolute());
     }
-    // `grok --resume <uuid>` resolves across every cwd. `/resume` search was
+    // `atlas --resume <uuid>` resolves across every cwd. `/resume` search was
     // cwd-scoped, so pasting that same id showed nothing. Promote an exact
     // UUID hit from any local directory into the lane before merge filters.
     if let Some(id) = query

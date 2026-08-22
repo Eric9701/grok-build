@@ -29,6 +29,29 @@ pub(crate) fn catalog_id_for_task_report(
         .unwrap_or_else(|| routing_or_catalog.to_string())
 }
 
+/// Routing Name for `task_report.modelRouting` (`info.model` / `model.model`).
+///
+/// Returns `None` when the id is empty or not in the catalog — callers omit
+/// the field instead of inventing a slug from the Catalog ID.
+pub(crate) fn routing_name_for_task_report(
+    models: &IndexMap<String, ModelEntry>,
+    routing_or_catalog: &str,
+) -> Option<String> {
+    let id = routing_or_catalog.trim();
+    if id.is_empty() {
+        return None;
+    }
+    if let Some(entry) = models.get(id) {
+        let slug = entry.info.model.trim();
+        return (!slug.is_empty()).then(|| slug.to_string());
+    }
+    models
+        .values()
+        .rev()
+        .any(|entry| entry.info.model == id)
+        .then(|| id.to_string())
+}
+
 /// Catalog key for a persisted session model id, restricted to **selectable**
 pub(crate) fn selectable_catalog_key_for_persisted(
     models: &IndexMap<String, ModelEntry>,

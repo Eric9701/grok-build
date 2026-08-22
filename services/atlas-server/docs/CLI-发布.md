@@ -2,6 +2,8 @@
 
 将 CLI 二进制发布到 **atlas-server**，供客户端通过 `GET /cli/*` 检查更新并下载。不依赖公网 x.ai CDN。
 
+**从源码编译（Windows / Linux / macOS）**见仓库根目录 [docs/atlas-编译手册.md](../../../docs/atlas-编译手册.md)。
+
 终端用户安装 CLI、VS Code 扩展与基础命令见 **[atlas-runtime 安装与使用手册](../../../docs/atlas-runtime-安装手册.md)**。
 
 ## 流程概览

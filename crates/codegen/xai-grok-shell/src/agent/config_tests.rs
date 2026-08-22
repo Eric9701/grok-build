@@ -2111,6 +2111,7 @@ fn model_info_from_config_propagates_use_concise() {
     let entry = ModelEntryConfig {
         id: None,
         model_family: None,
+        managed: None,
         model: "test".to_string(),
         base_url: "https://test.api/v1".to_string(),
         name: None,
@@ -2271,6 +2272,7 @@ fn model_info_from_config_propagates_agent_type() {
     let entry = ModelEntryConfig {
         id: None,
         model_family: None,
+        managed: None,
         model: "test".to_string(),
         base_url: "https://test.api/v1".to_string(),
         name: None,
@@ -2723,6 +2725,7 @@ fn inference_idle_timeout_propagates_to_model_info() {
     let entry = ModelEntryConfig {
         id: None,
         model_family: None,
+        managed: None,
         model: "test".to_string(),
         base_url: "https://test.api/v1".to_string(),
         name: None,

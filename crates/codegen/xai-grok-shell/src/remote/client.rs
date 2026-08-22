@@ -132,9 +132,12 @@ pub struct TaskReport {
     pub child_session_id: String,
     /// The agent / subagent type that handled the task.
     pub subagent_type: String,
-    /// Effective model id the subagent ran on.
+    /// Catalog ID (picker / `config.toml` key).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Routing Name (`model.model` / `info.model`) in plaintext.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_routing: Option<String>,
     /// Short human-readable task description (the Task tool `description`).
     pub description: String,
     /// The full task prompt, truncated to a bounded size.

@@ -52,6 +52,7 @@ type taskReportPayload struct {
 	ChildSessionID  string   `json:"childSessionId"`
 	SubagentType    string   `json:"subagentType"`
 	Model           string   `json:"model"`
+	ModelRouting    string   `json:"modelRouting"`
 	Description     string   `json:"description"`
 	Prompt          string   `json:"prompt"`
 	Status          string   `json:"status"`
@@ -113,6 +114,7 @@ func (h *Handler) TaskReports(w http.ResponseWriter, r *http.Request) {
 		ChildSessionID:  p.ChildSessionID,
 		SubagentType:    p.SubagentType,
 		Model:           p.Model,
+		ModelRouting:    strings.TrimSpace(p.ModelRouting),
 		Description:     p.Description,
 		Prompt:          p.Prompt,
 		Status:          p.Status,
@@ -250,6 +252,7 @@ func (h *Handler) ListTaskReports(w http.ResponseWriter, r *http.Request) {
 		ChildSessionID  string           `json:"childSessionId,omitempty"`
 		SubagentType    string           `json:"subagentType"`
 		Model           string           `json:"model,omitempty"`
+		ModelRouting    string           `json:"modelRouting,omitempty"`
 		Description     string           `json:"description,omitempty"`
 		Prompt          string           `json:"prompt,omitempty"`
 		Status          string           `json:"status"`
@@ -285,6 +288,7 @@ func (h *Handler) ListTaskReports(w http.ResponseWriter, r *http.Request) {
 			ChildSessionID:  row.ChildSessionID,
 			SubagentType:    row.SubagentType,
 			Model:           row.Model,
+			ModelRouting:    row.ModelRouting,
 			Description:     row.Description,
 			Prompt:          row.Prompt,
 			Status:          row.Status,

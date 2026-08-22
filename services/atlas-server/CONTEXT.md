@@ -4,17 +4,21 @@ Enterprise atlas-server domain for accounts, User Groups, and which managed mode
 
 ## Language
 
+**Org Node**:
+A tree node in the `user_groups` table, typed by `node_type`: 业务部 (dept), 业务条线 (business line), or 条线分组 (squad). Only squads hold members and model assignments. Legacy rows with `parent_id = NULL` are unclassified nodes awaiting placement.
+_Avoid_: Department unit, OU, flat group
+
 **User Group**:
-A named set of users used to grant managed-model access. Flat (no nesting). Distinct from telemetry `team_id`.
-_Avoid_: Team, Org, Model Entitlement Group
+A squad-level Org Node — the leaf layer. The only Org Node level that holds Group Membership and Group Assignment. Formerly flat; nesting exists only above this level.
+_Avoid_: Team, Org, Model Entitlement Group, business line (that is a non-leaf Org Node)
 
 **Direct Assignment**:
 Models attached to a single user via `user_models`. May mark one model as that user's default.
 _Avoid_: Personal entitlement (unless contrasting with group), override
 
 **Group Assignment**:
-Models attached to a User Group. Contributes to availability only; does not set a user's default model.
-_Avoid_: Group default, inherited default
+Models attached to a User Group (squad-level Org Node only). Contributes to availability only; does not set a user's default model. No inheritance across Org Node levels.
+_Avoid_: Group default, inherited default, line-level grant
 
 **Effective Model Set**:
 The deduplicated union of a user's Direct Assignment and all Group Assignments from User Groups they belong to (enabled catalog entries only).
@@ -33,11 +37,19 @@ A client `config.toml` `[model.<catalog-id>]` table with `managed = true`. Routi
 _Avoid_: User-authored `[model.*]` without `managed` (not overwritten by catalog sync)
 
 **Group Membership**:
-The many-to-many link between a user and a User Group. A user may belong to many groups; membership is identity-only (no per-membership model list).
+The many-to-many link between a user and a squad-level Org Node. A user may belong to many squads; membership is identity-only (no per-membership model list).
 _Avoid_: Role in group, group seat
 
+**Catalog ID**:
+The picker / `config.toml` key of a catalog entry (`[model.<id>]`). Task Report field `model` stores this.
+_Avoid_: Routing Name, model slug, `info.model`
+
+**Routing Name**:
+The upstream sampling slug (`model.model` / `info.model`). Task Report field `modelRouting` stores this in plaintext.
+_Avoid_: Catalog ID, ENC form of the slug, `id`
+
 **Task Report**:
-A per-task usage record the client posts after a main-session turn or subagent finishes. Attributed by Report User and Client Version carried in the report body.
+A per-task usage record the client posts after a main-session turn or subagent finishes. Attributed by Report User and Client Version carried in the report body. Identifies the model by Catalog ID (`model`) and Routing Name (`modelRouting`).
 _Avoid_: Trace, session signal, telemetry event
 
 **Report User**:

@@ -141,6 +141,7 @@ mod tests {
             child_session_id: "c".into(),
             subagent_type: "explore".into(),
             model: None,
+            model_routing: None,
             description: "d".into(),
             prompt: None,
             status: "completed".into(),
@@ -201,6 +202,17 @@ mod tests {
         assert_eq!(v["userId"], "u-42");
         assert_eq!(v["email"], "dev@atlas.local");
         assert_eq!(v["clientVersion"], "0.2.121");
+    }
+
+    #[test]
+    fn task_report_json_uses_camel_case_model_routing() {
+        let mut report = blank_report();
+        report.model = Some("arch-qwen3.8-max".into());
+        report.model_routing = Some("qwen3.8-max".into());
+        let v = serde_json::to_value(&report).unwrap();
+        assert_eq!(v["model"], "arch-qwen3.8-max");
+        assert_eq!(v["modelRouting"], "qwen3.8-max");
+        assert!(v.get("model_routing").is_none());
     }
 }
 

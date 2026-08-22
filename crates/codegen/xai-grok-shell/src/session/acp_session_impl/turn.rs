@@ -913,6 +913,10 @@ impl SessionActor {
             &self.models_manager.models(),
             &turn_model_id,
         );
+        let turn_model_routing_for_report = crate::agent::models::routing_name_for_task_report(
+            &self.models_manager.models(),
+            &turn_model_id,
+        );
         let doom_event_model = turn_model_id.clone();
         let turn_timer = std::time::Instant::now();
         let mut result = {
@@ -1246,12 +1250,13 @@ impl SessionActor {
         );
         self.maybe_post_main_turn_task_report(
             prompt_id,
-            &origin,
+            input_origin.as_prompt_origin(),
             &report_prompt_text,
             &result,
             turn_duration_ms,
             turn_tool_count,
             &turn_model_id_for_report,
+            turn_model_routing_for_report,
             current_prompt_index as u64,
             &turn_started_at,
         )
@@ -2001,8 +2006,9 @@ impl SessionActor {
     /// [`PromptOrigin::PlanResume`], which is a real model turn after plan
     /// approval / revise.
     ///
-    /// `turn_model_id` is the catalog id (picker / config.toml key), not the
-    /// upstream routing slug used for sampling / OTLP.
+    /// `turn_model_id` is the Catalog ID (picker / config.toml key).
+    /// `turn_model_routing` is the Routing Name (`info.model`); omitted when
+    /// the catalog cannot resolve it.
     async fn maybe_post_main_turn_task_report(
         &self,
         prompt_id: &str,
@@ -2012,6 +2018,7 @@ impl SessionActor {
         turn_duration_ms: u64,
         turn_tool_count: u32,
         turn_model_id: &str,
+        turn_model_routing: Option<String>,
         turn_number: u64,
         turn_started_at: &str,
     ) {
@@ -2096,6 +2103,7 @@ impl SessionActor {
             child_session_id: session_id,
             subagent_type,
             model: (!turn_model_id.is_empty()).then(|| turn_model_id.to_string()),
+            model_routing: turn_model_routing,
             description,
             prompt,
             status: status.to_string(),

@@ -89,6 +89,7 @@ func (m *MySQLStore) Migrate() error {
 			child_session_id VARCHAR(128) NULL,
 			subagent_type VARCHAR(128) NOT NULL DEFAULT '',
 			model VARCHAR(128) NULL,
+			model_routing VARCHAR(128) NULL,
 			description TEXT NULL,
 			prompt MEDIUMTEXT NULL,
 			status VARCHAR(32) NOT NULL DEFAULT '',
@@ -146,11 +147,26 @@ func (m *MySQLStore) Migrate() error {
 	if err := m.migrateTaskReportClientVersion(); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	if err := m.migrateTaskReportModelRouting(); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
 	return nil
 }
 
 func (m *MySQLStore) migrateTaskReportClientVersion() error {
 	_, err := m.db.Exec(`ALTER TABLE task_reports ADD COLUMN client_version VARCHAR(64) NULL`)
+	if err == nil {
+		return nil
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "duplicate column") || strings.Contains(msg, "1060") {
+		return nil
+	}
+	return err
+}
+
+func (m *MySQLStore) migrateTaskReportModelRouting() error {
+	_, err := m.db.Exec(`ALTER TABLE task_reports ADD COLUMN model_routing VARCHAR(128) NULL`)
 	if err == nil {
 		return nil
 	}

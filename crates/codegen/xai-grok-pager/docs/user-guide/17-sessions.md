@@ -97,7 +97,7 @@ For the live top-level sessions in this pager (parent and forks) — switch, ren
 Resume a specific session by ID or title:
 
 ```bash
-grok --resume <session-id-or-title>
+atlas --resume <session-id-or-title>
 ```
 
 A value that is not a session ID is matched against session titles for the current directory, ignoring letter case (a simple lowercase comparison) — handy after `/rename`. If several sessions share the title, a single manually renamed session wins over auto-generated duplicates; otherwise the command errors and lists the matching IDs. UUID-shaped values are always treated as session IDs, never titles. Scripts should prefer IDs.

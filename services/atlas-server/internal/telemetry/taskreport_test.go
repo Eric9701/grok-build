@@ -202,6 +202,7 @@ func TestTaskReportsRoundTrip(t *testing.T) {
 		"childSessionId":"child-1",
 		"subagentType":"it-solution-architect",
 		"model":"grok-4.5",
+		"modelRouting":"qwen3.8-max",
 		"description":"design the payments module",
 		"prompt":"do the thing",
 		"status":"completed",
@@ -239,6 +240,12 @@ func TestTaskReportsRoundTrip(t *testing.T) {
 	if got.ClientVersion != "0.2.121" {
 		t.Errorf("ClientVersion = %q, want 0.2.121", got.ClientVersion)
 	}
+	if got.Model != "grok-4.5" {
+		t.Errorf("Model = %q, want grok-4.5", got.Model)
+	}
+	if got.ModelRouting != "qwen3.8-max" {
+		t.Errorf("ModelRouting = %q, want qwen3.8-max", got.ModelRouting)
+	}
 	if got.ArtifactCount != 3 || len(got.Artifacts) != 3 {
 		t.Fatalf("artifact count = %d / %d, want 3", got.ArtifactCount, len(got.Artifacts))
 	}
@@ -266,6 +273,8 @@ func TestTaskReportsRoundTrip(t *testing.T) {
 		Count   int    `json:"count"`
 		Reports []struct {
 			SubagentType  string `json:"subagentType"`
+			Model         string `json:"model"`
+			ModelRouting  string `json:"modelRouting"`
 			ArtifactCount int    `json:"artifactCount"`
 		} `json:"reports"`
 	}
@@ -277,6 +286,12 @@ func TestTaskReportsRoundTrip(t *testing.T) {
 	}
 	if listResp.Count != 1 || len(listResp.Reports) != 1 {
 		t.Fatalf("list count = %d, want 1", listResp.Count)
+	}
+	if listResp.Reports[0].Model != "grok-4.5" {
+		t.Errorf("list model = %q, want grok-4.5", listResp.Reports[0].Model)
+	}
+	if listResp.Reports[0].ModelRouting != "qwen3.8-max" {
+		t.Errorf("list modelRouting = %q, want qwen3.8-max", listResp.Reports[0].ModelRouting)
 	}
 
 	aggReq := httptest.NewRequest(http.MethodGet, "/admin/api/task-reports?user_id=atlas-test-user&aggregate=1", nil)

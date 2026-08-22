@@ -25,6 +25,7 @@ type TaskReportRecord struct {
 	ChildSessionID  string
 	SubagentType    string
 	Model           string
+	ModelRouting    string
 	Description     string
 	Prompt          string
 	Status          string
@@ -177,10 +178,10 @@ func (m *MySQLStore) InsertTaskReport(r TaskReportRecord) (int64, error) {
 	res, err := m.db.Exec(
 		`INSERT INTO task_reports
 			(user_id, email, team_id, subagent_id, parent_session_id, child_session_id,
-			 subagent_type, model, description, prompt, status, success, duration_ms,
+			 subagent_type, model, model_routing, description, prompt, status, success, duration_ms,
 			 tool_calls, turns, tokens_used, artifacts, artifact_count, cwd, worktree_path,
 			 error, started_at, completed_at, client_ip, client_version)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nullIfEmpty(r.UserID),
 		nullIfEmpty(r.Email),
 		nullIfEmpty(r.TeamID),
@@ -189,6 +190,7 @@ func (m *MySQLStore) InsertTaskReport(r TaskReportRecord) (int64, error) {
 		nullIfEmpty(r.ChildSessionID),
 		r.SubagentType,
 		nullIfEmpty(r.Model),
+		nullIfEmpty(r.ModelRouting),
 		nullIfEmpty(r.Description),
 		nullIfEmpty(r.Prompt),
 		r.Status,
@@ -224,7 +226,7 @@ func (m *MySQLStore) ListTaskReportsByUser(userID string, limit int, fromDay, to
 	}
 	q := `SELECT id, IFNULL(user_id,''), IFNULL(email,''), IFNULL(team_id,''),
 		        IFNULL(subagent_id,''), IFNULL(parent_session_id,''), IFNULL(child_session_id,''),
-		        subagent_type, IFNULL(model,''), IFNULL(description,''), IFNULL(prompt,''),
+		        subagent_type, IFNULL(model,''), IFNULL(model_routing,''), IFNULL(description,''), IFNULL(prompt,''),
 		        status, success, duration_ms, tool_calls, turns, tokens_used,
 		        IFNULL(artifacts,'[]'), artifact_count, IFNULL(cwd,''), IFNULL(worktree_path,''),
 		        IFNULL(error,''), IFNULL(started_at,''), IFNULL(completed_at,''),
@@ -248,7 +250,7 @@ func (m *MySQLStore) ListTaskReportsByUser(userID string, limit int, fromDay, to
 		if err := rows.Scan(
 			&r.ID, &r.UserID, &r.Email, &r.TeamID,
 			&r.SubagentID, &r.ParentSessionID, &r.ChildSessionID,
-			&r.SubagentType, &r.Model, &r.Description, &r.Prompt,
+			&r.SubagentType, &r.Model, &r.ModelRouting, &r.Description, &r.Prompt,
 			&r.Status, &r.Success, &r.DurationMs, &r.ToolCalls, &r.Turns, &r.TokensUsed,
 			&artifactsJSON, &r.ArtifactCount, &r.Cwd, &r.WorktreePath,
 			&r.Error, &r.StartedAt, &r.CompletedAt,

@@ -485,7 +485,7 @@ impl SessionSearchIndex {
     /// Session-id-shaped queries (full UUID or hyphenated hex prefix) match
     /// `session_docs.session_id` directly. FTS only indexes title+content, and
     /// a hyphenated UUID `MATCH` looks for tokens that were never indexed —
-    /// so `/resume` search by id returned nothing while `grok --resume <id>`
+    /// so `/resume` search by id returned nothing while `atlas --resume <id>`
     /// still loaded the session.
     pub fn query(
         &self,
