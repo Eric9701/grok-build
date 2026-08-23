@@ -11,6 +11,7 @@
 | 组件 | 包 / 入口 | 本机产物 | 发布文件名 |
 |------|-----------|----------|------------|
 | CLI（TUI / ACP） | `cargo build -p xai-grok-pager-bin --release` | `target/release/xai-grok-pager`（Windows 带 `.exe`） | `grok-{ver}-{os}-{arch}` |
+| CLI（Linux x86_64，兼容 CentOS 7 等老 glibc） | `cargo build -p xai-grok-pager-bin --release --target x86_64-unknown-linux-musl` | `target/x86_64-unknown-linux-musl/release/xai-grok-pager` | 同上 `linux` / `x86_64` |
 | atlas-server | `go build ./cmd/server`（在 `services/atlas-server`） | `atlas-server` / `atlas-server.exe` | 自行部署，不走 `/cli` |
 
 官方安装把 CLI 二进制改名为 `atlas` / `atlas.exe`。`--version` 展示的 semver 来自编译时的 `GROK_VERSION`（未设则用 crate 版本）。
@@ -112,6 +113,8 @@ cargo build -p xai-grok-pager-bin --release
 
 产物：`target/release/xai-grok-pager`
 
+**注意：** 上述命令默认链接**本机 glibc**（`x86_64-unknown-linux-gnu`）。在 Ubuntu 22.04+ 等新系统上编出的二进制**无法在 CentOS 7 / RHEL 7**（glibc 2.17）上运行，会报 `GLIBC_2.xx not found`。要给老发行版发 Linux x86_64 包，请用 [4.4 节 musl 静态构建](#44-centos-7--老-glibc-兼容musl-静态构建)。
+
 本机是 x86_64 就得到 linux-x86_64；本机是 ARM 得到 linux-aarch64。交叉编译需先加 target（链接器另配，本文以本机编译为准）：
 
 ```bash
@@ -136,6 +139,119 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o atlas-server ./cmd/server
 ```
 
 需要 Go **1.25+**。
+
+### 4.4 CentOS 7 / 老 glibc 兼容（musl 静态构建）
+
+#### 现象
+
+在 CentOS 7.9 上运行在较新 Linux（如 Ubuntu Server 26）上编译的 `atlas`，会出现类似错误：
+
+```text
+./atlas: /lib64/libc.so.6: version `GLIBC_2.27' not found (required by ./atlas)
+./atlas: /lib64/libc.so.6: version `GLIBC_2.39' not found (required by ./atlas)
+...
+```
+
+#### 原因
+
+| 环境 | 典型 glibc |
+|------|------------|
+| CentOS 7 / RHEL 7 | **2.17** |
+| Ubuntu 22.04 | 2.35 |
+| Ubuntu 24.04+ | 2.39+ |
+
+glibc **只能向前兼容**：在新系统上用默认 `linux-gnu` 目标编出的动态链接二进制，依赖较新的 glibc 符号，老系统无法加载。把新系统的 `libc.so.6` 拷到 CentOS 7 **无效且危险**，不要这样做。
+
+本仓库 Linux x86_64 **正式发布**使用 `x86_64-unknown-linux-musl` 静态链接（见根目录 [`.cargo/config.toml`](../.cargo/config.toml) 及 `xai-grok-tools` / `xai-grok-shell` 的 `build.rs`）。musl 静态二进制不依赖目标机 glibc，可在 CentOS 7 及多数现代 Linux 上直接运行。
+
+`sqlite-vec`（记忆检索依赖）在 musl 上会因缺少 BSD 类型 `u_int8_t` 等编译失败。仓库 [`.cargo/config.toml`](../.cargo/config.toml) 的 `[env]` 已为 musl 注入对应 `CFLAGS_*`；若构建机未带上该配置，需手动 export（见下方「常见失败」）。
+
+#### 构建步骤（在任意较新 Linux 上交叉编即可）
+
+```bash
+# 1. 安装 musl 工具链（Debian / Ubuntu）
+sudo apt update
+sudo apt install -y musl-tools musl-dev build-essential pkg-config git protobuf-compiler
+
+# 2. 添加 Rust target
+rustup target add x86_64-unknown-linux-musl
+
+# 3. 编译（仓库根目录；需能读到 .cargo/config.toml）
+cd /path/to/grok-build
+export GROK_VERSION=0.2.131
+
+# 若仍报 sqlite-vec u_int8_t 错误，显式注入（与 .cargo/config.toml 等价）：
+# export CFLAGS_x86_64_unknown_linux_musl="-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t"
+
+# 访问不了 GitHub 时先指定本地 rg（见第 6 节；musl 构建应使用 musl 版 rg）
+# export GROK_TOOLS_BUNDLE_RG_PATH=/path/to/rg
+
+cargo build -p xai-grok-pager-bin --release --target x86_64-unknown-linux-musl
+```
+
+产物：
+
+```text
+target/x86_64-unknown-linux-musl/release/xai-grok-pager
+```
+
+#### 常见失败：`sqlite-vec` / `u_int8_t`
+
+报错类似 `unknown type name 'u_int8_t'`、`conflicting types for 'uint8_t'`、`expected 'u8 *' {aka 'int *'}`：
+
+```bash
+export CFLAGS_x86_64_unknown_linux_musl="-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t"
+# aarch64 musl 则用：
+# export CFLAGS_aarch64_unknown_linux_musl="-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t"
+
+cargo build -p xai-grok-pager-bin --release --target x86_64-unknown-linux-musl
+```
+
+#### 发布前自检
+
+```bash
+BINARY=target/x86_64-unknown-linux-musl/release/xai-grok-pager
+
+file "$BINARY"
+# 期望：ELF 64-bit LSB executable, x86-64, statically linked
+
+ldd "$BINARY"
+# 期望：not a dynamic executable（或 statically linked）
+
+"$BINARY" --version
+```
+
+拷到 CentOS 7 验证：
+
+```bash
+cp "$BINARY" ./atlas
+chmod +x ./atlas
+./atlas --version
+```
+
+#### 与默认 gnu 构建对比
+
+| 构建方式 | 命令 | 产物路径 | CentOS 7 |
+|----------|------|----------|----------|
+| 默认（本机 gnu） | `cargo build -p xai-grok-pager-bin --release` | `target/release/xai-grok-pager` | ❌ glibc 过新 |
+| musl 静态（推荐发 Linux x86_64） | `cargo build … --target x86_64-unknown-linux-musl` | `target/x86_64-unknown-linux-musl/release/xai-grok-pager` | ✅ |
+
+#### 备选方案
+
+若 musl 构建环境暂时搭不起来，可在 **glibc 足够老** 的容器里用默认 gnu 目标编译，例如 `centos:7` 或 `rockylinux:8` 镜像中安装 rustup 后执行 `cargo build -p xai-grok-pager-bin --release`。产物仍动态链接 glibc，但下限与构建环境一致，可跑在 CentOS 7 上。维护成本通常高于 musl 静态构建。
+
+#### 发布到 atlas-server
+
+musl 产物路径与默认 gnu 不同，发布时 `--binary` 要指向 musl 目录：
+
+```bash
+cd services/atlas-server
+./scripts/publish-release.sh \
+  --binary ../../target/x86_64-unknown-linux-musl/release/xai-grok-pager \
+  --version 0.2.131 \
+  --os linux \
+  --arch x86_64
+```
 
 ---
 
@@ -247,6 +363,12 @@ Windows Release 默认跳过自动下载，一般无此问题。
 
 **jemalloc / Apple Silicon**  
 仓库 [`.cargo/config.toml`](../.cargo/config.toml) 已为 `aarch64-apple-darwin` 设置 16KB 页（`AARCH64_APPLE_DARWIN_JEMALLOC_SYS_WITH_LG_PAGE=14`），无需手改。
+
+**CentOS 7 上 `GLIBC_2.xx not found`**  
+说明二进制是在较新 Linux 上用默认 gnu 目标编的。请按 [4.4 节](#44-centos-7--老-glibc-兼容musl-静态构建) 用 `x86_64-unknown-linux-musl` 重新构建并发布。
+
+**musl 构建报 `sqlite-vec` / `u_int8_t`**  
+`sqlite-vec` 0.1.7-alpha.2 依赖 BSD 别名类型，musl 没有。仓库 `.cargo/config.toml` 已注入 `CFLAGS_*_unknown_linux_musl`；也可手动 `export CFLAGS_x86_64_unknown_linux_musl="-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t"` 后再编。
 
 ---
 
