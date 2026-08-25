@@ -13,33 +13,123 @@
     { id: "voice", title: "Voice", restore: true },
     { id: "notifications", title: "Notifications", restore: true },
     { id: "providers", title: "Providers", restore: false },
-    { id: "account", title: "Account", restore: false },
+    // Things you have SET UP, next to the other things you have set up —
+    // apart from General/Voice/Notifications, which are preferences.
+    { id: "routines", title: "Routines", restore: false },
+    { id: "connectors", title: "Connectors", restore: false },
+    // "Remote control" rather than "Account": the page is about driving this
+    // desk from a phone or browser — linking, the device list, the AFK Pilot
+    // sign-in that enables it. "Account" invited confusion with the agent
+    // accounts (Grok / Codex / Claude), which live under Providers.
+    { id: "account", title: "Remote control", restore: false },
     { id: "advanced", title: "Advanced", restore: false },
     { id: "about", title: "About", restore: false },
   ];
 
   // Lucide-style stroke icons — same language as chat.js ICON. Labels stay
   // visible; color comes from the nav-item theme tokens.
+  /** Longest a repaint may wait on a focused nav select before flushing. */
+  const DEFERRED_PAINT_MS = 1200;
+
   const NAV_ICONS = {
     general: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>',
     voice: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>',
     notifications: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
-    providers: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>',
-    account: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+    providers: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>',
+    connectors: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>',
+    // Lucide "refresh-cw" — a cycle, which is what a routine is. Deliberately
+    // not a clock: the page is about repetition, not time of day.
+    routines: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>',
+    // The lucide phone the top bar uses for Continue remotely (chat.js ICON
+    // .smartphone). Same shape on both so the nav row and the button read as
+    // one feature — which is the point of calling this page Remote control.
+    account: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>',
     advanced: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
     about: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
   };
 
+  // Provider marks from Lobe Icons (MIT), adapted to inherit currentColor.
+  // A third copy of the chat.js / projects-rail.js block, deliberately: the VS
+  // Code settings TAB loads settings.css and settings.js and nothing else, so
+  // this file cannot reach a shared helper. test/provider-logo.test.ts holds
+  // all three copies to the same paths.
+  const PROVIDER_LOGO_PATHS = {
+    grok: "M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815",
+    codex: "M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z",
+    // Four-point sparkle — distinct from the Grok/Codex marks, currentColor.
+    claude: "M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z",
+  };
+
+  /**
+   * Row marks for the About links. Lucide strokes like NAV_ICONS, plus the
+   * GitHub octicon, which is a FILLED path rather than a stroke — hence its
+   * own shape here instead of a line in the lucide set. Every one is
+   * currentColor, so they inherit .settings-row-logo's --vscode-foreground
+   * and dim with .is-disabled along with the copy beside them.
+   *
+   * The octicon ships with a 1024 viewBox but 0-16 coordinates (an export
+   * artifact); drawn at 0 0 16 16, which is the space the path is actually in.
+   */
+  const ROW_ICONS = {
+    bug: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg>',
+    lightbulb: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>',
+    mail: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>',
+    github: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8C0 11.54 2.29 14.53 5.47 15.59C5.87 15.66 6.02 15.42 6.02 15.21C6.02 15.02 6.01 14.39 6.01 13.72C4 14.09 3.48 13.23 3.32 12.78C3.23 12.55 2.84 11.84 2.5 11.65C2.22 11.5 1.82 11.13 2.49 11.12C3.12 11.11 3.57 11.7 3.72 11.94C4.44 13.15 5.59 12.81 6.05 12.6C6.12 12.08 6.33 11.73 6.56 11.53C4.78 11.33 2.92 10.64 2.92 7.58C2.92 6.71 3.23 5.99 3.74 5.43C3.66 5.23 3.38 4.41 3.82 3.31C3.82 3.31 4.49 3.1 6.02 4.13C6.66 3.95 7.34 3.86 8.02 3.86C8.7 3.86 9.38 3.95 10.02 4.13C11.55 3.09 12.22 3.31 12.22 3.31C12.66 4.41 12.38 5.23 12.3 5.43C12.81 5.99 13.12 6.7 13.12 7.58C13.12 10.65 11.25 11.33 9.47 11.53C9.76 11.78 10.01 12.26 10.01 13.01C10.01 14.08 10 14.94 10 15.21C10 15.42 10.15 15.67 10.55 15.59C13.71 14.53 16 11.53 16 8C16 3.58 12.42 0 8 0Z"></path></svg>',
+  };
+
+  function providerLogoMarkup(id) {
+    const path = PROVIDER_LOGO_PATHS[id];
+    if (!path) return "";
+    return `<svg class="provider-logo" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="${path}"></path></svg>`;
+  }
+
   const GITHUB_REPO_URL = "https://github.com/phuryn/grok-build-vscode";
+  const GROK_CONNECTORS_URL = "https://grok.com/connectors";
+  const CONNECTOR_SECTION_HERE = "On this computer";
+  const CONNECTOR_SECTION_GROK = "Grok.com connectors";
+  const CONNECTOR_SECTION_LOCAL = "Local Grok connectors";
+  const CONNECTOR_BLURB_HERE =
+    "These apps are available to Grok, Codex, and Claude. Most open a browser to sign in; GitHub uses a personal access token you paste here. Tokens stay on this machine.";
+  const CONNECTOR_BLURB_HERE_REMOTE =
+    "These apps are connected on the desk machine. Sign-in happens there — a phone cannot change which tools an agent has.";
+  const CONNECTOR_BLURB_GROK =
+    "These follow your Grok account, so they are shared across every Grok session on every machine.";
+  const CONNECTOR_BLURB_LOCAL =
+    "Declared in this machine's Grok config files. Grok only.";
+  const CONNECTOR_BLURB_LOCAL_REMOTE =
+    "Declared in this machine's Grok config files. Grok only. These are managed on the desk machine only.";
+  const ICON_EXTERNAL_LINK =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
+  // lucide `settings` — same path as chat.js ICON.gear. Local Open is config,
+  // not a document, so the cog rather than a file-type glyph.
+  const ICON_SETTINGS =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const CONNECTOR_LOGO_IDS = {
+    airtable: true,
+    atlassian: true,
+    calendly: true,
+    canva: true,
+    cloudflare: true,
+    github: true,
+    linear: true,
+    notion: true,
+    sentry: true,
+    stripe: true,
+    zapier: true,
+  };
   const GITHUB_ISSUE_BUG_URL = GITHUB_REPO_URL + "/issues/new?labels=bug";
   const GITHUB_ISSUE_FEATURE_URL = GITHUB_REPO_URL + "/issues/new?labels=enhancement";
   const SUPPORT_MAILTO = "mailto:support@productcompass.pm";
   const ABOUT_DISCLAIMER =
-    "Atlas for VS Code · enterprise build | " +
-    "GUI for Atlas CLI. Compatible with the Atlas enterprise proxy.";
+    "Unofficial · community-built · MIT | " +
+    "A VS Code UI for SpaceXAI’s Grok Build CLI - not affiliated with or endorsed by SpaceXAI (formerly xAI). " +
+    "Grok, Grok Build, and xAI are trademarks of xAI; this project uses those names only to describe what it’s compatible with.";
 
   const TELEMETRY_COPY =
     "Anonymous usage stats only: a single session-start event with an anonymous install id — never prompts, code, file paths or names, and no identity. The IP address is discarded, never stored.";
+
+  const THUMBS_COPY =
+    "Show thumbs on a finished Grok turn so you can send a rating to SpaceXAI. Off by default. On, thumbs appear only when this Grok session supports feedback — never on Codex or Claude.";
 
   function escapeHtml(s) {
     return String(s ?? "")
@@ -85,6 +175,10 @@
 
   function codexProvider(snapshot) {
     return ((snapshot && snapshot.providers) || []).find((p) => p && p.id === "codex" && p.connected);
+  }
+
+  function claudeProvider(snapshot) {
+    return ((snapshot && snapshot.providers) || []).find((p) => p && p.id === "claude" && p.connected);
   }
 
   function legacyProviders(env) {
@@ -134,7 +228,7 @@
     return value ? "v" + value : "—";
   }
 
-  function atlasUpdateStatusText(snapshot) {
+  function grokUpdateStatusText(snapshot) {
     const u = grokUpdateOf(snapshot);
     if (u.checking) return "Checking for updates";
     if (grokUpdateBlocked(snapshot)) return "On the supported version";
@@ -159,6 +253,63 @@
       defaultValue: "knowledge",
       get: (s) => purposeOf(s),
       message: (value) => ({ type: "setAppPurpose", value }),
+    },
+    {
+      id: "chatFontScale",
+      category: "general",
+      title: "Text size",
+      description: "Chat text size on this device only. Keyboard zoom stays in sync with this slider.",
+      kind: "range",
+      min: 80,
+      max: 160,
+      step: 10,
+      defaultValue: 100,
+      visible: (s, env) => !!(env && env.clientOwnsFontScale),
+      get: (s) => Math.round(((s && s.fontScale) || 1) * 100),
+      localOnly: true,
+    },
+    {
+      id: "openChatFontScale",
+      category: "general",
+      title: "Text size",
+      description: "Chat zoom lives in VS Code settings so it can stay a user or workspace preference.",
+      kind: "action",
+      actionLabel: "Open VS Code settings",
+      visible: (s, env) => !!(env && !env.isRemote && !env.clientOwnsFontScale && !env.isDesktop),
+      message: () => ({ type: "openSettings", section: "atlas.chatFontScale" }),
+    },
+    {
+      id: "showThinking",
+      category: "general",
+      title: "Show thinking traces",
+      description: "Show Grok's reasoning traces in chat, including on already-loaded sessions.",
+      kind: "toggle",
+      defaultValue: false,
+      visible: (s) => purposeOf(s) === "coding",
+      get: (s) => !!(s && s.showThinking),
+      message: (value) => ({ type: "setShowThinking", value }),
+    },
+    {
+      id: "expandCommandOutputs",
+      category: "general",
+      title: "Expand tool details",
+      description: "Pre-open each command's IN/OUT block and each edit's inline diff instead of clicking a row to expand it.",
+      kind: "toggle",
+      defaultValue: false,
+      visible: (s) => purposeOf(s) === "coding",
+      get: (s) => !!(s && s.expandCommandOutputs),
+      message: (value) => ({ type: "setExpandCommandOutputs", value }),
+    },
+    {
+      id: "steerByDefault",
+      category: "general",
+      title: "Steer by default",
+      description: "Send straight into the running turn instead of queueing until it finishes. Steering does not cancel work in progress.",
+      kind: "toggle",
+      defaultValue: false,
+      visible: (s, env) => !env || env.steerSupported !== false,
+      get: (s) => !!(s && s.steerByDefault),
+      message: (value) => ({ type: "setSteerByDefault", value }),
     },
     {
       id: "telemetryDesktop",
@@ -195,61 +346,28 @@
       },
     },
     {
-      id: "chatFontScale",
+      id: "thumbsFeedback",
       category: "general",
-      title: "Text size",
-      description: "Chat text size on this device only. Keyboard zoom stays in sync with this slider.",
-      kind: "range",
-      min: 80,
-      max: 160,
-      step: 10,
-      defaultValue: 100,
-      visible: (s, env) => !!(env && env.clientOwnsFontScale),
-      get: (s) => Math.round(((s && s.fontScale) || 1) * 100),
-      localOnly: true,
-    },
-    {
-      id: "openChatFontScale",
-      category: "general",
-      title: "Text size",
-      description: "Chat zoom lives in VS Code settings so it can stay a user or workspace preference.",
-      kind: "action",
-      actionLabel: "Open VS Code settings",
-      visible: (s, env) => !!(env && !env.isRemote && !env.clientOwnsFontScale && !env.isDesktop),
-      message: () => ({ type: "openSettings", section: "atlas.chatFontScale" }),
-    },
-    {
-      id: "showThinking",
-      category: "general",
-      title: "Show thinking traces",
-      description: "Show Atlas's reasoning traces in chat, including on already-loaded sessions.",
+      title: "Thumbs feedback to SpaceXAI",
+      description: THUMBS_COPY,
       kind: "toggle",
       defaultValue: false,
-      visible: (s) => purposeOf(s) === "coding",
-      get: (s) => !!(s && s.showThinking),
-      message: (value) => ({ type: "setShowThinking", value }),
+      visible: (s, env) => !env || !env.isRemote,
+      get: (s) => !!(s && s.thumbsFeedback),
+      message: (value) => ({ type: "setThumbsFeedback", value }),
     },
     {
-      id: "expandCommandOutputs",
+      id: "thumbsFeedbackRemote",
       category: "general",
-      title: "Expand tool details",
-      description: "Pre-open each command's IN/OUT block and each edit's inline diff instead of clicking a row to expand it.",
-      kind: "toggle",
-      defaultValue: false,
-      visible: (s) => purposeOf(s) === "coding",
-      get: (s) => !!(s && s.expandCommandOutputs),
-      message: (value) => ({ type: "setExpandCommandOutputs", value }),
-    },
-    {
-      id: "steerByDefault",
-      category: "general",
-      title: "Steer by default",
-      description: "Send straight into the running turn instead of queueing until it finishes. Steering does not cancel work in progress.",
-      kind: "toggle",
-      defaultValue: false,
-      visible: (s, env) => !env || env.steerSupported !== false,
-      get: (s) => !!(s && s.steerByDefault),
-      message: (value) => ({ type: "setSteerByDefault", value }),
+      title: "Thumbs feedback to SpaceXAI",
+      description: "",
+      kind: "status",
+      visible: (s, env) => !!(env && env.isRemote),
+      describe: (s) => {
+        const known = s && typeof s.thumbsFeedback === "boolean";
+        const state = known ? (s.thumbsFeedback ? "On. " : "Off. ") : "";
+        return state + THUMBS_COPY;
+      },
     },
     {
       id: "voiceSendPhrase",
@@ -282,7 +400,7 @@
       actionLabel: "Open voice settings",
       describe: (s) => (s && s.voiceConfigured)
         ? "Voice is ready on this machine."
-        : "Voice needs a key or a signed-in Atlas account before the mic can start.",
+        : "Voice needs a key or a signed-in Grok account before the mic can start.",
       visible: (s, env) => !!(env && !env.isRemote && !env.isDesktop),
       message: () => ({ type: "openSettings", section: "atlas.voiceApiKey" }),
     },
@@ -334,7 +452,7 @@
       id: "soundNotifications",
       category: "notifications",
       title: "Sound notifications",
-      description: "Play a short sound when a turn finishes or errors, only when the Atlas panel is not focused.",
+      description: "Play a short sound when a turn finishes or errors, only when the Grok panel is not focused.",
       kind: "toggle",
       defaultValue: false,
       get: (s) => !!(s && s.soundNotifications),
@@ -353,7 +471,8 @@
     {
       id: "providerGrok",
       category: "providers",
-      title: "Atlas",
+      logo: "grok",
+      title: "Grok",
       description: "",
       kind: "action",
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
@@ -369,6 +488,7 @@
     {
       id: "providerCodex",
       category: "providers",
+      logo: "codex",
       title: "Codex",
       description: "",
       kind: "action",
@@ -383,9 +503,27 @@
       },
     },
     {
+      id: "providerClaude",
+      category: "providers",
+      logo: "claude",
+      title: "Claude",
+      description: "",
+      kind: "action",
+      visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
+      describe: (s) => providerDescription(providerOf(s, "claude")),
+      actionLabel: (s) => providerAction(providerOf(s, "claude")),
+      message: (s) => {
+        const provider = providerOf(s, "claude");
+        return provider.connected && provider.needsLogin !== true
+          ? { type: "logout", provider: "claude" }
+          : { type: "runGrokLogin", provider: "claude" };
+      },
+    },
+    {
       id: "providerGrokStatus",
       category: "providers",
-      title: "Atlas",
+      logo: "grok",
+      title: "Grok",
       description: "",
       kind: "status",
       visible: (s, env) => !!(env && env.isRemote && env.providersKnown),
@@ -394,6 +532,7 @@
     {
       id: "providerCodexStatus",
       category: "providers",
+      logo: "codex",
       title: "Codex",
       description: "",
       kind: "status",
@@ -401,22 +540,14 @@
       describe: (s) => providerDescription(providerOf(s, "codex")),
     },
     {
-      id: "localModelsIntro",
+      id: "providerClaudeStatus",
       category: "providers",
-      title: "Local models",
-      description: "Append OpenAI-compatible or Ollama models to the Atlas CLI catalog (~/.atlas/config.toml). They appear in the model picker after the CLI reloads.",
+      logo: "claude",
+      title: "Claude",
+      description: "",
       kind: "status",
-      hostLocal: true,
-    },
-    {
-      id: "addLocalModel",
-      category: "providers",
-      title: "Add local model",
-      description: "Write a [model.*] table to the global Atlas config. The CLI merges it over the remote catalog.",
-      kind: "action",
-      actionLabel: "Add…",
-      hostLocal: true,
-      message: () => ({ type: "addLocalModel" }),
+      visible: (s, env) => !!(env && env.isRemote && env.providersKnown),
+      describe: (s) => providerDescription(providerOf(s, "claude")),
     },
     {
       id: "continueRemotely",
@@ -490,7 +621,7 @@
       id: "openGlobalConfig",
       category: "advanced",
       title: "Open global config",
-      description: "Open the user-level Atlas config file on this machine.",
+      description: "Open the user-level Grok config file on this machine.",
       kind: "action",
       actionLabel: "Open",
       hostLocal: true,
@@ -500,27 +631,40 @@
       id: "openProjectConfig",
       category: "advanced",
       title: "Open project config",
-      description: "Open this project's Atlas config file.",
+      description: "Open this project's Grok config file.",
       kind: "action",
       actionLabel: "Open",
       hostLocal: true,
       message: () => ({ type: "openProjectConfig" }),
     },
     {
-      id: "runMcpList",
-      category: "advanced",
-      title: "MCP servers",
-      description: "List the MCP servers configured for the Atlas CLI.",
-      kind: "action",
-      actionLabel: "Open",
-      hostLocal: true,
-      message: () => ({ type: "runMcpList" }),
+      id: "routinesList",
+      category: "routines",
+      title: "Routines",
+      description: "Send the same prompt to a project on a schedule. Each run opens a session you can read later.",
+      kind: "routines",
+    },
+    {
+      id: "connectorsCatalog",
+      category: "connectors",
+      title: "Connectors",
+      description: CONNECTOR_BLURB_HERE,
+      kind: "connectors",
+      visible: (s, env) => mcpSettingsEnabled(env),
+    },
+    {
+      id: "mcpCatalog",
+      category: "connectors",
+      title: "Grok connectors",
+      description: CONNECTOR_BLURB_GROK,
+      kind: "mcp",
+      visible: (s, env) => mcpSettingsEnabled(env),
     },
     {
       id: "showLogs",
       category: "advanced",
       title: "Show logs",
-      description: "Open the host log for this Atlas client.",
+      description: "Open the host log for this Grok client.",
       kind: "action",
       actionLabel: (s, env) => logsLabel(env),
       hostLocal: true,
@@ -541,18 +685,18 @@
       id: "openVsCodeSettings",
       category: "advanced",
       title: "Open VS Code settings",
-      description: "Open the host Settings editor focused on Atlas.",
+      description: "Open the host Settings editor focused on Grok.",
       kind: "action",
       actionLabel: "Open",
       hostLocal: true,
       visible: (s, env) => !!(env && !env.isDesktop),
-      message: () => ({ type: "openSettings", section: "atlas" }),
+      message: () => ({ type: "openSettings", section: "grok" }),
     },
     {
       id: "moveView",
       category: "advanced",
       title: "Move view",
-      description: "Open the editor's own picker so you can move the Atlas chat to another dock.",
+      description: "Open the editor's own picker so you can move the Grok chat to another dock.",
       kind: "action",
       actionLabel: "Move view…",
       hostLocal: true,
@@ -594,7 +738,7 @@
     {
       id: "aboutHostProduct",
       category: "about",
-      title: (s) => (s && s.hostKind === "desktop") ? "Atlas Desktop" : "Atlas extension",
+      title: (s) => (s && s.hostKind === "desktop") ? "Grok Build Desktop" : "Grok Build extension",
       kind: "value",
       visible: (s, env) => remoteAbout(s, env),
       get: (s) => versionLabel(s && s.extVersion),
@@ -610,7 +754,7 @@
     {
       id: "aboutGrokCli",
       category: "about",
-      title: "Atlas CLI",
+      title: "Grok Build CLI",
       kind: "value",
       visible: (s, env) => {
         if (remoteAbout(s, env) && hasReportedProviderVersions(s)) return !!grokProvider(s);
@@ -631,43 +775,34 @@
       },
     },
     {
-      id: "aboutCodexAdapter",
+      id: "aboutClaudeCli",
       category: "about",
-      title: "Codex ACP adapter",
+      title: "Claude Code CLI",
       kind: "value",
-      visible: (s) => !!codexProvider(s),
+      visible: (s) => !!claudeProvider(s),
       get: (s) => {
-        const p = codexProvider(s);
-        return versionLabel(p && p.adapterVersion);
+        const p = claudeProvider(s);
+        return versionLabel(p && p.cliVersion);
       },
     },
+    // Deliberately absent: "Codex ACP adapter", "Claude ACP adapter" and
+    // "Codex updates". The two adapters are pinned dependencies of THIS
+    // extension (@agentclientprotocol/codex-acp, @agentclientprotocol/
+    // claude-agent-acp, exact versions in package.json) and ship inside the
+    // vsix, so they move only when the extension does — a version the reader
+    // cannot act on reads as one more thing to keep current. And "Codex
+    // updates are managed at its install source" was true only when the user
+    // installed Codex themselves; when they let us install it the source is
+    // us, pinned at CODEX_MANAGED_TAG, and there is nowhere for them to go.
+    // One sentence, two meanings. Grok is the only CLI this extension
+    // actually updates, so it is the only one with an update row.
     {
-      id: "aboutCodexUpdate",
+      id: "aboutGrokUpdateStatus",
       category: "about",
-      title: "Codex updates",
-      kind: "status",
-      visible: (s) => !!codexProvider(s),
-      describe: (s, env) => {
-        const p = codexProvider(s);
-        if (p && p.updateAvailable) {
-          const latest = p.latestCliVersion ? ` · v${p.latestCliVersion}` : "";
-          const where = env && env.isRemote
-            ? "Update it at the desk — this device can’t."
-            : "Update it at its install source.";
-          return `Codex update available${latest}. ${where}`;
-        }
-        return env && env.isRemote
-          ? "Codex updates are managed at the desk."
-          : "Codex updates are managed at its install source.";
-      },
-    },
-    {
-      id: "aboutAtlasUpdateStatus",
-      category: "about",
-      title: "Atlas CLI updates",
+      title: "Grok Build CLI updates",
       kind: "status",
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env),
-      describe: (s) => atlasUpdateStatusText(s),
+      describe: (s) => grokUpdateStatusText(s),
     },
     {
       id: "aboutGrokUpdatePolicy",
@@ -683,23 +818,23 @@
     {
       id: "aboutUpdateGrok",
       category: "about",
-      title: "Update Atlas CLI",
-      description: "Download and install the latest Atlas CLI on this machine.",
+      title: "Update Grok Build CLI",
+      description: "Download and install the latest Grok Build CLI on this machine.",
       kind: "action",
-      actionLabel: "Update Atlas CLI",
+      actionLabel: "Update Grok Build CLI",
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env) && canUpdateGrok(s),
-      message: () => ({ type: "updateAtlas" }),
+      message: () => ({ type: "updateGrok" }),
     },
     {
       id: "aboutUpdateGrokBlocked",
       category: "about",
-      title: "Update Atlas CLI",
+      title: "Update Grok Build CLI",
       description: "Updates are paused for compatibility.",
       kind: "action",
-      actionLabel: "Update Atlas CLI",
+      actionLabel: "Update Grok Build CLI",
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env) && grokUpdateBlocked(s),
       enabled: () => false,
-      message: () => ({ type: "updateAtlas" }),
+      message: () => ({ type: "updateGrok" }),
     },
     {
       id: "aboutRemoteCliUpdate",
@@ -715,6 +850,7 @@
     {
       id: "reportBug",
       category: "about",
+      icon: "bug",
       title: "Report a bug",
       description: "Open a new issue on the GitHub tracker.",
       kind: "action",
@@ -724,6 +860,7 @@
     {
       id: "requestFeature",
       category: "about",
+      icon: "lightbulb",
       title: "Request a feature",
       description: "Open a new issue on the GitHub tracker.",
       kind: "action",
@@ -733,6 +870,7 @@
     {
       id: "contactSupport",
       category: "about",
+      icon: "mail",
       title: "Contact",
       description: "support@productcompass.pm",
       kind: "action",
@@ -742,13 +880,28 @@
     {
       id: "aboutRepo",
       category: "about",
-      title: "Atlas source repository",
+      icon: "github",
+      title: "phuryn/grok-build-vscode",
       description: "Source repository on GitHub.",
       kind: "action",
       actionLabel: "Open",
       href: GITHUB_REPO_URL,
     },
   ];
+
+  function mcpSettingsEnabled(env) {
+    return !!(env && env.hostCaps && env.hostCaps.mcpSettings);
+  }
+
+  function connectorSection(row) {
+    if (row.id === "connectorsCatalog") return CONNECTOR_SECTION_HERE;
+    return "";
+  }
+
+  function catalogCategories(env) {
+    if (mcpSettingsEnabled(env)) return CATEGORIES;
+    return CATEGORIES.filter((cat) => cat.id !== "connectors");
+  }
 
   function rowVisible(row, snapshot, env) {
     if (row.hostLocal && env && env.isRemote) return false;
@@ -785,43 +938,38 @@
     return row.localOnly === true;
   }
 
-  function localModelRows(snapshot) {
-    const list = (snapshot && snapshot.localModels) || [];
-    return list.map((model) => {
-      const bits = [model.model || model.id, model.baseUrl, model.envKey ? `env ${model.envKey}` : (model.hasApiKey ? "API key set" : "")]
-        .filter(Boolean);
-      return {
-        id: "localModel:" + model.id,
-        category: "providers",
-        title: model.name || model.id,
-        description: bits.join(" · "),
-        kind: "action",
-        actionLabel: "Edit…",
-        hostLocal: true,
-        message: () => ({ type: "editLocalModel", id: model.id }),
-      };
-    });
-  }
-
-  function allRows(snapshot) {
-    return ROWS.concat(localModelRows(snapshot));
-  }
-
   function visibleRows(snapshot, env) {
-    return allRows(snapshot).filter((row) => rowVisible(row, snapshot, env));
+    return ROWS.filter((row) => rowVisible(row, snapshot, env));
   }
 
   function visibleCategories(snapshot, env) {
     const rows = visibleRows(snapshot, env);
     const ids = new Set(rows.map((row) => row.category));
-    return CATEGORIES.filter((cat) => ids.has(cat.id));
+    return catalogCategories(env).filter((cat) => ids.has(cat.id));
   }
 
   function searchHaystack(row, snapshot, env) {
     const cat = CATEGORIES.find((c) => c.id === row.category);
+    const extraConnectors = row.kind === "connectors" && Array.isArray(snapshot && snapshot.mcpConnectors)
+      ? snapshot.mcpConnectors.map((c) => [c.name, c.description, c.keyHint].join(" ")).join(" ")
+      : "";
+    const extraMcp = row.kind === "mcp" && Array.isArray(snapshot && snapshot.mcpServers)
+      ? [
+          CONNECTOR_SECTION_GROK,
+          CONNECTOR_SECTION_LOCAL,
+          GROK_CONNECTORS_URL,
+          CONNECTOR_BLURB_GROK,
+          CONNECTOR_BLURB_LOCAL,
+          ...snapshot.mcpServers.map((s) => [s.displayName, s.name, s.scopeName, s.configFile].filter(Boolean).join(" ")),
+        ].join(" ")
+      : "";
+    const section = connectorSection(row);
     return [
       rowTitle(row, snapshot, env),
       rowDescription(row, snapshot, env),
+      extraConnectors,
+      extraMcp,
+      section,
       cat ? cat.title : "",
       row.id,
     ].join(" ").toLowerCase();
@@ -920,6 +1068,9 @@
       case "telemetryDesktop":
         next.telemetryEnabled = !!value;
         break;
+      case "thumbsFeedback":
+        next.thumbsFeedback = !!value;
+        break;
       default:
         break;
     }
@@ -956,13 +1107,32 @@
       voiceSendPhrase: "atlas send",
       voiceKeyterms: [],
       telemetryEnabled: true,
+      thumbsFeedback: false,
       providers: [],
-      localModels: [],
+      // Host-owned, never latched locally: an older host that ignores
+      // refreshProviders leaves this false and the button stays idle rather
+      // than spinning on a refresh that is never coming.
+      providersChecking: false,
       extVersion: "",
       cliVersion: "",
       hostKind: "",
       hostName: "",
       grokUpdate: null,
+      mcpServers: [],
+      mcpLoading: false,
+      mcpError: "",
+      mcpWarning: "",
+      mcpConnectors: [],
+      // NULL, not []. Routines can legitimately be empty, so "no routines" and
+      // "the host has not answered yet" are different states and the page must
+      // not show the invitation while it is still the second one. The connector
+      // catalog gets away with treating empty as not-arrived because a fixed
+      // Tier-1 list is never legitimately empty; this one is.
+      routines: null,
+      routineProjects: [],
+      routineModels: [],
+      routineError: "",
+      routineErrorId: "",
       ...(partial || {}),
     };
   }
@@ -1027,6 +1197,18 @@
     if (el.classList.contains("settings-restore-confirm-cancel")) return { kind: "restore-cancel" };
     if (el.classList.contains("settings-back")) return { kind: "back" };
     return null;
+  }
+
+  /** Focus plus whether the phone category <select> is the live control.
+   *  Destroying that node while its native picker is open closes the picker. */
+  function describeChrome(container) {
+    const doc = container.ownerDocument;
+    const active = doc && doc.activeElement;
+    const focus = describeFocus(container, active);
+    return {
+      focus,
+      navMenuOpen: !!(focus && focus.kind === "nav-select"),
+    };
   }
 
   function applyFocus(container, desc) {
@@ -1103,7 +1285,934 @@
     return `<button type="button" class="settings-switch${on ? " on" : ""}" role="switch" aria-checked="${on ? "true" : "false"}"${disabled ? " disabled" : ""}><span class="settings-switch-knob"></span></button>`;
   }
 
-  function renderRow(row, snapshot, env) {
+  function mcpDetail(server) {
+    const parts = [];
+    if (server.enabled === false) parts.push("Disabled");
+    if (server.status) parts.push(server.status);
+    if (Number.isFinite(server.toolCount)) {
+      parts.push(`${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}`);
+    }
+    if (server.url) parts.push(server.url);
+    else if (server.command) parts.push([server.command].concat(server.args || []).join(" "));
+    if (server.error) parts.push(server.error);
+    return parts.join(" · ");
+  }
+
+  // Local config servers commonly report whether they are enabled but do not
+  // include a health/status field. They are still usable in that state. An
+  // explicit status (including an error or an in-progress state) remains the
+  // authoritative display signal, and an explicit enabled:false must never
+  // get a green dot from a stale "ready" status.
+  function mcpServerIsReady(server) {
+    if (server.enabled === false) return false;
+    if (server.error || server.status === "unavailable") return false;
+    return !server.status || server.status === "ready";
+  }
+
+  function mcpIsManagedServer(server) {
+    return !!(server && (server.managed === true || server.source === "managed"));
+  }
+
+  function settingsMediaSibling(dir) {
+    try {
+      const scripts = document.getElementsByTagName("script");
+      for (let i = 0; i < scripts.length; i++) {
+        const src = scripts[i].src || "";
+        if (src.indexOf("settings.js") !== -1) return new URL(dir, src).href;
+      }
+    } catch (_) { /* */ }
+    return "";
+  }
+
+  /**
+   * Connected first, then disconnected; each group A–Z by display name.
+   * Display-only — TIER1_CONNECTORS order is left alone (hostMcpServers walks it).
+   */
+  function sortConnectorsForDisplay(connectors) {
+    return (connectors || []).slice().sort((a, b) => {
+      const ac = a && a.connected ? 0 : 1;
+      const bc = b && b.connected ? 0 : 1;
+      if (ac !== bc) return ac - bc;
+      return String(a && a.name || "").localeCompare(String(b && b.name || ""), undefined, { sensitivity: "base" });
+    });
+  }
+
+  function connectorLogoSrc(id) {
+    if (!CONNECTOR_LOGO_IDS[id]) return "";
+    const base = settingsMediaSibling("connector-logos/");
+    if (!base) return "";
+    return base + id + ".webp";
+  }
+
+  /** "github.com/settings/personal-access-tokens" from its URL — host plus
+   *  path, without the scheme or a trailing slash. */
+  function keyDocsLabel(url) {
+    const text = String(url || "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    return text || String(url || "");
+  }
+
+  function appendConnectorLogo(titleEl, connector) {
+    const src = connectorLogoSrc(connector && connector.id);
+    if (!src) return;
+    const chip = document.createElement("span");
+    chip.className = "settings-connector-logo";
+    chip.setAttribute("aria-hidden", "true");
+    const img = document.createElement("img");
+    img.alt = "";
+    img.draggable = false;
+    img.addEventListener("load", function () {
+      chip.classList.add("is-ready");
+    });
+    img.addEventListener("error", function () {
+      if (chip.parentNode) chip.parentNode.removeChild(chip);
+      if (!titleEl.querySelector(".settings-connector-logo")) titleEl.classList.remove("has-logo");
+    });
+    img.src = src;
+    chip.appendChild(img);
+    titleEl.classList.add("has-logo");
+    titleEl.insertBefore(chip, titleEl.firstChild);
+  }
+
+  function appendMcpServerRows(list, servers, opts) {
+    for (const server of servers) {
+      const row = document.createElement("div");
+      row.className = "settings-mcp-server";
+      const copy = document.createElement("div");
+      copy.className = "settings-mcp-copy";
+      const name = document.createElement("div");
+      name.className = "settings-mcp-name settings-row-title";
+      const status = document.createElement("span");
+      status.className = "settings-mcp-status" + (mcpServerIsReady(server) ? " is-ready" : (server.error || server.status === "unavailable" ? " is-error" : ""));
+      status.setAttribute("aria-hidden", "true");
+      name.appendChild(status);
+      const label = document.createElement("span");
+      label.textContent = server.displayName || server.name;
+      name.appendChild(label);
+      if (opts.managed && server.scopeName) {
+        const scope = document.createElement("span");
+        scope.className = "settings-mcp-scope";
+        scope.textContent = server.scopeName;
+        name.appendChild(scope);
+      }
+      const detail = document.createElement("div");
+      detail.className = "settings-row-desc";
+      detail.textContent = mcpDetail(server) || (server.enabled ? "Enabled" : "Disabled");
+      copy.append(name, detail);
+      row.appendChild(copy);
+      list.appendChild(row);
+    }
+  }
+
+  function renderMcpSectionState(text, error) {
+    const el = document.createElement("div");
+    el.className = "settings-mcp-state" + (error ? " is-error" : "");
+    if (error) el.setAttribute("role", "alert");
+    else el.setAttribute("aria-live", "polite");
+    el.textContent = text;
+    return el;
+  }
+
+  function renderMcpCatalog(snapshot, env) {
+    const el = document.createElement("div");
+    el.className = "settings-mcp settings-mcp-split";
+    el.dataset.id = "mcpCatalog";
+    const servers = Array.isArray(snapshot.mcpServers) ? snapshot.mcpServers : [];
+    const managed = servers.filter(mcpIsManagedServer);
+    const local = servers.filter((server) => !mcpIsManagedServer(server));
+    const loading = !!snapshot.mcpLoading;
+    const error = snapshot.mcpError ? String(snapshot.mcpError) : "";
+
+    const grokHead = document.createElement("div");
+    grokHead.className = "settings-group-row";
+    const grokTitle = document.createElement("h2");
+    grokTitle.className = "settings-group";
+    grokTitle.textContent = CONNECTOR_SECTION_GROK;
+    grokHead.appendChild(grokTitle);
+    const grokOpen = document.createElement("button");
+    grokOpen.type = "button";
+    grokOpen.className = "settings-action settings-mcp-web";
+    grokOpen.dataset.href = GROK_CONNECTORS_URL;
+    const grokIcon = document.createElement("span");
+    grokIcon.className = "settings-file-icon";
+    grokIcon.setAttribute("aria-hidden", "true");
+    grokIcon.innerHTML = ICON_EXTERNAL_LINK;
+    grokOpen.appendChild(grokIcon);
+    grokOpen.appendChild(document.createTextNode("Open"));
+    grokHead.appendChild(grokOpen);
+    el.appendChild(grokHead);
+    const grokBlurb = document.createElement("div");
+    grokBlurb.className = "settings-mcp-warning";
+    grokBlurb.textContent = CONNECTOR_BLURB_GROK;
+    el.appendChild(grokBlurb);
+    if (loading) {
+      el.appendChild(renderMcpSectionState("Loading Grok connectors…"));
+    } else if (error) {
+      el.appendChild(renderMcpSectionState(error, true));
+    } else if (!managed.length) {
+      el.appendChild(renderMcpSectionState("No grok.com connectors reported."));
+    } else {
+      const grokList = document.createElement("div");
+      grokList.className = "settings-mcp-list";
+      appendMcpServerRows(grokList, managed, { managed: true });
+      el.appendChild(grokList);
+    }
+
+    const localHead = document.createElement("div");
+    localHead.className = "settings-group-row";
+    const localTitle = document.createElement("h2");
+    localTitle.className = "settings-group";
+    localTitle.textContent = CONNECTOR_SECTION_LOCAL;
+    localHead.appendChild(localTitle);
+    if (!(env && env.isRemote)) {
+      const localOpen = document.createElement("button");
+      localOpen.type = "button";
+      localOpen.className = "settings-action settings-mcp-open";
+      localOpen.title = "config.toml";
+      const localIcon = document.createElement("span");
+      localIcon.className = "settings-file-icon";
+      localIcon.setAttribute("aria-hidden", "true");
+      localIcon.innerHTML = ICON_SETTINGS;
+      localOpen.appendChild(localIcon);
+      localOpen.appendChild(document.createTextNode("Open"));
+      localHead.appendChild(localOpen);
+    }
+    el.appendChild(localHead);
+    const localBlurb = document.createElement("div");
+    localBlurb.className = "settings-mcp-warning";
+    localBlurb.textContent = env && env.isRemote ? CONNECTOR_BLURB_LOCAL_REMOTE : CONNECTOR_BLURB_LOCAL;
+    el.appendChild(localBlurb);
+    if (loading) {
+      el.appendChild(renderMcpSectionState("Loading Grok connectors…"));
+    } else if (error) {
+      el.appendChild(renderMcpSectionState(error, true));
+    } else if (!local.length) {
+      el.appendChild(renderMcpSectionState("No local Grok connectors reported."));
+    } else {
+      const localList = document.createElement("div");
+      localList.className = "settings-mcp-list";
+      appendMcpServerRows(localList, local, {});
+      el.appendChild(localList);
+    }
+    return el;
+  }
+
+  function isKeyConnectorView(connector) {
+    return !!(connector && connector.auth === "key");
+  }
+
+  function connectorDescription(connector, env) {
+    if (connector.status === "connecting") {
+      return isKeyConnectorView(connector)
+        ? "Checking the token…"
+        : "Waiting for the browser sign-in to finish…";
+    }
+    if (connector.status === "error" && connector.error) return connector.error;
+    if (env && env.isRemote) {
+      if (isKeyConnectorView(connector) && connector.connected && connector.keySet !== true) {
+        return connector.description + " Connected, but no key on the desk.";
+      }
+      return connector.connected
+        ? connector.description + " Connected on the desk machine."
+        : connector.description + " Sign-in happens on the desk.";
+    }
+    if (isKeyConnectorView(connector) && connector.connected && connector.keySet === true) {
+      return connector.description + " Key is set. Applies to new conversations and when you reopen one.";
+    }
+    if (isKeyConnectorView(connector) && connector.connected) {
+      return connector.description + " Connected, but no key on this machine. Paste a token to use it here.";
+    }
+    if (connector.connected) {
+      return connector.description + " Applies to new conversations and when you reopen one.";
+    }
+    if (isKeyConnectorView(connector) && connector.keyHint) return connector.keyHint;
+    return connector.description;
+  }
+
+  function renderConnectorKeyForm(connector, keyForm) {
+    const form = document.createElement("div");
+    form.className = "settings-connector-key";
+    const input = document.createElement("input");
+    input.type = "password";
+    input.className = "settings-text settings-connector-key-input";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.setAttribute("aria-label", connector.name + " personal access token");
+    input.placeholder = "Paste token";
+    input.value = keyForm && keyForm.id === connector.id ? String(keyForm.value || "") : "";
+    input.dataset.id = connector.id;
+    form.appendChild(input);
+    if (connector.keyDocsUrl) {
+      const hint = document.createElement("div");
+      hint.className = "settings-connector-key-hint";
+      hint.appendChild(document.createTextNode("Get a token at "));
+      const link = document.createElement("a");
+      link.className = "settings-connector-key-docs";
+      link.href = connector.keyDocsUrl;
+      // Derived from the href, never hardcoded: this line said
+      // "github.com/settings/personal-access-tokens" under EVERY key
+      // connector, so Zapier pointed its users at GitHub.
+      link.textContent = keyDocsLabel(connector.keyDocsUrl);
+      link.dataset.href = connector.keyDocsUrl;
+      hint.appendChild(link);
+      hint.appendChild(document.createTextNode("."));
+      form.appendChild(hint);
+    }
+    const readonly = document.createElement("label");
+    readonly.className = "settings-connector-readonly";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.className = "settings-connector-readonly-input";
+    box.dataset.id = connector.id;
+    box.checked = !!(keyForm && keyForm.id === connector.id ? keyForm.readOnly : connector.readOnly);
+    readonly.appendChild(box);
+    readonly.appendChild(document.createTextNode("Read-only (the agent can look, not write)"));
+    form.appendChild(readonly);
+    const actions = document.createElement("div");
+    actions.className = "settings-connector-key-actions";
+    const submit = document.createElement("button");
+    submit.type = "button";
+    submit.className = "settings-action settings-connector-key-submit";
+    submit.dataset.id = connector.id;
+    submit.textContent = connector.connected ? "Save key" : "Connect";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "settings-action settings-connector-key-cancel";
+    cancel.dataset.id = connector.id;
+    cancel.textContent = "Cancel";
+    actions.append(submit, cancel);
+    form.appendChild(actions);
+    return form;
+  }
+
+  function renderConnectorsCatalog(snapshot, env, keyForm) {
+    const el = document.createElement("div");
+    el.className = "settings-mcp";
+    el.dataset.id = "connectorsCatalog";
+    const warning = document.createElement("div");
+    warning.className = "settings-mcp-warning";
+    warning.textContent = env && env.isRemote
+      ? CONNECTOR_BLURB_HERE_REMOTE
+      : CONNECTOR_BLURB_HERE;
+    el.appendChild(warning);
+    const connectors = sortConnectorsForDisplay(
+      Array.isArray(snapshot.mcpConnectors) ? snapshot.mcpConnectors : [],
+    );
+    if (!connectors.length) {
+      const empty = document.createElement("div");
+      empty.className = "settings-mcp-state";
+      empty.textContent = "Connector list has not arrived from the host yet.";
+      el.appendChild(empty);
+      return el;
+    }
+    const list = document.createElement("div");
+    list.className = "settings-mcp-list";
+    for (const connector of connectors) {
+      const row = document.createElement("div");
+      row.className = "settings-row settings-connector" + (connector.connected ? " is-connected" : "");
+      row.dataset.id = "connector-" + connector.id;
+      row.dataset.auth = isKeyConnectorView(connector) ? "key" : "oauth";
+      const copy = document.createElement("div");
+      copy.className = "settings-row-copy";
+      const name = document.createElement("div");
+      name.className = "settings-row-title";
+      appendConnectorLogo(name, connector);
+      const status = document.createElement("span");
+      status.className = "settings-mcp-status" + (connector.connected ? " is-ready" : (connector.status === "error" ? " is-error" : ""));
+      status.setAttribute("aria-hidden", "true");
+      name.appendChild(status);
+      name.appendChild(document.createTextNode(connector.name));
+      const desc = document.createElement("div");
+      desc.className = "settings-row-desc";
+      desc.textContent = connectorDescription(connector, env);
+      copy.append(name, desc);
+      const control = document.createElement("div");
+      control.className = "settings-row-control";
+      const connecting = connector.status === "connecting";
+      const formOpen = !!(keyForm && keyForm.id === connector.id);
+      if (!(env && env.isRemote)) {
+        if (isKeyConnectorView(connector) && connector.connected && !formOpen) {
+          const replace = document.createElement("button");
+          replace.type = "button";
+          replace.className = "settings-action settings-connector-key-open";
+          replace.dataset.id = connector.id;
+          replace.dataset.action = "replace";
+          replace.textContent = connector.keySet === true ? "Replace" : "Paste token";
+          replace.disabled = connecting;
+          control.appendChild(replace);
+        }
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "settings-action settings-connector-action";
+        btn.dataset.id = connector.id;
+        btn.dataset.auth = isKeyConnectorView(connector) ? "key" : "oauth";
+        btn.dataset.connected = connector.connected ? "true" : "false";
+        if (isKeyConnectorView(connector) && !connector.connected) {
+          btn.textContent = connecting ? "Connecting…" : (formOpen ? "Cancel" : "Connect");
+          btn.dataset.action = formOpen ? "cancel" : "open";
+        } else {
+          btn.textContent = connecting ? "Connecting…" : (connector.connected ? "Disconnect" : "Connect");
+        }
+        btn.disabled = connecting;
+        if (connecting) btn.setAttribute("aria-busy", "true");
+        control.appendChild(btn);
+      } else {
+        const span = document.createElement("span");
+        span.className = "settings-value";
+        span.textContent = connector.connected ? "Connected" : "Not connected";
+        control.appendChild(span);
+      }
+      row.append(copy, control);
+      if (!(env && env.isRemote) && isKeyConnectorView(connector) && connector.connected && connector.keySet === true && !formOpen) {
+        const readonly = document.createElement("label");
+        readonly.className = "settings-connector-readonly settings-connector-readonly-live";
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.className = "settings-connector-readonly-input";
+        box.dataset.id = connector.id;
+        box.dataset.live = "true";
+        box.checked = connector.readOnly === true;
+        box.disabled = connecting;
+        readonly.appendChild(box);
+        readonly.appendChild(document.createTextNode("Read-only (the agent can look, not write)"));
+        row.appendChild(readonly);
+      }
+      if (!(env && env.isRemote) && isKeyConnectorView(connector) && formOpen && !connecting) {
+        row.appendChild(renderConnectorKeyForm(connector, keyForm));
+      }
+      list.appendChild(row);
+    }
+    el.appendChild(list);
+    return el;
+  }
+
+  /* ----------------------------------------------------------- routines */
+
+  // Which row is open, and the draft being edited in it. Module-level so a
+  // snapshot arriving mid-edit (another window saved something) re-renders the
+  // list without throwing away what is half-typed here.
+  const ROUTINE_UI = { open: "", draft: null, confirmRemove: "", pendingSave: false };
+  const NEW_ROUTINE = "__new__";
+
+  const PROVIDER_LABELS = { grok: "Grok", codex: "Codex", claude: "Claude" };
+  function providerLabel(provider) {
+    return PROVIDER_LABELS[provider] || provider;
+  }
+
+  /** First model of `provider`, else the first model at all. Mirrors the
+   *  composer: a new conversation in a project starts on that project default
+   *  provider, and a routine is a new conversation on a timer. */
+  function defaultModelFor(models, provider) {
+    return models.find(function (m) { return m.provider === provider; }) || models[0] || null;
+  }
+
+  function blankRoutineDraft(snapshot) {
+    const projects = Array.isArray(snapshot.routineProjects) ? snapshot.routineProjects : [];
+    const models = Array.isArray(snapshot.routineModels) ? snapshot.routineModels : [];
+    const project = projects[0];
+    const pick = defaultModelFor(models, project && project.defaultProvider);
+    return {
+      id: "",
+      title: "",
+      prompt: "",
+      cwd: project ? project.cwd : "",
+      provider: pick ? pick.provider : "",
+      model: pick ? pick.model : "",
+      every: 1,
+      unit: "days",
+      at: "09:00",
+    };
+  }
+
+  function routineDraftFrom(routine) {
+    return {
+      id: routine.id,
+      title: routine.title,
+      prompt: routine.prompt,
+      cwd: routine.cwd,
+      provider: routine.provider,
+      model: routine.model,
+      every: routine.cadence.every,
+      unit: routine.cadence.unit,
+      at: routine.cadence.at || "09:00",
+    };
+  }
+
+  function draftToMessage(draft) {
+    const cadence = { every: Number(draft.every) || 1, unit: draft.unit };
+    if (draft.unit === "days") cadence.at = draft.at || "09:00";
+    return {
+      type: "saveRoutine",
+      ...(draft.id ? { id: draft.id } : {}),
+      draft: {
+        title: draft.title,
+        prompt: draft.prompt,
+        cwd: draft.cwd,
+        provider: draft.provider,
+        model: draft.model,
+        cadence,
+      },
+    };
+  }
+
+  /**
+   * "in 42m" / "in 6h 12m" / "in 3d 4h". Floors rather than rounds, so a
+   * countdown never claims more time than is left.
+   *
+   * Deliberately duplicated rather than shared: the VS Code settings TAB loads
+   * this file and nothing else, so it cannot reach webview-helpers.js. Pinned
+   * by test/settings-routines.dom.test.ts along with its sibling.
+   */
+  function formatRoutineCountdown(ms) {
+    if (!Number.isFinite(ms)) return "";
+    if (ms <= 0) return "due now";
+    const mins = Math.floor(ms / 60000);
+    if (mins < 60) return "in " + Math.max(1, mins) + "m";
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) {
+      const rem = mins % 60;
+      return rem ? "in " + hours + "h " + rem + "m" : "in " + hours + "h";
+    }
+    const days = Math.floor(hours / 24);
+    const remH = hours % 24;
+    return remH ? "in " + days + "d " + remH + "h" : "in " + days + "d";
+  }
+
+  function routineRunLabel(run) {
+    if (run.outcome === "ran") return "Ran";
+    if (run.outcome === "running") return "Running now";
+    if (run.outcome === "skipped") return run.detail || "Skipped";
+    if (run.outcome === "interrupted") return run.detail || "Interrupted";
+    return run.detail || "Failed";
+  }
+
+  function routineRunTime(run) {
+    try {
+      return new Date(run.startedAt).toLocaleString(undefined, {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+      });
+    } catch (_) {
+      return "";
+    }
+  }
+
+  /** The run strip — the health signal, and the only place this page spends any
+   *  boldness. State is carried by HEIGHT and WIDTH as well as hue, so it
+   *  survives a greyscale screenshot and a colourblind reader. */
+  function renderRoutineStrip(routine) {
+    const strip = document.createElement("span");
+    strip.className = "settings-routine-strip";
+    const runs = (routine.runs || []).slice().reverse(); // oldest left, newest right
+    for (const run of runs) {
+      const tick = document.createElement("button");
+      tick.type = "button";
+      tick.className = "settings-routine-tick is-" + run.outcome;
+      tick.title = routineRunLabel(run) + " · " + routineRunTime(run);
+      tick.setAttribute("aria-label", tick.title);
+      if (run.sessionId) {
+        tick.dataset.session = run.sessionId;
+        // The run's OWN project, not the routine's current one — repointing a
+        // routine must not break the links to what already ran.
+        tick.dataset.cwd = run.cwd || routine.cwd;
+      }
+      strip.appendChild(tick);
+    }
+    const count = document.createElement("span");
+    count.className = "settings-routine-count";
+    const health = routine.health || { ran: 0, total: 0 };
+    count.textContent = health.total ? health.ran + "/" + health.total : "no runs yet";
+    const wrap = document.createElement("span");
+    wrap.className = "settings-routine-strip-wrap";
+    wrap.append(strip, count);
+    return wrap;
+  }
+
+  function labelledField(labelText, control, hintText) {
+    const field = document.createElement("label");
+    field.className = "settings-routine-field";
+    const label = document.createElement("span");
+    label.className = "settings-routine-label";
+    label.textContent = labelText;
+    field.append(label, control);
+    if (hintText) {
+      const hint = document.createElement("span");
+      hint.className = "settings-routine-hint";
+      hint.textContent = hintText;
+      field.appendChild(hint);
+    }
+    return field;
+  }
+
+  function renderRoutineForm(draft, snapshot, isNew) {
+    const body = document.createElement("div");
+    body.className = "settings-routine-body";
+
+    const name = document.createElement("input");
+    name.type = "text";
+    name.className = "settings-routine-input";
+    name.value = draft.title;
+    name.placeholder = "Morning brief";
+    name.dataset.field = "title";
+    body.appendChild(labelledField("Name", name));
+
+    const prompt = document.createElement("textarea");
+    prompt.className = "settings-routine-input settings-routine-prompt";
+    prompt.value = draft.prompt;
+    prompt.rows = 4;
+    prompt.placeholder = "Summarise what changed in this repo since your last run.";
+    prompt.dataset.field = "prompt";
+    body.appendChild(
+      labelledField("Prompt", prompt, "Sent as the first message of a new session."),
+    );
+
+    const pair = document.createElement("div");
+    pair.className = "settings-routine-pair";
+
+    const projects = Array.isArray(snapshot.routineProjects) ? snapshot.routineProjects : [];
+    const project = document.createElement("select");
+    project.className = "settings-routine-input";
+    project.dataset.field = "cwd";
+    for (const p of projects) {
+      const opt = document.createElement("option");
+      opt.value = p.cwd;
+      opt.textContent = p.archived ? p.label + " (archived)" : p.label;
+      if (p.cwd === draft.cwd) opt.selected = true;
+      project.appendChild(opt);
+    }
+    if (!projects.some((p) => p.cwd === draft.cwd) && draft.cwd) {
+      const opt = document.createElement("option");
+      opt.value = draft.cwd;
+      opt.textContent = draft.cwd + " (unavailable)";
+      opt.selected = true;
+      project.appendChild(opt);
+    }
+    pair.appendChild(labelledField("Project", project));
+
+    const models = Array.isArray(snapshot.routineModels) ? snapshot.routineModels : [];
+    const model = document.createElement("select");
+    model.className = "settings-routine-input";
+    model.dataset.field = "model";
+    // Grouped by provider. A native <select> cannot carry an icon, but an
+    // optgroup says the same thing and needs no custom dropdown.
+    let group = null;
+    let groupProvider = "";
+    for (const m of models) {
+      if (m.provider !== groupProvider) {
+        groupProvider = m.provider;
+        group = document.createElement("optgroup");
+        group.label = providerLabel(m.provider);
+        model.appendChild(group);
+      }
+      const opt = document.createElement("option");
+      opt.value = m.provider + " " + m.model;
+      opt.textContent = m.label;
+      if (m.provider === draft.provider && m.model === draft.model) opt.selected = true;
+      (group || model).appendChild(opt);
+    }
+    pair.appendChild(
+      labelledField(
+        "Model",
+        model,
+        // "No model" would be wrong twice over: a provider with no cached
+        // model list still offers its default, so an empty list can only mean
+        // no PROVIDER is connected at all.
+        models.length ? "Only connected models are listed." : "No provider connected.",
+      ),
+    );
+    body.appendChild(pair);
+
+    const cadence = document.createElement("div");
+    cadence.className = "settings-routine-cadence";
+    const every = document.createElement("span");
+    every.className = "settings-routine-word";
+    every.textContent = "Every";
+    const count = document.createElement("input");
+    count.type = "number";
+    count.min = "1";
+    count.className = "settings-routine-input settings-routine-count-input";
+    count.value = String(draft.every);
+    count.dataset.field = "every";
+    const unit = document.createElement("select");
+    unit.className = "settings-routine-input";
+    unit.dataset.field = "unit";
+    for (const u of ["minutes", "hours", "days"]) {
+      const opt = document.createElement("option");
+      opt.value = u;
+      opt.textContent = u;
+      if (u === draft.unit) opt.selected = true;
+      unit.appendChild(opt);
+    }
+    cadence.append(every, count, unit);
+    if (draft.unit === "days") {
+      const at = document.createElement("span");
+      at.className = "settings-routine-word";
+      at.textContent = "at";
+      const time = document.createElement("input");
+      time.type = "time";
+      time.className = "settings-routine-input settings-routine-time";
+      time.value = draft.at || "09:00";
+      time.dataset.field = "at";
+      cadence.append(at, time);
+    }
+    body.appendChild(
+      labelledField(
+        "Cadence",
+        cadence,
+        draft.unit === "days"
+          ? "Anchored to the clock, so it holds through daylight saving."
+          : "At most once every 15 minutes.",
+      ),
+    );
+
+    // An id-less error belongs to whichever form is open. The host names the
+    // routine it refused; a relay bounce cannot, because it never reached the
+    // host — and only one form is open at a time, so the open one is the asker.
+    const errorId = snapshot.routineErrorId || "";
+    if (snapshot.routineError && (!errorId || errorId === (draft.id || ""))) {
+      const err = document.createElement("div");
+      err.className = "settings-routine-error";
+      err.textContent = snapshot.routineError;
+      body.appendChild(err);
+    }
+    return body;
+  }
+
+  function renderRoutineRuns(routine) {
+    const wrap = document.createElement("div");
+    wrap.className = "settings-routine-runs";
+    const head = document.createElement("div");
+    head.className = "settings-routine-runs-head";
+    head.textContent = routine.runs.length
+      ? "Last " + routine.runs.length + (routine.runs.length === 1 ? " run" : " runs")
+      : "No runs yet";
+    wrap.appendChild(head);
+    for (const run of routine.runs) {
+      const line = document.createElement("div");
+      line.className = "settings-routine-run is-" + run.outcome;
+      const bar = document.createElement("span");
+      bar.className = "settings-routine-run-bar";
+      const when = document.createElement("time");
+      when.textContent = routineRunTime(run);
+      const what = document.createElement("span");
+      what.className = "settings-routine-run-what";
+      if (run.sessionId && run.outcome === "ran") {
+        const link = document.createElement("button");
+        link.type = "button";
+        link.className = "settings-routine-open";
+        link.dataset.session = run.sessionId;
+        link.dataset.cwd = run.cwd || routine.cwd;
+        link.textContent = "Ran — open session";
+        what.appendChild(link);
+      } else {
+        what.textContent = routineRunLabel(run);
+      }
+      line.append(bar, when, what);
+      wrap.appendChild(line);
+    }
+    return wrap;
+  }
+
+  /**
+   * Who has to be running, said from where the reader is standing.
+   *
+   * "a window is open" named nothing the reader controls. It is also not simply
+   * "this IDE": routines fire if ANY host on the machine is running, so an
+   * editor-only sentence would be wrong whenever the desktop app is up, and on
+   * a phone — which never runs them — it would be wrong always.
+   */
+  function routinesHostNote(env) {
+    if (env && env.isRemote) {
+      return "Routines run on your computer, while the desktop app or an editor window is open.";
+    }
+    if (env && env.isDesktop) {
+      return "Routines run while this app or an editor window is open. Nothing runs once they are all closed.";
+    }
+    return "Routines run while this IDE or the desktop app is open. Nothing runs once they are all closed.";
+  }
+
+  function renderRoutines(snapshot, env) {
+    const el = document.createElement("div");
+    el.className = "settings-routines";
+    el.dataset.id = "routinesList";
+
+    const lease = document.createElement("div");
+    lease.className = "settings-routines-note";
+    lease.textContent = routinesHostNote(env);
+    el.appendChild(lease);
+
+    const routines = Array.isArray(snapshot.routines) ? snapshot.routines : null;
+    if (!routines) {
+      const wait = document.createElement("div");
+      wait.className = "settings-routines-loading";
+      wait.textContent = "Loading routines…";
+      el.appendChild(wait);
+      return el;
+    }
+
+    // The host answers every write with a fresh frame. One carrying no error is
+    // a confirmed save, so the create form has done its job and must close —
+    // left open with the same text it reads as "that did not work", and the
+    // second press creates a duplicate routine.
+    if (ROUTINE_UI.pendingSave && !snapshot.routineError) {
+      ROUTINE_UI.pendingSave = false;
+      if (ROUTINE_UI.open === NEW_ROUTINE) {
+        ROUTINE_UI.open = "";
+        ROUTINE_UI.draft = null;
+      }
+    } else if (ROUTINE_UI.pendingSave) {
+      ROUTINE_UI.pendingSave = false;
+    }
+
+    if (!routines.length && ROUTINE_UI.open !== NEW_ROUTINE) {
+      const empty = document.createElement("div");
+      empty.className = "settings-routines-empty";
+      const h = document.createElement("div");
+      h.className = "settings-routines-empty-title";
+      h.textContent = "No routines yet";
+      const p = document.createElement("div");
+      p.className = "settings-routines-empty-copy";
+      p.textContent =
+        "A routine sends one prompt to one project on a schedule you set — a morning summary of what changed, or a weekly dependency check. Each run becomes a session, and the last twenty stay here so you can see it working.";
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "settings-action settings-routine-new";
+      add.textContent = "New routine";
+      empty.append(h, p, add);
+      el.appendChild(empty);
+      return el;
+    }
+
+    const list = document.createElement("div");
+    list.className = "settings-routines-list";
+
+    if (ROUTINE_UI.open === NEW_ROUTINE) {
+      const draft = ROUTINE_UI.draft || blankRoutineDraft(snapshot);
+      ROUTINE_UI.draft = draft;
+      const card = document.createElement("div");
+      card.className = "settings-routine is-open is-new";
+      card.dataset.routine = NEW_ROUTINE;
+      const head = document.createElement("div");
+      head.className = "settings-routine-head";
+      const title = document.createElement("span");
+      title.className = "settings-routine-name";
+      title.textContent = "New routine";
+      head.appendChild(title);
+      card.appendChild(head);
+      card.appendChild(renderRoutineForm(draft, snapshot, true));
+      const foot = document.createElement("div");
+      foot.className = "settings-routine-foot";
+      const save = document.createElement("button");
+      save.type = "button";
+      save.className = "settings-action is-primary settings-routine-save";
+      save.textContent = "Create routine";
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "settings-action settings-routine-cancel";
+      cancel.textContent = "Cancel";
+      foot.append(save, cancel);
+      card.appendChild(foot);
+      list.appendChild(card);
+    }
+
+    for (const routine of routines) {
+      const open = ROUTINE_UI.open === routine.id;
+      const card = document.createElement("div");
+      card.className =
+        "settings-routine" + (open ? " is-open" : "") + (routine.paused ? " is-paused" : "");
+      card.dataset.routine = routine.id;
+
+      const head = document.createElement("button");
+      head.type = "button";
+      head.className = "settings-routine-head settings-routine-toggle";
+      head.setAttribute("aria-expanded", open ? "true" : "false");
+
+      const ident = document.createElement("span");
+      ident.className = "settings-routine-ident";
+      const name = document.createElement("span");
+      name.className = "settings-routine-name";
+      name.textContent = routine.title;
+      if (routine.paused) {
+        const tag = document.createElement("span");
+        tag.className = "settings-routine-tag";
+        tag.textContent = "Paused";
+        name.appendChild(tag);
+      }
+      const meta = document.createElement("span");
+      meta.className = "settings-routine-meta";
+      const bits = [routine.projectLabel, routine.cadenceLabel];
+      const modelRow = (Array.isArray(snapshot.routineModels) ? snapshot.routineModels : []).find(
+        (m) => m.provider === routine.provider && m.model === routine.model,
+      );
+      bits.push(modelRow ? modelRow.label : routine.model);
+      meta.textContent = bits.join(" · ");
+      ident.append(name, meta);
+
+      const next = document.createElement("span");
+      next.className = "settings-routine-next";
+      next.textContent = routine.paused ? "Paused" : formatRoutineCountdown(routine.nextRunAt - Date.now());
+
+      const chev = document.createElement("span");
+      chev.className = "settings-routine-chev";
+      chev.setAttribute("aria-hidden", "true");
+      chev.innerHTML =
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
+
+      head.append(ident, renderRoutineStrip(routine), next, chev);
+      card.appendChild(head);
+
+      if (open) {
+        const draft = ROUTINE_UI.draft && ROUTINE_UI.draft.id === routine.id
+          ? ROUTINE_UI.draft
+          : routineDraftFrom(routine);
+        ROUTINE_UI.draft = draft;
+        card.appendChild(renderRoutineForm(draft, snapshot, false));
+        card.appendChild(renderRoutineRuns(routine));
+
+        const foot = document.createElement("div");
+        foot.className = "settings-routine-foot";
+        const left = document.createElement("span");
+        left.className = "settings-routine-foot-left";
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "settings-action is-primary settings-routine-save";
+        save.textContent = "Save changes";
+        const pause = document.createElement("button");
+        pause.type = "button";
+        pause.className = "settings-action settings-routine-pause";
+        pause.dataset.paused = routine.paused ? "1" : "";
+        pause.textContent = routine.paused ? "Resume" : "Pause";
+        const runNow = document.createElement("button");
+        runNow.type = "button";
+        runNow.className = "settings-action settings-routine-run-now";
+        runNow.textContent = "Run now";
+        left.append(save, pause, runNow);
+
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "settings-action is-danger settings-routine-remove";
+        remove.textContent =
+          ROUTINE_UI.confirmRemove === routine.id ? "Remove for good" : "Remove";
+        foot.append(left, remove);
+        card.appendChild(foot);
+      }
+      list.appendChild(card);
+    }
+
+    el.appendChild(list);
+
+    if (ROUTINE_UI.open !== NEW_ROUTINE) {
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "settings-action settings-routine-new";
+      add.textContent = "New routine";
+      el.appendChild(add);
+    }
+    return el;
+  }
+
+  function renderRow(row, snapshot, env, keyForm) {
+    if (row.kind === "mcp") return renderMcpCatalog(snapshot, env);
+    if (row.kind === "connectors") return renderConnectorsCatalog(snapshot, env, keyForm);
+    if (row.kind === "routines") return renderRoutines(snapshot, env);
     const el = document.createElement("div");
     el.className = "settings-row";
     el.dataset.id = row.id;
@@ -1114,7 +2223,21 @@
     title.className = "settings-row-copy";
     const name = document.createElement("div");
     name.className = "settings-row-title";
-    name.textContent = rowTitle(row, snapshot, env);
+    // The mark rides the title rather than a column of its own: the row is a
+    // two-column grid (copy | control) and a third column would re-space every
+    // other page. has-logo carries the flex, so rows without one are untouched.
+    const logoMark = row.logo ? providerLogoMarkup(row.logo) : (row.icon ? ROW_ICONS[row.icon] || "" : "");
+    if (logoMark) {
+      name.classList.add("has-logo");
+      const mark = document.createElement("span");
+      mark.className = "settings-row-logo";
+      mark.setAttribute("aria-hidden", "true");
+      mark.innerHTML = logoMark;
+      name.appendChild(mark);
+      name.appendChild(document.createTextNode(rowTitle(row, snapshot, env)));
+    } else {
+      name.textContent = rowTitle(row, snapshot, env);
+    }
     const desc = document.createElement("div");
     desc.className = "settings-row-desc";
     desc.textContent = rowDescription(row, snapshot, env);
@@ -1215,13 +2338,22 @@
     let snapshot = defaultSnapshot(opts.snapshot);
     let categoryId = opts.category || "general";
     let query = "";
+    let keyForm = { id: "", value: "", readOnly: false };
     let pendingRestore = null;
     let aboutChecked = false;
+    let providersChecked = false;
+    let mcpChecked = false;
+    let routinesChecked = false;
+    let lastPaintedCategory = "";
+    let lastPaintedQuery = "";
     const post = typeof opts.post === "function" ? opts.post : () => {};
     const apply = typeof opts.apply === "function" ? opts.apply : null;
     const onLocal = typeof opts.onLocal === "function" ? opts.onLocal : null;
     const onClose = typeof opts.onClose === "function" ? opts.onClose : null;
     let phoneNav = matchPhoneNav(container.ownerDocument);
+    let lastPaintedKey = "";
+    let paintDeferred = false;
+    let deferredPaintTimer = null;
 
     const modal = !opts.standalone;
     container.classList.add("settings-surface");
@@ -1301,7 +2433,51 @@
       if (!legacyProviders(env) && !grokProvider(snapshot)) return;
       aboutChecked = true;
       snapshot = { ...snapshot, grokUpdate: { ...(snapshot.grokUpdate || {}), checking: true } };
-      post({ type: "checkAtlasUpdate" });
+      post({ type: "checkGrokUpdate" });
+    }
+
+    /** Whether this surface may ask the desk to re-observe its accounts. Remote
+     *  clients see the answer — `providerState` is mirrored — but must not spawn
+     *  the desk's CLIs to get it, which is why the rows there are status-only. */
+    function canRefreshProviders() {
+      return !env.isRemote && env.providersKnown === true;
+    }
+
+    function requestProvidersRefresh() {
+      if (!canRefreshProviders()) return;
+      post({ type: "refreshProviders" });
+    }
+
+    /**
+     * Opening the page is itself the request. What the rows claim comes from a
+     * persisted flag and a cached CLI path, so arriving here without asking is
+     * the most common way to read something that stopped being true.
+     *
+     * Latched like maybeCheckAbout: paint() runs on every repaint and every
+     * host update, and this must fire once per visit, not once per frame.
+     */
+    function maybeRefreshProviders() {
+      if (providersChecked || categoryId !== "providers" || query.trim()) return;
+      if (!canRefreshProviders()) return;
+      providersChecked = true;
+      requestProvidersRefresh();
+    }
+
+    function requestMcpRefresh() {
+      snapshot = { ...snapshot, mcpLoading: true, mcpError: "" };
+      post({ type: "listMcpServers" });
+    }
+
+    function maybeRefreshRoutines() {
+      if (routinesChecked || categoryId !== "routines" || query.trim()) return;
+      routinesChecked = true;
+      post({ type: "listRoutines" });
+    }
+
+    function maybeRefreshMcp() {
+      if (mcpChecked || categoryId !== "connectors" || query.trim()) return;
+      mcpChecked = true;
+      requestMcpRefresh();
     }
 
     function runAction(row) {
@@ -1319,10 +2495,46 @@
       if (opts.closeOnAction && onClose) onClose();
     }
 
+    function paintKey() {
+      return JSON.stringify({
+        snapshot,
+        env,
+        categoryId,
+        query,
+        pendingRestore: pendingRestore ? pendingRestore.map((row) => row.id) : null,
+        phoneNav,
+        keyFormId: keyForm.id,
+        // Which routine is open, and which unit its cadence is on — the two
+        // pieces of local state that change the DOM without the snapshot
+        // moving. Without them an expand or a unit switch computes the same
+        // key and paint() returns early, so the click does nothing.
+        routineOpen: ROUTINE_UI.open,
+        routineConfirm: ROUTINE_UI.confirmRemove,
+        // The draft fields that change the DOM STRUCTURE or a select's
+        // selected option. Deliberately not title/prompt: those change per
+        // keystroke, and repainting would rebuild the input under the caret.
+        routineDraft: ROUTINE_UI.draft
+          ? [ROUTINE_UI.draft.unit, ROUTINE_UI.draft.cwd, ROUTINE_UI.draft.provider, ROUTINE_UI.draft.model].join(" ")
+          : "",
+      });
+    }
+
     function paint() {
-      const focus = describeFocus(container, container.ownerDocument && container.ownerDocument.activeElement);
+      const chrome = describeChrome(container);
       ensureCategory();
       maybeCheckAbout();
+      maybeRefreshProviders();
+      maybeRefreshMcp();
+      maybeRefreshRoutines();
+      const key = paintKey();
+      if (key === lastPaintedKey && container.firstChild) {
+        paintDeferred = false;
+        return;
+      }
+      lastPaintedKey = key;
+      paintDeferred = false;
+      if (deferredPaintTimer) { clearTimeout(deferredPaintTimer); deferredPaintTimer = null; }
+      const focus = chrome.focus;
       const searching = !!query.trim();
       const shownCats = cats();
       const page = CATEGORIES.find((c) => c.id === categoryId) || shownCats[0];
@@ -1330,6 +2542,18 @@
         ? filterRows(query, snapshot, env)
         : visibleRows(snapshot, env).filter((row) => row.category === categoryId);
       const matchedCats = new Set(rows.map((row) => row.category));
+
+      // Every repaint rebuilds the whole surface, which puts the scroll back at
+      // the top. That is fine on a category switch and wrong on everything
+      // else: clicking Connect, saving a routine or any host frame arriving
+      // repaints, and the row the user was working on jumps off screen.
+      // Category and search deliberately DO reset — a new list starts at its
+      // beginning.
+      const keptScroll = categoryId === lastPaintedCategory && query === lastPaintedQuery
+        ? (container.querySelector(".settings-body") || {}).scrollTop || 0
+        : 0;
+      lastPaintedCategory = categoryId;
+      lastPaintedQuery = query;
 
       container.innerHTML = "";
       const shell = document.createElement("div");
@@ -1411,6 +2635,29 @@
       head.appendChild(crumb);
       const headActions = document.createElement("div");
       headActions.className = "settings-head-actions";
+      // Above the rows, beside the breadcrumb — the strip "Restore defaults"
+      // already owns, which Providers leaves empty (restore: false).
+      if (!searching && page && page.id === "providers" && canRefreshProviders()) {
+        const checking = snapshot.providersChecking === true;
+        const refresh = document.createElement("button");
+        refresh.type = "button";
+        refresh.className = "settings-refresh";
+        refresh.textContent = checking ? "Checking…" : "Refresh";
+        refresh.disabled = checking;
+        if (checking) refresh.setAttribute("aria-busy", "true");
+        refresh.onclick = (e) => { e.stopPropagation(); requestProvidersRefresh(); };
+        headActions.appendChild(refresh);
+      }
+      if (!searching && page && page.id === "connectors") {
+        const refresh = document.createElement("button");
+        refresh.type = "button";
+        refresh.className = "settings-refresh";
+        refresh.textContent = snapshot.mcpLoading ? "Loading…" : "Refresh";
+        refresh.disabled = snapshot.mcpLoading === true;
+        if (refresh.disabled) refresh.setAttribute("aria-busy", "true");
+        refresh.onclick = (e) => { e.stopPropagation(); requestMcpRefresh(); paint(); };
+        headActions.appendChild(refresh);
+      }
       const changes = !searching && page && page.restore
         ? restoreChanges(page.id, snapshot, env)
         : [];
@@ -1475,10 +2722,21 @@
             heading.textContent = cat ? cat.title : row.category;
             body.appendChild(heading);
           }
-          body.appendChild(renderRow(row, snapshot, env));
+          body.appendChild(renderRow(row, snapshot, env, keyForm));
         }
       } else {
-        for (const row of rows) body.appendChild(renderRow(row, snapshot, env));
+        let lastSection = "";
+        for (const row of rows) {
+          const section = connectorSection(row);
+          if (section && section !== lastSection) {
+            lastSection = section;
+            const heading = document.createElement("h2");
+            heading.className = "settings-group";
+            heading.textContent = section;
+            body.appendChild(heading);
+          }
+          body.appendChild(renderRow(row, snapshot, env, keyForm));
+        }
         if (categoryId === "about") {
           const disclaimer = document.createElement("p");
           disclaimer.className = "settings-about-disclaimer";
@@ -1490,6 +2748,12 @@
       shell.appendChild(nav);
       shell.appendChild(main);
       container.appendChild(shell);
+      if (keptScroll) {
+        const body = container.querySelector(".settings-body");
+        // Clamped by the browser if the content got shorter, which is the
+        // honest outcome — better than snapping to the top.
+        if (body) body.scrollTop = keptScroll;
+      }
 
       search.oninput = () => {
         query = search.value;
@@ -1504,6 +2768,9 @@
       function selectCategory(next) {
         if (!next) return;
         if (next !== "about") aboutChecked = false;
+        if (next !== "providers") providersChecked = false;
+        if (next !== "connectors") mcpChecked = false;
+        if (next !== "routines") routinesChecked = false;
         categoryId = next;
         query = "";
         dismissRestoreConfirm();
@@ -1517,7 +2784,7 @@
       });
       navSelect.onchange = () => selectCategory(navSelect.value);
       body.querySelectorAll(".settings-row").forEach((el) => {
-        const row = allRows(snapshot).find((r) => r.id === el.dataset.id);
+        const row = ROWS.find((r) => r.id === el.dataset.id);
         if (!row) return;
         if (row.kind === "toggle") {
           const sw = el.querySelector(".settings-switch");
@@ -1583,6 +2850,237 @@
           btn.onclick = (e) => { e.stopPropagation(); runAction(row); };
         }
       });
+      function closeKeyForm() {
+        keyForm = { id: "", value: "", readOnly: false };
+        paint();
+      }
+      function openKeyForm(id, readOnly) {
+        keyForm = { id, value: "", readOnly: !!readOnly };
+        paint();
+        const input = container.querySelector(".settings-connector-key-input");
+        if (input) input.focus();
+      }
+      body.querySelectorAll(".settings-connector-action").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (env.isRemote || btn.disabled) return;
+          const id = btn.dataset.id;
+          if (!id) return;
+          if (btn.dataset.auth === "key" && btn.dataset.connected !== "true") {
+            if (btn.dataset.action === "cancel" || keyForm.id === id) closeKeyForm();
+            else {
+              const row = snapshot.mcpConnectors.find((c) => c && c.id === id);
+              openKeyForm(id, row && row.readOnly);
+            }
+            return;
+          }
+          post({
+            type: btn.dataset.connected === "true" ? "disconnectMcpConnector" : "connectMcpConnector",
+            id,
+          });
+        });
+      });
+      body.querySelectorAll(".settings-connector-key-open").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (env.isRemote || btn.disabled) return;
+          const id = btn.dataset.id;
+          if (!id) return;
+          const row = snapshot.mcpConnectors.find((c) => c && c.id === id);
+          openKeyForm(id, row && row.readOnly);
+        });
+      });
+      body.querySelectorAll(".settings-connector-key-cancel").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          closeKeyForm();
+        });
+      });
+      body.querySelectorAll(".settings-connector-key-submit").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (env.isRemote || btn.disabled) return;
+          const id = btn.dataset.id;
+          if (!id) return;
+          const form = btn.closest(".settings-connector-key");
+          const input = form && form.querySelector(".settings-connector-key-input");
+          const box = form && form.querySelector(".settings-connector-readonly-input");
+          const key = input ? String(input.value || "") : "";
+          const readOnly = !!(box && box.checked);
+          if (input) input.value = "";
+          keyForm = { id: "", value: "", readOnly: false };
+          post({ type: "connectMcpConnector", id, key, readOnly });
+          paint();
+        });
+      });
+      body.querySelectorAll(".settings-connector-key-input").forEach((input) => {
+        input.addEventListener("input", () => {
+          if (keyForm.id === input.dataset.id) keyForm.value = input.value;
+        });
+        input.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          const submit = input.closest(".settings-connector-key")
+            && input.closest(".settings-connector-key").querySelector(".settings-connector-key-submit");
+          if (submit) submit.click();
+        });
+      });
+      // ---- routines ----
+      // Field edits update the draft WITHOUT repainting: a repaint on every
+      // keystroke would rebuild the input and lose the caret. Only structural
+      // changes (open/close, unit switch, save) paint.
+      body.querySelectorAll(".settings-routine-body [data-field]").forEach((input) => {
+        const commit = () => {
+          if (!ROUTINE_UI.draft) return;
+          const field = input.dataset.field;
+          if (field === "model") {
+            const [provider, ...rest] = String(input.value || "").split(" ");
+            ROUTINE_UI.draft.provider = provider;
+            ROUTINE_UI.draft.model = rest.join(" ");
+            return;
+          }
+          ROUTINE_UI.draft[field] = field === "every" ? Number(input.value) || 1 : input.value;
+        };
+        input.addEventListener("input", commit);
+        input.addEventListener("change", () => {
+          commit();
+          // Switching project re-picks the model the same way the composer
+          // does: each project has its own default provider, and carrying the
+          // previous project's model across is rarely what was meant.
+          if (input.dataset.field === "cwd" && ROUTINE_UI.draft) {
+            const projects = Array.isArray(snapshot.routineProjects) ? snapshot.routineProjects : [];
+            const models = Array.isArray(snapshot.routineModels) ? snapshot.routineModels : [];
+            const project = projects.find((x) => x.cwd === ROUTINE_UI.draft.cwd);
+            const pick = defaultModelFor(models, project && project.defaultProvider);
+            if (pick) {
+              ROUTINE_UI.draft.provider = pick.provider;
+              ROUTINE_UI.draft.model = pick.model;
+            }
+            paint();
+            return;
+          }
+          // The days branch grows a time control, so this one has to repaint.
+          if (input.dataset.field === "unit") paint();
+        });
+      });
+      body.querySelectorAll(".settings-routine-toggle").forEach((head) => {
+        head.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const card = head.closest(".settings-routine");
+          const id = card && card.dataset.routine;
+          if (!id) return;
+          ROUTINE_UI.open = ROUTINE_UI.open === id ? "" : id;
+          ROUTINE_UI.draft = null;
+          ROUTINE_UI.confirmRemove = "";
+          paint();
+        });
+      });
+      body.querySelectorAll(".settings-routine-new").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          ROUTINE_UI.open = NEW_ROUTINE;
+          ROUTINE_UI.draft = blankRoutineDraft(snapshot);
+          paint();
+        });
+      });
+      body.querySelectorAll(".settings-routine-cancel").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          ROUTINE_UI.open = "";
+          ROUTINE_UI.draft = null;
+          paint();
+        });
+      });
+      body.querySelectorAll(".settings-routine-save").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (!ROUTINE_UI.draft) return;
+          ROUTINE_UI.pendingSave = true;
+          post(draftToMessage(ROUTINE_UI.draft));
+          // The host answers with a fresh `routines` frame; the draft stays
+          // put so a refusal comes back to the text that caused it rather than
+          // to a blank form.
+        });
+      });
+      body.querySelectorAll(".settings-routine-pause").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const card = btn.closest(".settings-routine");
+          const id = card && card.dataset.routine;
+          if (!id) return;
+          post({ type: "setRoutinePaused", id, paused: !btn.dataset.paused });
+        });
+      });
+      body.querySelectorAll(".settings-routine-run-now").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const card = btn.closest(".settings-routine");
+          const id = card && card.dataset.routine;
+          if (!id) return;
+          post({ type: "runRoutineNow", id });
+        });
+      });
+      body.querySelectorAll(".settings-routine-remove").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const card = btn.closest(".settings-routine");
+          const id = card && card.dataset.routine;
+          if (!id) return;
+          // Two clicks, and the second one says what it does. A routine is
+          // cheap to rebuild but its run history is not.
+          if (ROUTINE_UI.confirmRemove !== id) {
+            ROUTINE_UI.confirmRemove = id;
+            paint();
+            return;
+          }
+          ROUTINE_UI.confirmRemove = "";
+          ROUTINE_UI.open = "";
+          ROUTINE_UI.draft = null;
+          post({ type: "deleteRoutine", id });
+        });
+      });
+      body.querySelectorAll(".settings-routine-open, .settings-routine-tick[data-session]").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const id = btn.dataset.session;
+          if (!id) return;
+          if (onClose && !opts.standalone) onClose();
+          post({ type: "resumeSession", id, cwd: btn.dataset.cwd || undefined });
+        });
+      });
+      body.querySelectorAll(".settings-connector-readonly-input").forEach((box) => {
+        box.addEventListener("change", () => {
+          if (env.isRemote || box.disabled) return;
+          const id = box.dataset.id;
+          if (!id) return;
+          if (keyForm.id === id) keyForm.readOnly = box.checked;
+          if (box.dataset.live === "true") {
+            post({ type: "connectMcpConnector", id, readOnly: box.checked });
+          }
+        });
+      });
+      body.querySelectorAll(".settings-connector-key-docs").forEach((link) => {
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const url = link.dataset.href || link.href;
+          if (url) openExternalHref(url);
+        });
+      });
+      body.querySelectorAll(".settings-mcp-web").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const url = btn.dataset.href;
+          if (url) openExternalHref(url);
+        });
+      });
+      body.querySelectorAll(".settings-mcp-open").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (env.isRemote) return;
+          post({ type: "openGlobalConfig" });
+        });
+      });
       applyFocus(container, focus);
     }
 
@@ -1631,6 +3129,32 @@
 
     container._onKey = onKey;
     document.addEventListener("keydown", onKey, true);
+    // A deferred paint used to wait for exactly one event: the nav select
+    // losing focus. But `navMenuOpen` is true whenever that select merely HAS
+    // focus, and picking a category leaves it focused — so on a phone every
+    // frame that arrived afterwards was deferred and nothing flushed it. The
+    // page sat on "Loading routines…" (and "Loading Grok connectors…" before
+    // that) until the reader touched the screen for an unrelated reason.
+    //
+    // So: flush on `change` as well, which fires when the dropdown closes with
+    // a selection, and arm a timer as a backstop. Deferring exists to avoid
+    // repainting UNDER an open dropdown; it must not be able to wait for ever.
+    // `paint()` restores focus through applyFocus, so flushing costs nothing.
+    const flushDeferredPaint = () => {
+      if (!paintDeferred) return;
+      paint();
+    };
+    container.addEventListener("blur", (e) => {
+      const target = e.target;
+      if (!target || !target.classList || !target.classList.contains("settings-nav-select")) return;
+      flushDeferredPaint();
+    }, true);
+    container.addEventListener("change", (e) => {
+      const target = e.target;
+      if (!target || !target.classList || !target.classList.contains("settings-nav-select")) return;
+      flushDeferredPaint();
+    }, true);
+
     const view = container.ownerDocument && container.ownerDocument.defaultView;
     const phoneMq = view && view.matchMedia ? view.matchMedia(PHONE_NAV_MQ) : null;
     function onPhoneNavChange() {
@@ -1649,6 +3173,20 @@
       update(nextSnapshot, nextEnv) {
         if (nextSnapshot) snapshot = defaultSnapshot({ ...snapshot, ...nextSnapshot });
         if (nextEnv) Object.assign(env, nextEnv);
+        if (container.firstChild && paintKey() === lastPaintedKey) return;
+        if (describeChrome(container).navMenuOpen) {
+          paintDeferred = true;
+          // The backstop. An open dropdown is a short interaction; a focused
+          // one can last as long as the reader looks at the page.
+          if (deferredPaintTimer) clearTimeout(deferredPaintTimer);
+          deferredPaintTimer = setTimeout(() => {
+            deferredPaintTimer = null;
+            flushDeferredPaint();
+          }, DEFERRED_PAINT_MS);
+          // The backstop. An open dropdown is a short interaction; a focused
+          // one can last as long as the reader looks at the page.
+          return;
+        }
         paint();
       },
       focusSearch() {
@@ -1657,6 +3195,9 @@
       },
       setCategory(id) {
         if (id !== "about") aboutChecked = false;
+        if (id !== "providers") providersChecked = false;
+        if (id !== "connectors") mcpChecked = false;
+        if (id !== "routines") routinesChecked = false;
         categoryId = id || "general";
         query = "";
         dismissRestoreConfirm();
@@ -1680,8 +3221,21 @@
     CATEGORIES,
     NAV_ICONS,
     TELEMETRY_COPY,
+    THUMBS_COPY,
     ABOUT_DISCLAIMER,
     GITHUB_REPO_URL,
+    GROK_CONNECTORS_URL,
+    ICON_SETTINGS,
+    CONNECTOR_LOGO_IDS,
+    sortConnectorsForDisplay,
+    CONNECTOR_SECTION_HERE,
+    CONNECTOR_SECTION_GROK,
+    CONNECTOR_SECTION_LOCAL,
+    CONNECTOR_BLURB_HERE,
+    CONNECTOR_BLURB_HERE_REMOTE,
+    CONNECTOR_BLURB_GROK,
+    CONNECTOR_BLURB_LOCAL,
+    CONNECTOR_BLURB_LOCAL_REMOTE,
     GITHUB_ISSUE_BUG_URL,
     GITHUB_ISSUE_FEATURE_URL,
     SUPPORT_MAILTO,
@@ -1697,6 +3251,11 @@
     applyValue,
     defaultEnv,
     defaultSnapshot,
+    formatRoutineCountdown,
+    DEFERRED_PAINT_MS,
+    routinesHostNote,
+    keyDocsLabel,
+    routineRunLabel,
     mount,
   };
 

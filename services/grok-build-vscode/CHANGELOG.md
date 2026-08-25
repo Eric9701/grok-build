@@ -1,5 +1,182 @@
 # Changelog
 
+## 3.17.0 — 2026-08-24
+
+### Added
+
+- **Routines.** A prompt, a project, a model, and a cadence — saved once and run on a schedule. Settings → Routines. Each firing opens its own session named after the routine (`[Routine] Morning brief`), so the answer is waiting in the rail rather than needing you to be there when it arrives. The last twenty runs are kept per routine, as a strip you can read at a glance: a run that worked opens its session, one that was skipped says which model was missing, one that failed says why. A daily cadence takes a time of day and holds it through daylight saving; anything shorter runs at most once every fifteen minutes. Routines run while any Grok window is open — this extension, or the desktop app — and nothing runs once they are all closed, which the page says rather than leaving you to discover. On a phone you can create, edit, pause and remove them for any project that phone can already reach.
+- **Zapier connector.** Reaches whatever apps you have added to your own Zapier MCP server — Gmail, Calendar, Slack and thousands more. Sign in through the browser like the other connectors; there is nothing to paste. Build the server and pick its apps in Zapier first, since one with no apps added exposes no tools.
+
+### Fixed
+
+- **A connector that fails to start now says what went wrong.** The report took the last line of the failure, and for anything Node itself throws that line is the version banner — so a broken install surfaced as `Could not connect: Node.js v20.19.0`, which named nothing. It now reports the error.
+- **Every connector's "get a token" link pointed at GitHub.** The address came from the connector; the words next to it were hardcoded, so any connector but GitHub sent you to the wrong place.
+- **Settings no longer jumps back to the top while you are using it.** Anything that refreshed the page — connecting a connector, saving a change — scrolled it to the beginning and moved the row out from under you.
+
+## 3.16.0 — 2026-08-24
+
+### Added
+
+- **The waiting indicator says how long it has been waiting.** *Grokking* now carries a running count from the moment it appears — `Grokking · 4m 12s`. A turn has no deadline you can see (the extension tolerates 30 minutes of CLI silence before giving up, deliberately, so a long healthy turn is never killed as if it were stuck), which meant "working" and "wedged" looked identical. The count says nothing about whether anything is wrong, only how long the wait has lasted.
+
+### Fixed
+
+- **A slow network no longer holds up every session start.** The silent CLI update that runs once after an extension upgrade could block the composer for up to three minutes, and a failure left it to be retried on the *next* window — so where `x.ai` is unreachable, every new window paid that stall again, indefinitely. It now gets 20 seconds and one attempt per extension version. The update is optional; if it can't finish quickly the session starts on the CLI you already have. Thanks to [@funkpopo](https://github.com/funkpopo), whose measurements from a network that can't reach `x.ai` found this ([#129](https://github.com/phuryn/grok-build-vscode/pull/129)).
+- **A local connector that reports no health status is no longer shown as unavailable.** Servers declared in your Grok config files often report that they are enabled without a health field, and only an explicit `ready` earned the green dot — so a working server looked exactly like a broken one, on a row with nothing to click. Thanks to [@funkpopo](https://github.com/funkpopo) ([#128](https://github.com/phuryn/grok-build-vscode/pull/128)).
+- **A connector that recovered stops showing as failed.** A server's error message was never cleared once reported, so a connector that failed once kept that error for the rest of the session and its row stayed red even after it came back. A later status report now supersedes it. Connector status is also honest on the phone now: the error text deliberately stays on your machine (it can quote a launch command), but the fact of a failure travels, so a broken server no longer reads as ready there.
+- **The Windows desktop installer builds again.** The telemetry identity added in 3.15.0 was passed to the packager as a bare argument, and PowerShell split it in two — so the Windows leg of the release failed while macOS succeeded, and v3.15.0 shipped without a `.exe` until it was rebuilt.
+
+## 3.15.0 — 2026-08-23
+
+### Added
+
+- **A file read is now a link to the file, and clicking it shows you the file.** A `Read` row reads `Read chat.js lines 8400-8459`, with the path and range themselves clickable and no excerpt underneath — the six lines it used to print were the ones you could already see, and they cost the row the space the path needed ([#122](https://github.com/phuryn/grok-build-vscode/issues/122)). In an editor the link opens the real file with those lines selected. In the desktop app it opens a preview showing the **whole file** with line numbers and the agent's lines marked in blue, scrolled to them — the surrounding context is the reason to click, and until now that surface showed only the excerpt. Both previews gained **Open in file panel**, beside Copy and Save As, for when a glance turns into reading.
+
+### Fixed
+
+- **Connectors stop asking you to sign in again when more than one window is open.** `mcp-remote` pins its sign-in port to the one recorded in its own registration, and on Windows it cannot see that another window already holds it. The extension answered that collision by retrying on a different port — which is `mcp-remote`'s signal to discard its registration and enrol afresh, so a browser tab opened, and because the credential store is shared, every other window was pushed into signing in too. One collision re-authorised the machine. The collision is now reported instead of worked around: it means the connector is already signed in and running, which is the good case.
+- **Links to files under `~` open ([#125](https://github.com/phuryn/grok-build-vscode/issues/125)).** `~/Downloads/notes.md` was treated as a relative name and looked for inside the project, so clicking it said the file was missing. `~` is now expanded to your home directory. `~someone/…` is deliberately left alone — resolving another account's home needs more than a guess.
+- **Reading a whole file no longer invents a line range.** A read with no offset or limit showed `lines 1-812`, which was not a range the agent chose but simply the length of the file. The row shows the path alone, and the link opens the file with nothing selected.
+- **Expanded tool details appear while the agent is still working.** With *Expand tool details* on, a group settled its expansion only once the batch had finished, so reads and searches stayed collapsed until the end — commands too. They open as the rows arrive now.
+- **The desktop app was reporting no usage data at all.** Packaging rewrote the app's name, so its identity check could never match and telemetry disabled itself silently — which is correct behaviour for a fork and wrong for our own app. Every figure we had was therefore "of editor users" without saying so.
+- **Usage data stopped discarding editors it did not recognise.** The host name was checked against a fixed list of seven products, so anything else — Antigravity IDE, code-server, Kiro, Devin, Windsurf — was dropped on the floor rather than recorded. It is now validated for shape, the same way the model name always has been.
+
+### Changed
+
+- **The anonymous usage event records four more things**, all documented in [docs/privacy.md](docs/privacy.md): which CLI the session runs on, how many connectors are set up on the machine, whether the session started in a git worktree, and whether this install has been seen before. Values only, never content — the CLI is one of three names, and the connector figure is a count, never the list.
+- **`install.sh` and `release.sh` do what their PowerShell counterparts do.** The shell versions were about half the size, and the gaps were not cosmetic: `install.sh` could not build against a staging relay at all, `release.sh` skipped the screens gate, the wait for CI, the Open VSX publish and the local install, and was committed without its execute bit — so the command its own usage text documents could never have run. `install.sh --all` also found no editors on macOS, exited non-zero, and looked successful.
+
+## 3.14.1 — 2026-08-22
+
+### Fixed
+
+- **Connectors stop asking you to sign in again.** `mcp-remote` stores its authorisation tokens in a folder named after its own version, and the extension was letting npm resolve whichever version was newest at the moment a session started — so every upstream release silently emptied your credentials and opened a browser tab for each connected service. Three versions shipped in twenty-four hours. The version is pinned now: the desktop app and the editors share one set of tokens, and changing it becomes a deliberate decision instead of a surprise.
+- **View all on a Read row opens the file, not a copy of it ([#122](https://github.com/phuryn/grok-build-vscode/issues/122)).** It opened an untitled document holding just the lines the agent had read; it now opens the real file with those lines selected.
+- **A long-running conversation stops growing its stored cost ledger without limit.** One entry per turn was kept forever; past 400 turns the older ones now fold into a running total.
+
+## 3.14.0 — 2026-08-21
+
+### Added
+
+- **Three more connectors, and connectors that take a key.** **GitHub**, **Calendly** and **Airtable** join Settings → Connectors. GitHub is the first that authorises with a personal access token you paste on the row itself (fine-grained recommended) rather than a browser round trip — the token goes to the platform secret store, never into `grok.mcpConnectors` and never into a settings file you might share. Connecting it in one editor now takes effect in the others instead of disconnecting them.
+- **A long conversation opens in a fifth of a second ([#102](https://github.com/phuryn/grok-build-vscode/issues/102)).** Opening a conversation with hundreds of turns took the better part of a minute and left the panel unusable while it worked. It now renders the most recent turns first and fills in the rest as you scroll back: 46 seconds became 191 milliseconds on the conversation that prompted the report, and resizing the panel went from a quarter of a second to ten milliseconds.
+
+### Fixed
+
+- **A reconnect feels like nothing happened.** Switching apps on a phone, locking the screen, or losing signal all drop the socket, and the reconnect used to be loud: the conversation was torn down before its replacement existed, the welcome screen flashed over a chat that was still coming back, the title blanked, the composer stole focus, and "Starting" appeared over a conversation that was merely being restored. The conversation now stays on screen throughout, and the panel says *Restoring conversation* rather than pretending to start a new one.
+- **Your place in the conversation survives a reconnect.** A reader scrolled up was yanked back to the bottom when the transcript was replayed — twice over, and from more than one direction. If you had scrolled up you stay where you were; if you were at the bottom you keep following, as before.
+- **A conversation name is a name, not the prompt that started it.** Whole first prompts were being stored as the conversation's automatic name — one had grown to 27,813 characters — which bloated the stored session index and slowed every read of it. Names are capped, and existing oversized ones are trimmed on load: the index on the machine that surfaced this went from 4.4 MB to 1.4 MB.
+- **File-panel row actions stop sticking.** After clicking a row, its actions stayed visible and highlighted once the pointer had moved away.
+- **The desktop app focuses the composer when it opens**, so you can type straight away.
+- **Plan and permission cards stay with their turn** when a long conversation fills in earlier history, instead of draining to the wrong place.
+
+## 3.13.1 — 2026-08-20
+
+### Added
+
+- **Connectors — sign in to the apps you already work in.** **Settings → Connectors** ships in release builds now; it was development-only in 3.13.0. Connect Linear, Notion, Atlassian, Canva, Stripe, Sentry or Cloudflare once on this computer and every agent can use them — Grok, Codex and Claude alike. You authorise in your browser and the tokens are cached by `mcp-remote` under `~/.mcp-auth`, so the extension never handles one. The page has three sections: apps you connect here, the grok.com connectors that follow your Grok account, and local Grok connectors declared in this machine's config files. Project-file servers stay off it.
+- **Copy path and Copy relative path ([#120](https://github.com/phuryn/grok-build-vscode/issues/120)).** Every row in the file panel offers both, on files and folders, on the desk and on a phone.
+- **Rate a Grok turn ([#114](https://github.com/phuryn/grok-build-vscode/issues/114)).** Thumbs on a finished turn send a rating to SpaceXAI. Off by default — turn on **Thumbs feedback to SpaceXAI** in Settings → General — and they appear only where the Grok session actually supports feedback, never on Codex or Claude.
+
+### Fixed
+
+- **Connectors could not start at all on macOS.** A desktop app launched from Finder inherits a PATH with no Homebrew in it, so `npx` was missing. Finding it was not enough either: `npx` is a script whose `#!/usr/bin/env node` line needs `node` findable as well, so the child's environment is fixed alongside the lookup. Windows keeps its PATH exactly as you wrote it.
+- **Queueing a message with images keeps the images.** Attachments were dropped when a message went to the queue — everything you attached is queued with it, or nothing is. Steer carries them too, and an image's number is stamped when you attach it and never moves afterwards.
+- **The context breakdown adds up, and stays put.** The rows in the popover did not sum to the figure above them, and a breakdown could be shown against numbers from a different reading. Each one now belongs to the measurement that produced it. Settings also stopped rebuilding itself over and over while open.
+- **Queued messages look like sent ones.** Images in a queued message sit below the text, where they sit in a message you have already sent, and the first message in a conversation gets a little room above it.
+
+## 3.13.0 — 2026-08-19
+
+### Added
+
+- **Find in a conversation.** Long conversations were navigable only by scrolling. There is now a find bar — in the **⋯** menu on every surface, and on **Ctrl/Cmd+F** in VS Code and the desktop app (the browser keeps its own find, and on a phone the menu is the only door there was). Next and previous, a live match count, case sensitivity, and regular expressions, with `^` and `$` matching per line. It searches what you wrote and what the agent replied, plus the label on each tool row — the command that ran, the file that was read — but not the contents of those rows: searching a common word used to bury the handful of hits in your conversation under dozens from command output and diffs. Matches are highlighted without touching the page, so nothing in the transcript stops working while you search.
+- **The context donut shows where the window went.** Clicking it now breaks the used space into System, Tools, Messages, Skills, MCP and Free, with the auto-compact threshold. Grok only, and it costs nothing to look: the number comes from a control-plane reading rather than a question put to the model, so opening the popover does not consume the window it is describing. Contributed by @funkpopo.
+- **Icons in the gear menu and Settings.** Knowledge work and Coding carry marks, as do Report a bug, Request a feature, Contact and the repository link.
+
+### Fixed
+
+- **A larger chat font no longer cuts the panel in half ([#119](https://github.com/phuryn/grok-build-vscode/issues/119)).** At 200% only a fraction of the chat was visible. The stylesheet was correcting for zoom in a way browsers used to require and no longer do, so the correction became the error — and it was wrong at every setting except 100%, overflowing below it as well as clipping above. Reported by @FireInWinter.
+- **Slash autocomplete stops offering commands that would not run ([#110](https://github.com/phuryn/grok-build-vscode/issues/110)).** Skills work anywhere in a message; commands only run when they start it. The popover treated both the same, so a command typed on a second line was suggested, accepted, and then quietly sent as ordinary text. Now skills are offered wherever you are typing and commands only at the start, which is exactly where each one works. Reported by @ryukenshin546-a11y and @SimonEast.
+- **A file the agent reads says which file, and which lines ([#122](https://github.com/phuryn/grok-build-vscode/issues/122)).** Read rows now carry the path and the line range, and open the whole file the same way command output does. Where the range is not reported, the path shows without one rather than a guess. Requested by @padixa.
+- **Settings is clearer about what it can act on.** The **Account** page is now **Remote control**, which is what it does — linking this desk to a phone or browser. Version rows for the two ACP adapters are gone: they ship inside the extension and move only when it does, so there was nothing to act on. The Codex updates row is gone for the opposite reason — it said updates were handled elsewhere, which was untrue whenever the extension had installed Codex itself.
+- **A fresh clone no longer produces a file the tests cannot parse.** The repository never declared its line-ending convention, so a new checkout on Windows could rewrite a script's first line into something Node refused to read.
+
+### Internal
+
+- MCP server inventory, read from the agent's own rails rather than a command that cannot see managed connectors. Contributed by @funkpopo. Together with the connector work it is visible in development builds only, until a failed sign-in stops leaving a process behind.
+- The unit suite stopped reporting the machine's mood: bounds that were measuring how fast a subprocess starts, rather than detecting one that had hung, made three or four unrelated tests fail per run.
+
+## 3.12.4 — 2026-08-18
+
+### Fixed
+
+- **MCP tool calls show what went in and what came back.** An MCP call was a single line with no way to see the arguments or the result. It now gets the same expandable IN/OUT block shell commands have, on all three agents — which took measuring each one, because they agree on nothing: the tool name, the arguments and the result each live somewhere different, and two of the three send no `content` at all on completion. Grok's internal tool-search rows fold into the explore group instead of cluttering the transcript, and a Codex server that genuinely fails to start still says so.
+- **Long tool names stay readable.** A name like `mcp.codex_apps.codex_document_control.list_documents` was cut at the end — exactly where the useful part is, leaving a column of rows that all read the same. Long names now elide in the middle, keeping both ends, and hovering shows the complete name.
+- **Skill search looks at descriptions, not just names.** A skill you remembered by what it does rather than what it is called was unfindable. Matching now covers descriptions, name matches still rank first, and the matched words are highlighted wherever they landed so a description-only hit makes sense.
+- **Opening a long conversation no longer scrolls endlessly.** Loading a big conversation replayed every message while forcing the view to the bottom after each one — roughly fifteen hundred times on the largest conversations here, which read as an infinite scroll that only stopped when you switched away. The view now settles once, at the end, and loading is quicker for it. Opening the same conversation twice at once can no longer interleave two copies of its history either.
+- **Grok conversations stop jumping in Recents when you open them.** A `session/load` rewrites `events.jsonl`, so ranking by that file promoted whatever you had just opened — and, because the previously-opened one carried a fresh stamp too, it often looked like the *previous* conversation jumping. Grok now ranks by `updates.jsonl`, which a load leaves alone and a real turn advances, so work done in the terminal still promotes a row. **Claude conversations can still jump** — its listing time is restamped on open and the pinning that should hold it does not yet survive in practice; Codex was never affected.
+- **A live turn no longer dies at 30 minutes with `ACP request timed out: session/prompt` ([#117](https://github.com/phuryn/grok-build-vscode/issues/117)).** `session/prompt` stays open for the whole turn, but the client armed a one-shot 30-minute timer that streaming `session/update` traffic never reset — so a healthy long job (training, a long tool loop, many slow steps) was cut while the agent was still working. The timer is now idle-based: any ACP traffic re-arms it (default 30 minutes of silence). A 24-hour absolute cap remains as a safety net. Tune `grok.acp.promptIdleTimeoutMs`, `grok.acp.promptAbsoluteTimeoutMs` (`0` disables), and `grok.acp.requestTimeoutMs` on newly started sessions.
+- **MCP tool results show the whole payload.** Codex rows that only printed a terse `Action completed.` were dropping `structuredContent` — where Gmail and similar servers put the actual messages. OUT now carries the text and the structured JSON, and a failed Codex call shows its error instead of an empty box. Pretty-printing that JSON stops at the 100K display cap so a nested result cannot expand into megabytes first, and a Claude JSON string is shown as the adapter sent it so 64-bit identifiers are not rounded.
+- **Stopping a command still shows [Cancelled] when the browser is newer than the desk.** An older host that never sent a cancellation flag was being read as "not cancelled", so a genuine Stop lost its marker. The host now always says whether it was a kill.
+- **Reopened conversations show shell command output again (#44).** Switching away from a live Claude conversation and back no longer drops the command's output.
+
+## 3.12.3 — 2026-08-18
+
+### Fixed
+
+- **The desktop app no longer dies when a phone or browser connects.** Opening a remote client while the app happened to be refreshing its voice settings could crash it outright — a Windows error dialog and a dead window, not a degraded feature. A background file watcher was asking a client that had connected but not yet finished its handshake which project it was on, and treating "not ready yet" as a fatal error. It now waits for that client instead, and the same assumption has been corrected everywhere else it was made.
+- **Dragging a panel edge follows your cursor when the UI is zoomed.** The rail and the file panel both jumped on grab and then drifted further from the pointer the further you dragged, because the drag was measured in screen pixels while the layout was in zoomed ones. Both now agree. At the default zoom nothing changes.
+- **Codex shows which MCP tool it ran.** Calls to MCP servers appeared as a bare `Run`, so a row of them told you nothing — the name was on the wire, but a generic label was taking precedence over it. They now read as `mcp.<server>.<tool>`, matching how the same calls already appeared for Grok and Claude.
+
+## 3.12.2 — 2026-08-18
+
+### Fixed
+
+- **Stray "New session" conversations stop piling up.** Checking whether an agent is signed in quietly started a real conversation and then tried to end it — but that particular cleanup never worked, so every check left an empty conversation behind. They showed up as identical "New session" rows you could not open (the CLI cannot load a conversation with no messages) and that survived **Clear all**. The check now runs somewhere harmless and removes after itself, so nothing new accumulates. Anything already on your disk stays where it is and is inert; it was never taking part in your work.
+- **Clear all history finishes the job.** It deleted the files while the agent processes were still shutting down, so on Windows the delete could fail — or the CLI would write the conversation back — and the rows returned. It now waits for those processes to exit first, and refreshes the project list for projects other than the one you are looking at.
+
+## 3.12.1 — 2026-08-17
+
+### Fixed
+
+- **The desktop app opens on a fresh install instead of hanging (#116).** Launching with no project configured sat on "Starting" forever. The app asked itself to open a conversation, found no folder to open it in, and returned without ever telling the window it had stopped working — so the loading state had nothing to clear it. Reported by @ffgrep, who also found the workaround: adding a project, or setting `workspaceRoots` by hand.
+- **A first run now has somewhere to work.** Rather than asking you to understand projects before you can send a message, the app creates a **Grok Build** folder in your home directory and starts there. It happens once, only when you have no projects at all, and it is an ordinary project you can remove — adding your own stops it being offered again. Plenty of people want this for chat or knowledge work and have no reason to think about project organisation.
+- **Removing every project gives you an empty state, not a spinner.** It names what is needed and offers **Add project folder**, and starting a conversation stays blocked until you add one — the same dead end was reachable that way too.
+
+## 3.12.0 — 2026-08-17
+
+### Added
+
+- **Colour, rename and opening a conversation happen the moment you do them.** Picking a project colour, renaming a conversation, or opening one from the rail or history used to sit still for a second or two while the host was asked and answered — longest in the browser, where every confirmation makes a round trip to your desk. All three now apply immediately. Renaming anywhere updates every surface at once, so the top bar no longer shows the old name after you renamed it in the history list. Opening a conversation switches the title and holds the messages panel on a loading state instead of leaving the previous transcript sitting under the new name. Your desk stays the authority throughout: if it disagrees, or never answers, the display returns to what it actually says.
+- **Maximize the file panel in the browser.** afkpilot.com on a monitor docks the panel beside the chat, exactly like the desktop app — but had no way to give it the whole window. It does now, with Escape to restore. On a phone nothing changes: the panel already fills the screen there.
+- **Provider marks on Settings → Providers.** Each row carries its agent's mark, so Grok, Codex and Claude Code are identifiable at a glance rather than by reading down a column of names.
+
+### Fixed
+
+- **Opening a Grok conversation no longer runs it on a different agent.** With Grok disconnected, opening a Grok conversation from the rail reported "Failed to start Codex" — and it meant it: the conversation had been quietly handed to whichever agent could answer, because a freshly opened session looked empty before its history loaded. A conversation now keeps the agent it belongs to, and if that agent cannot answer you are told so by name. The wrong error text was the visible symptom; running your conversation on an agent you did not choose was the actual bug.
+- **Refresh finds an agent you signed into somewhere else.** Approving Grok in a browser and pressing Refresh in Settings → Providers did nothing, because it only re-checked accounts already marked connected — which is precisely the case you press it to fix. Every installed agent is re-checked now.
+- **The ⋯ menu stops closing itself while projects load.** Opening it during the first seconds after a window opens had it vanish every few seconds until the project list settled.
+- **The browser matches the editor's text size.** afkpilot.com on a desktop rendered a size larger than the same UI in VS Code or the desktop app, because the browser has no editor font setting to inherit and fell back to its own default. It now matches at 13px. Phones and tablets are unchanged — text stays at the larger size the touch layout was designed around.
+
+## 3.11.0 — 2026-08-17
+
+### Added
+
+- **Settings → Providers can be made to tell the truth.** The page said whether Grok, Codex and Claude were connected, but nothing ever re-checked: sign out inside a terminal, install a CLI, let a token lapse, and it kept repeating whatever it last heard. There's now a **Refresh** button above the list, and opening the page runs the same check on its own. It re-looks for each CLI and re-tests the accounts that are actually connected — it never marks an account connected on your behalf, so a refresh can only ever tell you what is true. The button says "Checking…" while it works. On the phone the list stays read-only, as it was, but it updates the moment your desk re-checks.
+
+### Fixed
+
+- **The VS Code settings tab keeps up with your accounts.** Opened as an editor tab, Settings → Providers only ever showed the state it started with — connect or sign out anywhere else and that tab never heard about it, so it could sit there contradicting the sidebar until you closed and reopened it. It now receives the same live updates every other surface gets.
+
+## 3.10.1 — 2026-08-16
+
+### Fixed
+
+- **Grok can see the images it opens (#79).** Asking Grok to read a `.png` or `.jpg` came back `Cannot read binary file`, while the same CLI in a terminal described pictures happily. The cause was on this side: the extension told the CLI it could resolve files on its behalf, and that routed *every* read — images included — down a text-only path with no image branch. It no longer does, so reading a picture reaches the CLI's own image-aware path and the model actually sees it. Generated images, screenshots a subagent produced, anything Grok opens by path. Pasting and attaching images were never affected — those always sent the pixels, and still do. Applies to grok CLI 1.0.4 and newer, where that image-aware read exists; older CLIs keep their previous behaviour, and Codex sessions are unchanged.
+- **Codex Auto accept stays Auto accept.** Codex reports Plan/Default and Agent/full-access as two options on every snapshot. Treating collaboration `default` as the host mode discarded `agent-full-access`, so picking Auto accept snapped back to Agent and approving a plan from full-access implemented under an Agent badge.
+- **A rejected Plan switch no longer leaves the Plan badge up.** The toolbar followed the click, not `session/set_mode`. When that RPC failed, Claude and Codex stayed writable (no client gate) while the UI claimed Plan.
+- **Plan mode blocks a command that arrives in the same stdout chunk as the switch.** Raising the client gate after `await setMode` left a window: readline can deliver the success reply and a `terminal/create` in one turn, and the handler still saw the gate down. A successful Plan reply now commits the gate in the response hook, before the next line is dispatched. A refused switch still leaves the badge and gate unchanged.
+
 ## 3.10.0 — 2026-08-15
 
 ### Added

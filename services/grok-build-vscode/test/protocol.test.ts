@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   HOST_CAPABILITIES,
   HOST_MESSAGE_TYPES as TS_HOST,
+  INTERRUPTED_SEND_CODE,
   WEBVIEW_MESSAGE_TYPES as TS_WEBVIEW,
 } from "../src/protocol";
 // The webview's own copy of the contract (plain JS — it can't import the TS types).
@@ -16,6 +17,11 @@ const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.me
 const sorted = (a: readonly string[]) => [...a].sort();
 
 describe("host <-> webview message contract (src/protocol.ts is the source of truth)", () => {
+  it("pins the interrupted-send error code so harnesses do not match copy", () => {
+    expect(INTERRUPTED_SEND_CODE).toBe("interrupted-send");
+    expect(chatSrc).toContain('el.setAttribute("data-error-code", code)');
+  });
+
   it("advertises remote voice as a host protocol capability", () => {
     expect(HOST_CAPABILITIES).toEqual({
       uploadFile: true,
@@ -23,6 +29,7 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
       // Older hosts refuse to delete the conversation the requester is reading,
       // so the client has to be told rather than assume. Capability, not version.
       deleteActiveSession: true,
+      queueSendChips: true,
       // Project file browse for AFK Pilot. Absent on older hosts.
       browseProjectFiles: true,
       // Edit+save existing files — separate from browse so a host can offer
@@ -41,6 +48,9 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
     expect(
       packageJson.contributes.configuration.properties["atlas.summarizeRepliesAloud"].default,
     ).toBe(true);
+    expect(
+      packageJson.contributes.configuration.properties["atlas.thumbsFeedback"].default,
+    ).toBe(false);
   });
 
   it("scopes the macOS Emacs composer bindings to composer focus", () => {
@@ -54,6 +64,19 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
       command: "atlas.composerPreviousLine",
       key: "ctrl+p",
       when: "isMac && atlas.composerFocus",
+    });
+  });
+
+  it("contributes find-in-conversation as a palette command and a Cmd/Ctrl+F fallback", () => {
+    expect(packageJson.contributes.commands).toContainEqual({
+      command: "atlas.findInSession",
+      title: "Atlas: Find in Conversation",
+    });
+    expect(packageJson.contributes.keybindings).toContainEqual({
+      command: "atlas.findInSession",
+      key: "ctrl+f",
+      mac: "cmd+f",
+      when: "focusedView == atlas.chat",
     });
   });
 

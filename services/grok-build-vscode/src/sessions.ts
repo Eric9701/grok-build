@@ -3,7 +3,14 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { isPrimerText, isPrimerSummary } from "./grok-primer";
-import type { PromptUsage } from "./acp-dispatch";
+import {
+  applyContextOccupancy,
+  occupancyFromUsageLog,
+  sumUsage,
+  type ContextOccupancyEvent,
+  type ContextOccupancyState,
+  type PromptUsage,
+} from "./acp-dispatch";
 
 /** A session with at most this many recorded messages is cheap to confirm as empty
  *  (a primer-only session has ~4). The sweep only reads `chat_history.jsonl` for
@@ -30,29 +37,30 @@ export interface SessionListEntry {
    *  the projects rail's Pinned group; absent means unpinned. */
   pinnedAt?: number;
   /** Agent that owns this immutable session. Absent means Grok for compatibility. */
-  provider?: "grok" | "codex";
+  provider?: "grok" | "codex" | "claude";
 }
 
 export interface SessionMetaOverride {
   /** Agent that owns the session. Existing records omit it and therefore mean Grok. */
-  provider?: "grok" | "codex";
+  provider?: "grok" | "codex" | "claude";
   /** Provider-reported cwd for stores that are not laid out under the Grok home. */
   providerCwd?: string;
   /**
    * "This conversation was used just now", asserted by the host rather than
    * read off disk.
    *
-   * Ordering is by transcript mtime, and measured against the real CLI that
-   * file is written about **2.1 seconds** after a send (the turn itself ended
-   * at 4.5s). So between sending and that write, the row you just typed into
-   * sits wherever it was — and a brand-new conversation is not in the list at
-   * all. Waiting is the wrong answer to "I just used this".
+   * Grok ordering is by `updates.jsonl` mtime (see {@link statSessionActivity}),
+   * and measured against the real CLI that file is written about **2.1 seconds**
+   * after a send (the turn itself ended at 4.5s). So between sending and that
+   * write, the row you just typed into sits wherever it was — and a brand-new
+   * conversation is not in the list at all. Waiting is the wrong answer to
+   * "I just used this".
    *
    * Set when a message is sent and when a session is created. It is a FLOOR,
-   * never a ceiling: the transcript wins the moment it is newer, which it will
-   * be within seconds — which is also why persisting it alongside the other
-   * overrides is harmless rather than a lie that outlives the run. By the time
-   * anything reads it again the real file has overtaken it.
+   * never a ceiling: the on-disk clock wins the moment it is newer, which it
+   * will be within seconds — which is also why persisting it alongside the
+   * other overrides is harmless rather than a lie that outlives the run. By
+   * the time anything reads it again the real file has overtaken it.
    */
   activeAt?: number;
   customName?: string;
@@ -62,7 +70,8 @@ export interface SessionMetaOverride {
    *  into the same field made it permanent — grok's own `session_summary` for that
    *  session could never surface, so history read as half-sentences of the opening
    *  prompt while `grok sessions list` showed a clean topic (#96). Ranks BELOW the
-   *  CLI's title, so it only fills the gap before grok writes one. */
+   *  CLI's title, so it only fills the gap before grok writes one. Always stored
+   *  through {@link capAutoName} (`AUTO_NAME_MAX_CHARS`). */
   autoName?: string;
   pinnedAt?: number;
   /** The checkout this pinned session lives in, captured when it was pinned. The
@@ -86,7 +95,22 @@ export interface SessionMetaOverride {
    *  the extension is the only place per-turn usage exists at all (grok reports
    *  it per prompt and never persists it). Sessions predating this field keep
    *  their total uncorrected rather than losing it. */
-  usageLog?: { afterUserMessage: number; afterHistoryEvent?: number; usage?: PromptUsage }[];
+  usageLog?: {
+    afterUserMessage: number;
+    afterHistoryEvent?: number;
+    usage?: PromptUsage;
+    /** This turn's observed adapter prompt size (not the remembered max). */
+    contextUsed?: number;
+    /** Compaction reset; the next `contextUsed` is the new baseline. */
+    compacted?: boolean;
+  }[];
+  /**
+   * Remembered adapter context occupancy (Claude/Codex). The latest prompt
+   * size, monotonic between compactions. Grok still reads `signals.json`.
+   */
+  contextUsed?: number;
+  contextWindow?: number;
+  contextPendingCompact?: boolean;
   /** Last verdict the user gave to an exit_plan_mode card in this session, for the restore-card label. */
   lastPlanVerdict?: "approved" | "rejected" | "abandoned";
   /** Every plan the user resolved in this session, in chronological order. grok's plan.md only
@@ -124,6 +148,126 @@ export interface SessionMetaOverride {
   queuedDraft?: string;
 }
 export type SessionMetaOverrides = Record<string, SessionMetaOverride>;
+
+/** Storage ceiling for `autoName`. History rows elide well before this; the cap
+ *  exists so a pasted prompt cannot bloat `grok.sessionMeta`. */
+export const AUTO_NAME_MAX_CHARS = 120;
+
+/** Prefer a word boundary this close to the cap rather than cutting mid-word. */
+const AUTO_NAME_WORD_LOOKBACK = 20;
+
+/** Storage ceiling for `usageLog`: one entry per user prompt, ~260 bytes each.
+ *  400 is far above anything observed — measured 2026-08-22 across 1,366 stored
+ *  sessions, the longest log was 13 entries and the median was 1. The cap is
+ *  here so a marathon session cannot grow `session-meta.json` without bound,
+ *  not because today's data needs trimming. */
+export const USAGE_LOG_MAX_ENTRIES = 400;
+
+type UsageLogEntry = NonNullable<SessionMetaOverride["usageLog"]>[number];
+
+/**
+ * Fold a `usageLog` back under {@link USAGE_LOG_MAX_ENTRIES} by summing its
+ * oldest entries into a single carry entry. Returns the SAME array when nothing
+ * needed folding, so a load-time sweep can skip the write.
+ *
+ * **Tokens survive exactly**: `sumUsage` over the folded log equals `sumUsage`
+ * over the original, so the session total is unchanged.
+ *
+ * **Context occupancy survives too.** `contextUsed` is monotonic between
+ * compactions, so the last dropped entry's value is already the maximum over
+ * everything dropped — which is what `occupancyFromUsageLog` would have folded
+ * those entries to. Carrying its `compacted` flag preserves the reset boundary.
+ *
+ * **The dollar SESSION cost is deliberately given up** on a folded log.
+ * `enforceCompleteSessionCost` judges coverage by counting distinct
+ * `afterUserMessage` coordinates, and a carry entry carries one where it used
+ * to carry many — so a folded session reports its cost as unknown rather than
+ * as a number that is quietly too small. That is the existing, designed
+ * degradation for incomplete coverage, not a new failure mode, and "unknown"
+ * beats "wrong" for a figure the user reads as money.
+ *
+ * **Known limitation, accepted rather than fixed.** A rewind that lands INSIDE
+ * the folded prefix is lossy: `truncateResolvedAfter` filters entries by
+ * `afterUserMessage`, and the carry sits at the last dropped turn, so rewinding
+ * to an earlier turn discards the carry and with it the usage of turns that
+ * survive. No choice of carry position fixes this — placing it at the first
+ * dropped turn merely swaps under-reporting for over-reporting. Folding is
+ * inherently lossy for rewinds into the folded range.
+ *
+ * It is left alone because reaching it needs 401 uncompacted turns in one
+ * conversation and then a rewind to turn one or two, discarding 399 turns of
+ * work. Measured 2026-08-22 across 1,369 stored sessions: the longest log is 13
+ * entries. If that distribution ever changes, revisit the cap before the fold.
+ */
+export function capUsageLog(entries: UsageLogEntry[]): UsageLogEntry[] {
+  if (entries.length <= USAGE_LOG_MAX_ENTRIES) return entries;
+  // +1 so the carry entry itself fits inside the ceiling.
+  const dropCount = entries.length - USAGE_LOG_MAX_ENTRIES + 1;
+  const dropped = entries.slice(0, dropCount);
+  const boundary = dropped[dropped.length - 1];
+  const summed = sumUsage(dropped);
+  const carry: UsageLogEntry = summed === undefined
+    ? { ...boundary, usage: undefined }
+    : { ...boundary, usage: summed };
+  return [carry, ...entries.slice(dropCount)];
+}
+
+/** Cap every `usageLog` in a session-meta map. Same contract as
+ *  {@link capSessionMetaAutoNames}: the identical object back when nothing
+ *  changed. Never touches any other field. */
+export function capSessionMetaUsageLogs<T extends Record<string, { usageLog?: unknown }>>(
+  meta: T,
+): { value: T; changed: boolean } {
+  let changed = false;
+  let next: T | undefined;
+  for (const id of Object.keys(meta)) {
+    const entry = meta[id];
+    if (!entry || !Array.isArray(entry.usageLog)) continue;
+    const usageLog = capUsageLog(entry.usageLog as UsageLogEntry[]);
+    if (usageLog === entry.usageLog) continue;
+    if (!next) next = { ...meta };
+    (next as Record<string, unknown>)[id] = { ...entry, usageLog };
+    changed = true;
+  }
+  return { value: next ?? meta, changed };
+}
+
+/** Collapse whitespace and cut a candidate `autoName` to {@link AUTO_NAME_MAX_CHARS}.
+ *  Cuts on a nearby word boundary when one exists; otherwise a hard cut.
+ *  Empty / non-string input becomes `""`. Idempotent on an already-capped value. */
+export function capAutoName(name: unknown): string {
+  if (typeof name !== "string") return "";
+  const collapsed = name.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= AUTO_NAME_MAX_CHARS) return collapsed;
+  let end = AUTO_NAME_MAX_CHARS;
+  // Don't split a surrogate pair at the hard limit.
+  if ((collapsed.charCodeAt(end) & 0xfc00) === 0xdc00) end -= 1;
+  const slice = collapsed.slice(0, end);
+  const boundary = slice.lastIndexOf(" ");
+  const minKeep = AUTO_NAME_MAX_CHARS - AUTO_NAME_WORD_LOOKBACK;
+  if (boundary >= minKeep) return slice.slice(0, boundary).trimEnd();
+  return slice.trimEnd();
+}
+
+/** Cap every `autoName` in a session-meta map. Returns the same object when
+ *  nothing changed so a load-time sweep can skip the write. Never touches
+ *  `customName` or any other field. */
+export function capSessionMetaAutoNames<T extends Record<string, { autoName?: unknown }>>(
+  meta: T,
+): { value: T; changed: boolean } {
+  let changed = false;
+  let next: T | undefined;
+  for (const id of Object.keys(meta)) {
+    const entry = meta[id];
+    if (!entry || typeof entry.autoName !== "string") continue;
+    const autoName = capAutoName(entry.autoName);
+    if (autoName === entry.autoName) continue;
+    if (!next) next = { ...meta };
+    (next as Record<string, unknown>)[id] = { ...entry, autoName };
+    changed = true;
+  }
+  return { value: next ?? meta, changed };
+}
 
 /** Pick the newest user-visible session from an already-scoped history list. */
 export function mostRecentSession(entries: readonly SessionListEntry[]): SessionListEntry | undefined {
@@ -192,13 +336,14 @@ export interface TrustedSessionCwd {
  * CLI exit reports `error` down the same status path.
  *
  * Fixing the trigger was the wrong instinct. What made those reachable was the
- * EVIDENCE: session-directory mtimes move when a conversation is merely loaded,
- * so a remote could manufacture the proof. `newestActivityAt` must therefore be
- * the TRANSCRIPT and nothing else — see {@link newestTranscriptMtime}, which
- * deliberately does not fall back to `summary.json` the way `indexSessions`
- * does. A remote cannot move a transcript without running a turn, and it cannot
- * run a turn in a project it is fenced out of. With evidence that cannot be
- * forged, it stops mattering which event asks the question.
+ * EVIDENCE: session-directory mtimes — and `events.jsonl` — move when a
+ * conversation is merely loaded, so a remote could manufacture the proof.
+ * `newestActivityAt` must therefore be {@link newestTranscriptMtime}, which
+ * stats `updates.jsonl` only and never falls back to `events.jsonl` or
+ * `summary.json` the way {@link indexSessions} does. A remote cannot move that
+ * file without running a turn, and it cannot run a turn in a project it is
+ * fenced out of. With evidence that cannot be forged, it stops mattering
+ * which event asks the question.
  */
 export function expiredArchiveChoiceKeys(opts: {
   archives: RepoArchives;
@@ -310,7 +455,7 @@ export interface RepoListEntry {
   updatedAt: number;
   /** Provider a fresh conversation in this project will use. Optional so older
    * hosts keep rendering their existing provider-neutral New-session row. */
-  defaultProvider?: "grok" | "codex";
+  defaultProvider?: "grok" | "codex" | "claude";
   worktreeLabel?: string;
   /**
    * Archive choice flattened for the wire. **Present when the host supports
@@ -859,8 +1004,9 @@ function buildEntry(
   cwd: string,
   overrides: SessionMetaOverrides,
   fallbackNow: number,
-  /** Transcript mtime — last time the conversation actually MOVED. Preferred
-   *  over `updated_at`, which the CLI restamps on a mere open. */
+  /** Recency-clock mtime — last time the conversation actually MOVED
+   *  ({@link statSessionActivity}). Preferred over `updated_at`, which the
+   *  CLI restamps on a mere open. */
   activityAt?: number,
 ): SessionListEntry {
   const id = (raw?.info?.id as string) ?? dirName;
@@ -910,9 +1056,17 @@ function buildEntry(
 export interface SessionIndexEntry {
   /** Directory name = grok session id. */
   id: string;
-  /** Modification time of the session's `summary.json` (ms). A cheap proxy for last activity —
-   *  grok rewrites that file (which also holds `updated_at`) on every turn. */
+  /** Recency-clock mtime (ms) from {@link statSessionActivity} — `updates.jsonl`
+   *  when present, else `events.jsonl`, else `summary.json`. Also the key the
+   *  host's `sessionCache` invalidates on, so a load (which does not touch
+   *  `updates.jsonl`) is a cache hit and a real turn is a miss. */
   mtimeMs: number;
+  /** True when `events.jsonl` exists. False is a summary-only shell — created
+   *  (often by a credential probe or an abandoned New session) and never spoken
+   *  to. The sweep uses this to find those shells even when they have fallen
+   *  outside the newest-N window. Set by {@link indexSessions}; omitted by
+   *  callers that only need identity + mtime. */
+  hasTranscript?: boolean;
 }
 
 export interface IndexDeps {
@@ -996,11 +1150,67 @@ export function findSessionCatalogCwd(deps: {
   return undefined;
 }
 
-/** Cheap ordering pass: every session id newest-first by `summary.json` mtime, WITHOUT reading or
- *  parsing any summary content. One `stat` per dir instead of a `stat` + `read` + `JSON.parse`, so
- *  it stays fast even with thousands of sessions. The caller reads (via `readSessionEntries`) only
- *  the window it actually shows. mtime is an approximate sort key; the exact `updated_at` order is
- *  re-applied within the loaded page after reading.
+const SESSION_UPDATES = "updates.jsonl";
+const SESSION_EVENTS = "events.jsonl";
+const SESSION_SUMMARY = "summary.json";
+
+/**
+ * Recency clock for one grok session directory. Stat-only (no reads).
+ *
+ * Preference:
+ *   1. `updates.jsonl` — persist/replay log. A `session/load` with no turn
+ *      leaves it alone; a real turn advances it. Measured on a fresh process:
+ *      load restamps `events.jsonl` / `chat_history.jsonl` / `summary.json`
+ *      and leaves `updates.jsonl` and `rewind_points.jsonl` untouched.
+ *   2. `events.jsonl` — spoken-to session from before the updates log
+ *      existed (~13% of dirs). A load still restamps this file, so those
+ *      rows can still jump; the next real turn grows `updates.jsonl` and
+ *      the preferred clock takes over. `rewind_points.jsonl` is also
+ *      load-stable but a conversation-only turn may not touch it, so it is
+ *      not a rank signal.
+ *   3. `summary.json` — no transcript yet. Same fallback as before, so a
+ *      brand-new conversation still lists.
+ *
+ * `hasTranscript` is still "events.jsonl exists" — the empty-session sweep
+ * keys on that, not on the rank file. A stray file that is not a session
+ * dir makes every join miss and this returns undefined.
+ */
+export function statSessionActivity(
+  fs: FsLike,
+  sessionDir: string,
+): { mtimeMs: number; hasTranscript: boolean } | undefined {
+  let eventsMtime: number | undefined;
+  try {
+    eventsMtime = fs.statSync(path.join(sessionDir, SESSION_EVENTS)).mtimeMs;
+  } catch {
+    /* no events.jsonl */
+  }
+  if (eventsMtime !== undefined) {
+    try {
+      return {
+        mtimeMs: fs.statSync(path.join(sessionDir, SESSION_UPDATES)).mtimeMs,
+        hasTranscript: true,
+      };
+    } catch {
+      return { mtimeMs: eventsMtime, hasTranscript: true };
+    }
+  }
+  try {
+    return {
+      mtimeMs: fs.statSync(path.join(sessionDir, SESSION_SUMMARY)).mtimeMs,
+      hasTranscript: false,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Cheap ordering pass: every session id newest-first by {@link statSessionActivity}
+ *  mtime, WITHOUT reading or parsing any summary content. One or two `stat`s per
+ *  dir instead of a `stat` + `read` + `JSON.parse`, so it stays fast even with
+ *  thousands of sessions. The caller reads (via `readSessionEntries`) only the
+ *  window it actually shows. mtime is an approximate sort key; the exact
+ *  `updated_at` order is re-applied within the loaded page after reading.
  *
  *  Scans **all case-aliases** of `cwd` ({@link sessionCatalogDirs}) so a Windows project split
  *  across `c:\…` and `C:\…` catalog leaves returns the union. Duplicate ids keep the higher mtime. */
@@ -1009,7 +1219,7 @@ export function indexSessions(deps: IndexDeps): SessionIndexEntry[] {
   const platform = deps.platform ?? process.platform;
   const catalogs = sessionCatalogDirs({ fs, grokHome, cwd, platform });
   if (!catalogs.length) return [];
-  const byId = new Map<string, number>();
+  const byId = new Map<string, { mtimeMs: number; hasTranscript: boolean }>();
   for (const dir of catalogs) {
     let names: string[];
     try {
@@ -1022,52 +1232,38 @@ export function indexSessions(deps: IndexDeps): SessionIndexEntry[] {
       if (!isValidSessionId(name)) continue;
       const resolvedSessionDir = path.join(dir, name);
       if (!isSessionDirChild(dir, resolvedSessionDir, platform)) continue;
-      let st: { mtimeMs: number };
-      try {
-        // Order by the TRANSCRIPT, not by summary.json. Opening a conversation
-        // rewrites summary.json — the CLI rebuilds system_prompt.txt and
-        // prompt_context.json and restamps `updated_at` — without adding a
-        // single message, so merely visiting a conversation promoted it to the
-        // top of Recent and of its project. Measured against a real
-        // 1592-session store: 46 were sitting above their true activity for
-        // exactly that reason, which is why it read as intermittent.
-        // `events.jsonl` only moves when the conversation does.
-        //
-        // It also carries the "is this a real session dir?" check the
-        // summary.json stat used to provide: a stray file entry makes the join
-        // non-existent and statSync throws.
-        st = fs.statSync(path.join(resolvedSessionDir, "events.jsonl"));
-      } catch {
-        try {
-          // No transcript yet — created but never spoken to. Fall back so it
-          // still lists, and keep the dir-validity check for that case.
-          st = fs.statSync(path.join(resolvedSessionDir, "summary.json"));
-        } catch {
-          continue;
-        }
-      }
+      const clock = statSessionActivity(fs, resolvedSessionDir);
+      if (!clock) continue;
       const prev = byId.get(name);
-      if (prev === undefined || st.mtimeMs > prev) byId.set(name, st.mtimeMs);
+      if (!prev || clock.mtimeMs > prev.mtimeMs) {
+        byId.set(name, { mtimeMs: clock.mtimeMs, hasTranscript: clock.hasTranscript });
+      } else if (clock.hasTranscript) {
+        prev.hasTranscript = true;
+      }
     }
   }
-  const out: SessionIndexEntry[] = [...byId.entries()].map(([id, mtimeMs]) => ({ id, mtimeMs }));
+  const out: SessionIndexEntry[] = [...byId.entries()].map(([id, rec]) => ({
+    id,
+    mtimeMs: rec.mtimeMs,
+    hasTranscript: rec.hasTranscript,
+  }));
   out.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return out;
 }
 
 /**
- * Newest TRANSCRIPT mtime under `cwd`'s session catalogs, or 0.
+ * Newest real-activity mtime under `cwd`'s session catalogs, or 0.
  *
- * Deliberately NOT `indexSessions`, which falls back to `summary.json` when a
- * session has no transcript yet. That fallback is right for ordering a list —
- * a brand-new conversation should still appear — and wrong for anything that
- * decides authorization, because grok rewrites `summary.json` when a session is
- * merely LOADED. A remote could therefore manufacture "this project was worked
- * in" by getting an empty session reloaded, which is exactly how the archive
- * fence was bypassed twice.
+ * Deliberately NOT `indexSessions` / {@link statSessionActivity}: those fall
+ * back to `events.jsonl` then `summary.json` so a brand-new or pre-updates
+ * conversation still lists. That fallback is right for ordering and wrong
+ * for authorization — grok restamps both files on a mere `session/load`. A
+ * remote could therefore manufacture "this project was worked in" by getting
+ * a session reloaded, which is exactly how the archive fence was bypassed.
  *
- * `events.jsonl` only moves when a turn actually runs. That is evidence a remote
- * cannot produce without already being allowed in.
+ * `updates.jsonl` is the only persist file a load leaves alone and a real
+ * turn advances. No fallback. A dir that never grew that log reports
+ * nothing, even if `events.jsonl` exists.
  */
 export function newestTranscriptMtime(deps: IndexDeps): number {
   const { fs, grokHome, cwd, log } = deps;
@@ -1086,10 +1282,10 @@ export function newestTranscriptMtime(deps: IndexDeps): number {
       const sessionDir = path.join(dir, name);
       if (!isSessionDirChild(dir, sessionDir, platform)) continue;
       try {
-        const st = fs.statSync(path.join(sessionDir, "events.jsonl"));
+        const st = fs.statSync(path.join(sessionDir, SESSION_UPDATES));
         if (st.mtimeMs > newest) newest = st.mtimeMs;
       } catch {
-        // No transcript: never spoken to, so it says nothing about activity.
+        // No updates log: a load writes events.jsonl, so that file is not evidence.
       }
     }
   }
@@ -1193,14 +1389,11 @@ export function readSessionEntries(deps: ReadEntriesDeps): SessionListEntry[] {
       log?.(`[sessions] could not read summary.json for ${id}: ${(e as Error).message}`);
       continue;
     }
-    // Last real activity, for the same reason indexSessions stats it: `updated_at`
-    // inside summary.json is restamped by merely OPENING the conversation, so
-    // sorting on it moved a session you only glanced at to the top. Undefined
-    // when there is no transcript yet, and buildEntry then keeps `updated_at`.
-    let activityAt: number | undefined;
-    try {
-      activityAt = fs.statSync(path.join(resolvedSessionDir, "events.jsonl")).mtimeMs;
-    } catch { /* no transcript yet — fall back to the recorded stamp */ }
+    // Same clock as indexSessions: `updated_at` inside summary.json is restamped
+    // by merely OPENING the conversation. Undefined when there is no transcript
+    // yet, and buildEntry then keeps `updated_at`.
+    const clock = statSessionActivity(fs, resolvedSessionDir);
+    const activityAt = clock?.hasTranscript ? clock.mtimeMs : undefined;
     out.push(buildEntry(id, raw, cwd, overrides, now, activityAt));
   }
   return out;
@@ -1209,6 +1402,42 @@ export function readSessionEntries(deps: ReadEntriesDeps): SessionListEntry[] {
 export interface ContextUsage {
   used: number;
   window?: number;
+}
+
+export function persistSessionContext(
+  override: SessionMetaOverride,
+  event: ContextOccupancyEvent,
+): SessionMetaOverride {
+  const next = applyContextOccupancy({
+    used: override.contextUsed,
+    window: override.contextWindow,
+    pendingCompact: override.contextPendingCompact,
+  }, event);
+  return {
+    ...override,
+    contextUsed: next.used,
+    contextWindow: next.window,
+    contextPendingCompact: next.pendingCompact || undefined,
+  };
+}
+
+export function persistedContextUsage(override: SessionMetaOverride | undefined): ContextUsage | null {
+  const used = override?.contextUsed;
+  if (typeof used !== "number" || !Number.isFinite(used) || used <= 0) return null;
+  const window = override?.contextWindow;
+  const hasWindow = typeof window === "number" && Number.isFinite(window) && window > 0;
+  return { used, window: hasWindow ? window : undefined };
+}
+
+export function contextUsageFromLog(
+  entries: SessionMetaOverride["usageLog"],
+  window?: number,
+): ContextOccupancyState {
+  const folded = occupancyFromUsageLog(entries);
+  return {
+    ...folded,
+    window: typeof window === "number" && Number.isFinite(window) && window > 0 ? window : folded.window,
+  };
 }
 
 /** Read grok's persisted context usage from a session's `signals.json`

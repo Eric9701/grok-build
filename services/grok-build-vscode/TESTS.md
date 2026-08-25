@@ -4,10 +4,12 @@ Three layers:
 
 1. **Grok-free automated tests** (Vitest) — pure-logic unit tests plus happy-dom DOM tests that drive the real `media/chat.js`, plus a fast TerminalManager suite that spawns real `/bin/sh` children. **1343 tests, all passing in a few seconds.** The per-file list below is **non-exhaustive** and its counts predate several feature releases (voice, ask-question, plan-mode, v1.4.0 media/subagent/logout, v1.4.19 card-collapse/background-task, the Agent Dashboard/session-pool, telemetry, vision input, and the typed host↔webview message contract) — it's indicative, not exact. `npm test` is the source of truth. **None of them spawn the `grok` binary**, so the whole suite runs in CI on a clean Ubuntu box (`.github/workflows/ci.yml`'s `test` job runs `npm ci && npm run compile && npm test && npm run package` and never installs grok). **CI's `test` job runs this exact suite — `npm test` locally ≡ that job, verbatim.**
 2. **Real-grok pre-release suite** (`npm run test:live`, `scripts/live-tests.cjs`) — an **on-demand, run-on-request** gate that spawns the real `grok` binary and drives it over ACP end-to-end: handshake, a **capability-drift probe** (`capabilities` — snapshots advertised `promptCapabilities` and asserts the documented `image:false` baseline; with `vision-prompt` pinning that vision *actually* works, the pair is an advertised-vs-actual drift detector), prompt round-trip, a **mid-turn cancel** (`cancel-mid-turn` — the Stop-button contract: an id-less `session/cancel` settles the in-flight prompt with a cancelled stopReason and the session stays usable, #37), **mid-turn steering** (`interject` — the Steer contract, #52: `_x.ai/interject` reaches the model mid-turn AND the turn still ends uncancelled, so steering never destroys in-flight tool work), **conversation forking** (`session-fork` — #48: a new session id, the parent's history carried into it, loadable), **concurrent sessions** (`parallel-sessions` — two CLI processes on one workspace answer overlapping prompts independently, no cross-talk), session restore, the **plan-mode gate modeled as the two real flows** (primer → plan → `[Plan rejected]` (gate up, 0 workspace mutations + a byte-identical-seed-file containment canary) → `[Plan approved]` (gate down, implementation can land)), image gen, video gen, the two **v1.6.1 notification-rail canaries** — `compact-notification` (after `/compact`, an `auto_compact_completed.tokens_after` arrives on `_x.ai/session_notification` and feeds the real `contextUsedFromCompactNotification`; asserts NO `auto_compact_started` on a manual compact, pinning the auto/manual split) and `effort-live` (set_model `_meta.reasoningEffort` applies live and is confirmed **applied** — not just accepted — by a `model_changed` whose `reasoning_effort` equals the target) — and subagent delegation on BOTH agent families — `subagent` (default model / grok-build agent) and `subagent-composer` (first `*composer*` model) — each of which now **hard-asserts the LIVE `_x.ai/session_notification` lifecycle** (`subagent_spawned` + a matching `subagent_finished` with a finite `duration_ms`; the CLI transmits these as of grok 0.2.101 and the extension fills the card's duration/output from them, incl. Composer whose tool-channel completion carries none). Each **SKIP**s when grok doesn't delegate or the model isn't available. It **reuses the real compiled modules** (`out/acp-dispatch.js`, `out/plan-gate.js`, `out/grok-primer.js`, `media/webview-helpers.js`) so it tests shipped logic, not re-implementations. Non-deterministic / entitlement-gated outcomes **SKIP** (don't fail the gate); only a real regression **FAILS**. It is **never run by `npm test` or CI** — it needs an authenticated `grok` + network + subscription. The **`release.*` scripts now run it by default** (`-SkipLive`/`--skip-live` opts out). Flags: `--smoke` (handshake + capability-drift only), `--quick` (skip slow tests incl. the 4-turn plan-mode), `--only=<name>`, `--skip=<name>`, `GROK_BIN=<path>`. See [CLAUDE.md § Test taxonomy](CLAUDE.md).
-3. **VS Code integration smoke** (`npm run test:integration`, `@vscode/test-electron`) — boots a real VS Code, activates the extension, asserts the contributed commands are registered, and resolves the webview via the **missing-CLI onboarding path** (needs no grok binary), covering host glue the unit suite can't (activation, `getHtml`/CSP, `localResourceRoots`, command registration). Compiles in isolation (`integration/tsconfig.json` → `out-integration/`); `.vscode-test.mjs` drives it. Runs in CI as a **required** job under `xvfb` (validated passing against a real VS Code Extension Host). Still grok-free. Not part of `npm test` (needs a headed/`xvfb` VS Code + an Electron download).
+3. **VS Code integration smoke** (`npm run test:integration`, `@vscode/test-electron`) — boots a real VS Code, activates the extension, asserts the contributed commands are registered, and resolves the webview via the **missing-CLI onboarding path** (needs no grok binary), covering host glue the unit suite can't (activation, `getHtml`/CSP, `localResourceRoots`, command registration). The repo-selection suite then points `grok.cliPath` at `test/fixtures/fake-grok-acp.cjs` (`provisionFakeGrok`) so remote resume / `session/load` and matching-sessionId worktree tests run hermetically on every platform. Compiles in isolation (`integration/tsconfig.json` → `out-integration/`); `.vscode-test.mjs` drives it. Runs in CI as a **required** job under `xvfb` (validated passing against a real VS Code Extension Host). Still grok-binary-free. Not part of `npm test` (needs a headed/`xvfb` VS Code + an Electron download).
 
 4. **Screens checks** (`npm run e2e:screens`, here **and** in the relay repo) — a real Chromium / real Electron window driven through chat → file panel → open a file → edit, capturing a frame at each step and asserting what layer 1 structurally cannot. The vitest DOM suites run in happy-dom, which has **no layout engine**: rects are zeros and stylesheets never apply, so an icon with no size, a control pushed off-screen, or a panel overlapping the header all satisfy every assertion they can make. The file panel's action row shipped as three EMPTY BOXES through a green suite, three review rounds and a deploy; a human found it in a screenshot. These assert rendered geometry — every painted icon occupies space, the panel starts below the bar holding its toggle, nothing scrolls sideways — and leave the frames in `.screens/` for a person or a model to look at. Grok-free and deterministic, so safe in a gate. The desktop one builds the **grok-qa fixture** (`scripts/qa-fixture.mjs`): a fixed project *and* a fixed session store pointed at via `GROK_HOME`, so the rail has real history in it and frames are comparable between runs.
 5. **Live app smoke** (`npm run smoke:live`) — the desktop app against the **real** grok CLI: start it, send a prompt, wait for the reply, open the file panel on real files, confirm the CLI actually wrote a transcript. Complements (2) rather than repeating it — `test:live` drives the CLI over ACP and proves the *protocol*; this drives the *app* and proves a person can use it. Prints a report and leaves frames to read. **Never in `npm test` or CI** (real CLI, key, network), and it refuses to fall back to the test fixture when no real CLI is present, because a green run against a fake is worse than no run.
+
+6. **Lifecycle host** (`npm run e2e:lifecycle-host`) — a long-lived real desktop host the relay repo's orchestrator spawns as a child. Not a driver: it provisions the fake ACP CLI, connects the shipped uplink to `GROK_RELAY_URL` with a development-only injected token, prints `GROK_LIFECYCLE_HOST_READY` once the relay admits the host (`clients` frame), clears the ready deadline on that line, and idles until it reads `GROK_LIFECYCLE_HOST_SHUTDOWN` on stdin (then kills Electron, waits for its actual exit, and exits; SIGINT/SIGTERM remain a fallback). Restart is shutdown + spawn against the same `GROK_HOME`. The token gate (`resolveInjectedDeviceToken`) is in the grok-free unit suite; the runner itself is not. A production build never accepts the injected token.
 
 Separately, **grok-dependent probes** live as standalone scripts under `research/*.cjs`. They exercise the real CLI's ACP behavior (e.g. confirming `exit_plan_mode` treats any client reply as approval, or capturing the native-Windows media/subagent wire shapes) and are run **manually** — Vitest's `include` glob is `test/**/*.test.ts`, so it never collects them. They're non-destructive (ACK writes without touching disk and run in a temp cwd) and require a `grok` binary on PATH; CI doesn't run them. The probes are the **discovery** tool (capture an undocumented shape once); layer 2 is the **regression** tool (re-verify the shapes still hold before each release).
 
@@ -78,10 +80,11 @@ The wire format is the highest-value test surface: ACP changes break everything 
 
 ### `test/slash-filter.test.ts` — slash autocomplete + dispatch gate
 
-- `getSlashQuery` only activates after `/` at line-start or newline (no false positives on `path/foo/bar`)
+- `getSlashQuery` activates on `/` at position 0 (`atStart`) or after whitespace (mid-prompt skills); no false positives on `path/foo/bar`
+- `isAdvertisedSkill` is true only when `_meta.scope` + `_meta.path` are non-empty strings
 - Empty query returns the full command list
 - Name filter is case-insensitive substring, prefix matches first then mid-name, stable within each tier (#110)
-- `applySlashPick` replaces only the slash token, preserves trailing text, returns the new caret position
+- `applySlashPick` replaces the slash token at the caret (including mid-prompt skills), preserves trailing text, returns the new caret position
 - `matchSlashCommand` recognizes an advertised command only at position 0 (rejects Unix paths / mid-line slashes)
 - `filterAdvertisedCommands` drops the config-mutating `/always-approve` from both the autocomplete list and the dispatch gate (#31)
 
@@ -89,6 +92,7 @@ The wire format is the highest-value test surface: ACP changes break everything 
 
 - Typing `ui` finds `ux-ui-promax`; `design` finds `web-design`
 - Prefix matches rank above substring matches; non-matches stay out; matching is case-insensitive; no-match hides the popover
+- Skills (`_meta.scope`+`_meta.path`) are offered mid-prompt; commands only at position 0 (#110)
 
 ### `test/mention.test.ts` — "@" file autocomplete, pure halves (24 tests)
 
@@ -159,7 +163,9 @@ These actually spawn real shell children (real `/bin/sh`, or real PowerShell on 
 - Returns `undefined` when nothing is found
 - **`extensionWasUpgraded`** — true on any version change (incl. a downgrade), false on a fresh install / unchanged version / empty stored version; gates the silent `grok update` the extension runs once when its own version changes
 
-### `test/sessions.test.ts` — session listing & naming (93 tests)
+### `test/sessions.test.ts` — session listing & naming
+
+- **`capAutoName` / `capSessionMetaAutoNames`** — storage ceiling for `autoName` (`AUTO_NAME_MAX_CHARS` 120): long prompts cut on a nearby word boundary, multi-line whitespace collapsed, already-short and exactly-at-limit names unchanged, empty/undefined → `""`. The map helper caps only `autoName`, leaves `customName` and already-short entries byte-identical, and is a no-op the second time.
 
 - Lists sessions from grok's on-disk layout (`~/.grok/sessions/<urlencoded-cwd>/<id>/`) for the current cwd only
 - Row naming precedence (#96): a manual `customName`, then grok's own title (`cliSessionTitle` — `session_summary`, else `generated_title`), then our first-message `autoName`, then `Untitled (<date>)`. A legacy primer-derived title is rejected in both its summarized and verbatim forms, while a real session that merely mentions a primer is kept
@@ -168,7 +174,11 @@ These actually spawn real shell children (real `/bin/sh`, or real PowerShell on 
 - **`isEmptySession`** — the predicate the sweep deletes on (#97). Chat history is authoritative: zero real user queries means empty, whatever `num_messages` says, which covers both today's never-typed-into sessions and legacy primer-only ones. Renamed, pinned, worktree-bound and subagent sessions are refused, as is a history file that exists but cannot be read; a directory holding nothing but `summary.json` is the unloadable shape and does qualify
 - **`historyIsIntelligible`** — the interlock beneath it: a history in a format we cannot parse is never called empty (one CLI schema change would otherwise make the sweep delete everything), while a truncated final line from a write in progress still leaves the real queries before it visible, and a zero-byte file falls through to the message count rather than to a parse failure
 
-### `test/plan-gate.test.ts` — plan-mode policy (63 tests)
+### `test/plan-mode-transition.test.ts` — Plan chrome follows the RPC outcome
+
+Drives `GrokSidebar.setMode("plan")` against a stub client. A rejected `session/set_mode` must leave `planActive` down and keep the previous Auto-accept badge; a successful one must not raise the host chrome until the RPC returns. The same-chunk race — success reply plus a `terminal/create` in one stdout write — is pinned in `test/acp.test.ts` through the real readline dispatch, not by calling handlers directly. Auto accept → Plan plus a same-chunk `session/request_permission` is pinned here through that same readline path: grok must reject a mutating edit, and Codex/Claude must not auto-select their plan-review `allow_once`/`allow_always` (Codex `implement_plan`, Claude `acceptEdits`) because a stale `session.planActive` read would still see `autoApprove` and grant implementation. Codex must also not apply grok's write/terminal refusal (`usesClientPlanGate` stays false). The inverse click — a pending adapter plan-review card, then a flip to Auto accept — must not write `implement_plan` / `acceptEdits` / `default`, including when the mode-change RPC then fails; the card stays in `pendingPermissions` and a later `permissionAnswer` is still accepted. A sibling pending edit is still auto-approved (#64). A `switch_mode` card that arrives after Auto accept is already on is also left for a human.
+
+### `test/plan-gate.test.ts` — plan-mode policy (69 tests)
 
 The pure heart of client-side plan enforcement. No spawn, no fs — just the classification logic the **three** choke points call (`fs/write_text_file`, `terminal/create`, and — since 2.1.1 — `session/request_permission`, which previously auto-declined every `execute` on tool kind alone).
 
@@ -179,6 +189,10 @@ The pure heart of client-side plan enforcement. No spawn, no fs — just the cla
 - **One narrow control-flow grammar** — `if (Test-Path … | $? | $LASTEXITCODE) { … } else { … }` with both branches recursively classified. Script-block braces stay unsafe by default; nested control flow, computed conditions and calculated properties (`@{e={ … }}`) remain refused
 - **Regression corpus** — each bypass found during the 2.1.1 review rounds is pinned: a mutating command riding along with a plan write, `$()` inside a quoted payload, a bare-paren subexpression behind an allowlisted head, and escaped dangerous options
 
+### `test/session-start-decision.test.ts` / `test/send-start-race.test.ts` — send vs startSession
+
+A concurrent `startSession` used to swallow a send: `handleSend` echoed `userMessage`, then `gen !== session.gen` returned with no turn-failed signal. `decideSessionStart` is the pure gate (`ensure` refuses a live turn and reuses a matching ready client). The sidebar tests drive real `handleSend` / `startSession`: an opportunistic start during a turn leaves `gen` and the client untouched; a replacing start after the echo emits `INTERRUPTED_SEND_TEXT` as `error` with `code: "interrupted-send"` (not `agentError`); a send behind a paused start issues exactly one prompt after startup settles.
+
 ### `test/queued-send-commit.test.ts` — queued-send claim lifecycle (4 tests)
 
 The queue is released at `handleSend`'s synchronous commit point, not before it. Covers: a send that bails before committing keeps the text, a send that commits releases it and cannot be re-flushed at turn end, and text appended during the attempt survives.
@@ -187,11 +201,17 @@ The queue is released at `handleSend`'s synchronous commit point, not before it.
 
 Plan mode hides persistent-grant options on `execute` cards, and the host validates an answer against the options it actually rendered — so a remote client cannot answer with an option id it was never offered. Covers restoring the full set once plan mode exits.
 
-### `test/persisted-state.test.ts` — durable client state (19 tests)
+### `test/persisted-state.test.ts` — durable client state
 
 `PersistedState` keeps session names, pins, archives and the install id in `~/.grok/client-state/*.json` instead of VS Code `globalState`, so another client on the same machine reads the same state. Covered: keys it does not own delegate straight to `globalState`; the first-run migration seeds each file from `globalState` **and preserves the existing install id** (a fresh one would read as a new machine at the relay and mint a second device row against the one-device cap); disk beats a stale shadow, and a disk value hydrates the shadow so downgrade still finds it; a synchronous read refreshes when another client changed the file; a write **rebases on the current disk snapshot** — another client's entries survive, and *the writer's own deletions still delete* rather than being resurrected; the install id is created atomically, so of two racing instances one wins and the other adopts it; write-then-rename; corrupt JSON and wrong-shaped JSON (`null`, arrays, unrelated objects) both fall back to the shadow rather than crashing activation on `Object.values`; an unwritable directory degrades to `globalState`; writes stay ordered.
 
+Load-time `autoName` sweep: a fat prompt is capped on the first read (never empty, never gated on the write), a short name stays byte-identical, `customName` is never touched, the file is written only when something changed, a second load is a no-op, and an entry another client added between load and that write survives the rebase.
+
 Injected `StateFs` mirrors node's real `writeFileSync(file, data, options)` signature deliberately: an earlier double read the exclusive-create flag off a fourth positional argument, which node **silently ignores**, so the atomic create was inert in production while the suite stayed green.
+
+### `test/auto-name-write.test.ts` — autoName write sites
+
+The two live `autoName` writers (`sessionTitle` and adapter history refresh) plus `updateSessionMeta` (the setter they share) all persist `capAutoName`'s result, so a later third path through the setter cannot store a raw prompt.
 
 ### `test/webview-helpers.test.ts` — pure webview helpers (153 tests)
 
@@ -214,9 +234,11 @@ happy-dom test (see [Webview DOM tests](#webview-dom-tests) below). Drives the s
 - `planNotice` / `planBlocked` (command + write variants) render a `.plan-notice` with the right text
 - Read-only plan-history card renders with the persisted verdict label
 
-### `test/acp.test.ts` — ACP client helpers (3 tests)
+### `test/acp.test.ts` — ACP client helpers
 
 - **Request timer lifecycle** — a resolved `request()` clears its timeout (no leaked timer).
+- **Plan gate same-chunk raise** — a successful `session/set_mode` reply and a mutating `terminal/create` in one stdout write must block the command. The gate is committed in the response hook so readline cannot dispatch the request before `planActive` is up.
+- **Advertised `clientCapabilities` (#79)** — `acpClientCapabilities(provider, grokVersion, versionVerified)` withholds `readTextFile` only for a live-verified grok >= 1.0.4 (no upper cap). A live 1.0.3, a cache/unverified 1.x banner, grok 0.2.117, Codex, and an unknown version keep the delegated handshake. The fake-CLI integration lifecycle test asserts the 1.0.4 wire payload; a second case asserts 0.2.117 still advertises `readTextFile`.
 - **Spawn argv** — `buildGrokAgentArgs()` returns `["agent", "stdio"]` with no effort, and `["agent", "--reasoning-effort", <value>, "stdio"]` (flag before the subcommand) for a valid effort.
 
 ### `test/acp-integration.test.ts` — ACP wire layer + plan-mode gate (17 tests)

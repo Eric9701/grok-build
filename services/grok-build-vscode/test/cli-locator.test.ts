@@ -334,6 +334,7 @@ describe("resolvePlanModeAvailability (#105 — cache fallback)", () => {
     expect(calls).toBe(2);
     expect(result.usedCache).toBe(true);
     expect(result.nextCache).toBeUndefined();
+    expect(result.versionOutput).toBe(newEnough);
     expect(result.decision).toEqual({ available: true, verified: false });
   });
 
@@ -345,6 +346,7 @@ describe("resolvePlanModeAvailability (#105 — cache fallback)", () => {
     });
     expect(result.usedCache).toBe(false);
     expect(result.nextCache).toBeUndefined();
+    expect(result.versionOutput).toBe("");
     expect(result.decision).toEqual({
       available: false,
       verified: false,
@@ -414,6 +416,7 @@ describe("resolvePlanModeAvailability (#105 — cache fallback)", () => {
       identity,
     });
     expect(written.usedCache).toBe(false);
+    expect(written.versionOutput).toBe(newEnough);
     expect(written.nextCache?.[identity.path]).toEqual({
       mtimeMs: identity.mtimeMs,
       size: identity.size,

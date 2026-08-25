@@ -1,8 +1,121 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 // @ts-expect-error — plain JS module, no types
-import { looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, parseAttachmentContext, parseSelectionBlocks, parseImageTags, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, commandProgramLabel, commandTextPreview, extractToolResultOutput, computeLineDiff, spokenTextFromMarkdown, isRelaySendRejection, panelReclampOnResizeAllowed, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx } from "../media/webview-helpers.js";
+import { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, FILE_EXTS, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, parseAttachmentContext, parseSelectionBlocks, parseImageTags, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, filterCommands, highlightQueryParts, appendHighlightedText, commandProgramLabel, commandTextPreview, MAX_COMMAND_OUTPUT_CHARS, capCommandOutput, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, spokenTextFromMarkdown, isRelaySendRejection, panelReclampOnResizeAllowed, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, createPendingOverlay, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards } from "../media/webview-helpers.js";
+import { Window } from "happy-dom";
 import { buildPrompt, buildPromptWithImages } from "../src/prompt-builder";
 import { makeExplicitChip, makeImplicitChip, makeImageChip } from "../src/chips";
+
+describe("contextOverheadTokens", () => {
+  it("is used minus system minus messages when that remainder is positive", () => {
+    expect(contextOverheadTokens(24273, 1516, 22757)).toBeNull();
+    expect(contextOverheadTokens(25000, 2000, 20000)).toBe(3000);
+  });
+
+  it("floors a negative remainder and hides a zero row", () => {
+    expect(contextOverheadTokens(10, 8, 5)).toBeNull();
+    expect(contextOverheadTokens(10, 6, 4)).toBeNull();
+  });
+
+  it("needs used, system, and messages together", () => {
+    expect(contextOverheadTokens(100, 10, undefined)).toBeNull();
+    expect(contextOverheadTokens(100, undefined, 40)).toBeNull();
+    expect(contextOverheadTokens(undefined, 10, 40)).toBeNull();
+  });
+});
+
+describe("nextContextBreakdown", () => {
+  const snapshot = {
+    type: "contextUsage" as const,
+    used: 100,
+    window: 200000,
+    systemPromptTokens: 10,
+    messageTokens: 80,
+    freeTokens: 199890,
+  };
+
+  it("binds session/info addends to the used they arrived with", () => {
+    const next = nextContextBreakdown(null, snapshot);
+    expect(next).toMatchObject({ used: 100, window: 200000, systemPromptTokens: 10, messageTokens: 80, freeTokens: 199890 });
+    expect(contextBreakdownIsCurrent(next, 100, 200000)).toBe(true);
+    expect(contextOverheadTokens(next.used, next.systemPromptTokens, next.messageTokens)).toBe(10);
+  });
+
+  it("keeps the snapshot when a used-only frame moves occupancy", () => {
+    const prev = nextContextBreakdown(null, snapshot);
+    expect(nextContextBreakdown(prev, { type: "contextUsage", used: 130 })).toBe(prev);
+    expect(contextBreakdownIsCurrent(prev, 130, 200000)).toBe(false);
+    // Overhead stays bound to the snapshot's used, never live occupancy minus
+    // stale addends (100→130 would invent Reasoning/overhead 40).
+    expect(contextOverheadTokens(prev.used, prev.systemPromptTokens, prev.messageTokens)).toBe(10);
+    expect(contextOverheadTokens(130, prev.systemPromptTokens, prev.messageTokens)).toBe(40);
+  });
+
+  it("keeps the snapshot when a used-only frame restates the same used", () => {
+    const prev = nextContextBreakdown(null, snapshot);
+    expect(nextContextBreakdown(prev, { type: "contextUsage", used: 100 })).toBe(prev);
+    expect(contextBreakdownIsCurrent(prev, 100, 200000)).toBe(true);
+  });
+
+  it("keeps the snapshot when a window-only frame rescales the denominator", () => {
+    const prev = nextContextBreakdown(null, snapshot);
+    expect(nextContextBreakdown(prev, { type: "contextUsage", window: 1000000 })).toBe(prev);
+    expect(contextBreakdownIsCurrent(prev, 100, 1000000)).toBe(false);
+  });
+
+  it("replaces an older snapshot wholesale instead of merging fields", () => {
+    const prev = nextContextBreakdown(null, snapshot);
+    const next = nextContextBreakdown(prev, {
+      type: "contextUsage",
+      used: 110,
+      window: 200000,
+      systemPromptTokens: 10,
+      messageTokens: 100,
+      freeTokens: 199890,
+    });
+    expect(next).toMatchObject({ used: 110, messageTokens: 100, systemPromptTokens: 10 });
+    expect(next.toolDefinitionsTokens).toBeNull();
+    expect(contextBreakdownIsCurrent(next, 110, 200000)).toBe(true);
+  });
+
+  it("refuses a structured frame that cannot bind to a used value", () => {
+    expect(nextContextBreakdown(null, { type: "contextUsage", systemPromptTokens: 10, messageTokens: 80 })).toBeNull();
+  });
+});
+
+describe("createPendingOverlay", () => {
+  it("paints until a frame for that key arrives, then dies", () => {
+    const overlay = createPendingOverlay({ timeoutMs: 60_000 });
+    overlay.paint("s1", "New name");
+    expect(overlay.valueFor("s1")).toBe("New name");
+    expect(overlay.valueFor("s2")).toBeUndefined();
+    expect(overlay.settle("s2")).toBe(false);
+    expect(overlay.valueFor("s1")).toBe("New name");
+    expect(overlay.settle("s1")).toBe(true);
+    expect(overlay.valueFor("s1")).toBeUndefined();
+  });
+
+  it("a contradicting settle still clears — the frame is the authority", () => {
+    const overlay = createPendingOverlay({ timeoutMs: 60_000 });
+    overlay.paint("/work/a", "blue");
+    expect(overlay.settleAny(["/work/b", "/work/a"])).toBe(true);
+    expect(overlay.peek()).toBeNull();
+  });
+
+  it("expires a silent host so a lie cannot stick", async () => {
+    vi.useFakeTimers();
+    try {
+      let expired = 0;
+      const overlay = createPendingOverlay({ timeoutMs: 50, onExpire: () => { expired += 1; } });
+      overlay.paint("s1", "Ghost");
+      expect(overlay.valueFor("s1")).toBe("Ghost");
+      await vi.advanceTimersByTimeAsync(50);
+      expect(overlay.valueFor("s1")).toBeUndefined();
+      expect(expired).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("spokenTextFromMarkdown", () => {
   it("keeps prose and link labels while omitting fenced code", () => {
@@ -21,6 +134,20 @@ describe("isRelaySendRejection", () => {
     expect(isRelaySendRejection("Device offline — VS Code isn't connected to the relay.")).toBe(false);
     expect(isRelaySendRejection("Could not rename this conversation.")).toBe(false);
     expect(isRelaySendRejection("Weekly prompt limit reached.")).toBe(false);
+  });
+
+  // The relay shortened this sentence. Pinning the full text here meant a
+  // refused send silently stopped becoming the editable "Not sent" block,
+  // losing the user's text. Both shapes must classify, so the relay's exact
+  // wording and this regex are no longer coupled.
+  it("classifies the quota refusal with or without the trailing sentence", () => {
+    expect(isRelaySendRejection("Free plan limit reached (100 messages this week). Resets in 2d.")).toBe(true);
+    expect(isRelaySendRejection(
+      "Free plan limit reached (100 messages this week). Resets in 2d. Upgrade to Remote Max for unlimited use.",
+    )).toBe(true);
+    // Still anchored on the identifying shape — a bare mention is not a refusal.
+    expect(isRelaySendRejection("Free plan limit reached.")).toBe(false);
+    expect(isRelaySendRejection("Free plan limit reached (100 messages this week).")).toBe(false);
   });
 });
 
@@ -215,6 +342,35 @@ describe("modelDisplayName", () => {
   it("returns '' for a falsy model ID", () => {
     expect(modelDisplayName("", models)).toBe("");
     expect(modelDisplayName(undefined, models)).toBe("");
+  });
+
+  it("uses a Claude description lead so the gear button shows the generation", () => {
+    expect(modelDisplayName("claude-sonnet-4-5", [
+      { modelId: "claude-sonnet-4-5", name: "Sonnet", description: "Sonnet 5 · Efficient for routine tasks" },
+    ])).toBe("Sonnet 5");
+  });
+});
+
+describe("modelPickerLabel", () => {
+  it("keeps grok and Codex names that already include a generation", () => {
+    expect(modelPickerLabel({ name: "Grok Build", description: "The default Grok Build agent" })).toBe("Grok Build");
+    expect(modelPickerLabel({ name: "GPT-5.6 Sol", description: "GPT-5.6 Sol · Codex" })).toBe("GPT-5.6 Sol");
+  });
+
+  it("promotes Claude's versioned description lead over a family-only name", () => {
+    expect(modelPickerLabel({ name: "Sonnet", description: "Sonnet 5 · Efficient for routine tasks" })).toBe("Sonnet 5");
+    expect(modelPickerLabel({ name: "Haiku", description: "Haiku 4.5 · Fastest for quick answers" })).toBe("Haiku 4.5");
+    expect(modelPickerLabel({ name: "Fable", description: "Fable 5 · Most capable for your hardest and longest-running tasks" })).toBe("Fable 5");
+    expect(modelPickerLabel({
+      name: "Opus (1M context)",
+      description: "Opus 5 with 1M context · Best for everyday, complex tasks",
+    })).toBe("Opus 5 with 1M context");
+  });
+
+  it("falls back to name or id when there is no usable description", () => {
+    expect(modelPickerLabel({ name: "Sonnet" })).toBe("Sonnet");
+    expect(modelPickerLabel({ modelId: "claude-sonnet-4-5" })).toBe("claude-sonnet-4-5");
+    expect(modelPickerLabel({})).toBe("");
   });
 });
 
@@ -424,6 +580,15 @@ describe("parseImageTags", () => {
     expect(out.images).toEqual([
       { index: 1, path: undefined },
       { index: 3, path: "a b/c.png" },
+    ]);
+  });
+
+  it("round-trips a non-contiguous #2 / #5 set without inventing a sequence", () => {
+    const out = parseImageTags("edit both\n\n[Image #2] (two.png)\n[Image #5] (five.png)");
+    expect(out.body).toBe("edit both");
+    expect(out.images).toEqual([
+      { index: 2, path: "two.png" },
+      { index: 5, path: "five.png" },
     ]);
   });
 
@@ -1278,7 +1443,7 @@ describe("extractToolResultOutput (cursor/Composer self-executed command result)
       rawOutput: { type: "Bash", output: [1, 2, 3], exit_code: 0, truncated: false },
       content: [{ type: "content", content: { type: "text", text: "v20.19.0\n10.8.2" } }],
     });
-    expect(r).toEqual({ output: "v20.19.0\n10.8.2", exitCode: 0, truncated: false });
+    expect(r).toEqual({ output: "v20.19.0\n10.8.2", exitCode: 0, truncated: false, cancelled: false, agentSawCut: true });
   });
 
   it("decodes rawOutput.output bytes when there's no content text", () => {
@@ -1292,13 +1457,103 @@ describe("extractToolResultOutput (cursor/Composer self-executed command result)
       rawOutput: { type: "Bash", exit_code: 1, truncated: true },
       content: [{ type: "content", content: { type: "text", text: "boom" } }],
     });
-    expect(r).toEqual({ output: "boom", exitCode: 1, truncated: true });
+    expect(r).toEqual({ output: "boom", exitCode: 1, truncated: true, cancelled: false, agentSawCut: true });
   });
 
   it("returns null when there's no command result to show", () => {
     expect(extractToolResultOutput(null as unknown as object)).toBeNull();
     expect(extractToolResultOutput({})).toBeNull();
     expect(extractToolResultOutput({ rawOutput: {} })).toBeNull(); // no output, no exit code
+  });
+
+  it("prefers Claude's string rawOutput over fenced content and leaves exitCode null", () => {
+    expect(extractToolResultOutput({
+      status: "completed",
+      rawOutput: "REPLAY_MARKER_4b7c",
+      content: [{ type: "content", content: { type: "text", text: "```console\nREPLAY_MARKER_4b7c\n```" } }],
+    })).toEqual({ output: "REPLAY_MARKER_4b7c", exitCode: null, truncated: false, cancelled: false, agentSawCut: true });
+  });
+
+  it("applies the same 100K display cap as the host restore path", () => {
+    const huge = "x".repeat(MAX_COMMAND_OUTPUT_CHARS + 25);
+    const fromString = extractToolResultOutput({
+      rawOutput: huge,
+      content: [{ type: "content", content: { type: "text", text: "```console\n" + huge + "\n```" } }],
+    });
+    expect(fromString).toEqual({
+      output: "x".repeat(MAX_COMMAND_OUTPUT_CHARS),
+      exitCode: null,
+      truncated: true,
+      cancelled: false,
+      agentSawCut: true,
+    });
+    expect(fromString!.output).not.toContain("```");
+    const fromContent = extractToolResultOutput({
+      rawOutput: { type: "Bash", exit_code: 0, truncated: false },
+      content: [{ type: "content", content: { type: "text", text: huge } }],
+    });
+    expect(fromContent?.output).toHaveLength(MAX_COMMAND_OUTPUT_CHARS);
+    expect(fromContent?.truncated).toBe(true);
+    expect(capCommandOutput("short", false)).toEqual({ output: "short", truncated: false });
+    expect(capCommandOutput("already", true)).toEqual({ output: "already", truncated: true });
+  });
+
+  it("does not invent shell output for a host-normalized MCP row", () => {
+    expect(extractToolResultOutput({
+      detailInput: JSON.stringify({ message: "x" }, null, 2),
+      rawOutput: [{ type: "text", text: "Echo: x" }],
+      content: [{ type: "content", content: { type: "text", text: "Echo: x" } }],
+    })).toBeNull();
+    expect(extractToolResultOutput({
+      detailInput: null,
+      rawOutput: "REPLAY_MARKER_4b7c",
+    })).toBeNull();
+  });
+});
+
+describe("commandOutputWasCancelled", () => {
+  it("trusts an explicit cancelled flag from a host that states it", () => {
+    expect(commandOutputWasCancelled({ exitCode: null, cancelled: true })).toBe(true);
+    expect(commandOutputWasCancelled({ exitCode: null, cancelled: false })).toBe(false);
+    expect(commandOutputWasCancelled({ exitCode: 0, cancelled: false })).toBe(false);
+    expect(commandOutputWasCancelled({ exitCode: 1, cancelled: true })).toBe(true);
+  });
+
+  it("falls back to null exit when an older host omitted the field", () => {
+    expect(commandOutputWasCancelled({ exitCode: null })).toBe(true);
+    expect(commandOutputWasCancelled({ command: "sleep 999", output: "partial", exitCode: null, truncated: true })).toBe(true);
+    expect(commandOutputWasCancelled({ exitCode: 0 })).toBe(false);
+    expect(commandOutputWasCancelled({ exitCode: 1 })).toBe(false);
+  });
+
+  it("does not treat a missing payload as cancelled", () => {
+    expect(commandOutputWasCancelled(null)).toBe(false);
+    expect(commandOutputWasCancelled(undefined)).toBe(false);
+    expect(commandOutputWasCancelled({})).toBe(false);
+  });
+});
+
+describe("commandOutputTruncationNote", () => {
+  it("states the agent saw a shell cut when this host says so", () => {
+    expect(commandOutputTruncationNote({ truncated: true, agentSawCut: true }))
+      .toBe("output truncated — grok saw the same cut");
+  });
+
+  it("does not claim the agent saw an MCP display cut", () => {
+    expect(commandOutputTruncationNote({ truncated: true, agentSawCut: false }))
+      .toBe("output truncated — display only; the agent saw the full result");
+  });
+
+  it("does not attribute a cut when an older host omitted agentSawCut", () => {
+    expect(commandOutputTruncationNote({ truncated: true })).toBe("output truncated");
+    expect(commandOutputTruncationNote({ truncated: true, command: "x", output: "y" }))
+      .toBe("output truncated");
+  });
+
+  it("is empty when nothing was truncated", () => {
+    expect(commandOutputTruncationNote({ truncated: false, agentSawCut: true })).toBe("");
+    expect(commandOutputTruncationNote(null)).toBe("");
+    expect(commandOutputTruncationNote({})).toBe("");
   });
 });
 
@@ -1371,5 +1626,179 @@ describe("computeLineDiff", () => {
     expect(r.truncated).toBe(true);
     expect(r.removed).toBe(40);
     expect(r.added).toBe(40);
+  });
+});
+
+describe("middleElide", () => {
+  const title = "mcp.codex_apps.codex_document_control.list_documents";
+
+  it("keeps a short string untouched", () => {
+    expect(middleElide("mcp.canva.search-designs", TOOL_LABEL_MAX)).toBe("mcp.canva.search-designs");
+  });
+
+  it("keeps both ends of a long MCP title", () => {
+    const shown = middleElide(title, TOOL_LABEL_MAX);
+    expect(shown.length).toBe(TOOL_LABEL_MAX);
+    expect(shown).toContain("…");
+    expect(shown.startsWith("mcp.codex")).toBe(true);
+    expect(shown.endsWith("list_documents")).toBe(true);
+    expect(shown).not.toBe(title);
+    // Tail-only cut was "mcp.codex_apps.codex_document_control.list_docu…"
+    expect(shown.endsWith("…")).toBe(false);
+  });
+
+  it("gives an odd leftover character to the tail", () => {
+    expect(middleElide("abcdefghijklmnopqrstuvwxyz", 9)).toBe("abcd…wxyz");
+  });
+});
+
+describe("filterCommands (webview copy)", () => {
+  it("includes description-only matches after name matches", () => {
+    const skills = [
+      { name: "web-design", description: "UI components" },
+      { name: "ui-kit", description: "buttons" },
+      { name: "notes", description: "quick ui tips" },
+    ];
+    expect(filterCommands(skills, "ui").map((c: { name: string }) => c.name)).toEqual([
+      "ui-kit",
+      "web-design",
+      "notes",
+    ]);
+  });
+});
+
+describe("highlightQueryParts", () => {
+  it("splits on the first case-insensitive run", () => {
+    expect(highlightQueryParts("Compress conversation", "con")).toEqual([
+      { text: "Compress ", hit: false },
+      { text: "con", hit: true },
+      { text: "versation", hit: false },
+    ]);
+    expect(highlightQueryParts("/ui-kit", "UI")).toEqual([
+      { text: "/", hit: false },
+      { text: "ui", hit: true },
+      { text: "-kit", hit: false },
+    ]);
+  });
+
+  it("leaves angle brackets as text parts, not markup", () => {
+    expect(highlightQueryParts("<img src=x onerror=alert(1)> design", "design")).toEqual([
+      { text: "<img src=x onerror=alert(1)> ", hit: false },
+      { text: "design", hit: true },
+    ]);
+  });
+});
+
+describe("appendHighlightedText", () => {
+  it("paints a match with text nodes so markup in the source stays inert", () => {
+    const win = new Window();
+    const el = win.document.createElement("div");
+    appendHighlightedText(el, "<img src=x onerror=alert(1)> design", "design");
+    expect(el.querySelector("img")).toBeNull();
+    expect(el.textContent).toBe("<img src=x onerror=alert(1)> design");
+    const hit = el.querySelector(".slash-hl");
+    expect(hit).not.toBeNull();
+    expect(hit!.textContent).toBe("design");
+    expect(el.childNodes.length).toBe(2);
+    expect(el.childNodes[0].nodeType).toBe(win.document.TEXT_NODE);
+  });
+});
+
+describe("splitHistoryWindow (#102)", () => {
+  function turns(n: number, start = 0) {
+    const out: { type: string; text?: string }[] = [];
+    for (let i = 0; i < n; i++) {
+      out.push({ type: "userMessage", text: `u${start + i}` });
+      out.push({ type: "agentStart" });
+      out.push({ type: "messageChunk", text: `a${start + i}` });
+      out.push({ type: "agentEnd" });
+    }
+    return out;
+  }
+
+  it("keeps a short replay intact", () => {
+    const msgs = turns(3);
+    const split = splitHistoryWindow(msgs, 80);
+    expect(split.prefixUserCount).toBe(0);
+    expect(split.prefix).toEqual([]);
+    expect(split.suffix).toHaveLength(msgs.length);
+  });
+
+  it("splits on counted user bubbles and keeps the live tail", () => {
+    const msgs = turns(10);
+    const split = splitHistoryWindow(msgs, 4);
+    expect(split.prefixUserCount).toBe(6);
+    expect(countHistoryReplayCounters(split.prefix).userMsgCount).toBe(6);
+    expect(split.suffix.find((m) => m.type === "userMessage")?.text).toBe("u6");
+    expect(split.suffix.filter((m) => m.type === "userMessage")).toHaveLength(4);
+  });
+
+  it("flattens historyBatch and skips steer / primer user turns", () => {
+    const msgs = [
+      { type: "historyBatch", messages: turns(2) },
+      { type: "userMessage", text: "steer", steer: true },
+      { type: "userMessageChunk", text: "<system-reminder> plumbing" },
+      { type: "userMessage", text: "kept" },
+      { type: "messageChunk", text: "ok" },
+    ];
+    const flat = flattenHistoryMessages(msgs);
+    expect(flat.some((m) => m.type === "historyBatch")).toBe(false);
+    const split = splitHistoryWindow(msgs, 1);
+    expect(split.prefixUserCount).toBe(2);
+    expect(split.suffix.filter((m) => m.type === "userMessage" && !m.steer)).toHaveLength(1);
+    expect(split.suffix.find((m) => m.type === "userMessage" && !m.steer)?.text).toBe("kept");
+  });
+
+  it("windowTurns <= 0 parks everything in prefix", () => {
+    const split = splitHistoryWindow(turns(3), 0);
+    expect(split.suffix).toEqual([]);
+    expect(split.prefixUserCount).toBe(3);
+  });
+});
+
+describe("partitionHistoryCards", () => {
+  const cards = [
+    { text: "early", afterUserMessage: 10 },
+    { text: "start", afterUserMessage: 1380 },
+    { text: "mid", afterUserMessage: 1390 },
+    { text: "end", afterUserMessage: 1420 },
+    { text: "unpositioned" },
+  ];
+
+  it("gives a hydrated chunk only the cards whose turns it renders", () => {
+    const { inChunk, rest } = partitionHistoryCards(cards, 1380, 1420);
+    expect(inChunk.map((c: { text: string }) => c.text)).toEqual(["start", "mid", "end"]);
+    expect(rest.map((c: { text: string }) => c.text)).toEqual(["early", "unpositioned"]);
+  });
+
+  it("keeps earlier cards deferred for the chunks that will render theirs", () => {
+    const { inChunk, rest } = partitionHistoryCards(cards, 1340, 1380);
+    expect(inChunk.map((c: { text: string }) => c.text)).toEqual(["start"]);
+    expect(rest.map((c: { text: string }) => c.text)).toEqual(["early", "mid", "end", "unpositioned"]);
+  });
+});
+
+describe("formatWaitElapsed", () => {
+  it("FLOORS, so it never shows time that has not passed", () => {
+    // Rounding would read 25s at 24.9s. A counter may lag reality; it may not
+    // run ahead of it.
+    expect(formatWaitElapsed(24_900)).toBe("24s");
+    expect(formatWaitElapsed(0)).toBe("0s");
+    expect(formatWaitElapsed(59_999)).toBe("59s");
+  });
+
+  it("switches to minutes and hours so a long stall stays readable", () => {
+    // The reason the hour tier exists: promptAbsoluteTimeoutMs is 24h, so a
+    // seconds-only counter would end up reading "86399s".
+    expect(formatWaitElapsed(60_000)).toBe("1m 0s");
+    expect(formatWaitElapsed(1_847_000)).toBe("30m 47s");
+    expect(formatWaitElapsed(3_600_000)).toBe("1h 0m");
+    expect(formatWaitElapsed(9_000_000)).toBe("2h 30m");
+  });
+
+  it("returns '' rather than NaN for junk", () => {
+    for (const bad of [undefined, null, "20000", NaN, Infinity, -1]) {
+      expect(formatWaitElapsed(bad as never)).toBe("");
+    }
   });
 });

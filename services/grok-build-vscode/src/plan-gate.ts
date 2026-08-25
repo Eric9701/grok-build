@@ -3,15 +3,23 @@
  *
  * grok's `x.ai/exit_plan_mode` treats *any* client response as approval, so we
  * cannot reject a plan at the protocol layer. Instead we enforce plan/act on
- * *our* side, at the two mandatory server→client choke points the agent cannot
- * avoid:
+ * our side at the server→client hooks the agent still reaches:
  *
- *   - `fs/write_text_file` — every file write
- *   - `terminal/create`    — every shell command
+ *   - `terminal/create` — every shell command. Load-bearing on every supported
+ *     grok: Plan still hands mutating shells to the client.
+ *   - `fs/write_text_file` — workspace writes, when they are delegated.
  *
- * Empirically (grok 0.2.3–0.2.117, ACP), a plan-mode turn only *reads* the
- * workspace (`fs/read_text_file` + internal search tools) and writes its plan
- * to `~/.grok/sessions/<cwd>/<id>/plan.md`. The gate therefore refuses every
+ * On a live-verified grok >= 1.0.4 we withhold `readTextFile`, the CLI treats
+ * client fs as all-or-nothing, and writes are not delegated. Plan-mode file
+ * safety then rests on grok's native edit refusal; only terminal mutations
+ * remain extension-enforced. The write handler + this gate stay so a later
+ * CLI that honours `writeTextFile` independently still has the hook, and so
+ * 0.2.x / unverified (which still advertise the delegated handshake) is
+ * unchanged.
+ *
+ * Empirically (grok 0.2.3–0.2.117, ACP, delegated fs), a plan-mode turn only
+ * *reads* the workspace and writes its plan to
+ * `~/.grok/sessions/<cwd>/<id>/plan.md`. The gate therefore refuses every
  * other file write, including writes outside the workspace.
  *
  * These functions are pure so the policy can be unit-tested without spawning a
@@ -23,7 +31,7 @@ import * as nodePath from "node:path";
 /** JSON-RPC error code we use when refusing a mutating call during plan mode. */
 export const PLAN_BLOCKED_CODE = -32010;
 export const PLAN_BLOCKED_WRITE_MSG =
-  "Blocked by Plan mode: only Atlas's session plan.md may be written before you approve the plan.";
+  "Blocked by Plan mode: only Grok's session plan.md may be written before you approve the plan.";
 export const PLAN_BLOCKED_TERMINAL_MSG =
   "Blocked by Plan mode: approve the plan before running commands that may change the workspace.";
 
@@ -788,6 +796,62 @@ export interface PermissionOptionLike {
   name?: string;
 }
 
+/** Claude/Codex modes that mean Auto accept in the host picker. */
+const ADAPTER_AUTO_ACCEPT_MODES = new Set([
+  "yolo",
+  "auto",
+  "acceptEdits",
+  "bypassPermissions",
+  "agent-full-access",
+]);
+
+/**
+ * Map an agent-reported mode onto the host's Plan / Auto-accept flags.
+ *
+ * Grok's `current_mode_update` is descriptive: only a Plan *entry* raises the
+ * client gate; a writable mode does not lower it (the verdict / `setMode` own
+ * that). Adapters with `usesClientPlanGate === false` are the opposite — the
+ * agent's mode is authority, because they switch to a writable mode and then
+ * edit (Claude `ExitPlanMode`, Codex plan approval).
+ */
+export function applyAgentModeToHostPlan(
+  modeId: string,
+  usesClientPlanGate: boolean,
+): { planActive: boolean; autoApprove: boolean } | null {
+  if (modeId === "plan") {
+    return { planActive: true, autoApprove: false };
+  }
+  if (usesClientPlanGate) return null;
+  return {
+    planActive: false,
+    autoApprove: ADAPTER_AUTO_ACCEPT_MODES.has(modeId),
+  };
+}
+
+/**
+ * Live Plan bit for a permission decision.
+ *
+ * Grok commits the client gate in the `session/set_mode` response hook, before
+ * the next ACP line in that stdout chunk. Session chrome (`session.planActive`)
+ * and `autoApprove` still wait on the host await, so reading those here would
+ * auto-grant a same-chunk `request_permission`.
+ *
+ * Adapters without the fs/terminal gate still raise `client.planActive` on a
+ * successful Plan RPC: Codex plan review is an ordinary `request_permission`
+ * whose `allow_once` means "implement this plan", and Auto accept would select
+ * it. `usesClientPlanGate` stays false, so this bit does not enable grok's
+ * write/terminal refusal. The session flag remains a fallback because a
+ * `config_option_update` can raise Plan without going through that RPC.
+ */
+export function effectivePlanActive(
+  usesClientPlanGate: boolean,
+  clientPlanActive: boolean,
+  sessionPlanActive: boolean,
+): boolean {
+  if (usesClientPlanGate) return clientPlanActive;
+  return clientPlanActive || sessionPlanActive;
+}
+
 export function permissionOptionsForPlan<T extends PermissionOptionLike>(
   options: T[],
   planActive: boolean,
@@ -811,6 +875,49 @@ export function permissionAnswerAllowed(
 }
 
 /**
+ * Adapter plan-review rides an ordinary `request_permission` whose allow
+ * option means "implement this plan" (Codex `implement_plan`, Claude
+ * `acceptEdits` / `default`). Auto accept is consent to routine tool
+ * grants, not to that unread card.
+ */
+export function isPlanReviewPermission(toolKind?: string): boolean {
+  return String(toolKind || "").toLowerCase() === "switch_mode";
+}
+
+/**
+ * Codex puts the plan on `rawInput.plan`. Claude ExitPlanMode puts the same
+ * string there and also as a `content` text block. Empty means the adapter
+ * asked for a mode change without sending anything to review.
+ */
+export function planTextFromPermissionToolCall(toolCall?: {
+  rawInput?: unknown;
+  content?: unknown;
+} | null): string {
+  const raw = toolCall?.rawInput as { plan?: unknown } | undefined;
+  if (typeof raw?.plan === "string" && raw.plan.trim()) return raw.plan;
+  const blocks = Array.isArray(toolCall?.content) ? toolCall.content : [];
+  for (const block of blocks) {
+    if (!block || typeof block !== "object") continue;
+    const rec = block as Record<string, unknown>;
+    if (rec.type === "content" && rec.content && typeof rec.content === "object") {
+      const inner = rec.content as Record<string, unknown>;
+      if (inner.type === "text" && typeof inner.text === "string" && inner.text.trim()) {
+        return inner.text;
+      }
+    }
+    if ((rec.type === "text" || rec.type === "input_text") && typeof rec.text === "string" && rec.text.trim()) {
+      return rec.text;
+    }
+  }
+  return "";
+}
+
+/** Adapter allow options implement the plan; reject keeps planning. */
+export function planReviewVerdictForOption(kind?: string): "approved" | "rejected" {
+  return kind && /reject|deny/i.test(kind) ? "rejected" : "approved";
+}
+
+/**
  * Pick the option that means "no" from a permission request's options. Prefers
  * an explicit `reject_once`, then any reject/deny kind; returns undefined if the
  * request offers no way to decline (caller should then fall back to the user).
@@ -824,11 +931,11 @@ export function pickRejectOption(options: PermissionOptionLike[]): string | unde
 }
 
 /**
- * True if `path` is the CLI's own plan file under sessions
- * (`.atlas/sessions/.../plan.md` or legacy `.grok/sessions/.../plan.md`).
- * We snoop the content of that write to populate the plan-review card, since
- * `exit_plan_mode` itself arrives with `planContent: null`.
+ * True if `path` is grok's own plan file (`.grok/sessions/.../plan.md`). We
+ * still snoop that write as a fallback. Current CLIs send `exit_plan_mode`
+ * with `planContent` populated; sidebar.ts prefers `req.plan` over the
+ * snooped `lastPlanText`.
  */
 export function isPlanFileWrite(path: string): boolean {
-  return /[\\/]\.(?:atlas|grok)[\\/]sessions[\\/].*[\\/]plan\.md$/i.test(String(path || ""));
+  return /[\\/]\.(?:grok|atlas)[\\/]sessions[\\/].*[\\/]plan\.md$/i.test(String(path || ""));
 }

@@ -9,6 +9,8 @@
 // [Error] marker + error tint; a kill is [Cancelled], not an error.
 import { describe, it, expect } from "vitest";
 import { bootWebview, dispatch, click } from "./webview-harness";
+import { normalizeCodexUpdate } from "../src/codex-backend";
+import { commandOutputForToolCall } from "../src/acp-dispatch";
 
 const exec = (id: string, command: string, title?: string) => ({
   type: "toolCall",
@@ -19,16 +21,23 @@ const exec = (id: string, command: string, title?: string) => ({
     rawInput: { variant: "Bash", command, is_background: false },
   },
 });
-const out = (command: string, output: string, exitCode: number | null = 0, truncated = false) => ({
-  type: "commandOutput",
+const out = (
+  command: string,
+  output: string,
+  exitCode: number | null = 0,
+  truncated = false,
+  cancelled?: boolean,
+) => ({
+  type: "commandOutput" as const,
   command,
   output,
   exitCode,
   truncated,
+  ...(cancelled !== undefined ? { cancelled } : {}),
 });
-const read = (id: string, path: string) => ({
+const explore = (id: string, path: string) => ({
   type: "toolCall",
-  call: { toolCallId: id, kind: "read", title: `Read ${path}`, rawInput: { path } },
+  call: { toolCallId: id, kind: "search", title: "grep", rawInput: { pattern: "needle", path } },
 });
 const close = (window: Window) => dispatch(window, { type: "messageChunk", text: "done" });
 
@@ -383,6 +392,155 @@ describe("command details (#41)", () => {
     },
   });
 
+  it("a replayed completed execute tool_call has IN but no OUT until commandOutput arrives", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, {
+      type: "toolCall",
+      call: {
+        toolCallId: "call-restore-1",
+        kind: "execute",
+        status: "completed",
+        title: "Execute `echo MARKER`",
+        rawInput: { variant: "Bash", command: "echo MARKER", is_background: false },
+        content: [{ type: "content", content: { type: "text", text: "MARKER\r\n" } }],
+        rawOutput: {
+          type: "Bash",
+          output: [...Buffer.from("MARKER\r\n", "utf8")],
+          output_for_prompt: "exit: 0\nMARKER\n",
+          exit_code: 0,
+          command: "echo MARKER",
+          truncated: false,
+        },
+      },
+    });
+    close(window);
+    dispatch(window, { type: "historyReplay", active: false });
+    expect(doc.querySelector(".tool-cmd")!.textContent).toBe("echo MARKER");
+    expect(doc.querySelector(".cmd-out")).toBeNull();
+  });
+
+  it("session/load restore fills OUT from the host commandOutput (same message as live)", () => {
+    const { window, doc } = bootWebview();
+    const call = {
+      toolCallId: "call-restore-2",
+      kind: "execute",
+      status: "completed",
+      title: "Execute `echo MARKER`",
+      rawInput: { variant: "Bash", command: "echo MARKER", is_background: false },
+      content: [{ type: "content", content: { type: "text", text: "MARKER\r\n" } }],
+      rawOutput: {
+        type: "Bash",
+        output: [...Buffer.from("MARKER\r\n", "utf8")],
+        output_for_prompt: "exit: 0\nMARKER\n",
+        exit_code: 0,
+        command: "echo MARKER",
+        truncated: false,
+      },
+    };
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, { type: "toolCall", call });
+    const replayed = commandOutputForToolCall(call, { replaying: true });
+    expect(replayed).not.toBeNull();
+    dispatch(window, { type: "commandOutput", ...replayed! });
+    dispatch(window, { type: "historyReplay", active: false });
+    close(window);
+
+    expect(doc.querySelectorAll(".has-details")).toHaveLength(1);
+    expect(doc.querySelector(".tool-cmd")!.textContent).toBe("echo MARKER");
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).toBe("MARKER\r\n");
+    expect(doc.querySelector(".cmd-out-marker")).toBeNull();
+  });
+
+  it("Claude session/load fills OUT from string rawOutput, not the fenced content or description", () => {
+    const { window, doc } = bootWebview();
+    const remembered = new Map<string, string>();
+    const pending = {
+      toolCallId: "toolu_01AnGmToxGM69P1ovvsNgk4F",
+      kind: "execute",
+      status: "pending",
+      title: "echo REPLAY_MARKER_4b7c",
+      rawInput: { command: "echo REPLAY_MARKER_4b7c", description: "Echo replay marker string" },
+      content: [{ type: "content", content: { type: "text", text: "Echo replay marker string" } }],
+    };
+    const completed = {
+      toolCallId: "toolu_01AnGmToxGM69P1ovvsNgk4F",
+      status: "completed",
+      rawOutput: "REPLAY_MARKER_4b7c",
+      content: [{ type: "content", content: { type: "text", text: "```console\nREPLAY_MARKER_4b7c\n```" } }],
+    };
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, { type: "toolCall", call: pending });
+    expect(commandOutputForToolCall(pending, { replaying: true, rememberedCommands: remembered })).toBeNull();
+    dispatch(window, { type: "toolCallUpdate", call: completed });
+    const replayed = commandOutputForToolCall(completed, { replaying: true, rememberedCommands: remembered });
+    expect(replayed).toEqual({
+      command: "echo REPLAY_MARKER_4b7c",
+      output: "REPLAY_MARKER_4b7c",
+      exitCode: null,
+      truncated: false,
+      cancelled: false,
+      agentSawCut: true,
+    });
+    dispatch(window, { type: "commandOutput", ...replayed! });
+    dispatch(window, { type: "historyReplay", active: false });
+    close(window);
+
+    expect(doc.querySelectorAll(".has-details")).toHaveLength(1);
+    expect(doc.querySelector(".tool-cmd")!.textContent).toBe("echo REPLAY_MARKER_4b7c");
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).toBe("REPLAY_MARKER_4b7c");
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).not.toContain("```");
+    expect(doc.querySelector(".cmd-out")!.textContent).not.toContain("Echo replay marker string");
+    expect(doc.querySelector(".cmd-out-marker")).toBeNull();
+    expect(replayed).toEqual(expect.objectContaining({ cancelled: false }));
+  });
+
+  it("a live Claude command keeps OUT after a buffer rebuild (conversation switch)", () => {
+    const { window, doc } = bootWebview();
+    const pending = {
+      type: "toolCall" as const,
+      call: {
+        toolCallId: "toolu_live_1",
+        kind: "execute",
+        status: "pending",
+        title: "echo LIVE_CLAUDE_OUT",
+        rawInput: { command: "echo LIVE_CLAUDE_OUT", description: "Echo live marker" },
+        content: [{ type: "content", content: { type: "text", text: "Echo live marker" } }],
+      },
+    };
+    const completed = {
+      type: "toolCallUpdate" as const,
+      call: {
+        toolCallId: "toolu_live_1",
+        status: "completed",
+        rawOutput: "LIVE_CLAUDE_OUT",
+        content: [{ type: "content", content: { type: "text", text: "```console\nLIVE_CLAUDE_OUT\n```" } }],
+      },
+    };
+    dispatch(window, pending);
+    dispatch(window, completed);
+    close(window);
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).toBe("LIVE_CLAUDE_OUT");
+    expect(doc.querySelector(".cmd-out-marker")).toBeNull();
+
+    // focusSession / rehydrateWebviewFromFocused: clear + historyReplay + the
+    // live buffer. Claude has no commandDone, so the buffer has no commandOutput.
+    dispatch(window, { type: "clearMessages" });
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, pending);
+    dispatch(window, completed);
+    dispatch(window, { type: "historyReplay", active: false });
+    close(window);
+
+    expect(doc.querySelectorAll(".has-details")).toHaveLength(1);
+    expect(doc.querySelectorAll(".cmd-out")).toHaveLength(1);
+    expect(doc.querySelector(".tool-cmd")!.textContent).toBe("echo LIVE_CLAUDE_OUT");
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).toBe("LIVE_CLAUDE_OUT");
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).not.toContain("```");
+    expect(doc.querySelector(".cmd-out")!.textContent).not.toContain("Echo live marker");
+    expect(doc.querySelector(".cmd-out-marker")).toBeNull();
+  });
+
   it("fills a self-executed (Composer) command's OUT from the completed update, no terminal/create", () => {
     const { window, doc } = bootWebview();
     dispatch(window, exec("c1", "git status --short"));
@@ -432,14 +590,118 @@ describe("command details (#41)", () => {
     const { window, doc } = bootWebview();
     dispatch(window, exec("k", "sleep 999"));
     close(window);
-    dispatch(window, out("sleep 999", "partial", null, true));
+    dispatch(window, { ...out("sleep 999", "partial", null, true, true), agentSawCut: true });
 
     const outRow = doc.querySelector(".cmd-out") as HTMLElement;
     expect(outRow.classList.contains("failed")).toBe(false);
     const markers = [...outRow.querySelectorAll(".cmd-out-marker")];
     expect(markers[0].textContent).toBe("[Cancelled] no exit code");
     expect(markers[0].classList.contains("muted")).toBe(true);
-    expect(markers[1].textContent).toContain("output truncated");
+    expect(markers[1].textContent).toBe("output truncated — grok saw the same cut");
+  });
+
+  it("an over-cap shell result still says the agent saw the same cut", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, exec("t", "cat big"));
+    close(window);
+    dispatch(window, { ...out("cat big", "x".repeat(80), 0, true, false), agentSawCut: true });
+    expect(doc.querySelector(".cmd-out-marker")!.textContent)
+      .toBe("output truncated — grok saw the same cut");
+  });
+
+  it("an over-cap MCP result does not claim the agent saw the cut", () => {
+    const { window, doc } = bootWebview();
+    const mcpIn = JSON.stringify({ query: "titles" }, null, 2);
+    dispatch(window, {
+      type: "toolCall",
+      call: {
+        toolCallId: "call-use-huge",
+        title: "canva__search-designs",
+        kind: "other",
+        detailInput: mcpIn,
+      },
+    });
+    close(window);
+    dispatch(window, {
+      type: "commandOutput",
+      command: mcpIn,
+      toolCallId: "call-use-huge",
+      output: "x".repeat(80),
+      exitCode: null,
+      truncated: true,
+      cancelled: false,
+      agentSawCut: false,
+    });
+    const note = doc.querySelector(".cmd-out-marker")!.textContent ?? "";
+    expect(note).toBe("output truncated — display only; the agent saw the full result");
+    expect(note).not.toContain("grok saw the same cut");
+  });
+
+  it("a truncated commandOutput with no agentSawCut does not attribute the cut", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, exec("t", "cat big"));
+    close(window);
+    dispatch(window, out("cat big", "partial", 0, true));
+    expect(doc.querySelector(".cmd-out-marker")!.textContent).toBe("output truncated");
+    expect(doc.querySelector(".cmd-out")!.textContent).not.toContain("grok saw");
+    expect(doc.querySelector(".cmd-out")!.textContent).not.toContain("display only");
+  });
+
+  it("a cancelled live command still shows [Cancelled] after a buffer rebuild", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, exec("k", "sleep 999"));
+    close(window);
+    dispatch(window, out("sleep 999", "partial", null, true, true));
+    expect(doc.querySelector(".cmd-out-marker")!.textContent).toBe("[Cancelled] no exit code");
+
+    // focusSession / rehydrateWebviewFromFocused: clear + historyReplay + the
+    // live buffer, which still carries the host-asserted cancelled field.
+    dispatch(window, { type: "clearMessages" });
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, exec("k", "sleep 999"));
+    close(window);
+    dispatch(window, out("sleep 999", "partial", null, true, true));
+    dispatch(window, { type: "historyReplay", active: false });
+
+    expect(doc.querySelectorAll(".has-details")).toHaveLength(1);
+    const markers = [...doc.querySelectorAll(".cmd-out-marker")];
+    expect(markers[0].textContent).toBe("[Cancelled] no exit code");
+    expect(markers[0].classList.contains("muted")).toBe(true);
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).toBe("partial");
+  });
+
+  it("new-client / old-host: null exit with no cancellation field still shows [Cancelled]", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, exec("k", "sleep 999"));
+    close(window);
+    dispatch(window, out("sleep 999", "partial", null));
+
+    const outRow = doc.querySelector(".cmd-out") as HTMLElement;
+    expect(outRow.classList.contains("failed")).toBe(false);
+    expect(outRow.querySelector(".cmd-out-marker")!.textContent).toBe("[Cancelled] no exit code");
+    expect(outRow.querySelector(".cmd-out-marker")!.classList.contains("muted")).toBe(true);
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).toBe("partial");
+  });
+
+  it("null exit with cancelled: false is not reported, not a kill", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, exec("c", "echo hi"));
+    close(window);
+    dispatch(window, out("echo hi", "hi\n", null, false, false));
+
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).toBe("hi\n");
+    expect(doc.querySelector(".cmd-out-marker")).toBeNull();
+    expect(doc.querySelector(".cmd-out")!.classList.contains("failed")).toBe(false);
+  });
+
+  it("null exit with cancelled: false and no output does not synthesise success", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, exec("c", "true"));
+    close(window);
+    dispatch(window, out("true", "", null, false, false));
+
+    expect(doc.querySelector(".tool-cmd-output")).toBeNull();
+    expect(doc.querySelector(".cmd-out-marker")).toBeNull();
   });
 
   it("an exit-0 command with no output shows a done marker, not an empty (no output) pre", () => {
@@ -528,12 +790,344 @@ describe("command details (#41)", () => {
     expect(group.classList.contains("cmd-single")).toBe(false);
   });
 
-  it("non-command tools get no details block and no clickable-highlight class", () => {
+  it("search/list tools get no details block and no clickable-highlight class", () => {
     const { window, doc } = bootWebview();
-    dispatch(window, { type: "toolCall", call: { toolCallId: "r", kind: "read", rawInput: { path: "/a.ts" } } });
+    dispatch(window, { type: "toolCall", call: { toolCallId: "r", kind: "search", rawInput: { pattern: "x", path: "/a.ts" } } });
     close(window);
     expect(doc.querySelector(".tool-item-details")).toBeNull();
     expect(doc.querySelector(".has-details")).toBeNull();
+  });
+
+  const readCall = (id: string, rawInput: Record<string, unknown>, title = "read_file") => ({
+    type: "toolCall",
+    call: { toolCallId: id, kind: "read", title, rawInput },
+  });
+  const readDone = (id: string, text: string, rawOutput?: unknown) => ({
+    type: "toolCallUpdate",
+    call: {
+      toolCallId: id,
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text } }],
+      ...(rawOutput ? { rawOutput } : {}),
+    },
+  });
+
+  it("a completed Read row IS its linked path and range — no excerpt (#122)", () => {
+    const { window, doc, posted } = bootWebview();
+    const body = Array.from({ length: 8 }, (_, i) => `${i + 1}\u2192line ${i + 1}`).join("\n");
+    dispatch(window, readCall("r1", { target_file: "hello.txt" }));
+    dispatch(window, readDone("r1", body, {
+      type: "ReadFile",
+      FileContent: { content: body, offset: null, raw_output: body, total_lines: 8 },
+    }));
+    close(window);
+
+    const flat = doc.querySelector(".tool-flat") as HTMLElement;
+    const label = flat.querySelector(".tool-label") as HTMLElement;
+    expect(label.textContent).toBe("Read hello.txt");
+
+    // The path + range is the control; there is nothing else to click, and no
+    // six-line excerpt of the file under it.
+    const link = label.querySelector(".tool-label-ref") as HTMLElement;
+    expect(link.textContent).toBe("hello.txt");
+    expect(flat.querySelector(".tool-item-details")).toBeNull();
+    expect(doc.querySelector(".command-view-all")).toBeNull();
+    expect(doc.querySelector(".tool-cmd-output")).toBeNull();
+
+    click(window, link);
+    // No `#L1-L8`: the agent read the whole file, so there is no range it
+    // chose and nothing to select. Opening with the first 8 lines highlighted
+    // would invent an emphasis the read never had.
+    expect(posted.filter((m: any) => m.type === "openFile")).toEqual([
+      { type: "openFile", path: "hello.txt" },
+    ]);
+  });
+
+  it("the linked range opens the FILE at those lines, never a copy of them (#122)", () => {
+    const { window, doc, posted } = bootWebview();
+    const body = Array.from({ length: 30 }, (_, i) => `${i + 980}\u2192line ${i + 980}`).join("\n");
+    dispatch(window, readCall("r1", { target_file: "src/deep.ts", offset: 980, limit: 30 }));
+    dispatch(window, readDone("r1", body, {
+      type: "ReadFile",
+      FileContent: { content: body, offset: 980, limit: 30 },
+    }));
+    close(window);
+
+    click(window, doc.querySelector(".tool-label-ref") as HTMLElement);
+    // The excerpt is exactly the context you cannot see, so an untitled copy of
+    // it is the one thing that does not help.
+    expect(posted.filter((m: any) => m.type === "openText")).toEqual([]);
+    expect(posted.filter((m: any) => m.type === "openFile")).toEqual([
+      { type: "openFile", path: "src/deep.ts#L980-L1009" },
+    ]);
+  });
+
+  it("a Read row with no line range on the wire links the file with no fragment (#122)", () => {
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, readCall("r2", { target_file: "notes.md" }));
+    dispatch(window, readDone("r2", "a\nb\nc\nd\ne\nf\ng\nh", {
+      type: "ReadFile",
+      FileContent: { content: "a\nb\nc\nd\ne\nf\ng\nh" },
+    }));
+    close(window);
+
+    const link = doc.querySelector(".tool-label-ref") as HTMLElement;
+    expect(link.textContent).toBe("notes.md");
+    click(window, link);
+    expect(posted.filter((m: any) => m.type === "openFile")).toEqual([
+      { type: "openFile", path: "notes.md" },
+    ]);
+  });
+
+  it("a Claude-shaped Read row links too — file_path + offset/limit (#122)", () => {
+    const { window, doc, posted } = bootWebview();
+    // Claude names its tool "Read" and passes { file_path, offset, limit } —
+    // neither the grok `target_file` key nor its `read_file` name.
+    dispatch(window, readCall("cl1", { file_path: "src/host.ts", offset: 40, limit: 20 }, "Read"));
+    dispatch(window, readDone("cl1", Array.from({ length: 20 }, (_, i) => `line ${i + 40}`).join("\n")));
+    close(window);
+
+    click(window, doc.querySelector(".tool-label-ref") as HTMLElement);
+    expect(posted.filter((m: any) => m.type === "openFile")).toEqual([
+      { type: "openFile", path: "src/host.ts#L40-L59" },
+    ]);
+  });
+
+  it("a Read row identified only by kind links the file (#122)", () => {
+    const { window, doc, posted } = bootWebview();
+    // No recognisable tool name at all — only ACP's kind. This is the path any
+    // provider takes when it names its read something we have never seen.
+    dispatch(window, readCall("k1", { path: "docs/x.md" }, "Inspect"));
+    dispatch(window, readDone("k1", Array.from({ length: 20 }, (_, i) => `row ${i}`).join("\n")));
+    close(window);
+
+    click(window, doc.querySelector(".tool-label-ref") as HTMLElement);
+    expect(posted.filter((m: any) => m.type === "openFile")).toEqual([
+      { type: "openFile", path: "docs/x.md" },
+    ]);
+  });
+
+  it("a Read row with NO path stays plain text — the gate is the ref, not the kind (#122)", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, readCall("np", {}, "read_file"));
+    dispatch(window, readDone("np", Array.from({ length: 12 }, (_, i) => `line ${i}`).join("\n")));
+    close(window);
+
+    // Nothing to link to, so nothing is linked. (Such a row carries no detail
+    // either — that is pre-existing: without a path there is no IN to attach.)
+    expect(doc.querySelector(".tool-label-ref")).toBeNull();
+    expect((doc.querySelector(".tool-label") as HTMLElement).textContent).toBe("Read");
+  });
+
+  it("REMOTE shows the SAME row; the link reveals the text in place (#122)", () => {
+    const { window, doc, posted } = bootWebview({ remote: true });
+    const body = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n");
+    dispatch(window, readCall("rr", { target_file: "src/a.ts", offset: 1, limit: 12 }));
+    dispatch(window, readDone("rr", body, {
+      type: "ReadFile",
+      FileContent: { content: body, offset: 1, limit: 12 },
+    }));
+    close(window);
+
+    // Identical shape to the IDE — one line, path + range as the link.
+    const link = doc.querySelector(".tool-label-ref") as HTMLElement;
+    expect(link.textContent).toBe("a.ts lines 1-12");
+    const details = doc.querySelector(".tool-item-details") as HTMLElement;
+    expect(details.classList.contains("tool-read-carrier")).toBe(true);
+    expect(details.hidden).toBe(true); // costs no space until asked for
+
+    // A phone cannot send openFile (host-local in remote-policy), so the link
+    // reveals what is already on the wire instead — and toggles back.
+    click(window, link);
+    expect(details.hidden).toBe(false);
+    expect(details.querySelector(".tool-cmd-output")!.textContent).toBe(body);
+    expect(posted.filter((m: any) => m.type === "openFile")).toEqual([]);
+    click(window, link);
+    expect(details.hidden).toBe(true);
+  });
+
+  it("the DESKTOP app shows the SAME row; the link opens its preview window (#122)", async () => {
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, {
+      type: "initialState",
+      effort: "", cwd: "/w", useCtrlEnter: false, extVersion: "0",
+      showThinking: false, expandCommandOutputs: true, appPurpose: "coding",
+      capabilities: { previewInApp: true },
+    });
+    const excerpt = Array.from({ length: 12 }, (_, i) => `line ${i + 1}`).join("\n");
+    const whole = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n");
+    dispatch(window, readCall("dd", { target_file: "src/a.ts", offset: 1, limit: 12 }));
+    dispatch(window, readDone("dd", excerpt, {
+      type: "ReadFile",
+      FileContent: { content: excerpt, offset: 1, limit: 12 },
+    }));
+    close(window);
+
+    const link = doc.querySelector(".tool-label-ref") as HTMLElement;
+    expect(link.textContent).toBe("a.ts lines 1-12");
+    const details = doc.querySelector(".tool-item-details") as HTMLElement;
+    expect(details.hidden).toBe(true);
+    expect(doc.getElementById("preview-overlay")).toBeNull();
+
+    // openTextFile cannot honour a line selection there, so the in-app preview
+    // fetches the file and marks the agent's lines — never posts openFile.
+    click(window, link);
+    const req = posted.find((m: any) => m.type === "readProjectFile");
+    expect(req).toMatchObject({ type: "readProjectFile", cwd: "/w", relPath: "src/a.ts" });
+    dispatch(window, {
+      type: "projectFileContent",
+      requestId: (req as any).requestId,
+      cwd: "/w",
+      relPath: "src/a.ts",
+      ok: true,
+      kind: "text",
+      text: whole,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const overlay = doc.getElementById("preview-overlay");
+    expect(overlay).not.toBeNull();
+    expect(overlay!.textContent).toContain("line 40");
+    expect(overlay!.querySelectorAll(".tdl-read").length).toBe(12);
+    expect(details.hidden).toBe(true); // the carrier stays out of the transcript
+    expect(posted.filter((m: any) => m.type === "openFile")).toEqual([]);
+    expect(posted.filter((m: any) => m.type === "openText")).toEqual([]);
+  });
+
+  it("a carrier is never an affordance — no chevron, no row toggle (#122)", () => {
+    const { window, doc } = bootWebview({ remote: true });
+    dispatch(window, readCall("c1", { target_file: "src/a.ts", offset: 1, limit: 12 }));
+    dispatch(window, readDone("c1", "one\ntwo\nthree"));
+    close(window);
+
+    const flat = doc.querySelector(".tool-flat") as HTMLElement;
+    expect(flat.querySelector(".tool-chevron")).toBeNull();
+    expect(flat.classList.contains("has-details")).toBe(false);
+    const details = flat.querySelector(".tool-item-details") as HTMLElement;
+    click(window, flat);
+    expect(details.hidden).toBe(true); // only the link opens it
+  });
+
+  // A subagent's rows are painted by applyToolLabel too — the row IS the label —
+  // and they never get a carrier, so off the editor a link there would be a
+  // control that does nothing.
+  const spawnSubagentReadingA = (window: Window) => {
+    dispatch(window, {
+      type: "toolCall",
+      call: {
+        toolCallId: "spawn-1",
+        title: "spawn_subagent",
+        _meta: { "x.ai/tool": { name: "spawn_subagent" } },
+        rawInput: { description: "Look around", subagent_type: "explore" },
+      },
+    });
+    dispatch(window, {
+      type: "subagentUpdate",
+      update: { sessionUpdate: "subagent_spawned", subagent_id: "kid", child_session_id: "kid" },
+    });
+    dispatch(window, {
+      type: "childStream",
+      childSessionId: "kid",
+      event: "toolCall",
+      call: { toolCallId: "s1", kind: "read", title: "read_file",
+              rawInput: { target_file: "src/a.ts", offset: 1, limit: 12 } },
+    });
+  };
+
+  it("a SUBAGENT read row links on an editor — openFile needs no carrier (#122)", () => {
+    const { window, doc, posted } = bootWebview();
+    spawnSubagentReadingA(window);
+
+    const row = doc.querySelector(".subagent-tool") as HTMLElement;
+    expect(row).not.toBeNull(); // the sequence really built the row
+    expect(row.textContent).toBe("Read a.ts lines 1-12");
+    const link = row.querySelector(".tool-label-ref") as HTMLElement;
+    expect(link).not.toBeNull();
+    click(window, link);
+    expect(posted.filter((m: any) => m.type === "openFile")).toEqual([
+      { type: "openFile", path: "src/a.ts#L1-L12" },
+    ]);
+  });
+
+  it("a SUBAGENT read row stays plain on a remote — a link there would be dead (#122)", () => {
+    const { window, doc } = bootWebview({ remote: true });
+    spawnSubagentReadingA(window);
+
+    const row = doc.querySelector(".subagent-tool") as HTMLElement;
+    expect(row).not.toBeNull(); // same sequence, so the absence below means something
+    expect(row.textContent).toBe("Read a.ts lines 1-12");
+    expect(row.querySelector(".tool-label-ref")).toBeNull();
+  });
+
+  it("a read batch expands WHILE it runs, not only when it finishes (#122)", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "initialState",
+      effort: "", cwd: "/w", useCtrlEnter: false, extVersion: "0",
+      showThinking: false, expandCommandOutputs: true, appPurpose: "coding",
+    });
+    dispatch(window, readCall("g1", { target_file: "one.ts", offset: 1, limit: 150 }));
+    dispatch(window, readCall("g2", { target_file: "two.ts", offset: 20, limit: 31 }));
+
+    // Mid-run: no close() yet. This is the report — the details only appeared
+    // once the command was done, because the group was settled at close time.
+    const group = doc.querySelector(".tool-group") as HTMLElement;
+    const groupBody = group.querySelector(".tool-group-body") as HTMLElement;
+    expect(groupBody.hidden).toBe(false);
+    expect(group.classList.contains("expanded")).toBe(true);
+
+    const links = [...group.querySelectorAll(".tool-label-ref")].map((e) => e.textContent);
+    expect(links).toEqual(["one.ts lines 1-150", "two.ts lines 20-50"]);
+  });
+
+  it("a user who collapses a running group is not overridden when rows arrive (#122)", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "initialState",
+      effort: "", cwd: "/w", useCtrlEnter: false, extVersion: "0",
+      showThinking: false, expandCommandOutputs: true, appPurpose: "coding",
+    });
+    dispatch(window, readCall("u1", { target_file: "one.ts", offset: 1, limit: 10 }));
+    const group = doc.querySelector(".tool-group") as HTMLElement;
+    click(window, group.querySelector(".tool-group-header") as HTMLElement);
+    expect((group.querySelector(".tool-group-body") as HTMLElement).hidden).toBe(true);
+
+    dispatch(window, readCall("u2", { target_file: "two.ts", offset: 1, limit: 10 }));
+    expect((group.querySelector(".tool-group-body") as HTMLElement).hidden).toBe(true);
+  });
+
+  it("View all on a COMMAND row still opens the captured text — there is no file to open (#122)", () => {
+    const { window, doc, posted } = bootWebview();
+    const command = "npm run build";
+    const output = Array.from({ length: 12 }, (_, i) => `out ${i}`).join("\n");
+    dispatch(window, exec("c1", command));
+    dispatch(window, out(command, output));
+    close(window);
+
+    const details = doc.querySelector(".tool-item-details") as HTMLElement;
+    for (const btn of [...details.querySelectorAll(".command-view-all")] as HTMLButtonElement[]) {
+      click(window, btn);
+    }
+    expect(posted.filter((m: any) => m.type === "openFile")).toEqual([]);
+    expect(posted.filter((m: any) => m.type === "openText").length).toBeGreaterThan(0);
+  });
+
+  it("a Codex MCP tool_call without detailInput is not a command row — name shows, no IN/OUT", () => {
+    const { window, doc } = bootWebview();
+    const { update } = normalizeCodexUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "mcp-1",
+      kind: "execute",
+      title: "mcp.canva.search-designs",
+      rawInput: { server: "canva", tool: "search-designs", arguments: { query: "logo" } },
+      _meta: { is_mcp_tool_call: true },
+    });
+    dispatch(window, { type: "toolCall", call: update });
+    close(window);
+    expect(doc.querySelector(".tool-flat .tool-label")!.textContent).toBe("mcp.canva.search-designs");
+    expect(doc.querySelector(".tool-item-details")).toBeNull();
+    expect(doc.querySelector(".has-details")).toBeNull();
+    expect(doc.querySelector(".cmd-block")).toBeNull();
   });
 
   it("the output poller and kill tools stay plain (no details, no highlight)", () => {
@@ -549,6 +1143,205 @@ describe("command details (#41)", () => {
     close(window);
     expect(doc.querySelector(".has-details")).toBeNull();
     expect(doc.querySelector(".tool-item-details")).toBeNull();
+  });
+});
+
+describe("MCP tool details (host-normalized detailInput + commandOutput)", () => {
+  const mcpIn = JSON.stringify({ message: "MCPSHAPE_9931" }, null, 2);
+  const mcpOut = (command: string, output: string) => ({
+    type: "commandOutput" as const,
+    command,
+    output,
+    exitCode: null,
+    truncated: false,
+    cancelled: false,
+  });
+
+  it("a decorated grok use_tool row shows IN immediately and OUT from commandOutput", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "toolCall",
+      call: {
+        toolCallId: "call-use-1",
+        title: "use_tool",
+        kind: "other",
+        rawInput: { tool_name: "everything__echo", tool_input: { message: "MCPSHAPE_9931" } },
+        detailInput: mcpIn,
+      },
+    });
+    dispatch(window, {
+      type: "toolCallUpdate",
+      call: { toolCallId: "call-use-1", title: "everything__echo", detailInput: mcpIn },
+    });
+    close(window);
+    dispatch(window, mcpOut(mcpIn, "Echo: MCPSHAPE_9931"));
+
+    const flat = doc.querySelector(".tool-flat.has-details") as HTMLElement;
+    expect(flat).not.toBeNull();
+    expect(flat.querySelector(".tool-label")!.textContent).toBe("everything__echo");
+    expect(flat.querySelector(".tool-cmd")!.textContent).toBe(mcpIn);
+    expect(flat.querySelector(".tool-cmd-output")!.textContent).toBe("Echo: MCPSHAPE_9931");
+  });
+
+  it("a decorated Codex MCP row uses the same IN/OUT shell, not a Run <program> label", () => {
+    const { window, doc } = bootWebview();
+    const { update } = normalizeCodexUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "exec-mcp-1",
+      kind: "execute",
+      title: "mcp.everything.echo",
+      rawInput: { server: "everything", tool: "echo", arguments: { message: "MCPSHAPE_9931" } },
+      _meta: { is_mcp_tool_call: true },
+    });
+    dispatch(window, { type: "toolCall", call: { ...update, detailInput: mcpIn } });
+    close(window);
+    dispatch(window, mcpOut(mcpIn, "Echo: MCPSHAPE_9931"));
+
+    expect(doc.querySelector(".tool-flat .tool-label")!.textContent).toBe("mcp.everything.echo");
+    expect(doc.querySelector(".tool-cmd")!.textContent).toBe(mcpIn);
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).toBe("Echo: MCPSHAPE_9931");
+  });
+
+  it("Claude pending MCP renders the title with no empty IN, then fills IN when args arrive", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "toolCall",
+      call: {
+        toolCallId: "toolu_mcp_1",
+        title: "mcp__everything__echo",
+        kind: "other",
+        rawInput: {},
+        detailInput: null,
+      },
+    });
+    expect(doc.querySelector(".tool-item-label")!.textContent).toBe("mcp__everything__echo");
+    expect(doc.querySelector(".cmd-block")).toBeNull();
+    expect(doc.querySelector(".cmd-in-body")).toBeNull();
+
+    dispatch(window, {
+      type: "toolCallUpdate",
+      call: {
+        toolCallId: "toolu_mcp_1",
+        title: "mcp__everything__echo",
+        rawInput: { message: "MCPSHAPE_9931" },
+        detailInput: mcpIn,
+      },
+    });
+    expect(doc.querySelector(".cmd-block")).not.toBeNull();
+    expect(doc.querySelector(".tool-cmd")!.textContent).toBe(mcpIn);
+    expect(doc.querySelector(".cmd-out")).toBeNull();
+
+    close(window);
+    dispatch(window, mcpOut(mcpIn, "Echo: MCPSHAPE_9931"));
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).toBe("Echo: MCPSHAPE_9931");
+  });
+
+  it("grok.expandCommandOutputs pre-expands a decorated MCP row", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "initialState",
+      effort: "", cwd: "/w", useCtrlEnter: false, extVersion: "0",
+      showThinking: false, expandCommandOutputs: true, appPurpose: "coding",
+    });
+    dispatch(window, {
+      type: "toolCall",
+      call: {
+        toolCallId: "mcp-exp",
+        title: "mcp__everything__echo",
+        kind: "other",
+        detailInput: mcpIn,
+      },
+    });
+    close(window);
+    const details = doc.querySelector(".tool-item-details") as HTMLElement;
+    expect(details.hidden).toBe(false);
+    expect((doc.querySelector(".tool-flat") as HTMLElement).classList.contains("expanded")).toBe(true);
+  });
+
+  it("a zero-argument MCP row keeps IN {} and OUT joined by toolCallId", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "toolCall",
+      call: {
+        toolCallId: "exec-mcp-empty",
+        title: "mcp.everything.list_folders",
+        kind: "other",
+        rawInput: { server: "everything", tool: "list_folders", arguments: {} },
+        detailInput: "{}",
+      },
+    });
+    close(window);
+    dispatch(window, {
+      type: "commandOutput",
+      command: "{}",
+      toolCallId: "exec-mcp-empty",
+      output: "[]",
+      exitCode: null,
+      truncated: false,
+      cancelled: false,
+    });
+    expect(doc.querySelector(".tool-flat .tool-label")!.textContent).toBe("mcp.everything.list_folders");
+    expect(doc.querySelector(".tool-cmd")!.textContent).toBe("{}");
+    expect(doc.querySelector(".tool-cmd-output")!.textContent).toBe("[]");
+    expect(doc.querySelector(".tool-flat")!.textContent).not.toMatch(/Run /);
+  });
+
+  it("two same-argument MCP rows completing out of order keep their own OUT", () => {
+    const { window, doc } = bootWebview();
+    for (const id of ["exec-mcp-a", "exec-mcp-b"]) {
+      dispatch(window, {
+        type: "toolCall",
+        call: {
+          toolCallId: id,
+          title: id === "exec-mcp-a" ? "mcp.everything.echo-a" : "mcp.everything.echo-b",
+          kind: "other",
+          detailInput: mcpIn,
+        },
+      });
+    }
+    close(window);
+    dispatch(window, {
+      type: "commandOutput",
+      command: mcpIn,
+      toolCallId: "exec-mcp-b",
+      output: "out-b",
+      exitCode: null,
+      truncated: false,
+      cancelled: false,
+    });
+    dispatch(window, {
+      type: "commandOutput",
+      command: mcpIn,
+      toolCallId: "exec-mcp-a",
+      output: "out-a",
+      exitCode: null,
+      truncated: false,
+      cancelled: false,
+    });
+    const rows = [...doc.querySelectorAll(".tool-item")] as HTMLElement[];
+    expect(rows).toHaveLength(2);
+    const rowA = rows.find((row) => row.textContent?.includes("echo-a"));
+    const rowB = rows.find((row) => row.textContent?.includes("echo-b"));
+    expect(rowA?.querySelector(".tool-cmd-output")!.textContent).toBe("out-a");
+    expect(rowB?.querySelector(".tool-cmd-output")!.textContent).toBe("out-b");
+  });
+
+  it("does not invent IN from a null detailInput or from Claude content alone", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "toolCall",
+      call: {
+        toolCallId: "toolu_empty",
+        title: "mcp__everything__echo",
+        kind: "other",
+        rawInput: {},
+        detailInput: null,
+        content: [{ type: "content", content: { type: "text", text: "Echo: MCPSHAPE_9931" } }],
+      },
+    });
+    close(window);
+    expect(doc.querySelector(".cmd-block")).toBeNull();
+    expect(doc.querySelector(".tool-cmd-output")).toBeNull();
   });
 });
 
@@ -571,12 +1364,12 @@ describe("group auto-expand under grok.expandCommandOutputs", () => {
 
     // Batch 1: a command + a read → kept as a group, has a command detail row.
     dispatch(window, exec("c1", "git status"));
-    dispatch(window, read("r1", "src/a.ts"));
+    dispatch(window, explore("r1", "src/a.ts"));
     close(window);
 
-    // Batch 2: two reads → kept as a group, NO command detail.
-    dispatch(window, read("r2", "src/b.ts"));
-    dispatch(window, read("r3", "src/c.ts"));
+    // Batch 2: two searches → kept as a group, NO command detail.
+    dispatch(window, explore("r2", "src/b.ts"));
+    dispatch(window, explore("r3", "src/c.ts"));
     close(window);
 
     const groups = [...doc.querySelectorAll(".tool-group")] as HTMLElement[];
@@ -595,10 +1388,10 @@ describe("group auto-expand under grok.expandCommandOutputs", () => {
     dispatch(window, { type: "appPurpose", value: "coding" });
 
     dispatch(window, exec("c1", "git status"));
-    dispatch(window, read("r1", "src/a.ts"));
+    dispatch(window, explore("r1", "src/a.ts"));
     close(window);
-    dispatch(window, read("r2", "src/b.ts"));
-    dispatch(window, read("r3", "src/c.ts"));
+    dispatch(window, explore("r2", "src/b.ts"));
+    dispatch(window, explore("r3", "src/c.ts"));
     close(window);
 
     const groups = [...doc.querySelectorAll(".tool-group")] as HTMLElement[];
@@ -628,10 +1421,10 @@ describe("setAllToolDetails (expand/collapse all latch)", () => {
     const { window, doc } = bootWebview();
 
     dispatch(window, exec("c1", "git status"));
-    dispatch(window, read("r1", "src/a.ts"));
+    dispatch(window, explore("r1", "src/a.ts"));
     close(window);
-    dispatch(window, read("r2", "src/b.ts"));
-    dispatch(window, read("r3", "src/c.ts"));
+    dispatch(window, explore("r2", "src/b.ts"));
+    dispatch(window, explore("r3", "src/c.ts"));
     close(window);
     dispatch(window, exec("solo", "npm test")); // lone command → flat row with details
     close(window);
@@ -665,7 +1458,7 @@ describe("setAllToolDetails (expand/collapse all latch)", () => {
 
     // A group + a lone command that appear later both render open.
     dispatch(window, exec("c1", "git status"));
-    dispatch(window, read("r1", "src/a.ts"));
+    dispatch(window, explore("r1", "src/a.ts"));
     close(window);
     dispatch(window, exec("solo", "npm test"));
     close(window);
@@ -674,8 +1467,8 @@ describe("setAllToolDetails (expand/collapse all latch)", () => {
 
     // Flip to collapse-all; subsequent content renders collapsed.
     dispatch(window, { type: "setAllToolDetails", open: false });
-    dispatch(window, read("r2", "src/b.ts"));
-    dispatch(window, read("r3", "src/c.ts"));
+    dispatch(window, explore("r2", "src/b.ts"));
+    dispatch(window, explore("r3", "src/c.ts"));
     close(window);
     expect(bodies(doc).every((b) => b.hidden)).toBe(true);
     expect(details(doc).every((d) => d.hidden)).toBe(true);
@@ -685,10 +1478,10 @@ describe("setAllToolDetails (expand/collapse all latch)", () => {
     const { window, doc } = bootWebview();
     dispatch(window, { type: "appPurpose", value: "coding" });
     dispatch(window, exec("c1", "git status"));
-    dispatch(window, read("r1", "src/a.ts"));
+    dispatch(window, explore("r1", "src/a.ts"));
     close(window);
-    dispatch(window, read("r2", "src/b.ts")); // explore-only group
-    dispatch(window, read("r3", "src/c.ts"));
+    dispatch(window, explore("r2", "src/b.ts")); // explore-only group
+    dispatch(window, explore("r3", "src/c.ts"));
     close(window);
 
     dispatch(window, { type: "setAllToolDetails", open: false }); // force-collapse everything
@@ -710,7 +1503,7 @@ describe("setAllToolDetails (expand/collapse all latch)", () => {
       showThinking: false, expandCommandOutputs: true, appPurpose: "coding",
     });
     dispatch(window, exec("c1", "git status"));
-    dispatch(window, read("r1", "src/a.ts"));
+    dispatch(window, explore("r1", "src/a.ts"));
     close(window); // command group auto-opens under the setting
     const cmdBody = bodies(doc)[0];
     expect(cmdBody.hidden).toBe(false);
@@ -732,8 +1525,8 @@ describe("setAllToolDetails (expand/collapse all latch)", () => {
     dispatch(window, { type: "setAllToolDetails", open: true }); // latch on
     dispatch(window, { type: "clearMessages" }); // focus-swap / new session
 
-    dispatch(window, read("r1", "src/a.ts"));
-    dispatch(window, read("r2", "src/b.ts"));
+    dispatch(window, explore("r1", "src/a.ts"));
+    dispatch(window, explore("r2", "src/b.ts"));
     close(window);
     // Explore-only group, latch cleared, setting off → collapsed.
     expect(bodies(doc)[0].hidden).toBe(true);

@@ -1,63 +1,35 @@
-# Atlas for VS Code
+# Atlas (Community)
 
-ACP client extension for the **Atlas CLI** (`atlas agent stdio`). Compatible with enterprise atlas-server (`/atlas/v1` proxy). Client env vars remain `GROK_*` (e.g. `GROK_HOME`, `GROK_CLI_CHAT_PROXY_BASE_URL`).
+[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](LICENSE) ![Agents](https://img.shields.io/badge/Agents-Grok%20Build%20%C2%B7%20Codex%20%C2%B7%20Claude%20Code-000000) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Cursor](https://badgen.net/badge/Cursor/Extension/007ACC)](https://cursor.com) [![Companion](https://img.shields.io/badge/Companion-afkpilot-0E639C)](https://github.com/phuryn/afkpilot) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
 
-> Forked from the community Grok Build VS Code extension; rebranded and path-aligned for Atlas.
+> **GUI for Atlas CLI (incl. Grok 4.6)** — not affiliated with or endorsed by SpaceXAI (formerly xAI). *Grok*, *Atlas*, and *xAI* are trademarks of xAI; this project uses those names only to describe what it's compatible with.
 
-## Quick start
+Two ways to use the same agent UI on top of the **Atlas CLI**:
 
-1. Install Atlas CLI (`~/.atlas/bin/atlas`) — see [docs/INSTALL.md](docs/INSTALL.md).
-2. Set `GROK_CLI_CHAT_PROXY_BASE_URL` to your enterprise `…/atlas/v1` if needed.
-3. Install / build this extension; open the **Atlas** sidebar.
-4. Run `atlas login` (or use the sidebar login affordance).
+| | **VS Code extension** | **Atlas Desktop** |
+|---|---|---|
+| **What** | Sidebar chat inside VS Code / Cursor | Standalone Electron app (no editor required) |
+| **Get it** | [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=PawelHuryn.grok-vscode-phuryn) · [Open VSX](https://open-vsx.org/extension/PawelHuryn/grok-vscode-phuryn) | [afkpilot.com/desktop](https://afkpilot.com/desktop) (see [Desktop install](#grok-build-desktop)) |
+| **Best when** | You already live in the editor | You want the agent as its own window |
 
-Settings live under **`atlas.*`** (e.g. `atlas.cliPath`). Legacy `grok.*` values are used as fallback when an `atlas.*` key was never configured.
+Both speak JSON-RPC to `grok agent stdio` (and to other ACP agents — **Codex** and **Claude Code** included), share chat history under `~/.grok`, and support **Remote Control** via **[AFK Pilot](https://afkpilot.com)** — pair once and watch, approve, and steer from your phone or any browser. Drop files in as `@`-context, run **multiple sessions**, generate **images & video inline**, and dictate by **voice**.
 
----
+No manual setup on either host: onboarding **walks you through installing the `grok` CLI and signing in** — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key**.
 
-# Grok Build for VS Code (Community) — upstream notes
-
-The sections below retain upstream feature documentation from the community project (AFK Pilot, voice, etc.). Prefer **Atlas** naming and paths from the Quick start above when deploying in this monorepo.
-
-[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](LICENSE) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Cursor](https://badgen.net/badge/Cursor/Extension/007ACC)](https://cursor.com) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
-
-> **GUI for Grok Build CLI (incl. Grok 4.5)** — not affiliated with or endorsed by xAI. *Grok*, *Grok Build*, and *xAI* are trademarks of xAI; this project uses those names only to describe what it's compatible with.
-
-The GUI for **Grok Build CLI** (incl. **Grok 4.5**), right in your editor — with **Remote Control**: pair **[AFK Pilot](https://afkpilot.com)** once and watch, approve, and steer your agent from your phone or any browser while away from your desk. Drop open files in as `@`-context, run **multiple sessions** at once, keep **resumable chat history**, generate **images & video inline**, and dictate by **voice**. If you'd rather stay in VS Code than a terminal, this brings Grok Build's agent into your sidebar.
-
-No manual setup: the extension **walks you through installing the `grok` CLI and signing in** — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key** — right from the sidebar, one click per step.
-
-**Install free from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=PawelHuryn.grok-vscode-phuryn) or [Open VSX Registry](https://open-vsx.org/extension/PawelHuryn/grok-vscode-phuryn)**
-
-![Grok Build in the VS Code sidebar, running Grok 4.5](docs/screenshots/grok_4.5.png)
-
-![Generated image rendered inline from /imagine](docs/screenshots/imagine.webp)
+![Atlas in the VS Code sidebar, running Grok](docs/screenshots/grok_4.5.png)
 
 ---
 
 ## Why use this?
 
-If you live in your editor, this puts Grok Build right next to your code — a graphical workflow on top of the CLI: the **native diff editor** on every proposed edit, your **open files and selection as context**, **parallel sessions** with status dots, **resumable history**, **inline images & video**, and **voice dictation**. The CLI does the heavy lifting; this is the GUI for when you'd rather not be in a terminal.
+If you live in your editor **or** want a dedicated agent window, this puts Atlas in a graphical workflow on top of the CLI: **diff preview** on every proposed edit, **open files and selection as context**, **parallel sessions** with status dots, **resumable history**, **inline images & video**, and **voice dictation**. The CLI does the heavy lifting; these hosts are the GUI for when you'd rather not be in a terminal.
 
 ### Features & capabilities
 
 _Click any feature to expand._
 
 <details>
-<summary><strong>Remote Control (AFK Pilot)</strong> — watch and steer your sessions from a phone or any browser</summary>
-
-Gear → *Remote Control* → **Sign in (link this device)** pairs this machine with **[AFK Pilot](https://afkpilot.com)**, a companion web client that mirrors this chat in the browser: follow a running turn, approve permissions, answer questions, and send or steer messages from your phone while away from your desk. The extension dials **out** to the service — no inbound port, no port forwarding — and **Sign out** unlinks the device again. The mobile view renders the retained chat window in full fidelity (diffs, images, equations, diagrams) with touch-sized controls; on reconnect, the remote snapshot is capped at the last 10 user messages while the VS Code view keeps the complete buffer. Its own **+** picker attaches a photo or a document (`.md`/`.txt`/`.pdf`/`.csv`/`.xlsx`/`.docx`) straight from your phone. You can **dictate** there too — say *"atlas send"* to submit hands-free — give each browser tab its **own conversation and repository**, and pick up the very conversation VS Code has open, live in both.
-
-A **projects rail** lists every repository with Grok history and its newest conversations, with pinned conversations lifted above them across all projects and a search over both. You can start a session in any project without switching to it first, and rename, delete or clear history from the row. Projects you put away — and any left untouched for 30 days — fold into **Archived**, and come back on their own the moment you work in one again. On a phone the rail is a drawer behind the handle in the header.
-
-While a device is linked, the extension also **keeps the machine awake** (`caffeinate` on macOS, `SetThreadExecutionState` on Windows, `systemd-inhibit` on Linux) so a turn you kicked off from your phone isn't cut short by idle sleep. The display still sleeps — only system sleep is blocked — and the lock is released the moment you sign out. Turn it off with `atlas.remote.keepAwake`. A **closed laptop lid still suspends** on every OS; no application can override that.
-
-![AFK Pilot — your Grok agent from any browser](docs/screenshots/remote.webp)
-
-</details>
-
-<details>
-<summary><strong>Permission cards with diff preview</strong> — see every edit in VS Code's native diff editor before you approve</summary>
+<summary><strong>Permission cards with diff preview</strong> — see every edit in VS Code's native diff before you approve</summary>
 
 When Grok proposes an edit, hit **open diff →** to review the whole file in VS Code's native diff editor, focused on the first changed line, then *Allow once / always* or *Reject*. The file is written only **after** you approve.
 
@@ -93,7 +65,7 @@ Type `/imagine <prompt>` (or `/imagine-video <prompt>`) and the result renders *
 <details>
 <summary><strong>Voice control</strong> — hands-free dictation with live transcription</summary>
 
-The **microphone button** dictates speech via [xAI's Speech-to-Text API](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text) — words appear live as you talk. Say **"grok send"** to submit hands-free and keep dictating; messages spoken while Grok responds queue and flush when it finishes.
+The **microphone button** dictates speech via [SpaceXAI's Speech-to-Text API](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text) — words appear live as you talk. Say **"atlas send"** to submit hands-free and keep dictating; messages spoken while Grok responds queue and flush when it finishes.
 
 It works out of the box once you're signed in (your `grok login` token is reused automatically) — you only need [`ffmpeg`](https://ffmpeg.org) installed to record. Setup, devices, and costs: **[docs/voice-setup.md](docs/voice-setup.md)**.
 
@@ -191,7 +163,7 @@ When Grok delegates work to a subagent, the chat shows a card with the task and 
 <details>
 <summary><strong>Tool calls</strong> — every read, edit & command inline; expand for full details</summary>
 
-Every action appears as a category-iconed row, batched and summarized ("Explored 5 items", "Edited 2 files"); a failed tool turns red with the reason. Edits show a `+N −M` change count and expand to an inline diff at the file's real line numbers; shell commands expand to an **IN/OUT block** with the full command and its complete output — exactly what Grok received, exit code included. To audit an Auto-accept run, pre-expand everything with `grok.expandCommandOutputs`, or **Grok: Expand All Tool Details** from the Command Palette.
+Every action appears as a category-iconed row, batched and summarized ("Explored 5 items", "Edited 2 files"); a failed tool turns red with the reason. Edits show a `+N −M` change count and expand to an inline diff at the file's real line numbers; shell commands expand to an **IN/OUT block** with the full command and its complete output — exactly what Grok received, exit code included. To audit an Auto-accept run, pre-expand everything with `atlas.expandCommandOutputs`, or **Grok: Expand All Tool Details** from the Command Palette.
 
 ![A tool batch with a command expanded to its IN/OUT block](docs/screenshots/tool_calls.png)
 
@@ -223,6 +195,15 @@ Click the model name in the gear popover. The list comes from your CLI; switchin
 </details>
 
 <details>
+<summary><strong>Multi-provider</strong> — built for Atlas, works with other ACP agents</summary>
+
+The host talks **ACP** (JSON-RPC over stdio), not a Grok-specific protocol, so the same UI drives any agent that speaks it — **OpenAI Codex** and **Claude Code** included. Connect them in **Settings → Providers**; each signs in through its own CLI. Atlas is the default and the one everything is tuned against, but every connected agent shares one model picker, and each conversation keeps the agent it started with, so all three can run side by side with the same chat, diffs, permission cards, and history.
+
+**Settings → Connectors** has three sections: apps you sign into on this computer (Connect / Disconnect — available to Grok, Codex, and Claude), grok.com connectors that follow your Grok account, and local Grok connectors declared in this machine's config files. Project-file servers stay off this page. grok.com connectors are edited at [grok.com/connectors](https://grok.com/connectors).
+
+</details>
+
+<details>
 <summary><strong>Reasoning effort</strong> — trade tokens for depth</summary>
 
 Gear → the effort dots next to the model, `none` → `xhigh`. On recent CLIs it applies **live** to the running session; older ones restart, with an optional *Summarize & Restart* that carries context forward.
@@ -231,20 +212,35 @@ Gear → the effort dots next to the model, `none` → `xhigh`. On recent CLIs i
 
 </details>
 
+<details>
+<summary><strong>Remote Control (AFK Pilot)</strong> — watch and steer your sessions from a phone or any browser</summary>
+
+Gear → *Remote Control* → **Sign in (link this device)** pairs this machine with **[AFK Pilot](https://afkpilot.com)** (its relay server + web client are [open source](https://github.com/phuryn/afkpilot)), a companion web client that mirrors this chat in the browser: follow a running turn, approve permissions, answer questions, and send or steer messages from your phone while away from your desk. The extension dials **out** to the service — no inbound port, no port forwarding — and **Sign out** unlinks the device again. The mobile view renders the retained chat window in full fidelity (diffs, images, equations, diagrams) with touch-sized controls; on reconnect, the remote snapshot is capped at the last 10 user messages while the VS Code view keeps the complete buffer. Its own **+** picker attaches a photo or a document (`.md`/`.txt`/`.pdf`/`.csv`/`.xlsx`/`.docx`) straight from your phone. You can **dictate** there too — say *"atlas send"* to submit hands-free — give each browser tab its **own conversation and repository**, and pick up the very conversation VS Code has open, live in both.
+
+A **projects rail** lists every repository with Grok history and its newest conversations, with pinned conversations lifted above them across all projects and a search over both. You can start a session in any project without switching to it first, and rename, delete or clear history from the row — from the ⋯ button or by right-clicking it. Give a project a **colour** and its folder is tinted everywhere the rail appears, including your phone. Projects you put away — and any left untouched for 30 days — fold into **Archived**, and come back on their own the moment you work in one again. On a phone the rail is a drawer behind the handle in the header.
+
+While a device is linked, the extension also **keeps the machine awake** (`caffeinate` on macOS, `SetThreadExecutionState` on Windows, `systemd-inhibit` on Linux) so a turn you kicked off from your phone isn't cut short by idle sleep. The display still sleeps — only system sleep is blocked — and the lock is released the moment you sign out. Turn it off with `atlas.remote.keepAwake`. A **closed laptop lid still suspends** on every OS; no application can override that.
+
+![AFK Pilot — your Grok agent from any browser](docs/screenshots/remote.webp)
+
+</details>
+
 ---
 
 ## Requirements
 
 - **VS Code** 1.106+ (or a compatible editor on the same base — Cursor 3.x qualifies; Antigravity is still on base 1.104 and keeps the last compatible extension version).
-- **The Grok Build CLI** (`grok`) on macOS, Linux, or Windows. The CLI ships a native Windows build, so the extension runs natively on all three — no WSL required (WSL2 + Remote-WSL still works if you prefer it).
-- **A login:** either a **SuperGrok or X Premium+** subscription (`grok login`) or an xAI API key. Either subscription unlocks **Grok Build**; with an API key you also get the **grok-4.x** models and **grok-imagine**. (Grok's free tier does **not** include the CLI agent.)
+- **The Atlas CLI** (`grok`) on macOS, Linux, or Windows. The CLI ships a native Windows build, so the extension runs natively on all three — no WSL required (WSL2 + Remote-WSL still works if you prefer it).
+- **A login:** either a **SuperGrok or X Premium+** subscription (`grok login`) or an xAI API key. Either subscription unlocks **Atlas**; with an API key you also get the **grok-4.x** models and **grok-imagine**. (Grok's free tier does **not** include the CLI agent.)
 - **Voice control** is optional and works out of the box once you're signed in — it just needs [`ffmpeg`](https://ffmpeg.org) to record. Setup + advanced options: [docs/voice-setup.md](docs/voice-setup.md).
 
 ---
 
 ## Install
 
-**1. Install the extension.** In VS Code or Cursor, open **Extensions** (`Ctrl/Cmd+Shift+X`) and search **"Grok Build for VS Code (Community)"** — or install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=PawelHuryn.grok-vscode-phuryn) / [Open VSX Registry](https://open-vsx.org/extension/PawelHuryn/grok-vscode-phuryn).
+### VS Code / Cursor extension
+
+**1. Install the extension.** In VS Code or Cursor, open **Extensions** (`Ctrl/Cmd+Shift+X`) and search **"Atlas for VS Code (Community)"** — or install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=PawelHuryn.grok-vscode-phuryn) / [Open VSX Registry](https://open-vsx.org/extension/PawelHuryn/grok-vscode-phuryn).
 
 **2. Open Grok and sign in.** Press `Ctrl/Cmd+;`. The sidebar **walks you through installing the `grok` CLI and signing in** — one click per step, with your SuperGrok / X Premium+ subscription or an xAI API key. That's the whole setup.
 
@@ -252,13 +248,35 @@ Grok opens in the **Secondary Side Bar** (right side, next to other AI tools). P
 
 > Prefer the terminal, building from source, or installing into several IDEs at once? See **[docs/INSTALL.md](docs/INSTALL.md)**.
 
+### Atlas Desktop
+
+Standalone app for **macOS** (Apple Silicon + Intel) and **Windows** (x64). Same agent UI as the extension; no VS Code required.
+
+**1. Download** the installer from **[afkpilot.com/desktop](https://afkpilot.com/desktop)** — it detects your platform and offers the right build. Asset names:
+
+| Platform | File |
+|---|---|
+| macOS Apple Silicon | `Grok-Build-Desktop-<version>-mac-arm64.dmg` |
+| macOS Intel | `Grok-Build-Desktop-<version>-mac-x64.dmg` |
+| Windows x64 | `Grok-Build-Desktop-<version>-win-x64.exe` |
+
+(Zip archives are also published for macOS: `…-mac-arm64.zip` / `…-mac-x64.zip`.)
+
+**2. Install and open** the app, then pick a project folder (File → Add Project Folder). Onboarding installs the `grok` CLI and signs you in the same way as the extension.
+
+**macOS is signed and notarised** (since 3.2.7) — the app opens straight from the `.dmg`, with no Gatekeeper warning and nothing to allow through in Settings.
+
+**Windows is not signed yet**, so Microsoft Defender SmartScreen may show “Windows protected your PC.” Choose **More info** → **Run anyway**.
+
+Details, build-from-source, and signing notes: **[docs/desktop.md](docs/desktop.md)**.
+
 ---
 
 ## Quick start
 
-1. **Open** the Grok view (`Ctrl/Cmd+;`, or **Grok: Open** from the command palette) — it lives in the Secondary Side Bar by default.
+1. **Open** Grok — in VS Code: `Ctrl/Cmd+;` (Secondary Side Bar by default); in Desktop: launch the app and add a project folder.
 2. **Type a prompt** and press **Enter**. Grok streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in the gear menu → *Config & debug*.
-3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — preview an edit in the native **diff editor**, with full-file context focused on the first changed line, then *Allow once / always / Reject*.
+3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — preview an edit (native diff in VS Code; in-app viewer on Desktop), then *Allow once / always / Reject*.
 4. **Pick your mode** (Agent / Plan / Auto accept), **model**, and **reasoning effort** from the bottom toolbar and gear menu.
 5. **Resume anytime** — the clock icon lists past sessions for this project.
 
@@ -271,26 +289,30 @@ Grok opens in the **Secondary Side Bar** (right side, next to other AI tools). P
 
 | Setting | Default | Notes |
 |---|---|---|
-| `grok.cliPath` | `""` | Path to the `grok` binary. Empty = auto-discover (`~/.grok/bin/grok` → PATH). |
-| `grok.defaultModel` | `""` | Model ID for new sessions. Empty = CLI default. |
-| `grok.defaultEffort` | `""` | Reasoning effort forwarded as `--reasoning-effort` (`none` / `minimal` / `low` / `medium` / `high` / `xhigh`). Empty = CLI default. Applies live on recent CLIs; older CLIs (and resetting to the model default) restart the session. |
-| `grok.defaultMode` | `""` | Mode for new sessions, remembered automatically from your last Agent / Auto accept switch (Plan is never remembered). Empty = Agent. |
-| `grok.includeActiveFileByDefault` | `true` | Auto-add the active editor as a context chip. Sends the file **path** (not its contents) unless you have text selected, in which case the selected lines are included. Click the chip to toggle it off — that choice is remembered across file switches and restarts. |
-| `grok.mentionIndexLimit` | `5000` | How many workspace files the composer's **@** autocomplete indexes. Raise it (no upper limit) if files are missing from the `@` list in a large repo; applies on the next `@`. Files you have open as tabs are always mentionable regardless of this cap. |
-| `grok.useCtrlEnterToSend` | `false` | When true, Enter inserts a newline and Ctrl/Cmd+Enter sends. |
-| `grok.showThinking` | `false` | Show Grok's reasoning (thinking) traces in chat. Off shows a *Thinking…* stand-in. Also toggleable live from gear → Config & debug. |
-| `grok.expandCommandOutputs` | `false` | Expand tool details by default — each shell command's IN/OUT block and each edit's inline diff (useful for auditing Auto-accept sessions). With this setting on, groups containing command or edit details open too; read/explore-only groups stay collapsed, and a lone command outside a group opens its details. Edit rows always show a `+N −M` change count, even when their diff is closed. Toggle live from gear → Config & debug → **Expand tool details**. (Setting key kept for compatibility.) |
-| `grok.steerByDefault` | `false` | Send straight into Grok's running turn instead of queueing. Off: a message sent mid-turn waits and flushes when the turn ends (steer it on demand with the **Steer** button). On: it skips the queue and redirects Grok immediately. Never cancels the turn or discards work in progress; plain text only (no chips, editor context, or `/commands`). Toggle live from gear → Config & debug → **Steer by default**. |
-| `grok.soundNotifications` | `false` | Play a short tone when Grok finishes a turn or errors — a rising chime for done, a lower tone for errors — but **only when the Grok panel isn't focused**, so it notifies you when you've stepped away. Toggle live from gear → Config & debug → **Sound notifications**. |
-| `grok.telemetry.enabled` | `true` | Send anonymous, privacy-first usage telemetry (see [Privacy](#privacy)). Also honors VS Code's global `telemetry.telemetryLevel`. |
-| `grok.chatFontScale` | `100` | Zoom for the chat panel only, as a percent (`150`, `200`, …). Scales the whole chat UI without rescaling the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live; supports User (global) and Workspace (local) scope. |
-| `grok.voiceApiKey` | `""` | Optional override key for voice Speech-to-Text. Empty = reuse your `grok login` token automatically, else `GROK_VOICE_API_KEY` / `XAI_API_KEY` from the workspace `.env`. See [docs/voice-setup.md](docs/voice-setup.md). |
-| `grok.ffmpegPath` | `""` | Path to `ffmpeg` for microphone recording. Empty = use `ffmpeg` from `PATH`. |
-| `grok.voiceInputDevice` | `""` | Microphone device override. Empty = system default (Windows auto-detects the first DirectShow audio device). |
-| `grok.voiceSendPhrase` | `"grok send"` | Spoken phrase that auto-submits when it ends a transcription. Empty = disable hands-free sending. |
-| `grok.voiceKeyterms` | `[]` | Words or phrases that bias streaming recognition toward code and project vocabulary. Sent to xAI with each streaming connection; up to 100 terms of 50 characters, including the send phrase and `Grok`. |
-| `grok.voiceLanguage` | `""` | Optional language code for streaming text formatting (for example `en`, `fr`, `de`, or `ja`). Empty preserves spoken-form text. |
-| `grok.voiceStreaming` | `true` | Stream transcription live as you speak. `false` = one-shot batch mode. Streaming costs $0.20/hr vs $0.10/hr batch. |
+| `atlas.cliPath` | `""` | Path to the `grok` binary. Empty = auto-discover (`~/.grok/bin/grok` → PATH). |
+| `atlas.defaultModel` | `""` | Model ID for new sessions. Empty = CLI default. |
+| `atlas.defaultEffort` | `""` | Reasoning effort forwarded as `--reasoning-effort` (`none` / `minimal` / `low` / `medium` / `high` / `xhigh`). Empty = CLI default. Applies live on recent CLIs; older CLIs (and resetting to the model default) restart the session. |
+| `atlas.defaultMode` | `""` | Mode for new sessions, remembered automatically from your last Agent / Auto accept switch (Plan is never remembered). Empty = Agent. |
+| `atlas.includeActiveFileByDefault` | `true` | Auto-add the active editor as a context chip. Sends the file **path** (not its contents) unless you have text selected, in which case the selected lines are included. Click the chip to toggle it off — that choice is remembered across file switches and restarts. |
+| `atlas.mentionIndexLimit` | `5000` | How many workspace files the composer's **@** autocomplete indexes. Raise it (no upper limit) if files are missing from the `@` list in a large repo; applies on the next `@`. Files you have open as tabs are always mentionable regardless of this cap. |
+| `atlas.acp.promptIdleTimeoutMs` | `1800000` | Silence before a live turn is treated as hung (`ACP request timed out: session/prompt`). Any ACP traffic resets the idle clock. `0` disables. Applies to new sessions. |
+| `atlas.acp.promptAbsoluteTimeoutMs` | `86400000` | Hard wall-clock cap for one turn, even while it is still streaming. `0` disables. Applies to new sessions. |
+| `atlas.acp.requestTimeoutMs` | `120000` | Timeout for ACP methods other than `session/prompt` (`initialize`, `session/new`, …). |
+| `atlas.useCtrlEnterToSend` | `false` | When true, Enter inserts a newline and Ctrl/Cmd+Enter sends. |
+| `atlas.showThinking` | `false` | Show Grok's reasoning (thinking) traces in chat. Off shows a *Thinking…* stand-in. Also toggleable live from gear → Config & debug. |
+| `atlas.expandCommandOutputs` | `false` | Expand tool details by default — each shell command's IN/OUT block and each edit's inline diff (useful for auditing Auto-accept sessions). With this setting on, groups containing command or edit details open too; read/explore-only groups stay collapsed, and a lone command outside a group opens its details. Edit rows always show a `+N −M` change count, even when their diff is closed. Toggle live from gear → Config & debug → **Expand tool details**. (Setting key kept for compatibility.) |
+| `atlas.steerByDefault` | `false` | Send straight into Grok's running turn instead of queueing. Off: a message sent mid-turn waits and flushes when the turn ends (steer it on demand with the **Steer** button). On: it skips the queue and redirects Grok immediately. Never cancels the turn or discards work in progress; plain text only (no chips, editor context, or `/commands`). Toggle live from gear → Config & debug → **Steer by default**. |
+| `atlas.soundNotifications` | `false` | Play a short tone when Grok finishes a turn or errors — a rising chime for done, a lower tone for errors — but **only when the Grok panel isn't focused**, so it notifies you when you've stepped away. Toggle live from gear → Config & debug → **Sound notifications**. |
+| `atlas.thumbsFeedback` | `false` | Show thumbs on a finished Grok turn so you can send a rating to SpaceXAI. Off by default. On, thumbs appear only when this Grok session supports feedback — never on Codex or Claude. Toggle from Settings → General → **Thumbs feedback to SpaceXAI**. |
+| `atlas.telemetry.enabled` | `true` | Send anonymous, privacy-first usage telemetry (see [Privacy](#privacy)). Also honors VS Code's global `telemetry.telemetryLevel`. |
+| `atlas.chatFontScale` | `100` | Zoom for the chat panel only, as a percent (`150`, `200`, …). Scales the whole chat UI without rescaling the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live; supports User (global) and Workspace (local) scope. |
+| `atlas.voiceApiKey` | `""` | Optional override key for voice Speech-to-Text. Empty = reuse your `grok login` token automatically, else `GROK_VOICE_API_KEY` / `XAI_API_KEY` from the workspace `.env`. See [docs/voice-setup.md](docs/voice-setup.md). |
+| `atlas.ffmpegPath` | `""` | Path to `ffmpeg` for microphone recording. Empty = use `ffmpeg` from `PATH`. |
+| `atlas.voiceInputDevice` | `""` | Microphone device override. Empty = system default (Windows auto-detects the first DirectShow audio device). |
+| `atlas.voiceSendPhrase` | `"atlas send"` | Spoken phrase that auto-submits when it ends a transcription. Empty = disable hands-free sending. |
+| `atlas.voiceKeyterms` | `[]` | Words or phrases that bias streaming recognition toward code and project vocabulary. Sent to SpaceXAI with each streaming connection; up to 100 terms of 50 characters, including the send phrase and `Grok`. |
+| `atlas.voiceLanguage` | `""` | Optional language code for streaming text formatting (for example `en`, `fr`, `de`, or `ja`). Empty preserves spoken-form text. |
+| `atlas.voiceStreaming` | `true` | Stream transcription live as you speak. `false` = one-shot batch mode. Streaming costs $0.20/hr vs $0.10/hr batch. |
 
 </details>
 
@@ -316,7 +338,7 @@ VS Code commands (not Grok slash commands):
 | `Grok: Expand All Tool Details (This Session)` | Open every tool group, command IN/OUT box, and edit inline diff, and keep new ones open — this session only |
 | `Grok: Collapse All Tool Details (This Session)` | Collapse them all, and keep new ones collapsed — this session only |
 | `Grok: Show Logs` | Open the Grok output channel (ACP messages, errors) |
-| `Grok: Log Out` | Sign out of the Grok CLI (`grok logout`) and return to the sign-in screen |
+| `Grok: Log Out` | Sign out of the Atlas CLI (`grok logout`) and return to the sign-in screen |
 
 | Key | Action |
 |---|---|
@@ -341,21 +363,16 @@ Full diagram, message flow, module map, and design notes: **[docs/architecture.m
 
 ## Development
 
-<details>
-<summary><strong>Build, test & repo conventions</strong></summary>
+Building, testing and repo conventions live in **[docs/development.md](docs/development.md)**.
 
-```bash
-npm install
-npm test         # grok-free unit/DOM/fake-CLI integration suite
-npm run test:integration # grok-free real VS Code Extension Host smoke (also required by CI)
-npm run package  # → grok-vscode-phuryn-<version>.vsix
-```
-
-`npm test` is grok-free and never spawns the real binary. CI also requires the separate `npm run test:integration` Electron smoke. An on-demand `npm run test:live` drives the actual `grok` end-to-end (handshake, restore, native plan verdicts, image/video gen) and is run **before a release**, not on every commit. Full test taxonomy: **[CLAUDE.md](CLAUDE.md#test-taxonomy--three-layers)**. Architecture and module map: **[docs/architecture.md](docs/architecture.md)**.
-
-**Repo conventions:** direct-to-`main`, no feature branches; commits explain the *why*; no speculative abstractions; the 1657-test grok-free suite is the floor — every change keeps it green.
-
-</details>
+The engineering documentation for the whole system — the architecture across
+the extension and its relay, the remote-control wire protocol, authentication,
+the cross-repo test matrix, and how releases ship — lives in the companion
+**[afkpilot](https://github.com/phuryn/afkpilot)** repository (the AFK
+Pilot relay server + web client, open source). Contributions to either half
+are welcome; start with its
+[docs index](https://github.com/phuryn/afkpilot/tree/main/docs) and
+[CONTRIBUTING](https://github.com/phuryn/afkpilot/blob/main/CONTRIBUTING.md).
 
 ---
 
@@ -368,7 +385,7 @@ npm run package  # → grok-vscode-phuryn-<version>.vsix
 
 ## Privacy
 
-**Privacy by design** — no message content, code, or file paths leave your machine automatically. The only automatic report is an anonymous, opt-out usage count (turn it off with `grok.telemetry.enabled: false` or VS Code's global `telemetry.telemetryLevel`). Data leaves only through features you explicitly enable or invoke: Voice input sends audio to xAI for transcription; the optional **Read simplified summaries** switch in VS Code or AFK Pilot sends the cleaned spoken reply to xAI for a brief version; Remote Control relays the chat to your linked devices. Each is disclosed separately from telemetry.
+**Privacy by design** — no message content, code, or file paths leave your machine automatically. The only automatic report is an anonymous, opt-out `session_start` (turn it off with `atlas.telemetry.enabled: false` or VS Code's global `telemetry.telemetryLevel`). It carries an install id plus a low-cardinality settings snapshot, including mode / model / effort, host kind, UI preferences, whether voice input is available, and which agents are connected — **never** message content, code, paths, or free-text settings. The full field list is in [docs/privacy.md](docs/privacy.md). Data leaves only through features you explicitly enable or invoke: Voice input sends audio to SpaceXAI for transcription; the optional **Read simplified summaries** switch in VS Code or AFK Pilot sends the cleaned spoken reply to SpaceXAI for a brief version; optional **Thumbs feedback to SpaceXAI** (off by default) sends a rating on a finished Grok turn; Remote Control relays the chat to your linked devices. Each is disclosed separately from telemetry.
 
 More: [docs/privacy.md](docs/privacy.md).
 
@@ -376,4 +393,4 @@ More: [docs/privacy.md](docs/privacy.md).
 
 ## License & attribution
 
-Licensed under the **Functional Source License, Version 1.1, MIT Future License (FSL-1.1-MIT)** — see [LICENSE](LICENSE). In short: use, modify, and redistribute freely for any purpose **except** offering a competing commercial product or service; each release automatically becomes plain **MIT two years after publication**. Versions up to and including 1.8.1 were published under MIT and remain MIT. The copyright notice and license text must travel with all copies, including compiled builds — if you're reusing this project, see [docs/attribution.md](docs/attribution.md) for how to credit it properly.
+Licensed under the **Functional Source License, Version 1.1, MIT Future License (FSL-1.1-MIT)** — see [LICENSE](LICENSE). In short: use, modify, and redistribute freely for any purpose **except** offering a competing commercial product or service. Versions up to and including 1.8.1 were published under MIT and remain MIT. The copyright notice and license text must travel with all copies, including compiled builds — if you're reusing this project, see [docs/attribution.md](docs/attribution.md) for how to credit it properly.

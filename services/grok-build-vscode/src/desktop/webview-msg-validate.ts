@@ -13,6 +13,12 @@ import {
   WEBVIEW_MESSAGE_TYPES,
   type WebviewMsg,
 } from "../protocol";
+import { MAX_CONNECTOR_KEY_CHARS } from "../mcp-connectors";
+import { ROUTINE_PROMPT_MAX } from "../routines";
+
+/** Generous next to {@link ROUTINE_PROMPT_MAX}: this gate rejects the absurd,
+ *  and validateRoutine does the real trimming once past the boundary. */
+const MAX_ROUTINE_PROMPT_CHARS = ROUTINE_PROMPT_MAX * 4;
 
 const TYPE_SET = new Set<string>(WEBVIEW_MESSAGE_TYPES);
 
@@ -82,7 +88,56 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "openProjectConfig":
     case "listLocalModels":
     case "addLocalModel":
-    case "runMcpList":
+    case "listMcpServers":
+    case "connectMcpConnector":
+    case "disconnectMcpConnector":
+      if ((type === "connectMcpConnector" || type === "disconnectMcpConnector") && !isString(raw.id)) {
+        return null;
+      }
+      if (type === "connectMcpConnector") {
+        if (!opt(raw.key, isString)) return null;
+        if (typeof raw.key === "string" && raw.key.length > MAX_CONNECTOR_KEY_CHARS) return null;
+        if (!opt(raw.readOnly, isBoolean)) return null;
+      }
+      break;
+    case "editLocalModel":
+    case "removeLocalModel":
+      if (!isString(raw.id)) return null;
+      break;
+    // Routines. `listRoutines` carries nothing; the writers carry an id, and
+    // `saveRoutine` a draft object whose FIELDS are re-validated host-side by
+    // validateRoutine — this gate only has to establish the shape.
+    case "listRoutines":
+      break;
+    case "deleteRoutine":
+    case "runRoutineNow":
+      if (!isString(raw.id)) return null;
+      break;
+    case "setRoutinePaused":
+      if (!isString(raw.id) || !isBoolean(raw.paused)) return null;
+      break;
+    case "saveRoutine": {
+      if (!opt(raw.id, isString)) return null;
+      if (!isObject(raw.draft)) return null;
+      const draft = raw.draft;
+      if (!opt(draft.title, isString) || !opt(draft.prompt, isString)) return null;
+      if (!opt(draft.cwd, isString) || !opt(draft.provider, isString)) return null;
+      if (!opt(draft.model, isString)) return null;
+      // A prompt is the one unbounded field here, and it crosses an untrusted
+      // bridge before anything caps it. validateRoutine slices to
+      // ROUTINE_PROMPT_MAX, but that runs after this gate has already accepted
+      // whatever arrived, so bound it here too rather than trusting the cap
+      // downstream of the boundary.
+      if (isString(draft.prompt) && draft.prompt.length > MAX_ROUTINE_PROMPT_CHARS) return null;
+      if (isString(draft.title) && draft.title.length > MAX_ROUTINE_PROMPT_CHARS) return null;
+      if (draft.cadence !== undefined) {
+        if (!isObject(draft.cadence)) return null;
+        const cadence = draft.cadence;
+        if (!opt(cadence.every, isNumber) || !opt(cadence.unit, isString)) return null;
+        if (!opt(cadence.at, isString)) return null;
+      }
+      break;
+    }
     case "showLogs":
     case "toggleDevTools":
     case "restartToUpdate":
@@ -94,19 +149,15 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       break;
     case "closeSettingsSurface":
       break;
-    case "editLocalModel":
-    case "removeLocalModel":
-      if (!isString(raw.id)) return null;
-      break;
     case "runInstallCmd":
     case "installCodex":
     case "cancelCodexInstall":
-    case "checkAtlasUpdate":
-    case "updateAtlas":
+    case "checkGrokUpdate":
+    case "updateGrok":
+    case "refreshProviders":
     case "pickFile":
     case "voiceStart":
     case "remoteVoiceStart":
-    case "clearQueuedSends":
     case "forkSession":
     case "newWorktreeSession":
     case "applyWorktree":
@@ -119,7 +170,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "logout":
     case "recheckConnection":
     case "retryProviderSession":
-      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex") return null;
+      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude") return null;
       break;
     case "setMode":
       if (raw.modeId !== "agent" && raw.modeId !== "plan" && raw.modeId !== "yolo") {
@@ -176,6 +227,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "setExpandCommandOutputs":
     case "setSteerByDefault":
     case "setTelemetryEnabled":
+    case "setThumbsFeedback":
     case "composerFocus":
       if (type === "composerFocus") {
         if (!isBoolean(raw.focused)) return null;
@@ -216,7 +268,7 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       break;
     case "setModel":
       if (!isString(raw.modelId)) return null;
-      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex") return null;
+      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude") return null;
       break;
     case "listSessions":
       if (!opt(raw.offset, isNumber) || !opt(raw.limit, isNumber) || !opt(raw.query, isString)) {
@@ -316,8 +368,19 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       if (!opt(raw.cancel, isBoolean)) return null;
       break;
     case "queueSend":
+      if (!isString(raw.text)) return null;
+      if (raw.chips !== undefined && !Array.isArray(raw.chips)) return null;
+      break;
     case "steerSend":
       if (!isString(raw.text)) return null;
+      if (raw.chips !== undefined && !Array.isArray(raw.chips)) return null;
+      if (!opt(raw.fromQueue, isBoolean)) return null;
+      break;
+    case "clearQueuedSends":
+      if (!opt(raw.restore, isBoolean)) return null;
+      break;
+    case "turnFeedback":
+      if (raw.rating !== -1 && raw.rating !== 0 && raw.rating !== 1) return null;
       break;
     case "dequeueSend":
       if (!isNumber(raw.index)) return null;

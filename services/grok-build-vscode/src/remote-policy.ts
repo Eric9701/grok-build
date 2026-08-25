@@ -13,6 +13,7 @@
 import type { HostMsg, HostUiCapabilities, WebviewMsg } from "./protocol";
 import { isImageChip, type FileChip } from "./chips";
 import { isPrimerText } from "./grok-primer";
+import { projectMcpServersMessageForRemote } from "./mcp";
 import { countsAsUserBubble } from "./plan-restore";
 import { historyEventCount } from "./rewind";
 import { cwdIsAuthorized } from "./workspace-auth";
@@ -235,6 +236,11 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   dequeueSend: "propose",
   clearQueuedSends: "propose",
   steerSend: "propose",
+  // A thumbs rating is input about the conversation the remote is already
+  // driving — same class as steerSend, not a desk-local picker or a destructive
+  // approval. The host files it against the live process's current turn
+  // (`client_type` is extension/desktop even when a phone clicked).
+  turnFeedback: "propose",
   forkSession: "propose",
   // Worktree create/apply/remove: REVERTED to host-local 2026-08-07, hours
   // after being widened to "propose" the same day. The widening was safe in
@@ -264,6 +270,8 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   uiConfirmAnswer: "host-local",
   // Workflow pause/resume/stop is a slash turn (same class as queueSend/steer).
   workflowControl: "propose",
+  // Donut popover re-fetch — read-only meter, no turn / no mutation.
+  refreshContextDetails: "view",
   pasteImage: "propose",
   // Host validates the extension/name/bytes before staging under globalStorage.
   uploadFile: "propose",
@@ -280,6 +288,11 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // Durable connection mutation is desk-only. Remote clients may only retry an
   // already-connected provider's session through retryProviderSession.
   recheckConnection: "host-local",
+  // Observation only — but it still spawns the desk's CLIs to do it, which is
+  // the same reason updateGrok/checkGrokUpdate sit here. A remote already sees
+  // every refresh: `providerState` is mirrored, so the phone's Providers page
+  // updates the moment the desk re-observes.
+  refreshProviders: "host-local",
   retryProviderSession: "propose",
   // approvals + destructive + host-CLI mutations (full only)
   permissionAnswer: "full",
@@ -296,10 +309,10 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // binaries live on the desk machine and only the desk can replace them, so a
   // phone offering it was offering something it has no business doing — and the
   // remote Version & about page is now purely informational for that reason.
-  // The status still travels: `atlasUpdateStatus` is mirrored, so a phone can
+  // The status still travels: `grokUpdateStatus` is mirrored, so a phone can
   // see the CLI is out of date while being unable to act on it.
-  updateAtlas: "host-local",
-  checkAtlasUpdate: "host-local",
+  updateGrok: "host-local",
+  checkGrokUpdate: "host-local",
   pickModel: "host-local",
   openFile: "host-local",
   showInFolder: "host-local",
@@ -321,7 +334,31 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   editLocalModel: "host-local",
   removeLocalModel: "host-local",
   openProjectConfig: "host-local",
-  runMcpList: "host-local",
+  // Read-only inventory query through the live Grok ACP session. Same class as
+  // refreshContextDetails: no turn, no mutation, no desk-local picker. Connect
+  // and disconnect stay host-local. Mirroring the last fetch is not enough if
+  // the desk never opened Settings, so a remote may ask when it opens the page.
+  listMcpServers: "view",
+  // Reading the page is a view op. Everything that WRITES is "full": a routine
+  // schedules unattended agent runs, which is the same class as the other host
+  // state a remote may change (pins, archives), not turn control.
+  //
+  // Unlike connectors, these are NOT host-local. A phone is exactly where
+  // someone thinks "I should get a morning brief", and a remote can already
+  // send arbitrary prompts — a routine adds persistence, not reach. Reach is
+  // bounded separately, by `cwd` being checked against the authorized set at
+  // the point of the write.
+  listRoutines: "view",
+  saveRoutine: "full",
+  deleteRoutine: "full",
+  setRoutinePaused: "full",
+  runRoutineNow: "full",
+  // OAuth opens a browser on the desk and writes ~/.mcp-auth there. Key-auth
+  // pastes a secret into HostSecrets. A phone cannot complete either flow,
+  // must never set/read/clear a key, and must not change which tools every
+  // agent receives on the next session/new.
+  connectMcpConnector: "host-local",
+  disconnectMcpConnector: "host-local",
   showLogs: "host-local",
   toggleDevTools: "host-local",
   openSettings: "host-local",
@@ -351,6 +388,9 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   setVoiceKeyterms: "propose",
   // Remote surface is read-only for telemetry; the desk owns the switch.
   setTelemetryEnabled: "host-local",
+  // Same class as the other General host prefs: the desk owns the switch,
+  // remotes receive the live value and honour it for thumbs.
+  setThumbsFeedback: "host-local",
   // Machine-global disclosure preference in ~/.grok/client-state — the web
   // client inherits and may set it (host-owned store, not VS Code settings).
   setAppPurpose: "propose",
@@ -517,6 +557,8 @@ export type OutboundDisposition =
   | "mirror"
   /** Carries a webview-only asWebviewUri src — must be inlined to base64 first. */
   | "media"
+  /** Allowlisted subset — rewrite before crossing; never ferry the desk object. */
+  | "allowlist"
   /** Meaningless/misleading outside the local webview (host mic/voice) — suppress. */
   | "host-local";
 
@@ -530,6 +572,14 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   voiceError: "mirror",
   initialState: "mirror",
   providerState: "mirror",
+  // Page fields only (`projectMcpServerForRemote`). Launch recipes stay on
+  // the desk. Same machine-global observation as mcpConnectors; remotes may
+  // look, they cannot Connect/Disconnect (inbound host-local above).
+  mcpServers: "allowlist",
+  mcpConnectors: "mirror",
+  // Mirrored, but the project-auth pass above trims both cwd-bearing lists
+  // first, so a tab sees only routines and projects it may already reach.
+  routines: "mirror",
   codexInstallProgress: "host-local",
   // Placement is a property of the machine running the extension, and `moveView`
   // is host-local anyway — a remote could neither act on the hint nor need it.
@@ -538,7 +588,8 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   appPurpose: "mirror",
   fontScale: "mirror",
   telemetryEnabled: "mirror",
-  atlasUpdateStatus: "mirror",
+  thumbsFeedback: "mirror",
+  grokUpdateStatus: "mirror",
   // Desk-only installer notice / restart — a remote has nothing useful to do with it.
   updateAvailable: "host-local",
   updateReady: "host-local",
@@ -616,6 +667,9 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   remoteStatus: "host-local",
   setAllToolDetails: "mirror",
   focusInput: "mirror",
+  // Desk/VS Code only — a phone opens find from its own ⋯, and a palette
+  // invocation on the desk must not pop a find bar on every linked tab.
+  findInSession: "host-local",
   restoreComposer: "mirror",
   truncateMessages: "mirror",
   uiConfirmRequest: "mirror",
@@ -627,6 +681,8 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   queuedSends: "mirror",
   submitQueuedSend: "mirror",
   steerUnavailable: "mirror",
+  feedbackAvailability: "mirror",
+  turnFeedbackAck: "mirror",
   usage: "mirror",
 };
 
@@ -662,7 +718,8 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   appPurpose: "none",
   fontScale: "none",
   telemetryEnabled: "none",
-  atlasUpdateStatus: "none",
+  thumbsFeedback: "none",
+  grokUpdateStatus: "none",
   updateAvailable: "none",
   updateReady: "none",
   cliUpdating: "none",
@@ -670,6 +727,9 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   providerState: "none",
   // Desk-only config.toml `[model.*]` list — not project data, not mirrored.
   localModels: "none",
+  mcpServers: "none",
+  mcpConnectors: "none",
+  routines: "entries",
   codexInstallProgress: "none",
   expandCommandOutputs: "none",
   steerByDefault: "none",
@@ -682,6 +742,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   error: "none",
   hostNotice: "none",
   focusInput: "none",
+  findInSession: "none",
   openModePopover: "none",
   // Open-folder catalog — project-bearing selectedCwd/activeCwd/entries validated.
   repos: "repos-catalog",
@@ -765,6 +826,8 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   queuedSends: "scope",
   submitQueuedSend: "scope",
   steerUnavailable: "scope",
+  feedbackAvailability: "scope",
+  turnFeedbackAck: "scope",
   usage: "scope",
 };
 
@@ -811,6 +874,20 @@ export function mayDeliverRemoteHostMsg(
     case "none":
       return true;
     case "entries": {
+      // `routines` carries TWO cwd-bearing lists — the rows and the project
+      // picker feeding the form. Checking only `entries` would hand a remote
+      // the name of every project on the machine through the dropdown.
+      if (msg.type === "routines") {
+        return (
+          msg.entries.every(
+            (e) =>
+              cwdIsAuthorized(e.cwd, authorizedCwds, sameCwd) &&
+              // A retained run can name a project the routine no longer points
+              // at, so the entry's own cwd does not vouch for it.
+              e.runs.every((run) => !run.cwd || cwdIsAuthorized(run.cwd, authorizedCwds, sameCwd)),
+          ) && msg.projects.every((p) => cwdIsAuthorized(p.cwd, authorizedCwds, sameCwd))
+        );
+      }
       const entries =
         msg.type === "sessions" || msg.type === "pinnedSessions"
           ? msg.entries
@@ -1043,6 +1120,17 @@ export function transformHostMsgForRemote(msg: HostMsg, deps: MediaInlineDeps): 
       ...(msg.chips ? { chips: msg.chips.map((chip) => inlineChipPreviewForRemote(chip, deps)) } : {}),
     };
   }
+  if (msg.type === "queuedSends" && msg.queued) {
+    return {
+      ...msg,
+      queued: msg.queued.map((item) => ({
+        ...item,
+        ...(item.chips
+          ? { chips: item.chips.map((chip) => inlineChipPreviewForRemote(chip, deps)) }
+          : {}),
+      })),
+    };
+  }
   if (msg.type === "userMessageChunk") {
     return {
       ...msg,
@@ -1056,7 +1144,73 @@ export function transformHostMsgForRemote(msg: HostMsg, deps: MediaInlineDeps): 
       return msg;
     case "media":
       return inlineMediaForRemote(msg as MediaMsg, deps);
+    case "allowlist":
+      return allowlistHostMsgForRemote(msg);
     default:
       return null; // host-local
   }
+}
+
+/**
+ * Trim a `routines` frame to what one connection may reach.
+ *
+ * Both lists carry cwds and both must be filtered, but for different reasons.
+ * The ROWS are the routines themselves. The PROJECTS are the form's picker, and
+ * the desk deliberately offers archived projects there — archiving hides a
+ * project from the rail, and a routine is not the rail. Remotes are the other
+ * way round: `remoteAuthorizedCwds` excludes archived projects on purpose, so
+ * archiving revokes remote access to them.
+ *
+ * Those two correct rules compose into a bug if the frame is merely CHECKED:
+ * one archived project anywhere makes `mayDeliverRemoteHostMsg` refuse the
+ * whole page, and a phone then sees nothing at all — including routines in
+ * projects it may perfectly well reach. Filtering first is what keeps the
+ * authorization check a backstop rather than an outage.
+ */
+export function routinesMessageForRemote(
+  msg: Extract<HostMsg, { type: "routines" }>,
+  authorizedCwds: readonly string[],
+  sameCwd: (a: string, b: string) => boolean,
+): Extract<HostMsg, { type: "routines" }> {
+  return {
+    ...msg,
+    entries: msg.entries
+      .filter((e) => cwdIsAuthorized(e.cwd, authorizedCwds, sameCwd))
+      .map((e) => ({ ...e, runs: e.runs.map((run) => redactRun(run, authorizedCwds, sameCwd)) })),
+    projects: msg.projects.filter((p) => cwdIsAuthorized(p.cwd, authorizedCwds, sameCwd)),
+  };
+}
+
+/**
+ * A run whose own project is out of reach keeps only the fact that it happened.
+ *
+ * A routine's project can be edited, so its retained runs can name a DIFFERENT
+ * project from the one it points at now — and that older project may since have
+ * been archived, which is how a remote loses access to it. Filtering the
+ * routine's current cwd is then not enough: the entry passes under its new
+ * project while a retained run still carries the old path, its session id, and
+ * a `detail` string that may quote either.
+ *
+ * Redacted rather than dropped, because the run DID happen and the health count
+ * beside it is computed host-side from the full list. Removing the row would
+ * make the strip disagree with its own total; blanking its identity leaves the
+ * strip honest and the tick simply unclickable, which is what it should be when
+ * it points somewhere this connection may not go.
+ */
+function redactRun<T extends { cwd?: string; sessionId?: string; detail?: string }>(
+  run: T,
+  authorizedCwds: readonly string[],
+  sameCwd: (a: string, b: string) => boolean,
+): T {
+  // No cwd at all is a record written before runs carried one. Its session
+  // resolves against the routine's current project, which is already checked.
+  if (!run.cwd || cwdIsAuthorized(run.cwd, authorizedCwds, sameCwd)) return run;
+  const { cwd: _cwd, sessionId: _sessionId, detail: _detail, ...rest } = run;
+  return rest as T;
+}
+
+/** Fail closed: an `allowlist` type with no rewriter is dropped, not ferried. */
+function allowlistHostMsgForRemote(msg: HostMsg): HostMsg | null {
+  if (msg.type === "mcpServers") return projectMcpServersMessageForRemote(msg);
+  return null;
 }

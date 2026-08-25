@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { isPrimerSummary } from "../src/grok-primer";
+import { occupancyFromUsageLog, sumUsage } from "../src/acp-dispatch";
 import * as path from "node:path";
 import {
+  AUTO_NAME_MAX_CHARS,
+  capAutoName,
+  capSessionMetaAutoNames,
+  capSessionMetaUsageLogs,
+  capUsageLog,
+  USAGE_LOG_MAX_ENTRIES,
   forkDisplayName,
   FsLike,
   SessionMetaOverrides,
@@ -50,6 +57,171 @@ const realQuery = (q: string) => userMsg(`<user_query>\n${q}\n</user_query>`);
 // grok/composer sends some prompts (notably slash commands) UNWRAPPED — a plain
 // user message with no <user_query>. These must still count as real queries.
 const unwrappedQuery = (q: string) => userMsg(q);
+
+describe("capAutoName", () => {
+  const words = Array.from({ length: 40 }, (_, i) => `word${String(i).padStart(2, "0")}`);
+  const longPrompt = words.join(" ");
+
+  it("cuts a long prompt on a nearby word boundary", () => {
+    expect(longPrompt.length).toBeGreaterThan(AUTO_NAME_MAX_CHARS);
+    const capped = capAutoName(longPrompt);
+    expect(capped.length).toBeLessThanOrEqual(AUTO_NAME_MAX_CHARS);
+    expect(capped.length).toBeGreaterThan(AUTO_NAME_MAX_CHARS - 20);
+    expect(capped.endsWith(" ")).toBe(false);
+    expect(longPrompt.startsWith(capped)).toBe(true);
+    expect(capped).not.toContain("word39");
+    expect(capAutoName(capped)).toBe(capped);
+  });
+
+  it("collapses newlines and extra whitespace in a multi-line prompt", () => {
+    expect(capAutoName("hello\n\nworld\tfrom\rprompt")).toBe("hello world from prompt");
+    const multi = `${"alpha ".repeat(30).trim()}\n${"bravo ".repeat(30).trim()}`;
+    const capped = capAutoName(multi);
+    expect(capped).not.toMatch(/\s{2,}/);
+    expect(capped).not.toMatch(/\n/);
+    expect(capped.length).toBeLessThanOrEqual(AUTO_NAME_MAX_CHARS);
+  });
+
+  it("leaves an already-short name unchanged", () => {
+    expect(capAutoName("fix the flaky test")).toBe("fix the flaky test");
+  });
+
+  it("leaves a name that is exactly the limit unchanged", () => {
+    const exact = "a".repeat(AUTO_NAME_MAX_CHARS);
+    expect(exact.length).toBe(AUTO_NAME_MAX_CHARS);
+    expect(capAutoName(exact)).toBe(exact);
+  });
+
+  it("hard-cuts when no word boundary is near the limit", () => {
+    expect(capAutoName("x".repeat(AUTO_NAME_MAX_CHARS + 50))).toBe("x".repeat(AUTO_NAME_MAX_CHARS));
+    expect(capAutoName("hello " + "x".repeat(AUTO_NAME_MAX_CHARS))).toBe("hello " + "x".repeat(AUTO_NAME_MAX_CHARS - 6));
+  });
+
+  it("returns empty for empty or undefined input", () => {
+    expect(capAutoName("")).toBe("");
+    expect(capAutoName("   \n\t  ")).toBe("");
+    expect(capAutoName(undefined)).toBe("");
+    expect(capAutoName(null)).toBe("");
+    expect(capAutoName(12)).toBe("");
+  });
+});
+
+describe("capSessionMetaAutoNames", () => {
+  it("caps fat autoName values and leaves everything else on the same object", () => {
+    const fat = "prompt ".repeat(40).trim();
+    const short = "fix the flaky test";
+    const custom = "A name the user typed that can be as long as they like ".repeat(5).trim();
+    const meta: SessionMetaOverrides = {
+      fat: { autoName: fat, customName: custom, pinnedAt: 9 },
+      short: { autoName: short, unread: true },
+      none: { provider: "grok" },
+    };
+    const { value, changed } = capSessionMetaAutoNames(meta);
+    expect(changed).toBe(true);
+    expect(value).not.toBe(meta);
+    expect(value.fat.autoName).toBe(capAutoName(fat));
+    expect(value.fat.autoName!.length).toBeLessThanOrEqual(AUTO_NAME_MAX_CHARS);
+    expect(value.fat.customName).toBe(custom);
+    expect(value.fat.pinnedAt).toBe(9);
+    expect(value.short).toBe(meta.short);
+    expect(JSON.stringify(value.short)).toBe(JSON.stringify(meta.short));
+    expect(value.none).toBe(meta.none);
+  });
+
+  it("is a no-op on an already-capped map", () => {
+    const meta: SessionMetaOverrides = { a: { autoName: "short" } };
+    const first = capSessionMetaAutoNames(meta);
+    expect(first.changed).toBe(false);
+    expect(first.value).toBe(meta);
+    const second = capSessionMetaAutoNames(first.value);
+    expect(second.changed).toBe(false);
+    expect(second.value).toBe(first.value);
+  });
+});
+
+describe("capUsageLog", () => {
+  const entry = (n: number) => ({
+    afterUserMessage: n,
+    afterHistoryEvent: n * 10,
+    usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110, costUsdTicks: 7 },
+    contextUsed: n * 1000,
+  });
+  const log = (count: number) => Array.from({ length: count }, (_, i) => entry(i + 1));
+
+  it("returns the SAME array below the ceiling, so a load sweep can skip the write", () => {
+    const under = log(USAGE_LOG_MAX_ENTRIES);
+    expect(capUsageLog(under)).toBe(under);
+  });
+
+  it("folds down to exactly the ceiling and keeps the newest turns intact", () => {
+    const over = log(USAGE_LOG_MAX_ENTRIES + 50);
+    const folded = capUsageLog(over);
+    expect(folded.length).toBe(USAGE_LOG_MAX_ENTRIES);
+    // The tail is untouched — a rewind still finds the turns it can reach.
+    expect(folded.slice(1)).toEqual(over.slice(51));
+  });
+
+  it("preserves the token total exactly — the carry entry is a sum, not a drop", () => {
+    const over = log(USAGE_LOG_MAX_ENTRIES + 50);
+    const before = sumUsage(over)!;
+    const after = sumUsage(capUsageLog(over))!;
+    expect(after.totalTokens).toBe(before.totalTokens);
+    expect(after.inputTokens).toBe(before.inputTokens);
+    expect(after.outputTokens).toBe(before.outputTokens);
+    expect(after.costUsdTicks).toBe(before.costUsdTicks);
+  });
+
+  it("preserves context occupancy — contextUsed is monotonic, so the boundary IS the max", () => {
+    const over = log(USAGE_LOG_MAX_ENTRIES + 50);
+    expect(occupancyFromUsageLog(capUsageLog(over)).used)
+      .toBe(occupancyFromUsageLog(over).used);
+  });
+
+  it("carries a compaction boundary rather than losing the reset", () => {
+    const over = log(USAGE_LOG_MAX_ENTRIES + 50);
+    over[50] = { ...over[50], compacted: true, contextUsed: 5 };
+    const folded = capUsageLog(over);
+    expect(folded[0].compacted).toBe(true);
+    expect(folded[0].contextUsed).toBe(5);
+    expect(occupancyFromUsageLog(folded).used).toBe(occupancyFromUsageLog(over).used);
+  });
+
+  it("is idempotent — folding an already-folded log changes nothing", () => {
+    const once = capUsageLog(log(USAGE_LOG_MAX_ENTRIES + 50));
+    expect(capUsageLog(once)).toBe(once);
+  });
+
+  it("survives entries with no usage at all (a zero-inference turn such as /compact)", () => {
+    const over = log(USAGE_LOG_MAX_ENTRIES + 2).map((e) => ({ ...e, usage: undefined }));
+    const folded = capUsageLog(over);
+    expect(folded.length).toBe(USAGE_LOG_MAX_ENTRIES);
+    expect(folded[0].usage).toBeUndefined();
+  });
+});
+
+describe("capSessionMetaUsageLogs", () => {
+  it("folds only the maps that need it and leaves the rest identical", () => {
+    const fat = Array.from({ length: USAGE_LOG_MAX_ENTRIES + 5 }, (_, i) => ({ afterUserMessage: i + 1 }));
+    const meta: SessionMetaOverrides = {
+      fat: { usageLog: fat, autoName: "a name" },
+      thin: { usageLog: [{ afterUserMessage: 1 }] },
+      none: { provider: "grok" },
+    };
+    const { value, changed } = capSessionMetaUsageLogs(meta);
+    expect(changed).toBe(true);
+    expect(value.fat.usageLog!.length).toBe(USAGE_LOG_MAX_ENTRIES);
+    expect(value.fat.autoName).toBe("a name");
+    expect(value.thin).toBe(meta.thin);
+    expect(value.none).toBe(meta.none);
+  });
+
+  it("is a no-op on an already-folded map", () => {
+    const meta: SessionMetaOverrides = { a: { usageLog: [{ afterUserMessage: 1 }] } };
+    const first = capSessionMetaUsageLogs(meta);
+    expect(first.changed).toBe(false);
+    expect(first.value).toBe(meta);
+  });
+});
 
 describe("mostRecentSession", () => {
   const entry = (id: string, updatedAt: number, kind?: "subagent"): SessionListEntry => ({
@@ -865,6 +1037,51 @@ describe("indexSessions", () => {
     });
     expect(indexSessions({ fs, grokHome, cwd }).map((e) => e.id)).toEqual(["real"]);
   });
+
+  it("indexes a summary-only shell (no chat_history, no events) and marks it transcript-less", () => {
+    // The catalog must still list it — that is how a credential-probe leftover
+    // becomes an "Untitled" row — and the sweep needs hasTranscript === false
+    // so it can find the shell after it ages out of the newest-N window.
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("019f0000-0000-7000-8000-000000000001")]: { isDir: true },
+      [path.join(dirFor("019f0000-0000-7000-8000-000000000001"), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id: "019f0000-0000-7000-8000-000000000001", cwd },
+          session_summary: "",
+          generated_title: "",
+          num_messages: 0,
+          updated_at: "2026-08-17T12:00:00Z",
+        }),
+        mtimeMs: 50,
+      },
+    });
+    const index = indexSessions({ fs, grokHome, cwd });
+    expect(index).toEqual([{
+      id: "019f0000-0000-7000-8000-000000000001",
+      mtimeMs: 50,
+      hasTranscript: false,
+    }]);
+    const [entry] = listSessions({ fs, grokHome, cwd, overrides: {} });
+    expect(entry.id).toBe("019f0000-0000-7000-8000-000000000001");
+    expect(entry.displayName.startsWith("Untitled (")).toBe(true);
+    expect(entry.numMessages).toBe(0);
+  });
+
+  it("marks a conversation with events.jsonl as having a transcript", () => {
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor("spoken")]: { isDir: true },
+      [path.join(dirFor("spoken"), "events.jsonl")]: { isDir: false, content: "{}\n", mtimeMs: 80 },
+      [path.join(dirFor("spoken"), "summary.json")]: { isDir: false, content: "{}", mtimeMs: 10 },
+    });
+    expect(indexSessions({ fs, grokHome, cwd })[0]).toMatchObject({
+      id: "spoken",
+      mtimeMs: 80,
+      hasTranscript: true,
+    });
+  });
 });
 
 describe("readSessionEntries", () => {
@@ -1065,6 +1282,26 @@ describe("clearSessions", () => {
     });
     const removed = clearSessions({ fs, grokHome, cwd });
     expect(removed).toEqual(["a"]);
+  });
+
+  it("removes a summary-only shell so it no longer reaches the catalog", () => {
+    const id = "019f0000-0000-7000-8000-000000000002";
+    const fs = buildFs({
+      [dir]: { isDir: true },
+      [dirFor(id)]: { isDir: true },
+      [path.join(dirFor(id), "summary.json")]: {
+        isDir: false,
+        content: JSON.stringify({
+          info: { id, cwd },
+          session_summary: "",
+          num_messages: 0,
+        }),
+      },
+    });
+    expect(indexSessions({ fs, grokHome, cwd }).map((e) => e.id)).toEqual([id]);
+    expect(clearSessions({ fs, grokHome, cwd })).toEqual([id]);
+    expect(indexSessions({ fs, grokHome, cwd })).toEqual([]);
+    expect(listSessions({ fs, grokHome, cwd, overrides: {} })).toEqual([]);
   });
 });
 
@@ -1321,12 +1558,11 @@ describe("isPathInside", () => {
 });
 
 // Opening a conversation rewrites summary.json — the CLI rebuilds
-// system_prompt.txt / prompt_context.json and restamps `updated_at` — without
-// adding a message. Ordering on that made a conversation you merely glanced at
-// jump to the top of Recent and of its project. Measured against a real
-// 1592-session store: 46 sessions were sitting above their true activity for
-// exactly this reason, which is why the owner saw it only "sometimes".
-// events.jsonl moves only when the conversation does.
+// system_prompt.txt / prompt_context.json and restamps `updated_at` — AND
+// writes an events.jsonl record, without adding a user message. Ordering on
+// either made a conversation you merely glanced at jump to the top of Recent
+// and of its project. updates.jsonl is the file a load leaves alone and a
+// real turn advances.
 describe("session ordering follows the transcript, not a visit", () => {
   const home = "/home/u/.grok";
   const cwd = "/work/repo";
@@ -1360,6 +1596,7 @@ describe("session ordering follows the transcript, not a visit", () => {
     const ids = indexSessions({ fs: fsWithBoth(), grokHome: home, cwd, platform: "linux" })
       .map((e) => e.id);
     // summary.json mtime would have put `visited` (9000) first.
+    // This fixture has no updates.jsonl, so the clock falls back to events.jsonl.
     expect(ids).toEqual(["spoken", "visited"]);
   });
 
@@ -1371,6 +1608,62 @@ describe("session ordering follows the transcript, not a visit", () => {
     const byId = Object.fromEntries(entries.map((e) => [e.id, e.updatedAt]));
     expect(byId.visited).toBe(100);
     expect(byId.spoken).toBe(500);
+  });
+
+  it("does not promote a session whose load-only files moved", () => {
+    // Measured: a session/load with no turn restamps events.jsonl,
+    // chat_history.jsonl and summary.json, and leaves updates.jsonl alone.
+    // `visited` was opened just now; `spoken` has the newer real turn.
+    const fs = buildFs({
+      [path.join(home, "sessions")]: { isDir: true },
+      [dir]: { isDir: true },
+      [path.join(dir, "visited")]: { isDir: true },
+      [path.join(dir, "spoken")]: { isDir: true },
+      [path.join(dir, "visited", "summary.json")]: {
+        isDir: false, content: summary("visited", "2026-05-01T00:00:00Z"), mtimeMs: 9000,
+      },
+      [path.join(dir, "visited", "events.jsonl")]: { isDir: false, content: "", mtimeMs: 9000 },
+      [path.join(dir, "visited", "chat_history.jsonl")]: { isDir: false, content: "", mtimeMs: 9000 },
+      [path.join(dir, "visited", "updates.jsonl")]: { isDir: false, content: "", mtimeMs: 100 },
+      [path.join(dir, "spoken", "summary.json")]: {
+        isDir: false, content: summary("spoken", "2026-01-01T00:00:00Z"), mtimeMs: 500,
+      },
+      [path.join(dir, "spoken", "events.jsonl")]: { isDir: false, content: "", mtimeMs: 500 },
+      [path.join(dir, "spoken", "updates.jsonl")]: { isDir: false, content: "", mtimeMs: 500 },
+    });
+    const index = indexSessions({ fs, grokHome: home, cwd, platform: "linux" });
+    expect(index.map((e) => e.id)).toEqual(["spoken", "visited"]);
+    expect(index[0].mtimeMs).toBe(500);
+    expect(index[1].mtimeMs).toBe(100);
+
+    const entries = readSessionEntries({
+      fs, grokHome: home, cwd, ids: ["visited", "spoken"],
+      overrides: {}, platform: "linux",
+    });
+    const byId = Object.fromEntries(entries.map((e) => [e.id, e.updatedAt]));
+    expect(byId.visited).toBe(100);
+    expect(byId.spoken).toBe(500);
+  });
+
+  it("advances rank mtime when updates.jsonl moves, so the read cache invalidates", () => {
+    // sessionCache is keyed on indexSessions mtimeMs. A load must keep that
+    // key (tested above); a real turn must change it.
+    const files: Record<string, FileEntry> = {
+      [path.join(home, "sessions")]: { isDir: true },
+      [dir]: { isDir: true },
+      [path.join(dir, "s1")]: { isDir: true },
+      [path.join(dir, "s1", "summary.json")]: {
+        isDir: false, content: summary("s1", "2026-01-01T00:00:00Z"), mtimeMs: 200,
+      },
+      [path.join(dir, "s1", "events.jsonl")]: { isDir: false, content: "", mtimeMs: 200 },
+      [path.join(dir, "s1", "updates.jsonl")]: { isDir: false, content: "", mtimeMs: 200 },
+    };
+    expect(indexSessions({ fs: buildFs(files), grokHome: home, cwd, platform: "linux" })[0].mtimeMs)
+      .toBe(200);
+    files[path.join(dir, "s1", "updates.jsonl")] = { isDir: false, content: "", mtimeMs: 800 };
+    files[path.join(dir, "s1", "events.jsonl")] = { isDir: false, content: "", mtimeMs: 800 };
+    expect(indexSessions({ fs: buildFs(files), grokHome: home, cwd, platform: "linux" })[0].mtimeMs)
+      .toBe(800);
   });
 
   it("falls back to summary.json for a conversation with no transcript yet", () => {
@@ -1508,10 +1801,10 @@ describe("newestTranscriptMtime (the evidence a remote cannot forge)", () => {
   const run = (files: Record<string, number>) =>
     newestTranscriptMtime({ fs: makeFs(files), grokHome, cwd, platform: "linux" });
 
-  it("takes the newest transcript across the project's sessions", () => {
+  it("takes the newest real-activity file across the project's sessions", () => {
     expect(run({
-      [`${grokHome}/sessions/${leaf}/${ID1}/events.jsonl`]: 500,
-      [`${grokHome}/sessions/${leaf}/${ID2}/events.jsonl`]: 900,
+      [`${grokHome}/sessions/${leaf}/${ID1}/updates.jsonl`]: 500,
+      [`${grokHome}/sessions/${leaf}/${ID2}/updates.jsonl`]: 900,
     })).toBe(900);
   });
 
@@ -1533,11 +1826,20 @@ describe("newestTranscriptMtime (the evidence a remote cannot forge)", () => {
     ).toBe(9_000_000);
   });
 
-  it("counts only the transcript when a session has both", () => {
+  it("counts only updates.jsonl when a session has load-stamped siblings", () => {
     expect(run({
-      [`${grokHome}/sessions/${leaf}/${ID1}/events.jsonl`]: 100,
+      [`${grokHome}/sessions/${leaf}/${ID1}/updates.jsonl`]: 100,
+      [`${grokHome}/sessions/${leaf}/${ID1}/events.jsonl`]: 9_000_000,
       [`${grokHome}/sessions/${leaf}/${ID1}/summary.json`]: 9_000_000,
     })).toBe(100);
+  });
+
+  it("ignores a load restamp of events.jsonl when there is no updates log", () => {
+    // A remote resume writes events.jsonl. That must not count as work.
+    expect(run({
+      [`${grokHome}/sessions/${leaf}/${ID1}/events.jsonl`]: 9_000_000,
+      [`${grokHome}/sessions/${leaf}/${ID1}/summary.json`]: 9_000_000,
+    })).toBe(0);
   });
 
   it("reports nothing for a project that has never been spoken to", () => {

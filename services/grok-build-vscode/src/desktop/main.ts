@@ -25,6 +25,7 @@ import {
   type ProtocolRequest,
 } from "electron";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { GrokSidebar } from "../sidebar";
 import { Uri } from "../host";
@@ -46,12 +47,21 @@ import {
   DESKTOP_PUBLIC_REPO_URL,
 } from "./host-dialogs";
 import { createFileMemento } from "./memento";
+import { extensionIdFromPackageMeta } from "./package-meta";
 import {
+  desktopUserHomeDir,
+  provisionDefaultProjectDir,
   resolveDesktopProfileDir,
   resolveExtensionRoot,
   resolveUserDataDir,
 } from "./paths";
 import { createSafeStorageSecrets } from "./safe-secrets";
+import {
+  RELAY_DEVICE_TOKEN_ENV,
+  RELAY_DEVICE_TOKEN_SECRET,
+  consumeInjectedDeviceToken,
+  withInjectedSecret,
+} from "../remote-frames";
 import {
   injectFileTreePanelLogged,
   registerFileTreeIpc,
@@ -154,10 +164,10 @@ function readPackageMeta(extensionRoot: string): { version: string; id: string }
   try {
     const pkg = JSON.parse(
       fs.readFileSync(path.join(extensionRoot, "package.json"), "utf8"),
-    ) as { version?: string; publisher?: string; name?: string };
+    ) as { version?: string; publisher?: string; name?: string; grokExtensionName?: string };
     return {
       version: pkg.version ?? "0.0.0",
-      id: `${pkg.publisher ?? "PawelHuryn"}.${pkg.name ?? "grok-vscode-phuryn"}`,
+      id: extensionIdFromPackageMeta(pkg),
     };
   } catch {
     return { version: "0.0.0", id: "PawelHuryn.grok-vscode-phuryn" };
@@ -314,6 +324,20 @@ async function createApp(): Promise<void> {
     }
   }
 
+  // Open-folder set BEFORE the sidebar exists so workspaceRoot() is already
+  // the first-run default (or a restored/discovered project). After this the
+  // constructor's RemoteClientState / default provider see a real cwd.
+  // Empty is still valid: a user who removed every project owns that set.
+  const workspace = ensureWorkspaceRoot(config, () => mainWindow, args.workspace, {
+    provisionDefaultProject: () =>
+      provisionDefaultProjectDir({
+        homeDir: desktopUserHomeDir(),
+        userDataDir: userData,
+      })?.dir,
+  });
+  if (workspace) log(`workspace: ${workspace}`);
+  else log("workspace: (none — empty project rail; use Add Project Folder)");
+
   const globalStorageDir = path.join(userData, "globalStorage");
   fs.mkdirSync(globalStorageDir, { recursive: true });
 
@@ -321,11 +345,37 @@ async function createApp(): Promise<void> {
   // Device token is a credential: encrypt with OS keychain via safeStorage.
   // Ciphertext file only — never plaintext next to config. Encryption-unavailable
   // fails on store/get (createSafeStorageSecrets), never silent fallback.
+  //
+  // A Node harness cannot pre-seed that file (the ciphertext is OS-keyed),
+  // so a development overlay answers the one key from memory when
+  // resolveInjectedDeviceToken is certain the relay URL was also overridden.
+  // Packaged builds are isPackaged=true; the resolver returns undefined and
+  // withInjectedSecret is a no-op — no token, no uplink, regardless of env.
+  const storedSecrets = createSafeStorageSecrets(
+    path.join(userData, "secrets.enc.json"),
+    safeStorage,
+  );
+  // Capture then delete — sidebar copies process.env into every ACP spawn.
+  const envTokenPresent = !!process.env[RELAY_DEVICE_TOKEN_ENV];
+  const injectedToken = consumeInjectedDeviceToken({
+    isProduction: app.isPackaged,
+    env: process.env,
+  });
+  if (envTokenPresent && !injectedToken) {
+    log("ignoring GROK_RELAY_DEVICE_TOKEN (production build or relay URL not overridden)");
+  } else if (injectedToken) {
+    log("using injected development device token (relay URL override active)");
+  }
   const hostContext: HostContext = {
-    secrets: createSafeStorageSecrets(
-      path.join(userData, "secrets.enc.json"),
-      safeStorage,
-    ),
+    secrets: {
+      get: withInjectedSecret(
+        (key) => storedSecrets.get(key),
+        RELAY_DEVICE_TOKEN_SECRET,
+        injectedToken,
+      ),
+      store: (key, value) => storedSecrets.store(key, value),
+      delete: (key) => storedSecrets.delete(key),
+    },
     globalStorageUri: Uri.file(globalStorageDir),
     extensionUri: Uri.file(extensionRoot),
     extensionId: pkg.id,
@@ -433,6 +483,11 @@ async function createApp(): Promise<void> {
       get planReviewSessionRoot() {
         return sidebar!.desktopPlanReviewSessionRoot();
       },
+      // Where Claude Code writes the plans it then links to. Same narrow
+      // provenance rule as above — a direct .md child, never a read root.
+      get claudePlansRoot() {
+        return path.join(os.homedir(), ".claude", "plans");
+      },
     } satisfies DesktopOpenFileContext;
   };
   webview.getAuthContext = () => authContext.get!();
@@ -539,8 +594,7 @@ async function createApp(): Promise<void> {
     openExternal: (url) => shell.openExternal(url),
   });
 
-  // desktop-dev passes an explicit open signal (not GROK_RELAY_URL). Detached
-  // so the default 720-wide chat stays usable while reading logs.
+  // desktop-dev passes an explicit open signal (not GROK_RELAY_URL).
   if (
     shouldOpenDevToolsAtStartup({
       isPackaged,
@@ -548,8 +602,13 @@ async function createApp(): Promise<void> {
       argv: process.argv,
     })
   ) {
-    mainWindow.webContents.openDevTools({ mode: "detach" });
-    log("DevTools opened (non-production build)");
+    // Docked, not detached. A detached DevTools is its own window, and on
+    // Windows it disappears behind the app the moment you click back into the
+    // chat -- which reads as "DevTools did not open" and cost a debugging
+    // session. The desktop-dev script also passes --remote-debugging-port,
+    // so the same renderer is drivable over CDP without a hand-passed flag.
+    mainWindow.webContents.openDevTools({ mode: "bottom" });
+    log("DevTools opened (non-production build); CDP on --remote-debugging-port if passed");
   }
 
   // Keyboard DevTools without needing the auto-hidden menu bar (Windows).
@@ -576,11 +635,6 @@ async function createApp(): Promise<void> {
     webview?.dispatchMessage(message);
   });
 
-  // Open-folder set: restore prefs or one-shot discovery seed — never a folder
-  // picker. Empty is valid (user adds via File → Add Project Folder).
-  const workspace = ensureWorkspaceRoot(config, () => mainWindow, args.workspace);
-  if (workspace) log(`workspace: ${workspace}`);
-  else log("workspace: (none — empty project rail; use Add Project Folder)");
   log(`extension root: ${extensionRoot}`);
   log(`cliPath config: ${String(config.getValue("atlas.cliPath") || "(auto)")}`);
 

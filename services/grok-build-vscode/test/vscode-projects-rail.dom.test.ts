@@ -192,6 +192,24 @@ describe("VS Code projects rail renderer", () => {
     expect(posted.some((p) => p.type === "selectRepo")).toBe(false);
   });
 
+  it("selects duplicate-titled New session rows by id and drops an empty-id entry", () => {
+    const { window, doc, posted } = h;
+    const api = railApi(window);
+    loadCatalog(api, "/work/alpha");
+    loadSessions(api, [
+      row("", "/work/alpha", "New session", 12),
+      row("live-a", "/work/alpha", "New session", 11),
+      row("live-b", "/work/alpha", "New session", 10),
+    ], "live-a");
+    const projectRows = [...doc.querySelectorAll(".rail-projects .rail-session")] as HTMLElement[];
+    expect(projectRows.map((el) => el.dataset.sessionId)).toEqual(["live-a", "live-b"]);
+    posted.length = 0;
+    projectRows[1].click();
+    expect(posted).toEqual([
+      { type: "resumeSession", id: "live-b", cwd: "/work/alpha" },
+    ]);
+  });
+
   it("highlights the clicked conversation immediately, before the host answers", () => {
     // The desktop rail shares a document with the chat, so its click can move
     // the highlight and be right. Here the rail is a separate webview and the
@@ -605,6 +623,72 @@ describe("VS Code projects rail renderer", () => {
         { type: "setRepoColor", cwd: "/work/alpha", color: "blue" },
       ]);
       expect(doc.querySelector(".rail-color-picker")).toBeNull();
+      const alphaTwisty = [...doc.querySelectorAll(".rail-repo-label")]
+        .find((e) => e.textContent === "alpha")!
+        .closest(".rail-repo")!
+        .querySelector(".rail-twisty");
+      expect(alphaTwisty?.getAttribute("data-repo-color")).toBe("blue");
+    });
+
+    it("keeps a confirming color frame and yields to a contradicting one", () => {
+      const { window, doc } = h;
+      const api = railApi(window);
+      loadCatalog(api, "/work/alpha", withColors());
+      const menu = openProjectMenu(doc, window, "alpha");
+      menuItem(menu, "Set color")!.click();
+      const coral = [...doc.querySelectorAll(".rail-color-swatch")]
+        .find((s) => s.getAttribute("aria-label") === "Coral") as HTMLElement;
+      coral.click();
+      const twisty = () => [...doc.querySelectorAll(".rail-repo-label")]
+        .find((e) => e.textContent === "alpha")!
+        .closest(".rail-repo")!
+        .querySelector(".rail-twisty");
+      expect(twisty()?.getAttribute("data-repo-color")).toBe("coral");
+
+      loadCatalog(api, "/work/alpha", withColors().map((r) => r.cwd === "/work/alpha" ? { ...r, color: "coral" } : r));
+      expect(twisty()?.getAttribute("data-repo-color")).toBe("coral");
+
+      const menu2 = openProjectMenu(doc, window, "alpha");
+      menuItem(menu2, "Set color")!.click();
+      const blue = [...doc.querySelectorAll(".rail-color-swatch")]
+        .find((s) => s.getAttribute("aria-label") === "Blue") as HTMLElement;
+      blue.click();
+      expect(twisty()?.getAttribute("data-repo-color")).toBe("blue");
+
+      loadCatalog(api, "/work/alpha", withColors());
+      expect(twisty()?.getAttribute("data-repo-color")).toBe(null);
+    });
+  });
+
+  describe("optimistic session rename", () => {
+    it("paints the row before any host frame, keeps a confirm, yields to a contradict", async () => {
+      const { window, doc } = h;
+      const api = railApi(window);
+      loadCatalog(api);
+      loadSessions(api, [row("a1", "/work/alpha", "alpha one")], "a1");
+
+      const sessionRow = [...doc.querySelectorAll(".rail-session")].find(
+        (e) => e.querySelector(".rail-session-name")?.textContent === "alpha one",
+      ) as HTMLElement;
+      const menuBtn = sessionRow.querySelector(".rail-action-btn:last-of-type") as HTMLElement;
+      menuBtn.click();
+      const rename = [...doc.querySelectorAll(".rail-menu-item")]
+        .find((b) => (b.textContent || "").includes("Rename")) as HTMLElement;
+      rename.click();
+      await Promise.resolve();
+      const input = doc.querySelector(".rail-dialog-input") as HTMLInputElement;
+      expect(input).toBeTruthy();
+      input.value = "Renamed on vscode rail";
+      (doc.querySelector(".rail-dialog-primary") as HTMLElement).click();
+      await Promise.resolve();
+
+      expect(doc.querySelector(".rail-session-name")!.textContent).toBe("Renamed on vscode rail");
+
+      loadSessions(api, [row("a1", "/work/alpha", "Renamed on vscode rail")], "a1");
+      expect(doc.querySelector(".rail-session-name")!.textContent).toBe("Renamed on vscode rail");
+
+      loadSessions(api, [row("a1", "/work/alpha", "Catalog title")], "a1");
+      expect(doc.querySelector(".rail-session-name")!.textContent).toBe("Catalog title");
     });
   });
   describe("add project", () => {

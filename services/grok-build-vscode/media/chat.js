@@ -188,6 +188,9 @@
     if (saved.repoCwd && saved.repoCwd !== state.cwd) {
       vscode.postMessage({ type: "selectRepo", cwd: saved.repoCwd });
     }
+    // Startup restore has no display name in the remembered payload, and the
+    // page is already on the welcome/"Starting" hold. Treating it like a
+    // user click would invent a title we do not have.
     vscode.postMessage({ type: "resumeSession", id: saved.id, cwd: saved.cwd || undefined });
   }
   const ttsAvailable = !!window.speechSynthesis && typeof window.SpeechSynthesisUtterance === "function";
@@ -263,9 +266,11 @@
   const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"];
   const GROK_ACTIVITY_VERB = "Working";
   const CODEX_ACTIVITY_VERB = "Opening AI";
+  const CLAUDE_ACTIVITY_VERB = "Clauding";
   const COMPOSER_PLACEHOLDER = {
     grok: "Ask Atlas\u2026",
     codex: "Ask GPT\u2026",
+    claude: "Ask Claude\u2026",
   };
   const EFFORT_TOOLTIPS = {
     none: "None — no extra reasoning",
@@ -305,11 +310,13 @@
     activeProvider: "grok",
     providersKnown: false,
     providers: [],
+    // Settings → Providers re-observation in flight. Host-owned; see the
+    // `providerState` case for why the client never sets it on its own.
+    providersChecking: false,
     onboardingMode: null,
     onboardingInfo: {},
     codexInstall: { phase: "idle", receivedBytes: 0, totalBytes: 0, reason: "" },
     availableModels: [],
-    localModels: [],
     currentModeId: "agent",
     effort: "",
     cwd: "",
@@ -341,6 +348,7 @@
     voiceSendPhrase: "atlas send",
     voiceKeyterms: [],
     telemetryEnabled: undefined,
+    thumbsFeedback: false,
     // Client-owned zoom (remote + desktop). VS Code uses hostFontScale only.
     remoteFontScale: CLIENT_OWNS_FONT_SCALE
       ? clampClientFontScale(storedNumber(CLIENT_FONT_SCALE_KEY, 1))
@@ -356,10 +364,11 @@
     remotePreferencesSupported: false,
     ttsTurnText: "",
     // Render MIRROR of the focused session's host-owned send queue (#37) —
-    // messages typed/dictated while Atlas was busy. All mutations route through
-    // the host (queueSend/dequeueSend/clearQueuedSends) and come back as a
-    // queuedSends snapshot, so the queue survives focus switches and the HOST
-    // flushes it (one combined prompt) when the session's turn ends.
+    // messages typed/dictated while Grok was busy. Entries are `{text, chips}`.
+    // All mutations route through the host (queueSend/dequeueSend/clearQueuedSends)
+    // and come back as a queuedSends snapshot, so the queue survives focus
+    // switches and the HOST flushes it (one combined prompt) when the session's
+    // turn ends.
     sendQueue: [],
     queuedWrapEl: null, // the .queued-msgs container pinned to the end of the chat
     queuedSubmissionPending: false,
@@ -376,8 +385,19 @@
     // whether it works — we offer it and let the host latch this off the first
     // time the CLI answers -32601 (the text falls back to the queue, never lost).
     steerSupported: true,
+    // Grok thumbs (#114). Off until the host advertises feedbackAvailability.
+    // Only the live-process turn that just finished is rateable (not session/load).
+    feedbackAvailable: false,
+    turnRating: 0,
+    // Claude Code has no mid-turn interject, so a message typed while it is
+    // working is always SCHEDULED, never steered — whatever the steer-by-default
+    // setting says (owner, 2026-08-17). Offering Steer there would promise the
+    // running turn hears you now, and it does not. See steerableProvider().
     lastTurnUsage: null, // last prompt's billing split (#53), for the donut popover
     sessionUsage: null, // session-cumulative billing — summed by the host, not grok
+    // Structured session/info addends, bound to the `used` they arrived with.
+    // Occupancy-only frames keep this; an open popover re-fetches session/info.
+    contextBreakdown: null,
     activeAgentEl: null,
     activeAgentRaw: "",
     activeUserEl: null,
@@ -400,6 +420,7 @@
     thoughtStartTime: null,
     activeToolGroupEl: null,
     slashFiltered: [],
+    slashQuery: "",
     slashActive: 0,
     // "@" file popover: the rows the host sent for the current token
     // (mentionResults), the highlighted row, and the token the rows answer —
@@ -534,12 +555,22 @@
     // consumed, not entries shown; hidden subagent sessions occupy slots).
     sessionNextOffset: null,
     sessionLastAutoPageKey: "",
-    // Combined history keeps Atlas's consumed-slot cursor opaque and remembers
+    // Combined history keeps Grok's consumed-slot cursor opaque and remembers
     // the last emitted Codex (timestamp,id) tuple. The scalar offset remains the
     // append/legacy contract.
     sessionProviderCursor: null,
     replaying: false,
     replayDepth: 0,
+    // Open-path window (#102): hold the replay stream and render only the last
+    // HISTORY_WINDOW_USER_TURNS. Older turns live here as raw host messages and
+    // prepend as the reader scrolls up. Live sessions never enter this path.
+    replayHold: false,
+    replayHeld: [],
+    historyPrefix: [],
+    historyPrefixUserCount: 0,
+    historyPrefixPlans: [],
+    historyPrefixPermissions: [],
+    historyHydrating: false,
     // Host events this client has actually rendered — the export source. A
     // remote snapshot is only the recent window; exportWindowed labels that.
     exportEvents: [],
@@ -612,6 +643,11 @@
     // Latest `grok update --check` result for Settings → About: { checking } while
     // in flight, then { current, latest, updateAvailable, error }.
     grokUpdate: null,
+    mcpServers: [],
+    mcpLoading: false,
+    mcpError: "",
+    mcpWarning: "",
+    mcpConnectors: [],
     // While replaying an older session, suppress a legacy primer user turn and
     // grok's response until the next user message starts.
     suppressReplayTurn: false,
@@ -654,7 +690,7 @@
     // False = today's behavior (queue, with an on-demand Steer button).
     steerByDefault: false,
     // grok.soundNotifications (persisted, global): when true a short synth tone
-    // plays on turn completion / error, but only when the Atlas panel isn't
+    // plays on turn completion / error, but only when the Grok panel isn't
     // focused (#59). Off by default. Host posts the value on init + config change.
     soundNotifications: false,
     // grok.processingSound: a quiet repeating cue while a live turn is still
@@ -713,9 +749,13 @@
     listTree: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/><path d="M3 6v4c0 1.1.9 2 2 2h3"/><path d="M3 10v6c0 1.1.9 2 2 2h3"/></svg>`,
     zap: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>`,
     copy: `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
+    thumbsUp: `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></svg>`,
+    thumbsDown: `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></svg>`,
     check: `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`,
+    squareChevronRight: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m10 8 4 4-4 4"/></svg>`,
     chevronRight: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>`,
     chevronDown: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`,
+    chevronUp: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>`,
     ellipsis: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>`,
     search: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>`,
     clock: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
@@ -759,17 +799,17 @@
     agent: {
       icon: ICON.bot,
       label: "Agent mode",
-      desc: "Atlas acts directly, asking approval only for changes it judges sensitive",
+      desc: "Grok acts directly, asking approval only for changes it judges sensitive",
     },
     plan: {
       icon: ICON.listTree,
       label: "Plan mode",
-      desc: "Atlas explores and proposes a plan; file writes and commands are blocked until you approve it",
+      desc: "Grok explores and proposes a plan; file writes and commands are blocked until you approve it",
     },
     yolo: {
       icon: ICON.zap,
       label: "Auto accept",
-      desc: "Atlas automatically approves all permission requests (YOLO)",
+      desc: "Grok automatically approves all permission requests (YOLO)",
     },
   };
 
@@ -892,7 +932,7 @@
       suspendAudioCtx(ctx);
     }, Math.ceil(lastStop * 1000) + 20);
   }
-  // Play only when the user isn't looking at the Atlas panel — the "notify me when
+  // Play only when the user isn't looking at the Grok panel — the "notify me when
   // I've stepped away" case (#59). A focused, visible panel means they'll see the
   // result without a beep. hasFocus() is false when the editor/another app has
   // focus; visibilityState covers a fully collapsed panel.
@@ -995,6 +1035,7 @@
 
   newBtn.innerHTML = ICON.squarePen;
   historyBtn.innerHTML = ICON.clock;
+  ensureVisibleNewSession();
   // "Continue remotely", one tap from the chat instead of buried in the gear
   // menu — the desk is where someone decides to get up and keep going on
   // their phone. Local client only (a remote is already remote), and only
@@ -1011,7 +1052,7 @@
 
   // ---------- markdown ----------
 
-  const { looksLikeFileRef, formatRelativeTime, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, commandProgramLabel, commandTextPreview, extractToolResultOutput, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents } = globalThis.GrokWebviewHelpers;
+  const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, appendHighlightedText, commandProgramLabel, commandTextPreview, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -1108,7 +1149,7 @@
   }
 
   // ---------- mermaid diagrams ----------
-  // Atlas emits ```mermaid fenced blocks. renderMarkdown turns each into a
+  // Grok emits ```mermaid fenced blocks. renderMarkdown turns each into a
   // .mermaid-block placeholder (showing the source as a fallback code block);
   // this pass renders it to SVG with the vendored mermaid lib. mermaid.render is
   // async and needs the live DOM (it measures text), so unlike the synchronous
@@ -1747,6 +1788,14 @@
 
   function openContextPopover() {
     closePopovers();
+    // The control-plane meter is independent of model prompts and is TTL-gated
+    // by the host. Render the cached snapshot immediately, then re-render when
+    // a fresh structured response arrives.
+    vscode.postMessage({ type: "refreshContextDetails" });
+    renderContextPopover();
+  }
+
+  function renderContextPopover() {
     contextPopover.innerHTML = "";
     // A `↳ ` label marks a sub-row (a component of the line above it) — indented
     // via CSS rather than padding the string, so the value column stays aligned.
@@ -1765,7 +1814,7 @@
       (parent || contextPopover).appendChild(el);
     };
     const tok = (n) => Number(n).toLocaleString();
-    // Atlas's fixed-point billing unit is 10^10 ticks per USD (xAI's published
+    // Grok's fixed-point billing unit is 10^10 ticks per USD (xAI's published
     // UsageTotals contract). Keep the divisor explicit; it is not cents/micros.
     const usdTicks = (ticks) => {
       const usd = Number(ticks) / 10_000_000_000;
@@ -1780,7 +1829,10 @@
 
     const used = state.usedTokens || 0;
     const pct = Math.min(100, Math.round((used / state.contextWindow) * 100));
-    info("Context used", `${tok(used)} / ${tok(state.contextWindow)} (${pct}%)`);
+    info(
+      "Context used",
+      `${tok(used)} / ${tok(state.contextWindow)} (${pct}%)`,
+    );
 
     // Compact sits directly under the context line — it is the action ON that
     // number, so it belongs to it, not stranded below the billing sections.
@@ -1799,6 +1851,53 @@
     }
     contextPopover.appendChild(act);
 
+    // Snapshot addends are internally consistent (overhead from snapshot.used).
+    // Occupancy that has moved does not hide the group: an open popover
+    // re-fetches session/info so header and rows become current together.
+    const breakdown = state.contextBreakdown;
+    const hasBreakdown = breakdown && (
+      breakdown.systemPromptTokens != null ||
+      breakdown.toolDefinitionsTokens != null ||
+      breakdown.messageTokens != null ||
+      breakdown.freeTokens != null ||
+      (breakdown.categories && breakdown.categories.length)
+    );
+    if (hasBreakdown) {
+      // Same split as the CLI TUI: legend rows fill the bar; informational
+      // rows sit below it because their tokens are already in those addends
+      // (tool definitions in Reasoning/overhead, usage categories in Messages).
+      // Overhead is derived from THIS snapshot's used, never live occupancy.
+      const overheadTokens = contextOverheadTokens(
+        breakdown.used,
+        breakdown.systemPromptTokens,
+        breakdown.messageTokens,
+      );
+      section("In this window");
+      if (breakdown.systemPromptTokens != null) info("System", tok(breakdown.systemPromptTokens));
+      if (breakdown.messageTokens != null) info("Messages", tok(breakdown.messageTokens));
+      if (overheadTokens != null) info("Reasoning/overhead", tok(overheadTokens));
+      if (breakdown.freeTokens != null) info("Free", tok(breakdown.freeTokens));
+      if (breakdown.autoCompactPct != null) info("Auto-compact at", `${breakdown.autoCompactPct}%`);
+      const hasCounted =
+        breakdown.toolDefinitionsTokens != null ||
+        (breakdown.categories && breakdown.categories.length);
+      if (hasCounted) {
+        section("Already counted above");
+        if (breakdown.toolDefinitionsTokens != null) {
+          const n = breakdown.toolDefinitionsCount;
+          const toolsLabel = typeof n === "number"
+            ? `Tool definitions (${n} ${n === 1 ? "tool" : "tools"})`
+            : "Tool definitions";
+          info(toolsLabel, tok(breakdown.toolDefinitionsTokens));
+        }
+        if (breakdown.categories) {
+          for (const category of breakdown.categories) {
+            info(category.detail ? `${category.label} (${category.detail})` : category.label, tok(category.tokens));
+          }
+        }
+      }
+    }
+
     // Billing rows only when the CLI actually reported usage — an older build or
     // a session with no completed turn shows the context row alone rather than a
     // wall of zeros. Cache-CREATION is absent everywhere in the CLI, so it is
@@ -1814,6 +1913,7 @@
       section("Session total");
       row(sess, "Input", "inputTokens");
       row(sess, "↳ cache read", "cachedReadTokens");
+      row(sess, "↳ cache write", "cachedWriteTokens");
       row(sess, "Output", "outputTokens");
       row(sess, "Cost", "costUsdTicks", usdTicks);
     }
@@ -1828,6 +1928,7 @@
       contextPopover.appendChild(body);
       row(turn, "Input", "inputTokens", null, body);
       row(turn, "↳ cache read", "cachedReadTokens", null, body);
+      row(turn, "↳ cache write", "cachedWriteTokens", null, body);
       row(turn, "Output", "outputTokens", null, body);
       row(turn, "↳ reasoning", "reasoningTokens", null, body);
       row(turn, "Cost", "costUsdTicks", usdTicks, body);
@@ -2061,18 +2162,178 @@
 
   function previewFilename(opts) {
     if (opts.filename) return previewBasename(opts.filename);
-    if (opts.kind === "diff" && opts.path) {
+    if (opts.path) {
       const base = previewBasename(opts.path);
-      return /\.diff$/i.test(base) ? base : base + ".diff";
+      if (opts.kind === "diff") return /\.diff$/i.test(base) ? base : base + ".diff";
+      return base;
     }
     const ext = PREVIEW_EXT_BY_LANG[opts.language] || ".txt";
     return "Untitled" + ext;
   }
 
   function previewTitle(opts) {
-    if (opts.kind === "diff" && opts.path) return previewBasename(opts.path);
+    if (opts.path) return previewBasename(opts.path);
     if (opts.filename) return previewBasename(opts.filename);
     return opts.language ? `Untitled (${opts.language})` : "Untitled";
+  }
+
+  function previewLanguage(opts) {
+    if (opts.language) return opts.language;
+    const api = globalThis.GrokSyntaxHighlight;
+    if (opts.path && api && typeof api.languageForPath === "function") {
+      return api.languageForPath(opts.path) || "";
+    }
+    return "";
+  }
+
+  // Same `#Lstart-Lend` suffix parseFileRef accepts, kept local because the
+  // webview cannot import src/file-ref.ts. Anchored at the end so a `#` earlier
+  // in the path (C#/F# folders) stays in the path.
+  function previewFileRef(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return { path: "", range: null };
+    const frag = s.match(/^(.*?)#L(\d+)(?:-L?(\d+))?$/i);
+    if (!frag) return { path: s, range: null };
+    const start = Number(frag[2]);
+    const end = frag[3] ? Number(frag[3]) : start;
+    return { path: frag[1], range: { start, end } };
+  }
+
+  // Workspace-relative path the file panel / readProjectFile will accept, or
+  // "" when the path is out of cwd scope (~/Downloads, another drive, …).
+  function workspaceRelPath(pathStr) {
+    const raw = String(pathStr || "").replace(/\\/g, "/").trim();
+    if (!raw || raw === "." || raw === "./") return "";
+    if (raw === "~" || raw.startsWith("~/")) return "";
+    const cwd = String(state.cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    const isAbs = raw.startsWith("/") || /^[A-Za-z]:\//.test(raw);
+    if (!isAbs) return raw.replace(/^\.\//, "");
+    if (!cwd) return "";
+    const fold = /^[A-Za-z]:\//.test(cwd);
+    const a = fold ? raw.toLowerCase() : raw;
+    const c = fold ? cwd.toLowerCase() : cwd;
+    if (a === c) return "";
+    if (a.startsWith(c + "/")) return raw.slice(cwd.length).replace(/^\//, "");
+    return "";
+  }
+
+  // One formula for every `.tdl` gutter: 4ch through 999, then digits+1.
+  function tdlGutterCh(widest) {
+    return Math.max(4, String(widest).length + 1) + "ch";
+  }
+
+  function previewFilePanelController() {
+    if (!hostPreviewsInApp()) return null;
+    const desk = window.__grokDeskFilePanel;
+    if (desk && typeof desk.openPath === "function") return desk;
+    const remote = state.filesBrowse && state.filesBrowse.component;
+    if (remote && typeof remote.openPath === "function") return remote;
+    return null;
+  }
+
+  let previewFileSeq = 0;
+  let previewOverlayGen = 0;
+  const previewFilePending = new Map();
+
+  function fetchPreviewFile(relPath) {
+    const cwd = state.cwd || "";
+    if (!cwd || !relPath) return Promise.resolve({ ok: false, reason: "no path" });
+    return new Promise((resolve) => {
+      const requestId = "preview-" + (++previewFileSeq);
+      const timer = setTimeout(() => {
+        if (!previewFilePending.has(requestId)) return;
+        previewFilePending.delete(requestId);
+        resolve({ ok: false, reason: "timed out" });
+      }, 15000);
+      previewFilePending.set(requestId, { resolve, timer });
+      vscode.postMessage({ type: "readProjectFile", cwd, relPath, requestId });
+    });
+  }
+
+  function settlePreviewFileRequest(msg) {
+    if (!msg || typeof msg.requestId !== "string") return false;
+    const pending = previewFilePending.get(msg.requestId);
+    if (!pending) return false;
+    clearTimeout(pending.timer);
+    previewFilePending.delete(msg.requestId);
+    pending.resolve(msg);
+    return true;
+  }
+
+  // The host serves text files up to FILE_PREVIEW_MAX_BYTES (2 MiB), and a
+  // 2 MiB file of one-character lines is a million rows — four DOM nodes each,
+  // built synchronously on the UI thread. Rendering all of it would wedge the
+  // renderer for a file the host considers perfectly ordinary. So a window is
+  // rendered around the range the agent read, which is the only part anyone
+  // opened this to see; the count says what was left out, because a silently
+  // truncated file is the same lie as a silently substituted one.
+  const PREVIEW_MAX_LINES = 4000;
+  const PREVIEW_CONTEXT_LINES = 400;
+
+  function previewLineWindow(total, range) {
+    if (total <= PREVIEW_MAX_LINES) return { from: 1, to: total, clipped: false };
+    const start = Math.min(Math.max(1, (range && range.start) || 1), total);
+    const end = Math.min(Math.max(start, (range && range.end) || start), total);
+    const span = end - start + 1;
+
+    // The lines the agent READ are never trimmed to make room for context —
+    // context is the thing that gives way. An earlier version computed a budget
+    // that grew with the span and then clamped it straight back to the cap, so
+    // a 4000-line read starting at 5000 rendered 4600-8599 and silently
+    // dropped 400 lines the user had asked to see.
+    if (span >= PREVIEW_MAX_LINES) {
+      const to = Math.min(total, start + PREVIEW_MAX_LINES - 1);
+      return { from: start, to, clipped: start > 1 || to < total };
+    }
+
+    // Spend whatever is left on context, split either side, and give the unused
+    // half to the other when the range sits near a file boundary.
+    const slack = PREVIEW_MAX_LINES - span;
+    const before = Math.min(Math.floor(slack / 2), start - 1);
+    const from = Math.max(1, start - before);
+    const to = Math.min(total, from + PREVIEW_MAX_LINES - 1);
+    return { from, to, clipped: from > 1 || to < total };
+  }
+
+  function buildNumberedFilePreview(text, language, pathStr, range) {
+    const wrap = document.createElement("div");
+    wrap.className = "tool-diff-region preview-file-region";
+    const lines = String(text ?? "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    const start = range && range.start;
+    const end = range && range.end;
+    const win = previewLineWindow(lines.length, range);
+    let firstRead = null;
+    for (let i = win.from - 1; i < win.to; i++) {
+      const n = i + 1;
+      const inRange = start != null && end != null && n >= start && n <= end;
+      const row = document.createElement("div");
+      row.className = "tdl" + (inRange ? " tdl-read" : "");
+      row.dataset.line = String(n);
+      const sign = document.createElement("span");
+      sign.className = "tdl-sign";
+      sign.textContent = "";
+      const num = document.createElement("span");
+      num.className = "tdl-num";
+      num.textContent = String(n);
+      const code = document.createElement("span");
+      code.className = "tdl-code";
+      const line = lines[i];
+      if (line === "") code.textContent = " ";
+      else code.innerHTML = highlightPreviewHtml(line, language, pathStr);
+      row.appendChild(sign);
+      row.appendChild(num);
+      row.appendChild(code);
+      if (inRange && !firstRead) {
+        row.id = "preview-read-start";
+        firstRead = row;
+      }
+      wrap.appendChild(row);
+    }
+    wrap.style.setProperty("--tdl-num-w", tdlGutterCh(win.to));
+    wrap._firstRead = firstRead;
+    wrap._window = win;
+    wrap._totalLines = lines.length;
+    return wrap;
   }
 
   function highlightPreviewHtml(text, language, pathStr) {
@@ -2105,14 +2366,57 @@
     const existing = document.getElementById("preview-overlay");
     if (!existing) return;
     if (existing._onKey) document.removeEventListener("keydown", existing._onKey, true);
+    existing._closed = true;
     existing.remove();
+  }
+
+  function insertPreviewPanelButton(actions, saveBtn, relPath) {
+    if (!hostPreviewsInApp() || !relPath) return null;
+    const controller = previewFilePanelController();
+    if (!controller) return null;
+    if (actions.querySelector(".preview-open-panel")) return actions.querySelector(".preview-open-panel");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "preview-action-btn preview-open-panel";
+    btn.textContent = "Open in file panel";
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      closePreviewOverlay();
+      controller.openPath(relPath);
+    };
+    actions.insertBefore(btn, saveBtn);
+    return btn;
+  }
+
+  function renderPreviewExcerpt(body, text, language, pathStr) {
+    const pre = document.createElement("pre");
+    pre.className = "preview-code";
+    const code = document.createElement("code");
+    code.innerHTML = highlightPreviewHtml(String(text ?? ""), language, pathStr);
+    pre.appendChild(code);
+    body.appendChild(pre);
+  }
+
+  function clearPreviewBody(body) {
+    while (body.firstChild) body.removeChild(body.firstChild);
+  }
+
+  function renderPreviewFallback(body, excerpt, language, pathStr, reason) {
+    clearPreviewBody(body);
+    const notice = document.createElement("div");
+    notice.className = "preview-notice";
+    notice.textContent = reason;
+    body.appendChild(notice);
+    renderPreviewExcerpt(body, excerpt, language, pathStr);
   }
 
   function openPreviewOverlay(opts) {
     closePreviewOverlay();
-    const copyText = opts.kind === "diff" ? unifiedDiffText(opts) : String(opts.content ?? "");
+    const payload = { text: opts.kind === "diff" ? unifiedDiffText(opts) : String(opts.content ?? "") };
     const filename = previewFilename(opts);
-    const language = opts.language || (opts.kind === "diff" ? "diff" : "");
+    const language = opts.kind === "diff" ? (opts.language || "diff") : previewLanguage(opts);
+    const excerpt = String(opts.content ?? "");
+    const relPath = workspaceRelPath(opts.path || "");
 
     const overlay = document.createElement("div");
     overlay.id = "preview-overlay";
@@ -2146,7 +2450,7 @@
     copyBtn.onclick = (e) => {
       e.stopPropagation();
       if (!navigator.clipboard || !navigator.clipboard.writeText) return;
-      navigator.clipboard.writeText(copyText).then(() => {
+      navigator.clipboard.writeText(payload.text).then(() => {
         copyBtn.textContent = "Copied";
         setTimeout(() => { if (copyBtn.isConnected) copyBtn.textContent = "Copy"; }, 1200);
       });
@@ -2157,7 +2461,7 @@
     saveBtn.textContent = "Save As";
     saveBtn.onclick = (e) => {
       e.stopPropagation();
-      const message = { type: "openText", content: copyText, filename };
+      const message = { type: "openText", content: payload.text, filename };
       if (language) message.language = language;
       vscode.postMessage(message);
     };
@@ -2184,13 +2488,83 @@
         result: computeLineDiff(site.oldText, site.newText),
       }));
       body.appendChild(buildInlineDiffRegion(hunks, { full: true }));
+      insertPreviewPanelButton(actions, saveBtn, relPath);
+    } else if (!opts.path) {
+      renderPreviewExcerpt(body, excerpt, language, opts.path);
+    } else if (!relPath) {
+      renderPreviewFallback(
+        body,
+        excerpt,
+        language,
+        opts.path,
+        "This file is outside the project, so only the excerpt the agent read is shown.",
+      );
     } else {
-      const pre = document.createElement("pre");
-      pre.className = "preview-code";
-      const code = document.createElement("code");
-      code.innerHTML = highlightPreviewHtml(String(opts.content ?? ""), language, opts.path);
-      pre.appendChild(code);
-      body.appendChild(pre);
+      const notice = document.createElement("div");
+      notice.className = "preview-notice";
+      notice.textContent = "Loading file…";
+      body.appendChild(notice);
+      const token = ++previewOverlayGen;
+      overlay._previewToken = token;
+      fetchPreviewFile(relPath).then((result) => {
+        if (overlay._closed || overlay._previewToken !== token) return;
+        // `readProjectFile` PRETTY-PRINTS JSON (file-tree.ts: JSON.stringify of
+        // the parsed value). That is right for the file panel, which edits and
+        // writes it back, and wrong here: the numbers in our gutter would count
+        // reformatted lines, and the highlighted range would mark the wrong
+        // ones. A one-line `{"n":1e3}` becomes three lines reading `"n": 1000`.
+        // The host tells us when it did this, so take the honest path instead
+        // of numbering a file the user does not have.
+        if (result && result.ok && result.reformatted) {
+          clearPreviewBody(body);
+          renderPreviewFallback(
+            body,
+            excerpt,
+            language,
+            opts.path,
+            "This JSON file is reformatted when loaded, so line numbers would not match the file on disk — showing the excerpt the agent read.",
+          );
+        } else if (result && result.ok && typeof result.text === "string") {
+          payload.text = result.text;
+          clearPreviewBody(body);
+          // The band marks the line numbers the agent asked for. That is a
+          // POSITIONAL reference, exactly what an editor host does when it
+          // opens the file at those lines, and it stays true whether or not the
+          // file has moved on since.
+          //
+          // A guard that tried to verify the content still matched was removed
+          // rather than tuned: the excerpt is the CLI's rendered transcript,
+          // not the file's bytes. A ranged read arrives decorated —
+          // `... 2219 lines not shown ...` and `  2220|  }` — so comparing it
+          // against raw file lines never matched, and the guard fired on every
+          // ordinary ranged read, stripped the markers, and announced a change
+          // that had not happened. Parsing those decorations would mean
+          // tracking a format that differs per CLI, to defend against a
+          // staleness the editor host has always had and nobody minds.
+          const region = buildNumberedFilePreview(result.text, language, opts.path, opts.range);
+          body.appendChild(region);
+          if (region._window && region._window.clipped) {
+            const clip = document.createElement("div");
+            clip.className = "preview-notice";
+            clip.textContent =
+              `Showing lines ${region._window.from}–${region._window.to} of ${region._totalLines} — the file is too long to render in full.`;
+            body.insertBefore(clip, region);
+          }
+          insertPreviewPanelButton(actions, saveBtn, relPath);
+          const startEl = region._firstRead;
+          if (startEl && typeof startEl.scrollIntoView === "function") {
+            startEl.scrollIntoView({ block: "center", inline: "nearest" });
+          }
+        } else {
+          renderPreviewFallback(
+            body,
+            excerpt,
+            language,
+            opts.path,
+            "Couldn't load the full file — showing the excerpt the agent read.",
+          );
+        }
+      });
     }
     panel.appendChild(body);
     overlay.appendChild(panel);
@@ -2250,13 +2624,24 @@
       voiceSendPhrase: typeof state.voiceSendPhrase === "string" ? state.voiceSendPhrase : "atlas send",
       voiceKeyterms: Array.isArray(state.voiceKeyterms) ? state.voiceKeyterms : [],
       telemetryEnabled: state.telemetryEnabled,
+      thumbsFeedback: !!state.thumbsFeedback,
       providers: state.providers || [],
+      providersChecking: !!state.providersChecking,
       extVersion: state.extVersion,
       cliVersion: state.cliVersion,
       hostKind: state.hostKind,
       hostName: state.hostName,
       grokUpdate: state.grokUpdate,
-      localModels: Array.isArray(state.localModels) ? state.localModels : [],
+      mcpServers: state.mcpServers,
+      mcpLoading: state.mcpLoading,
+      mcpError: state.mcpError,
+      mcpWarning: state.mcpWarning,
+      mcpConnectors: state.mcpConnectors,
+      routines: state.routines,
+      routineProjects: state.routineProjects,
+      routineModels: state.routineModels,
+      routineError: state.routineError,
+      routineErrorId: state.routineErrorId,
     };
   }
 
@@ -2328,6 +2713,9 @@
       case "telemetryDesktop":
         state.telemetryEnabled = !!value;
         break;
+      case "thumbsFeedback":
+        state.thumbsFeedback = !!value;
+        break;
       default:
         break;
     }
@@ -2375,7 +2763,14 @@
       snapshot: settingsSnapshot(),
       env: settingsEnv(),
       category: opts && opts.category,
-      post: (msg) => vscode.postMessage(msg),
+      post: (msg) => {
+        // A refused save never reaches the host, so the host never answers and
+        // the Routines page would sit there looking like the button did
+        // nothing. Remember that one is outstanding; the relay's refusal below
+        // is its answer.
+        if (msg && msg.type === "saveRoutine") state.routineSavePending = true;
+        vscode.postMessage(msg);
+      },
       apply: applySettingsChange,
       onLocal: (name) => {
         if (name === "explainRemote") showRemoteExplainer();
@@ -2385,17 +2780,22 @@
       onClose: closeSettingsOverlay,
     });
     settingsSurface.focusSearch();
-    vscode.postMessage({ type: "listLocalModels" });
   }
 
   function openAllSettings() {
-    const opener = document.getElementById("gear-btn") || document.activeElement;
+    openSettingsCategory();
+  }
+
+  function openSettingsCategory(category) {
+    const opener = appSettingsButton() || document.getElementById("gear-btn") || document.activeElement;
     closePopovers();
     if (hostOpensSettingsEditor()) {
-      vscode.postMessage({ type: "openSettingsSurface" });
+      const message = { type: "openSettingsSurface" };
+      if (category) message.category = category;
+      vscode.postMessage(message);
       return;
     }
-    openSettingsOverlay(opener);
+    openSettingsOverlay(opener, category ? { category } : undefined);
   }
 
   // Public UI service consumed by media/file-panel.js in both renderer hosts.
@@ -2585,7 +2985,14 @@
 
     // Model + effort both restart or race the session, so they are locked while
     // a turn or session startup is in flight (the same busy signal as Send).
-    const settingsLocked = state.busy;
+    //
+    // Also locked when NOTHING can answer: with no usable agent there is no
+    // model to choose between, and an enabled picker offering a list you cannot
+    // act on is worse than one that plainly says not yet. Connect an agent and
+    // it unlocks with that agent's own default selected (owner, 2026-08-17).
+    const anyUsableProvider = !state.providersKnown
+      || (state.providers || []).some((p) => p.connected && p.needsLogin !== true);
+    const settingsLocked = state.busy || !anyUsableProvider;
 
     // Until the session's model info arrives (its name + advertised effort menu),
     // don't show a guessed model or a stale effort ladder — show a Loading state.
@@ -2594,12 +3001,19 @@
     const nameBtn = document.createElement("button");
     nameBtn.className = "toolbar-btn model-name-btn" + (settingsLocked || !modelLoaded ? " disabled" : "");
     const ownModels = state.availableModels.filter((model) => !model.provider || model.provider === state.activeProvider);
-    const modelName = modelLoaded ? (modelDisplayName(state.currentModelId, ownModels) || "Atlas") : "Loading…";
-    nameBtn.innerHTML = `<span class="btn-label">${escapeHtml(truncate(modelName, 16))}</span>`;
+    // With no agent able to answer, show that rather than the last model a
+    // session happened to remember. "GPT-5.6 Sol" sitting under the composer
+    // reads as a working selection when nothing can run at all.
+    const modelName = !anyUsableProvider
+      ? "Models unavailable"
+      : (modelLoaded ? (modelDisplayName(state.currentModelId, ownModels) || "Grok Build") : "Loading…");
+    nameBtn.innerHTML = `<span class="btn-label">${escapeHtml(truncate(modelName, 18))}</span>`;
     nameBtn.disabled = settingsLocked || !modelLoaded;
-    nameBtn.title = !modelLoaded
-      ? "Loading the session…"
-      : (settingsLocked ? `${modelName} — available once the session is ready` : `${modelName} — click to change`);
+    nameBtn.title = !anyUsableProvider
+      ? "Connect an agent to choose a model"
+      : (!modelLoaded
+        ? "Loading the session…"
+        : (settingsLocked ? `${modelName} — available once the session is ready` : `${modelName} — click to change`));
     if (!settingsLocked && modelLoaded) nameBtn.onclick = (e) => { e.stopPropagation(); renderModelPicker(); };
     row.appendChild(nameBtn);
 
@@ -2681,13 +3095,16 @@
     // ── Use this app for ──────────────────────────────────────────────────
     // Progressive disclosure: Knowledge work (default) hides worktrees,
     // thinking traces and tool details; Coding unlocks them (still default off).
+    // Icons here only. The same choice in Settings is a <select>, where an
+    // option cannot carry markup — so it stays text and the two surfaces
+    // differ deliberately rather than by neglect.
     addSection("Use this app for");
     addGearItem(
-      `<span title="Hides worktrees, thinking traces, and tool details. The default for knowledge work.">Knowledge work</span>${state.appPurpose !== "coding" ? '<span class="popover-check">✓</span>' : ""}`,
+      `<span class="gear-lead" title="Hides worktrees, thinking traces, and tool details. The default for knowledge work.">${ICON.brain}<span>Knowledge work</span></span>${state.appPurpose !== "coding" ? '<span class="popover-check">✓</span>' : ""}`,
       () => { setAppPurpose("knowledge"); renderGearMain(); gearPopover.hidden = false; },
     );
     addGearItem(
-      `<span title="Adds worktrees, thinking traces, and tool details (still off by default).">Coding</span>${state.appPurpose === "coding" ? '<span class="popover-check">✓</span>' : ""}`,
+      `<span class="gear-lead" title="Adds worktrees, thinking traces, and tool details (still off by default).">${ICON.squareChevronRight}<span>Coding</span></span>${state.appPurpose === "coding" ? '<span class="popover-check">✓</span>' : ""}`,
       () => { setAppPurpose("coding"); renderGearMain(); gearPopover.hidden = false; },
     );
 
@@ -2729,14 +3146,24 @@
     }
   }
 
-  /** Gear account rows: only when nothing is connected, or a connected
-   *  account needs sign-in. Healthy connected accounts live in Settings. */
+  /**
+   * Gear account rows: ONLY while nothing can answer. Once any agent is usable
+   * the gear stops carrying accounts entirely and Settings → Providers owns
+   * them (owner, 2026-08-17).
+   *
+   * This used to stay visible whenever any connected account needed a sign-in,
+   * which meant a working setup with one lapsed extra account kept a
+   * half-broken Accounts list in the quick menu forever. The gear's job is to
+   * get someone unstuck; a second account that needs attention is management,
+   * not a blocker.
+   *
+   * "Usable", not "connected" — a linked account whose credentials lapsed
+   * cannot answer, so it must not count as the thing that hides this.
+   */
   function gearShowsProviderAccounts() {
     if (IS_REMOTE || !state.providersKnown) return false;
     const list = state.providers || [];
-    const anyConnected = list.some((p) => p.connected);
-    const needsAttention = list.some((p) => p.connected && p.needsLogin === true);
-    return !anyConnected || needsAttention;
+    return !list.some((p) => p.connected && p.needsLogin !== true);
   }
 
   function renderProviderAccounts() {
@@ -2748,8 +3175,14 @@
       // action is the connect flow, not "Sign out" of credentials that are
       // already refused.
       const needsLogin = connected && provider.needsLogin === true;
-      const action = needsLogin ? "Sign in again" : connected ? "Sign out" : "Connect";
-      const name = provider.id === "codex" ? "Codex" : "Atlas";
+      // Two states in the verb, not three. "Sign in again" told the user about
+      // OUR bookkeeping — that this account was linked once and its credentials
+      // lapsed — while "Connect" next to it meant the same thing to them: this
+      // one does not work, press here to fix it. Both open the same login. The
+      // stale case keeps its warning styling, so the difference is still
+      // visible without inventing a second word for one action.
+      const action = connected && !needsLogin ? "Sign out" : "Connect";
+      const name = providerDisplayName(provider.id);
       addGearItem(
         `<span class="gear-lead"><span class="provider-glyph provider-${provider.id}">${providerLogoMarkup(provider.id)}</span><span>${name}</span></span><span class="popover-ver${needsLogin ? " popover-warn" : ""}">${action}</span>`,
         () => {
@@ -2868,10 +3301,10 @@
     // A signed-out agent has no knowable model list, and the placeholder shown
     // in its place ("Codex default") reads as something you can select — so its
     // rows are replaced by the one action that can actually help.
-    const signInProviders = ["grok", "codex"].filter(providerNeedsLogin);
+    const signInProviders = ["grok", "codex", "claude"].filter(providerNeedsLogin);
     models = models.filter((model) => !signInProviders.includes(model.provider || state.activeProvider));
     if (grouped) {
-      models = ["grok", "codex"].flatMap((provider) => models.filter((model) =>
+      models = ["grok", "codex", "claude"].flatMap((provider) => models.filter((model) =>
         (model.provider || state.activeProvider) === provider));
     }
     let group = "";
@@ -2880,33 +3313,30 @@
       group = provider;
       const heading = document.createElement("div");
       heading.className = "popover-section model-provider-heading";
-      heading.textContent = provider === "codex" ? "Codex" : "Atlas";
+      heading.textContent = providerDisplayName(provider);
       gearPopover.appendChild(heading);
     };
-    const addSignInRow = (provider) => {
-      addProviderHeading(provider);
-      const el = document.createElement("div");
-      // Accounts are connected on the machine running the workspace, and the
-      // host refuses `runGrokLogin` from a remote — so a phone gets the fact,
-      // not a button that would do nothing.
-      el.className = "toolbar-popover-item model-signin" + (IS_REMOTE ? "" : " popover-action");
-      el.innerHTML = `<span class="popover-warn">${IS_REMOTE ? "Sign in at the desk to load models" : "Sign in to load models"}</span>`;
-      if (!IS_REMOTE) {
-        el.onclick = (e) => {
-          e.stopPropagation();
-          vscode.postMessage({ type: "runGrokLogin", provider });
-          closePopovers();
-        };
-      }
-      gearPopover.appendChild(el);
-    };
+    // A provider that cannot answer is simply not in this list. It used to get
+    // a heading and a "Sign in to load models" row, which put an agent you
+    // cannot pick in the middle of the menu for picking one — and on a phone it
+    // could not even be actioned, since the host refuses runGrokLogin from a
+    // remote. Manage providers at the bottom is the way back for all three
+    // (owner, 2026-08-17: "Not connected => Not visible").
     const renderModelRow = (m) => {
       const modelProvider = m.provider || state.activeProvider;
       addProviderHeading(modelProvider);
       const el = document.createElement("div");
       const active = m.modelId === state.currentModelId && (!m.provider || m.provider === state.activeProvider);
-      el.className = "toolbar-popover-item" + (active ? " active" : "");
-      el.innerHTML = `<span>${escapeHtml(truncate(modelDisplayName(m.modelId, [m]) || m.modelId, 28))}</span>${active ? '<span class="popover-check">✓</span>' : ""}`;
+      const label = modelPickerLabel(m) || m.modelId;
+      const glyphId = providerLogoId(modelProvider);
+      el.className = "toolbar-popover-item model-picker-row";
+      if (active) el.classList.add("active");
+      el.innerHTML =
+        `<span class="gear-lead">` +
+          `<span class="provider-glyph provider-${glyphId}">${providerLogoMarkup(glyphId)}</span>` +
+          `<span class="model-picker-name">${escapeHtml(truncate(label, 28))}</span>` +
+        `</span>` +
+        (active ? '<span class="popover-check">✓</span>' : "");
       el.title = m.modelId;
       el.onclick = (e) => {
         e.stopPropagation();
@@ -2917,18 +3347,30 @@
       };
       gearPopover.appendChild(el);
     };
+    const addManageProvidersRow = () => {
+      const sep = document.createElement("div");
+      sep.className = "popover-sep";
+      gearPopover.appendChild(sep);
+      const el = document.createElement("div");
+      el.className = "toolbar-popover-item model-manage-providers";
+      el.innerHTML = `<span class="gear-lead">${ICON.settings2}<span>Manage providers</span></span>`;
+      el.onclick = (e) => {
+        e.stopPropagation();
+        openSettingsCategory("providers");
+      };
+      gearPopover.appendChild(el);
+    };
     if (grouped) {
-      for (const provider of ["grok", "codex"]) {
+      for (const provider of ["grok", "codex", "claude"]) {
         for (const m of models) {
           if ((m.provider || state.activeProvider) === provider) renderModelRow(m);
         }
-        if (signInProviders.includes(provider)) addSignInRow(provider);
       }
+      addManageProvidersRow();
       return;
     }
     for (const m of models) renderModelRow(m);
-    // Ungrouped means one agent is in play: only its own gap is worth an action.
-    if (signInProviders.includes(state.activeProvider)) addSignInRow(state.activeProvider);
+    addManageProvidersRow();
   }
 
   /** The trigger for the surface currently being rendered. */
@@ -3153,7 +3595,7 @@
   // breakpoint that decides drawer-vs-docked, and that is the only place that
   // knows. One definition of "is this a phone", not two.
   // Width cap for the rail-anchored gear popover. Menu items and the About
-  // panel's version lines both live in here, so it has to fit "Atlas for
+  // panel's version lines both live in here, so it has to fit "Grok Build for
   // VS Code (Community)" wrapped without becoming a full-width sheet.
   const GEAR_POPOVER_WIDTH = 240;
 
@@ -3302,13 +3744,19 @@
       let startX = 0;
       let startW = 0;
       let lastW = 0;
+      // Body `--chat-zoom` scales VISUAL rects and clientX, while --rail-width
+      // is layout px. Convert both ends of the gesture so the edge tracks the
+      // cursor (a no-op at zoom 1). Converting only the delta jumps on grab.
+      const zoomOf = typeof chatZoomFactor === "function" ? chatZoomFactor : () => 1;
+      const unzoom = typeof unzoomClientPx === "function" ? unzoomClientPx : (px) => px;
+      const layoutPx = (clientPx) => unzoom(clientPx, zoomOf());
       handle.addEventListener("pointerdown", (e) => {
         // getBoundingClientRect, not the stored value: the rail may be sitting
         // at its CSS default having never been dragged.
-        startW = rail.getBoundingClientRect().width;
+        startW = layoutPx(rail.getBoundingClientRect().width);
         if (!startW) return;
         dragging = true;
-        startX = e.clientX;
+        startX = layoutPx(e.clientX);
         lastW = startW;
         document.body.classList.add("rail-resizing");
         handle.classList.add("rail-resizing");
@@ -3317,7 +3765,7 @@
       });
       handle.addEventListener("pointermove", (e) => {
         // Rail is on the left: drag right → wider.
-        if (dragging) lastW = applyRailWidth(startW + (e.clientX - startX), false);
+        if (dragging) lastW = applyRailWidth(startW + (layoutPx(e.clientX) - startX), false);
       });
       const end = (e) => {
         if (!dragging) return;
@@ -3375,7 +3823,7 @@
     if (!modePopover.hidden) { closePopovers(); return; }
     modePopover.innerHTML = "";
     for (const [id, meta] of Object.entries(MODE_META)) {
-      // Plan is Atlas's extension-owned plan gate. Codex owns its own plan
+      // Plan is Grok's extension-owned plan gate. Codex owns its own plan
       // review permission flow, so showing this item there is both inert and
       // misleading.
       if (id === "plan" && state.activeProvider === "codex") continue;
@@ -3460,19 +3908,47 @@
   const PROVIDER_LOGO_PATHS = {
     grok: "M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815",
     codex: "M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z",
+    // Four-point sparkle — distinct from the Grok/Codex marks, currentColor.
+    claude: "M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z",
   };
 
+  /**
+   * Whether the agent running this session can hear a mid-turn message.
+   *
+   * Steer is `_x.ai/interject`, an xAI extension to ACP — so it is a GROK
+   * capability, not an ACP one. Codex's adapter answers -32601 and the text
+   * falls back to the queue, and Claude Code has no interject at all. Both
+   * therefore schedule instead, and neither is offered a button that describes
+   * something its agent cannot do.
+   *
+   * An absent provider means an older host that only ever ran Grok.
+   */
+  function steerableProvider() {
+    return state.activeProvider !== "claude" && state.activeProvider !== "codex";
+  }
+
+  function providerDisplayName(provider) {
+    if (provider === "codex") return "Codex";
+    if (provider === "claude") return "Claude";
+    return "Atlas";
+  }
+
+  function providerLogoId(provider) {
+    if (provider === "codex" || provider === "claude") return provider;
+    return "grok";
+  }
+
   function providerLogoMarkup(provider) {
-    const id = provider === "codex" ? "codex" : "grok";
+    const id = providerLogoId(provider);
     return `<svg class="provider-logo" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="${PROVIDER_LOGO_PATHS[id]}"></path></svg>`;
   }
 
   function makeProviderGlyph(provider, dotValue, sessionId) {
-    const id = provider === "codex" ? "codex" : "grok";
+    const id = providerLogoId(provider);
     const glyph = document.createElement("span");
     glyph.className = "provider-glyph provider-" + id;
     glyph.innerHTML = providerLogoMarkup(id);
-    glyph.title = id === "codex" ? "Codex" : "Atlas";
+    glyph.title = providerDisplayName(id);
     glyph.setAttribute("aria-label", glyph.title);
     if (sessionId) {
       const badge = document.createElement("span");
@@ -3517,6 +3993,68 @@
     return raw.replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
   };
   const sameCwd = (a, b) => cwdKey(a) === cwdKey(b);
+
+  // Optimistic writes. Local overlays only — the next frame that names the
+  // entity is the authority (confirm, contradict, or refuse). A silent host
+  // cannot leave a lie: the overlay expires and the last frame re-renders.
+  const pendingRepoColor = createPendingOverlay({
+    onExpire() { renderRail(); },
+  });
+  const pendingRename = createPendingOverlay({
+    onExpire() { paintSessionSurfaces(); },
+  });
+
+  function repoColorOf(repo) {
+    const painted = pendingRepoColor.valueFor(cwdKey(repo && repo.cwd));
+    if (painted !== undefined) return painted;
+    return typeof repo?.color === "string" ? repo.color : "";
+  }
+
+  function sessionRowName(s) {
+    const painted = s && pendingRename.valueFor(s.id);
+    if (painted !== undefined) return painted || "Untitled";
+    return (s && s.displayName) || "Untitled";
+  }
+
+  function paintSessionSurfaces() {
+    if (!historyPopover.hidden) renderSessionRows();
+    renderSessionName();
+    renderSessionHead();
+    renderRail();
+  }
+
+  function paintPendingRepoColor(cwd, color) {
+    pendingRepoColor.paint(cwdKey(cwd), color);
+    renderRail();
+  }
+
+  function paintPendingRename(id, name) {
+    if (!id) return;
+    pendingRename.paint(id, name);
+    paintSessionSurfaces();
+  }
+
+  function settlePendingRepoColor(entries) {
+    pendingRepoColor.settleAny((entries || []).map((r) => r && cwdKey(r.cwd)).filter(Boolean));
+  }
+
+  function settlePendingRename(entries) {
+    const pending = pendingRename.peek();
+    if (!pending) return false;
+    const hit = (entries || []).find((e) => e && e.id === pending.key);
+    if (!hit) return false;
+    pendingRename.settle(pending.key);
+    // The list frame is the authority we just accepted. If the header is
+    // still holding a pre-rename sessionName for this id, adopt the row so
+    // a late name frame cannot snap the title back for a beat.
+    if (state.sessionName && state.sessionName.sessionId === hit.id) {
+      state.sessionName = {
+        ...state.sessionName,
+        name: String(hit.displayName || "New session"),
+      };
+    }
+    return true;
+  }
   const uniqueSessionRows = (entries) => {
     const byId = new Map();
     for (const entry of Array.isArray(entries) ? entries : []) {
@@ -3583,7 +4121,7 @@
     if (!state.repos.length) {
       const empty = document.createElement("div");
       empty.className = "history-empty";
-      empty.textContent = "No repositories with Atlas sessions.";
+      empty.textContent = "No repositories with Grok sessions.";
       repoPopover.appendChild(empty);
       return;
     }
@@ -3788,7 +4326,8 @@
 
   function renderSessionRow(s) {
       const row = document.createElement("div");
-      const active = s.id === state.activeSessionId;
+      const displayId = (railDisplayTarget() && railDisplayTarget().id) || state.activeSessionId;
+      const active = s.id === displayId;
       row.className = "history-row" + (active ? " active" : "");
       row.dataset.sessionId = s.id || "";
 
@@ -3819,6 +4358,7 @@
           // deliberate act.
           if (next !== s.displayName) {
             vscode.postMessage({ type: "renameSession", id: s.id, name: next });
+            paintPendingRename(s.id, next);
           }
           state.renamingSessionId = null;
           renderSessionRows();
@@ -3842,11 +4382,11 @@
         name.className = "history-row-name";
         // Tooltip is the name the USER sees/gave — never a legacy primer-derived
         // summary (rawSummary), which is internal compatibility data.
-        name.title = s.displayName || "";
+        name.title = sessionRowName(s);
         // A worktree session gets a branch icon (a TYPE marker in muted gray,
         // off the status-dot palette), not a "(WT)" text prefix like a fork's
         // "(Fork)" — it's an isolated checkout, not a renamed conversation.
-        let displayName = s.displayName || "Untitled";
+        let displayName = sessionRowName(s);
         if (s.worktreeLabel) {
           if (displayName.startsWith("(WT)")) displayName = displayName.slice(4).trim() || "Worktree";
           const branch = document.createElement("span");
@@ -3873,6 +4413,7 @@
         // stopPropagation so they don't also trigger a resume.
         row.onclick = () => {
           if (active) { closePopovers(); return; }
+          startRailResumeTransition(s.id, s.cwd, s.cwd, s.displayName);
           vscode.postMessage({ type: "resumeSession", id: s.id, cwd: s.cwd });
           closePopovers();
         };
@@ -3953,7 +4494,7 @@
 
   // ---------- projects rail ----------
   //
-  // A persistent left rail: every open project (or every repo with Atlas history
+  // A persistent left rail: every open project (or every repo with Grok history
   // on remote), each showing its newest few sessions.
   //
   // Gate (capability, not IS_REMOTE / not a host flag):
@@ -4180,7 +4721,7 @@
     closeRailColorPicker();
     if (!anchor || !repo) return;
     railColorPickerAnchorEl = anchor;
-    const current = typeof repo.color === "string" ? repo.color : "";
+    const current = repoColorOf(repo);
     const picker = document.createElement("div");
     picker.className = "rail-color-picker";
     picker.setAttribute("role", "listbox");
@@ -4205,6 +4746,9 @@
         // the catalog (and a remote round-trip for nothing).
         if (sw.id === current) return;
         vscode.postMessage({ type: "setRepoColor", cwd: repo.cwd, color: sw.id });
+        // Paint now. The next `repos` frame that names this cwd is the
+        // authority — confirm, contradict, or a silent host's expiry.
+        paintPendingRepoColor(repo.cwd, sw.id);
       };
       picker.appendChild(btn);
       swatches.push(btn);
@@ -4750,7 +5294,12 @@
       };
     // Highlight without a veil would claim conversation X while Y is still on
     // screen and fully actionable. Pair them so the click is visibly owned.
+    veilTranscriptForPendingOpen();
     setConversationLoading(true);
+    if (fields.kind === "resume") {
+      renderSessionName();
+      renderSessionHead();
+    }
     const ms = Number(window.__grokRailTransitionTimeoutMs) > 0
       ? Number(window.__grokRailTransitionTimeoutMs)
       : RAIL_TRANSITION_TIMEOUT_MS;
@@ -4763,12 +5312,13 @@
     renderRail();
   }
 
-  function startRailResumeTransition(sessionId, sessionCwd, repoCwd) {
+  function startRailResumeTransition(sessionId, sessionCwd, repoCwd, displayName) {
     startRailTransition({
       kind: "resume",
       sessionId,
       sessionCwd: sessionCwd || repoCwd,
       repoCwd,
+      displayName: displayName || "",
     });
   }
 
@@ -4794,8 +5344,13 @@
     // historyReplay owns the veil while a transcript is materialising; leave
     // it up if we are mid-replay so aborting a superseded click cannot blank a
     // real load still in progress.
-    if (!state.replaying) setConversationLoading(false);
+    if (!state.replaying) {
+      unveilTranscriptAfterFailedOpen();
+      setConversationLoading(false);
+    }
     renderRail();
+    renderSessionName();
+    renderSessionHead();
   }
 
   function completeRailTransition(token) {
@@ -5067,7 +5622,12 @@
     // panel on every rail rebuild, and a session load produces a burst of those.
     const filesBtn = document.getElementById("files-browse-btn");
     if (filesBtn) placeRemoteFilesButton(filesBtn);
-    if (!on) { renderSessionHead(); return; }
+    if (!on) {
+      const openMenuKey = railMenuEl ? railMenuEl.dataset.anchorId || "" : "";
+      renderSessionHead();
+      reanchorOpenRailMenu(openMenuKey);
+      return;
+    }
     wireRailSearch();
     // The rail rebuilds itself wholesale, and a session load produces a burst of
     // frames that each trigger one. Closing the menu here meant an open ⋯ was
@@ -5208,20 +5768,14 @@
       }
     }
 
-    // Re-anchor an open ⋯ to its rebuilt button, or close it if the row it
-    // belonged to is gone (deleted, filtered out, its project collapsed).
-    if (openMenuKey) {
-      const esc = window.CSS && CSS.escape ? CSS.escape(openMenuKey) : openMenuKey;
-      const anchor = root.querySelector('[data-rail-menu-key="' + esc + '"]');
-      if (anchor) {
-        railMenuAnchorEl = anchor;
-        // Re-place it. Keeping the menu open but leaving it at the old fixed
-        // coordinates is worse than closing it: rows insert and reorder as
-        // frames arrive, so the menu would end up beside whichever row moved
-        // into that spot while still acting on the one it was opened from.
-        if (railMenuEl) placeRailPopover(railMenuEl, anchor);
-      } else closeRailMenu();
-    }
+    // Re-anchor AFTER renderSessionHead: the top-right ⋯ lives in
+    // #session-head-actions (key "session-head"), which fillSessionHeadActions
+    // rebuilds. Searching only `root` here used to miss that button and slam
+    // the menu shut on every catalog frame — the thing the owner hit while
+    // projects were still loading. Search the document so both a rail-row
+    // menu and the header menu survive the wipe.
+    renderSessionHead();
+    reanchorOpenRailMenu(openMenuKey);
     // Colour picker is one-shot and short-lived — the rebuild destroys its
     // anchor button, and re-opening it mid-catalog-refresh is not worth the
     // bookkeeping. Closing avoids a fixed popover stranded over a gone row.
@@ -5234,7 +5788,23 @@
     } else {
       root.classList.remove("rail-rebuilding");
     }
-    renderSessionHead();
+  }
+
+  /** Re-hang an open ⋯ on the button that replaced its anchor, or close it
+   *  if that row/header is gone. Searches the whole document, not just the
+   *  rail: the conversation overflow is outside `#projects-rail`. */
+  function reanchorOpenRailMenu(openMenuKey) {
+    if (!openMenuKey) return;
+    const esc = window.CSS && CSS.escape ? CSS.escape(openMenuKey) : openMenuKey;
+    const anchor = document.querySelector('[data-rail-menu-key="' + esc + '"]');
+    if (anchor) {
+      railMenuAnchorEl = anchor;
+      // Re-place it. Keeping the menu open but leaving it at the old fixed
+      // coordinates is worse than closing it: rows insert and reorder as
+      // frames arrive, so the menu would end up beside whichever row moved
+      // into that spot while still acting on the one it was opened from.
+      if (railMenuEl) placeRailPopover(railMenuEl, anchor);
+    } else closeRailMenu();
   }
 
   /** Non-collapsible group label (PINNED). */
@@ -5417,8 +5987,22 @@
   }
 
   function displayedSessionName(record) {
-    const data = activeSessionName();
-    let name = data?.name || record?.displayName || "New session";
+    const t = state.railTransition;
+    const displayId = (t && t.kind === "resume" && t.sessionId)
+      || record?.id
+      || activeSessionName()?.sessionId
+      || state.activeSessionId;
+    const renamed = displayId ? pendingRename.valueFor(displayId) : undefined;
+    let name;
+    // Overlay wins until a catalog frame names this id. sessionName can
+    // arrive first carrying the pre-rename title, and treating it as
+    // authority would snap the header back for a beat.
+    if (renamed !== undefined) name = renamed || "Untitled";
+    else if (t && t.kind === "resume" && t.displayName) name = t.displayName;
+    else {
+      const data = activeSessionName();
+      name = data?.name || record?.displayName || "New session";
+    }
     if (record?.worktreeLabel && name.startsWith("(WT)")) name = name.slice(4).trim() || "Worktree";
     return name;
   }
@@ -5487,7 +6071,9 @@
     if (edit.input.isConnected) edit.input.replaceWith(edit.label);
     edit.editBtn.classList.remove("session-name-edit-editing");
     edit.editBtn.hidden = false;
-    if (edit.surface === "local") renderSessionName();
+    // After the input is gone — paintSessionSurfaces rebuilds the label.
+    if (commit && next !== edit.original) paintPendingRename(edit.id, next);
+    else if (edit.surface === "local") renderSessionName();
     else renderSessionHead();
   }
 
@@ -5548,18 +6134,59 @@
   }
 
   function beginNewSession() {
+    // Empty open set: New would reset the welcome to Starting and then the
+    // host would refuse to spawn. Leave the empty-state card up.
+    if (state.onboardingMode === "no-project") return;
     // Capture before reset — activeSessionId is host-confirmed and is the only
     // honest "what we are leaving" for the identity frames that will confirm
     // the new conversation (they must differ from previousSessionId).
     const previousSessionId = state.activeSessionId;
     const repoCwd = state.selectedRepoCwd || state.activeRepoCwd || "";
     saveRememberedRemoteSession(null);
-    resetForNewSession();
-    // After reset so setConversationLoading wins over the "Starting" welcome
-    // status resetForNewSession paints. The placeholder is renderer-local and
-    // never enters state.sessions.
+    // Veil before the host-style reset so the click can unhide the welcome.
+    // resetForNewSession marks the old nodes pending-clear, and a pending-clear
+    // transcript must not grow an empty-state panel on top of it.
     startRailNewTransition(repoCwd, "creating", previousSessionId);
+    resetForNewSession();
     vscode.postMessage({ type: "newSession" });
+  }
+
+  function wireSessionNewButton(btn) {
+    if (!btn || btn.dataset.railWired) return;
+    btn.dataset.railWired = "1";
+    btn.hidden = false;
+    btn.type = "button";
+    btn.title = "New session";
+    btn.setAttribute("aria-label", "New session");
+    btn.innerHTML = ICON.squarePen;
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      closePopovers();
+      beginNewSession();
+    };
+  }
+
+  // History stays a dedicated control; New sits next to it on every surface
+  // (top-bar `#new-btn`, remote `#session-new`). Older remote pages omit the
+  // latter — inject it after History so current-project New is still there
+  // when the rail is closed (see railSessionMenuItems).
+  function ensureVisibleNewSession() {
+    if (newBtn) {
+      newBtn.hidden = false;
+      newBtn.title = "New session";
+    }
+    const history = document.getElementById("session-history");
+    let sessionNew = document.getElementById("session-new");
+    if (!sessionNew && history && history.parentElement) {
+      sessionNew = document.createElement("button");
+      sessionNew.id = "session-new";
+      sessionNew.className = (history.className ? history.className + " " : "") + "icon-btn";
+      history.insertAdjacentElement("afterend", sessionNew);
+    }
+    if (sessionNew) {
+      if (!sessionNew.classList.contains("icon-btn")) sessionNew.classList.add("icon-btn");
+      wireSessionNewButton(sessionNew);
+    }
   }
 
   /** VS Code's compact top-bar overflow. Desktop and remote keep the richer
@@ -5582,13 +6209,18 @@
           icon: ICON.download,
           onSelect: () => exportCurrentSession(),
         },
+        {
+          label: "Find in conversation",
+          icon: ICON.search,
+          onSelect: () => openFind(),
+        },
       ],
       "vscode-session-head",
     ));
   }
 
   /**
-   * Conversation overflow (⋯) in the top-right cluster (after Remote + History).
+   * Conversation overflow (⋯) in the top-right cluster (after Remote, History, New).
    * Present only when the host shipped `#session-head-actions` (desktop getHtml /
    * AFK Pilot page). VS Code's smaller two-item menu uses its own slot so this
    * richer desktop/remote menu stays unchanged. Capability = the slot exists,
@@ -5596,20 +6228,17 @@
    */
   function fillSessionHeadActions() {
     fillVsCodeSessionActions();
+    ensureVisibleNewSession();
     const menuSlot = document.getElementById("session-head-actions");
-    // Hide the top-bar New wherever the overflow menu exists so New is not three
-    // similar icons in a row (top-bar + rail project + menu).
-    if (newBtn) newBtn.hidden = !!menuSlot;
-    const sessionNew = document.getElementById("session-new");
-    if (sessionNew) sessionNew.hidden = !!menuSlot;
     if (!menuSlot) return;
 
     menuSlot.innerHTML = "";
     // Fall back to what we already know rather than degrading the menu.
     // activeSessionRecord() searches the loaded lists, and a conversation can be
     // the live one before it appears in any of them — right after a fork, most
-    // visibly. The menu then dropped to New-only, and came back later when a
-    // list happened to refresh, which read as options randomly disappearing.
+    // visibly. The menu then dropped its conversation actions, and came back
+    // later when a list happened to refresh, which read as options randomly
+    // disappearing.
     // This menu acts on the conversation you are IN; its id and cwd are state we
     // hold, so a missing list entry is not a reason to withhold Rename, Delete
     // or Continue in a new chat.
@@ -5635,22 +6264,10 @@
     // reads the conversation being LEFT while the host has already moved to the
     // one being opened. railSessionMenuItems disables the id-less actions for
     // that window rather than this call site withholding them.
+    if (!record) return;
     menuSlot.appendChild(railMenuButton(
       "Session actions",
-      () => {
-        if (record) {
-          return railSessionMenuItems(record, repo, true, {
-            inlineRename: true,
-            includeNew: true,
-          });
-        }
-        // No live record yet (brand-new / still starting): still offer New.
-        return [{
-          label: "New session",
-          icon: ICON.squarePen,
-          onSelect: () => beginNewSession(),
-        }];
-      },
+      () => railSessionMenuItems(record, repo, true, { inlineRename: true }),
       "session-head",
     ));
   }
@@ -5662,15 +6279,19 @@
     const editBtn = $("session-name-edit");
     if (!chip || !label || !editBtn) return;
     const data = activeSessionName();
-    chip.hidden = !data;
+    const pendingOpen = !!(state.railTransition && state.railTransition.kind === "resume" && state.railTransition.displayName);
+    chip.hidden = !data && !pendingOpen;
     // Desktop rail hosts: overflow lives in the top-right cluster (after History).
     fillSessionHeadActions();
     renderSessionNameRepo();
-    if (!data || state.sessionNameEditing?.surface === "local") return;
+    if ((!data && !pendingOpen) || state.sessionNameEditing?.surface === "local") return;
     const name = displayedSessionName(activeSessionRecord());
     label.textContent = name;
     label.title = name;
-    editBtn.hidden = false;
+    // Pending open paints the title only. Rename stays gated on sessionName
+    // (the host confirmation), same as an older host that never sent the frame.
+    editBtn.hidden = !data;
+    if (!data) return;
     label.setAttribute("aria-label", `Conversation: ${name}. Activate to rename.`);
     editBtn.title = "Rename conversation";
     editBtn.setAttribute("aria-label", "Rename conversation");
@@ -5785,24 +6406,14 @@
 
     fillSessionHeadActions();
 
-    // History stays a separate control; New lives in the overflow menu when
-    // #session-head-actions is present (fillSessionHeadActions hides session-new).
     const history = document.getElementById("session-history");
     if (history && !history.dataset.railWired) {
       history.dataset.railWired = "1";
       history.innerHTML = ICON.clock;
+      history.title = history.title || "Session history";
       history.onclick = (e) => { e.stopPropagation(); openHistoryPopover(); };
     }
-    const add = document.getElementById("session-new");
-    if (add && !add.dataset.railWired) {
-      add.dataset.railWired = "1";
-      add.innerHTML = ICON.squarePen;
-      add.onclick = (e) => {
-        e.stopPropagation();
-        closePopovers();
-        beginNewSession();
-      };
-    }
+    ensureVisibleNewSession();
   }
 
   function renderRailRepo(repo, inArchive) {
@@ -5853,9 +6464,8 @@
     twisty.className = "rail-twisty";
     twisty.innerHTML = expanded ? ICON.folderOpen : ICON.folderClosed;
     twisty.setAttribute("aria-hidden", "true");
-    if (typeof repo.color === "string" && repo.color) {
-      twisty.dataset.repoColor = repo.color;
-    }
+    const repoColor = repoColorOf(repo);
+    if (repoColor) twisty.dataset.repoColor = repoColor;
     head.appendChild(twisty);
 
     const name = document.createElement("span");
@@ -6078,7 +6688,7 @@
       if (state.repoPreviewsUnsupported) {
         const note = railNote("Update Atlas to preview");
         note.title =
-          "Atlas on your computer — the extension or the desktop app — is older " +
+          "Grok Build on your computer — the extension or the desktop app — is older " +
           "than this page, so it can't list another project's sessions without " +
           "switching to it. Click the project name to open it, or update it.";
         body.appendChild(note);
@@ -6146,7 +6756,7 @@
     const hostActive = railIdlessActionsAllowed() && active;
     row.className = "rail-session" + (active ? " active" : "");
     row.dataset.sessionId = s.id || "";
-    row.title = s.displayName || "";
+    row.title = sessionRowName(s);
     // The row is the primary control, so it has to behave like one: reachable by
     // Tab and openable with Enter/Space. The repo names and pin buttons around it
     // are real <button>s; without this the conversations themselves — the whole
@@ -6185,7 +6795,7 @@
       branch.title = "Worktree: " + s.worktreeLabel;
       row.appendChild(branch);
     }
-    let name = s.displayName || "Untitled";
+    let name = sessionRowName(s);
     if (s.worktreeLabel && name.startsWith("(WT)")) name = name.slice(4).trim() || "Worktree";
     label.textContent = name;
     row.appendChild(label);
@@ -6270,16 +6880,15 @@
         onSelect: () => railRenameSession(s, cwd),
       },
     ];
-    // Header overflow only: New is folded out of the top bar on rail hosts so
-    // the bar is not three similar icons. Rail ROWS keep their own project-level
-    // New (+ on the project head) and must not gain a second one here.
-    if (opts?.includeNew) {
-      items.unshift({
-        label: "New session",
-        icon: ICON.squarePen,
-        onSelect: () => beginNewSession(),
-      });
-    }
+    // New used to live in the conversation overflow so rail hosts would not
+    // show three similar New icons (top bar, rail +, project +). That
+    // assumed the rail is on screen. It can be closed or minimised, and then
+    // neither + is reachable — the top-bar New is the only one left. It is
+    // also a different object: a new session in the CURRENT project, not
+    // "create one in the project I am pointing at". So New is top-bar only.
+    // Two places, not three: rail + (project-scoped, only while the rail is
+    // open) and the top bar (current project, always). Rail rows must not
+    // gain a copy — they already have + on the project head.
     // "Continue in a new chat" belongs with the other things you do TO a
     // conversation (rename, pin, delete), not in the composer's settings beside
     // model and effort — those adjust how the agent answers; this one makes a
@@ -6307,6 +6916,11 @@
         label: "Export as Markdown",
         icon: ICON.download,
         onSelect: () => exportCurrentSession(),
+      });
+      items.push({
+        label: "Find in conversation",
+        icon: ICON.search,
+        onSelect: () => openFind(),
       });
       // Worktree upkeep rides along for the same reason, and only while you are
       // in one — you cannot apply a checkout you are not standing in.
@@ -6407,7 +7021,7 @@
    *  to it, and says the extra part out loud when a turn is still running. */
   function deleteSessionWarning(active) {
     if (!active) return "This cannot be undone.";
-    const stopping = state.busy ? " Atlas is still working; that stops." : "";
+    const stopping = state.busy ? " Grok is still working; that stops." : "";
     return "This is the conversation you have open. It will close and a new one will start in the same project."
       + stopping + " This cannot be undone.";
   }
@@ -6424,6 +7038,7 @@
       const next = (name || "").trim();
       if (!next || next === s.displayName) return;
       vscode.postMessage({ type: "renameSession", id: s.id, name: next, ...(cwd ? { cwd } : {}) });
+      paintPendingRename(s.id, next);
     });
   }
 
@@ -6439,7 +7054,7 @@
       if (active || isRailPendingRow(s)) return;
       // Optimistic highlight + veil before the host answers. activeSessionId is
       // left alone until sessionName / sessions.activeId confirm this id.
-      startRailResumeTransition(s.id, s.cwd || repo.cwd, repo.cwd);
+      startRailResumeTransition(s.id, s.cwd || repo.cwd, repo.cwd, s.displayName);
       // `cwd` rides along so a session in another repo reopens in ITS checkout —
       // the host resolves sessions by cwd, and omitting it would look the id up
       // under the repo we happen to be in.
@@ -6503,6 +7118,9 @@
    *  tell "the conversation finished loading" from "startup finished" without
    *  comparing display strings. */
   function setWelcomeStatus(text, busy) {
+    // body.identity-restoring: the wrapper's "Restoring conversation…" is the
+    // only copy. Call sites already skip a painted-conversation hold.
+    if (identityRestoring()) return;
     const ver = $("welcome-version");
     if (!ver) return;
     ver.classList.toggle("welcome-status-busy", !!busy);
@@ -6518,7 +7136,53 @@
     ver.appendChild(label);
   }
 
+  /**
+   * Hide the current transcript without deleting it. Opening B must not leave
+   * A's messages under B's title; aborting B must be able to put A's messages
+   * back. Host `clearMessages` marks nodes pending-clear; they are destroyed
+   * when replacement content arrives (`appendTranscriptChild`) or on the next
+   * frame (`flushPendingTranscriptClear`) if none does.
+   */
+  function veilTranscriptForPendingOpen() {
+    const welcome = $("welcome");
+    for (const child of Array.from(messagesEl.children)) {
+      if (child.id === "welcome") continue;
+      if (child.getAttribute("data-pending-clear") === "1") continue;
+      if (child.hasAttribute("data-pending-open-hide")) continue;
+      child.setAttribute("data-pending-open-hide", "1");
+      child.hidden = true;
+    }
+    // A host clear already owns these nodes; revealing the empty state on top
+    // of them is the reconnect flash. The click path veils *before* that clear.
+    if (welcome && !hasPendingClearNodes() && !identityRestoring()) {
+      welcome.hidden = false;
+      state.welcomeVisible = true;
+    }
+  }
+
+  function unveilTranscriptAfterFailedOpen() {
+    let restored = 0;
+    for (const child of Array.from(messagesEl.children)) {
+      if (child.getAttribute("data-pending-open-hide") !== "1") continue;
+      // A committed host clear owns these nodes now; putting them back would
+      // resurrect a conversation the next-frame flush is about to drop.
+      if (child.getAttribute("data-pending-clear") === "1") continue;
+      child.removeAttribute("data-pending-open-hide");
+      child.hidden = false;
+      restored++;
+    }
+    const welcome = $("welcome");
+    if (welcome && restored > 0) {
+      welcome.hidden = true;
+      state.welcomeVisible = false;
+    }
+  }
+
   function setConversationLoading(active) {
+    // Either branch stamps the empty-state line. A painted conversation must
+    // not pick up Connected / Loading conversation, including when those
+    // messages arrive before clearMessages has marked the nodes.
+    if (welcomeHoldActive()) return;
     if (active) {
       // Deliberately the only indicator. A second banner above the transcript
       // used to double it up, and the transcript arrives as one batch anyway \u2014
@@ -6606,41 +7270,545 @@
     }
   }
 
+  // clearMessages marks existing transcript nodes instead of destroying them.
+  // Destroy at the first replacement append (same task) or on the next frame
+  // if nothing replaces it. body.identity-restoring suspends that next-frame
+  // flush: a restore is a replacement we already know is coming, so wait for
+  // the class to lift and flush then only if nothing arrived. Welcome, title,
+  // composer focus, and the reader's pin stay put while a conversation is
+  // still on screen — a resync must not blank, refocus, re-pin, or paint
+  // "Starting" over it, even before those nodes are marked pending-clear.
+  const PENDING_CLEAR_ATTR = "data-pending-clear";
+  let pendingTranscriptClear = false;
+  let pendingTranscriptClearRaf = 0;
+  // Status resetForNewSession would have stamped immediately. Held while a
+  // conversation is still on screen (pending-clear or not) or while
+  // body.identity-restoring is set; applied in the flush if nothing replaces
+  // them, dropped if a replacement arrives.
+  // "loading" / "no-project" / "starting" match the three special cases at
+  // the welcome block.
+  let pendingWelcomeReveal = null;
+  // Title, worktree flag, in-progress rename, composer focus, and the
+  // reader's pin: same hold. A resync must not blank the name, move focus
+  // (a returning phone tab would pop the keyboard), or yank a scrolled-up
+  // reader to the bottom. Flush still applies them for an empty swap; a
+  // sessionName with a different id applies focus + pin for a real swap.
+  let pendingSessionChromeReset = false;
+  // Desktop launch is a different event from that resync: the app just opened
+  // and the caret belongs in the composer, restored conversation or not. One
+  // shot, consumed on the first focused-window claim. VS Code never sets this.
+  let desktopLaunchFocusPending = IS_DESKTOP_CLIENT;
+
+  function isPendingClearNode(el) {
+    return !!(el && typeof el.closest === "function" && el.closest("[" + PENDING_CLEAR_ATTR + "]"));
+  }
+
+  function hasPendingClearNodes() {
+    for (const child of messagesEl.children) {
+      if (child.id === "welcome") continue;
+      if (child.getAttribute(PENDING_CLEAR_ATTR) === "1") return true;
+    }
+    return false;
+  }
+
+  function welcomeRevealKind() {
+    if (state.railTransition) return "loading";
+    if (state.onboardingMode === "no-project") return "no-project";
+    return "starting";
+  }
+
+  function applyWelcomeRevealKind(kind) {
+    if (kind === "loading") setConversationLoading(true);
+    else if (kind === "no-project") setWelcomeStatus("No project folder", false);
+    else setWelcomeStatus("Starting", true);
+  }
+
+  function revealWelcome() {
+    if (welcomeHoldActive()) return;
+    const welcome = $("welcome");
+    if (welcome) welcome.hidden = false;
+    state.welcomeVisible = true;
+  }
+
+  function identityRestoring() {
+    return !!(document.body && document.body.classList.contains("identity-restoring"));
+  }
+
+  function welcomeHoldActive() {
+    // Cold load of a remembered conversation: the wrapper owns the wait
+    // ("Restoring conversation…") and the welcome starts visible with no .msg
+    // nodes, so the painted-conversation hold below would not apply. Hide it
+    // in syncIdentityRestoreHold — this predicate only refuses to stamp/reveal.
+    if (identityRestoring()) return true;
+    const welcome = $("welcome");
+    if (!welcome || !welcome.hidden) return false;
+    // A painted conversation, whether already marked pending-clear or not.
+    // Remote snapshots send initialState first; local sends clearMessages first.
+    // Keying the hold on the mark made the phone's order stamp the empty state.
+    for (const child of messagesEl.children) {
+      if (child.id === "welcome") continue;
+      if (isPendingClearNode(child)) return true;
+    }
+    return liveTranscriptQueryAll(".msg").length > 0;
+  }
+
+  function liveTranscriptQueryAll(sel) {
+    return [...messagesEl.querySelectorAll(sel)].filter((el) => !isPendingClearNode(el));
+  }
+
+  function cancelPendingTranscriptClearRaf() {
+    if (!pendingTranscriptClearRaf) return;
+    cancelAnimationFrame(pendingTranscriptClearRaf);
+    pendingTranscriptClearRaf = 0;
+  }
+
+  function schedulePendingTranscriptClearFlush() {
+    if (pendingTranscriptClearRaf) return;
+    pendingTranscriptClearRaf = requestAnimationFrame(() => {
+      pendingTranscriptClearRaf = 0;
+      flushPendingTranscriptClear();
+    });
+  }
+
+  function markTranscriptPendingClear() {
+    pendingTranscriptClear = true;
+    for (const child of Array.from(messagesEl.children)) {
+      if (child.id === "welcome") continue;
+      child.setAttribute(PENDING_CLEAR_ATTR, "1");
+    }
+    cancelPendingTranscriptClearRaf();
+    if (identityRestoring()) return;
+    schedulePendingTranscriptClearFlush();
+  }
+
+  function focusComposerIfAllowed() {
+    // Guarded on document.hasFocus(): a host-initiated clear can arrive while
+    // the user is typing in the editor, and focusing then would yank keyboard
+    // focus across panels. The same argument keeps a resync from focusing —
+    // that path never reaches here because the chrome reset is held.
+    if (typeof document.hasFocus !== "function" || document.hasFocus()) input.focus();
+  }
+
+  function takeDesktopLaunchComposerFocus() {
+    // The desktop app IS the chat. First time this document is the focused
+    // surface, put the caret in the composer — including a boot that restores
+    // a conversation (the pending-clear hold would otherwise skip it). A
+    // reconnect/resync of an already-open surface has already consumed this.
+    // Do not consume while the window is unfocused: show:false boot would
+    // burn the shot before the first real window-focus.
+    if (!desktopLaunchFocusPending) return false;
+    if (typeof document.hasFocus === "function" && !document.hasFocus()) return false;
+    desktopLaunchFocusPending = false;
+    input.focus({ preventScroll: true });
+    return true;
+  }
+
+  function resetSessionChrome() {
+    pendingSessionChromeReset = false;
+    if (state.sessionNameEditing) finishSessionNameEdit(false);
+    state.isWorktree = false;
+    state.sessionName = null;
+    renderSessionName();
+    if (IS_REMOTE) renderSessionHead();
+    focusComposerIfAllowed();
+    setStickToBottom(true); // a fresh/loaded session starts pinned
+    updateScrollBtn();
+  }
+
+  /** Empty-state path: no replacement arrived, so the welcome must appear. */
+  function flushPendingTranscriptClear() {
+    if (!pendingTranscriptClear) return;
+    // Replay has started: replacement is in flight even if the first append
+    // has not landed yet. Keep the conversation until it does, or until the
+    // replay ends empty and calls us again.
+    if (state.replaying) return;
+    // Same for the wrapper's restore veil: stay armed until the class lifts.
+    if (identityRestoring()) return;
+    pendingTranscriptClear = false;
+    const kind = pendingWelcomeReveal;
+    pendingWelcomeReveal = null;
+    const chrome = pendingSessionChromeReset;
+    cancelPendingTranscriptClearRaf();
+    for (const child of Array.from(messagesEl.children)) {
+      if (child.getAttribute(PENDING_CLEAR_ATTR) === "1") child.remove();
+    }
+    if (kind) {
+      applyWelcomeRevealKind(kind);
+      renderWelcomeTip();
+    }
+    if (chrome) resetSessionChrome();
+    revealWelcome();
+  }
+
+  // The relay wrapper sets body.identity-restoring while it restores a
+  // remembered session on a fresh page. Both layers share this document, so
+  // read the class rather than waiting for a host frame.
+  let identityRestoreHeld = false;
+
+  function scheduleEmptyWelcomeFlush() {
+    pendingTranscriptClear = true;
+    if (pendingWelcomeReveal == null) pendingWelcomeReveal = welcomeRevealKind();
+    schedulePendingTranscriptClearFlush();
+  }
+
+  function syncIdentityRestoreHold() {
+    const now = identityRestoring();
+    if (now) {
+      const welcome = $("welcome");
+      if (welcome) welcome.hidden = true;
+      if (pendingWelcomeReveal == null) pendingWelcomeReveal = welcomeRevealKind();
+      identityRestoreHeld = true;
+      cancelPendingTranscriptClearRaf();
+      return;
+    }
+    if (!identityRestoreHeld) return;
+    identityRestoreHeld = false;
+    // Pending-clear nodes still count as painted, so welcomeHoldActive cannot
+    // decide this. Flag dropped → replacement landed. Still armed → flush.
+    if (!pendingTranscriptClear && welcomeHoldActive()) {
+      pendingWelcomeReveal = null;
+      return;
+    }
+    scheduleEmptyWelcomeFlush();
+  }
+
+  syncIdentityRestoreHold();
+  if (typeof MutationObserver === "function" && document.body) {
+    new MutationObserver(syncIdentityRestoreHold).observe(document.body, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+  }
+
+  // Last N counted user bubbles render on open; earlier turns prepend on scroll
+  // (#102). 80 is several screens even on a phone, 8× the remote snapshot of 10,
+  // and small conversations fall through unchanged. Tests may shrink it via
+  // `window.__grokHistoryWindow`.
+  const HISTORY_WINDOW_USER_TURNS = 80;
+  const HISTORY_PREPEND_USER_TURNS = 40;
+  const HISTORY_PREPEND_PX = 720;
+  let historyPark = null;
+  let prependLock = 0;
+
+  function historyWindowTurns() {
+    const override = window.__grokHistoryWindow;
+    if (typeof override === "number" && override > 0 && Number.isFinite(override)) return Math.floor(override);
+    return HISTORY_WINDOW_USER_TURNS;
+  }
+
+  function firstLiveTranscriptChild() {
+    for (const child of messagesEl.children) {
+      if (child.id === "welcome" || child.id === "history-head") continue;
+      if (isPendingClearNode(child)) continue;
+      return child;
+    }
+    return null;
+  }
+
+  function syncHistoryHead() {
+    let head = $("history-head");
+    const more = !!(state.historyPrefix && state.historyPrefix.length);
+    if (!more) {
+      if (head) head.remove();
+      return null;
+    }
+    if (!head) {
+      head = document.createElement("div");
+      head.id = "history-head";
+      head.setAttribute("aria-hidden", "true");
+      const welcome = $("welcome");
+      if (welcome && welcome.parentElement === messagesEl) {
+        messagesEl.insertBefore(head, welcome.nextSibling);
+      } else {
+        messagesEl.insertBefore(head, messagesEl.firstChild);
+      }
+    }
+    head.hidden = false;
+    return head;
+  }
+
+  function clearHistoryWindow() {
+    state.replayHold = false;
+    state.replayHeld = [];
+    state.historyPrefix = [];
+    state.historyPrefixUserCount = 0;
+    state.historyPrefixPlans = [];
+    state.historyPrefixPermissions = [];
+    state.historyHydrating = false;
+    historyPark = null;
+    const head = $("history-head");
+    if (head) head.remove();
+  }
+
+  const REPLAY_HOLD_TYPES = new Set([
+    "userMessage", "agentStart", "thoughtChunk", "messageChunk", "media",
+    "userMessageChunk", "historyBatch", "toolCall", "toolCallUpdate",
+    "permissionRequest", "permissionOptions", "permissionResolved",
+    "exitPlanRequest", "planResolved", "questionRequest", "planNotice",
+    "autoCompactNotice", "planBlocked", "promptComplete", "commandOutput",
+    "agentReset", "agentError", "agentEnd", "exit", "sessionContext",
+    "xaiNotification", "subagentUpdate", "childStream", "runProgress",
+    "summarizing",
+  ]);
+
+  function recordPrefixExport(msgs) {
+    for (const m of flattenHistoryMessages(msgs)) {
+      if (isExportableSessionEvent(m)) state.exportEvents.push(m);
+    }
+  }
+
+  function applyHistoryWindow(held) {
+    const split = splitHistoryWindow(held, historyWindowTurns());
+    state.historyPrefix = split.prefix;
+    state.historyPrefixUserCount = split.prefixUserCount;
+    if (split.prefixUserCount > 0) {
+      const counters = countHistoryReplayCounters(split.prefix);
+      state.userMsgCount = counters.userMsgCount;
+      state.interjectionCount = counters.interjectionCount;
+      state.historyEventCount = counters.historyEventCount;
+      const plans = state.planHistoryQueue || [];
+      state.historyPrefixPlans = plans.filter((p) =>
+        typeof p.afterUserMessage === "number" && p.afterUserMessage <= split.prefixUserCount);
+      state.planHistoryQueue = plans.filter((p) =>
+        typeof p.afterUserMessage !== "number" || p.afterUserMessage > split.prefixUserCount);
+      const perms = state.permissionHistoryQueue || [];
+      state.historyPrefixPermissions = perms.filter((p) =>
+        typeof p.afterUserMessage === "number" && p.afterUserMessage <= split.prefixUserCount);
+      state.permissionHistoryQueue = perms.filter((p) =>
+        typeof p.afterUserMessage !== "number" || p.afterUserMessage > split.prefixUserCount);
+      recordPrefixExport(split.prefix);
+    }
+    for (const m of split.suffix) handleHostMessage(m);
+    syncHistoryHead();
+  }
+
+  function restorePrependAnchor(sentinel, y) {
+    if (!sentinel || !sentinel.isConnected) return 0;
+    const delta = sentinel.getBoundingClientRect().top - y;
+    if (delta) messagesEl.scrollTop += delta;
+    return delta;
+  }
+
+  function prependHistoryNodes(nodes) {
+    if (!nodes.length) {
+      state.historyHydrating = false;
+      return;
+    }
+    const insertAt = firstLiveTranscriptChild();
+    const sentinel = insertAt;
+    const anchorY = sentinel ? sentinel.getBoundingClientRect().top : 0;
+    const prevHeight = messagesEl.scrollHeight;
+    const prevTop = messagesEl.scrollTop;
+    // Native anchoring is off while pinned and would double-count a height-delta
+    // write while unpinned. Hold the visible line in JS instead.
+    prependLock += 1;
+    messagesEl.classList.add("history-prepending");
+    const head = syncHistoryHead();
+    const before = (head && head.nextSibling) || insertAt;
+    for (const node of nodes) {
+      if (before) messagesEl.insertBefore(node, before);
+      else HTMLElement.prototype.appendChild.call(messagesEl, node);
+    }
+    if (sentinel && sentinel.isConnected) restorePrependAnchor(sentinel, anchorY);
+    else {
+      const grown = messagesEl.scrollHeight - prevHeight;
+      if (grown) messagesEl.scrollTop = prevTop + grown;
+    }
+    state.historyHydrating = false;
+    const finish = () => {
+      if (sentinel && sentinel.isConnected) restorePrependAnchor(sentinel, anchorY);
+      messagesEl.classList.remove("history-prepending");
+      prependLock = Math.max(0, prependLock - 1);
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(finish);
+    else finish();
+  }
+
+  function loadEarlierHistory(all) {
+    if (state.replaying || state.historyHydrating) return false;
+    if (!state.historyPrefix.length) return false;
+    const turns = all ? state.historyPrefixUserCount : HISTORY_PREPEND_USER_TURNS;
+    const split = splitHistoryWindow(state.historyPrefix, Math.max(1, turns));
+    const chunk = split.suffix.length ? split.suffix : split.prefix;
+    const remain = split.suffix.length ? split.prefix : [];
+    const remainUsers = split.suffix.length ? split.prefixUserCount : 0;
+    const remainCounters = countHistoryReplayCounters(remain);
+    state.historyPrefix = remain;
+    state.historyPrefixUserCount = remainUsers;
+    hydrateHistoryChunkWithCounters(chunk, remainUsers, remainCounters);
+    return true;
+  }
+
+  function hydrateHistoryChunkWithCounters(chunk, startUserCount, remainCounters) {
+    if (!chunk.length) return;
+    const saved = {
+      userMsgCount: state.userMsgCount,
+      interjectionCount: state.interjectionCount,
+      historyEventCount: state.historyEventCount,
+      planHistoryQueue: state.planHistoryQueue,
+      permissionHistoryQueue: state.permissionHistoryQueue,
+      busy: state.busy,
+      busyLocked: state.busyLocked,
+      grokkingEl: state.grokkingEl,
+      thinkingIndicatorEl: state.thinkingIndicatorEl,
+      activeAgentEl: state.activeAgentEl,
+      activeAgentRaw: state.activeAgentRaw,
+      activeUserEl: state.activeUserEl,
+      activeUserRaw: state.activeUserRaw,
+      activeThoughtEl: state.activeThoughtEl,
+      activeThoughtHdrEl: state.activeThoughtHdrEl,
+      thoughtBuffer: state.thoughtBuffer,
+      activeToolGroupEl: state.activeToolGroupEl,
+      turnAgentActionsEl: state.turnAgentActionsEl,
+      turnRating: state.turnRating,
+      suppressReplayTurn: state.suppressReplayTurn,
+      skipUserBubble: state.skipUserBubble,
+      replaying: state.replaying,
+    };
+    historyPark = document.createElement("div");
+    state.historyHydrating = true;
+    state.replaying = true;
+    state.busy = false;
+    state.grokkingEl = null;
+    state.thinkingIndicatorEl = null;
+    state.activeAgentEl = null;
+    state.activeAgentRaw = "";
+    state.activeUserEl = null;
+    state.activeUserRaw = "";
+    state.activeThoughtEl = null;
+    state.activeThoughtHdrEl = null;
+    state.thoughtBuffer = "";
+    state.activeToolGroupEl = null;
+    state.turnAgentActionsEl = null;
+    state.suppressReplayTurn = false;
+    state.skipUserBubble = false;
+    state.userMsgCount = startUserCount;
+    state.interjectionCount = remainCounters.interjectionCount;
+    state.historyEventCount = remainCounters.historyEventCount;
+    const endUserCount = startUserCount + countHistoryReplayCounters(chunk).userMsgCount;
+    const plans = partitionHistoryCards(state.historyPrefixPlans, startUserCount, endUserCount);
+    const perms = partitionHistoryCards(state.historyPrefixPermissions, startUserCount, endUserCount);
+    state.planHistoryQueue = plans.inChunk;
+    state.permissionHistoryQueue = perms.inChunk;
+    for (const m of chunk) handleHostMessage(m);
+    flushPlanHistory();
+    flushPermissionHistory();
+    if (!state.historyPrefix.length) {
+      state.planHistoryQueue = plans.rest;
+      state.permissionHistoryQueue = perms.rest;
+      flushPlanHistory();
+      flushPermissionHistory();
+    }
+    const nodes = [...historyPark.children];
+    historyPark = null;
+    state.historyPrefixPlans = state.historyPrefix.length ? plans.rest : [];
+    state.historyPrefixPermissions = state.historyPrefix.length ? perms.rest : [];
+    state.userMsgCount = saved.userMsgCount;
+    state.interjectionCount = saved.interjectionCount;
+    state.historyEventCount = saved.historyEventCount;
+    state.planHistoryQueue = saved.planHistoryQueue;
+    state.permissionHistoryQueue = saved.permissionHistoryQueue;
+    state.busy = saved.busy;
+    state.busyLocked = saved.busyLocked;
+    state.grokkingEl = saved.grokkingEl;
+    state.thinkingIndicatorEl = saved.thinkingIndicatorEl;
+    state.activeAgentEl = saved.activeAgentEl;
+    state.activeAgentRaw = saved.activeAgentRaw;
+    state.activeUserEl = saved.activeUserEl;
+    state.activeUserRaw = saved.activeUserRaw;
+    state.activeThoughtEl = saved.activeThoughtEl;
+    state.activeThoughtHdrEl = saved.activeThoughtHdrEl;
+    state.thoughtBuffer = saved.thoughtBuffer;
+    state.activeToolGroupEl = saved.activeToolGroupEl;
+    state.turnAgentActionsEl = saved.turnAgentActionsEl;
+    state.turnRating = saved.turnRating;
+    state.suppressReplayTurn = saved.suppressReplayTurn;
+    state.skipUserBubble = saved.skipUserBubble;
+    state.replaying = saved.replaying;
+    prependHistoryNodes(nodes);
+    refreshUserRewindButtons();
+    syncHistoryHead();
+    updateSendButton();
+  }
+
+  function expandHistoryAll() {
+    while (state.historyPrefix.length) loadEarlierHistory(true);
+  }
+
+  function maybeLoadEarlierHistory() {
+    if (state.replaying || state.historyHydrating) return;
+    if (!state.historyPrefix.length) return;
+    if (state.stickToBottom) return;
+    if (messagesEl.scrollTop > HISTORY_PREPEND_PX) return;
+    loadEarlierHistory(false);
+  }
+
+  /** Append replacement content. Drops pending-clear nodes in the same task
+   *  AFTER the new node is in, so the transcript is never empty mid-paint. */
+  function appendTranscriptChild(el) {
+    if (historyPark) {
+      historyPark.appendChild(el);
+      return el;
+    }
+    if (!pendingTranscriptClear) {
+      HTMLElement.prototype.appendChild.call(messagesEl, el);
+      return el;
+    }
+    const scrollTop = messagesEl.scrollTop;
+    pendingTranscriptClear = false;
+    pendingWelcomeReveal = null;
+    pendingSessionChromeReset = false;
+    cancelPendingTranscriptClearRaf();
+    HTMLElement.prototype.appendChild.call(messagesEl, el);
+    for (const child of Array.from(messagesEl.children)) {
+      if (child.getAttribute(PENDING_CLEAR_ATTR) === "1") child.remove();
+    }
+    messagesEl.scrollTop = scrollTop;
+    return el;
+  }
+
   function resetForNewSession() {
     stopProcessingCue();
     cancelPendingSpeech();
     // The transcript is about to be emptied wholesale; drop the reference so a
     // later echo can't try to remove a node from the previous session.
     state.optimisticSendEl = null;
-    state.isWorktree = false; // re-set by the incoming session's `session` message
-    state.sessionName = null;
-    state.sessionNameEditing = null;
-    renderSessionName();
-    if (IS_REMOTE) renderSessionHead();
-    // The caret belongs in the box after any session swap — new session, a
-    // history-row re-focus, a disk restore (all funnel through here via the
-    // host's clearMessages). Guarded on document.hasFocus(): user-initiated
-    // swaps start with a click inside this webview, but a host-initiated clear
-    // (an automatic restart) can arrive while the user is typing in the editor,
-    // and focusing then would yank keyboard focus across panels.
-    if (typeof document.hasFocus !== "function" || document.hasFocus()) input.focus();
-    for (const child of Array.from(messagesEl.children)) {
-      if (child.id !== "welcome") child.remove();
-    }
+    markTranscriptPendingClear();
+    // Incoming `session` / `sessionName` re-set these. Clearing them first is
+    // why a resync blanks the title and then paints it back. Hold while the
+    // previous conversation is still on screen — title, caret, and the
+    // reader's pin. Flush applies the reset if this was an empty swap; a
+    // replacement drops it.
+    if (hasPendingClearNodes()) pendingSessionChromeReset = true;
+    else resetSessionChrome();
     const welcome = $("welcome");
     if (welcome) {
-      welcome.hidden = false;
       const onb = $("welcome-onboarding");
-      if (onb) onb.innerHTML = "";
+      // Keep a just-shown "Connected" confirmation. Connecting an agent starts a
+      // fresh session for it, and that session swap arrives as clearMessages —
+      // so wiping the panel here erased the very confirmation the swap was
+      // announcing, which is why Codex and Claude never showed one. Any other
+      // panel is genuinely stale at this point and still goes.
+      if (onb && state.onboardingMode !== "provider-connected" && state.onboardingMode !== "no-project") onb.innerHTML = "";
       // A host clearMessages during an optimistic new-session transition must
       // not replace the paired "Loading conversation" veil with Starting — the
       // click already owns that wait. Otherwise the rail highlights the
       // placeholder while the welcome says something unrelated.
-      if (state.railTransition) setConversationLoading(true);
-      else setWelcomeStatus("Starting", true);
-      // The empty state is rebuilt on every new session, so the tip is too —
-      // until the host stops advertising it.
-      renderWelcomeTip();
+      // no-project is the other hold: last-folder-removed emits clearMessages
+      // then the empty-state card, and flipping to Starting in between is the
+      // hang that card exists to replace.
+      //
+      // Do not unhide or stamp while the previous conversation is still on
+      // screen (pending-clear or not). flushPendingTranscriptClear applies the
+      // same status once the nodes actually go; a replacement drops it so the
+      // empty state never appears over a conversation that is about to come back.
+      if (welcomeHoldActive() || hasPendingClearNodes()) {
+        pendingWelcomeReveal = welcomeRevealKind();
+      } else {
+        pendingWelcomeReveal = null;
+        applyWelcomeRevealKind(welcomeRevealKind());
+        renderWelcomeTip();
+      }
     }
     state.welcomeVisible = true;
     state.pendingDiffByToolCallId.clear();
@@ -6666,20 +7834,22 @@
     state.activeToolGroupEl = null;
     state.replaying = false;
     state.replayDepth = 0;
+    clearHistoryWindow();
     state.exportEvents = [];
     state.exportWindowed = false;
     state.planHistoryQueue = [];
     state.permissionHistoryQueue = [];
     state.userMsgCount = 0;
+    state.feedbackAvailable = false;
+    state.turnRating = 0;
     state.interjectionCount = 0;
     state.historyEventCount = 0;
     state.lastTurnUsage = null;
     state.sessionUsage = null;
+    state.contextBreakdown = null;
     state.suppressReplayTurn = false;
     state.skipUserBubble = false;
     cancelPendingSpeech();
-    setStickToBottom(true); // a fresh/loaded session starts pinned
-    updateScrollBtn();
     hideGrokking();
     hideThinkingIndicator();
     // Busy is per-session UI state — a swap must not leak the previous
@@ -6691,9 +7861,11 @@
     state.busy = false;
     state.busyLocked = false;
     // The send queue is HOST-owned per session — do NOT post a clear here.
-    // Reset only the local render mirror (the transcript wipe above removed the
-    // blocks); the replay delivers the focused session's own queuedSends
-    // snapshot, so its queued messages reappear when you swap back.
+    // Reset only the local render mirror. The deferred transcript wipe would
+    // otherwise leave the queued block visible until the next frame; the replay
+    // delivers the focused session's own queuedSends snapshot, so its queued
+    // messages reappear when you swap back.
+    if (state.queuedWrapEl) state.queuedWrapEl.remove();
     state.sendQueue = [];
     state.queuedWrapEl = null;
     state.queuedSubmissionPending = false;
@@ -6708,25 +7880,162 @@
     // (confirm-overlay / uiPrompt are action-scoped and remove themselves.)
     closeImagePreview();
     closePreviewOverlay();
+    onFindSessionReset();
   }
 
-  function showOnboarding(mode, info) {
+  /** Acts that open a terminal we cannot observe finishing. */
+  const LAUNCH_ACTS = ["runInstall", "runLogin", "connectProvider"];
+  const launchKey = (act, provider) => act + ":" + (provider || "");
+
+  /**
+   * Remember that a terminal was launched, and re-apply that on every render.
+   *
+   * Clicking one of these re-posts the onboarding state from the host, so the
+   * panel is rebuilt immediately — a mark written straight onto the DOM node
+   * vanished on the very next frame, which is why it looked like nothing had
+   * happened even after pressing the button twice.
+   *
+   * Keyed per mode, so moving to a different panel starts clean; a re-render of
+   * the SAME panel (a failed re-check) keeps it, because the terminal really was
+   * opened and pressing it again just stacks another login on top.
+   */
+  function markOnboardingLaunched(act, provider) {
+    if (state.onboardingRanMode !== state.onboardingMode) {
+      state.onboardingRanMode = state.onboardingMode;
+      state.onboardingRan = [];
+      state.onboardingLaunched = [];
+    }
+    const key = launchKey(act, provider);
+    if (!state.onboardingRan.includes(key)) state.onboardingRan.push(key);
+    applyOnboardingLaunchState();
+  }
+
+  /**
+   * The HOST opened a login terminal — from a Settings → Providers connect, or
+   * from a connect tile it handled itself. A click in this webview is not the
+   * only way one gets opened, and marking only on click meant an automatically
+   * launched terminal left the button looking untouched.
+   *
+   * Recorded per provider rather than per button, because the same launch is
+   * spelled `runLogin` on Grok's panel and `connectProvider` on the adapters'.
+   */
+  function markOnboardingLaunchedByHost(provider) {
+    if (state.onboardingRanMode !== state.onboardingMode) {
+      state.onboardingRanMode = state.onboardingMode;
+      state.onboardingRan = [];
+      state.onboardingLaunched = [];
+    }
+    const list = state.onboardingLaunched || (state.onboardingLaunched = []);
+    if (provider && !list.includes(provider)) list.push(provider);
+    if (!provider && !list.includes("*")) list.push("*");
+  }
+
+  /**
+   * Once a terminal has been opened, the next thing to press is the re-check —
+   * so it takes the primary styling and the launch button steps back to a dim
+   * secondary with a done mark. The launch button stays clickable: re-running a
+   * login is legitimate if the terminal was closed by accident.
+   */
+  function applyOnboardingLaunchState() {
+    const onb = $("welcome-onboarding");
+    if (!onb) return;
+    if (state.onboardingRanMode !== state.onboardingMode) return;
+    const ran = state.onboardingRan || [];
+    const launched = state.onboardingLaunched || [];
+    if (!ran.length && !launched.length) return;
+    // The panel's own provider, for Grok's `runLogin` button which carries none.
+    const panelProvider = (state.onboardingInfo && state.onboardingInfo.provider)
+      || (state.onboardingMode === "codex-login" ? "codex"
+        : state.onboardingMode === "claude-login" ? "claude"
+        : state.onboardingMode === "auth-required" ? "grok" : undefined);
+    let anyRan = false;
+    for (const btn of onb.querySelectorAll(".onb-action")) {
+      const act = btn.dataset.act;
+      if (!LAUNCH_ACTS.includes(act)) continue;
+      const forProvider = btn.dataset.provider || panelProvider;
+      const hostLaunched = launched.includes("*")
+        || (forProvider && launched.includes(forProvider));
+      if (!ran.includes(launchKey(act, btn.dataset.provider)) && !hostLaunched) continue;
+      anyRan = true;
+      btn.classList.add("onb-ran", "onb-secondary");
+      if (!btn.querySelector(".onb-ran-mark")) {
+        btn.insertAdjacentHTML("afterbegin", `<span class="onb-ran-mark">${ICON.check}</span>`);
+      }
+    }
+    if (!anyRan) return;
+    for (const btn of onb.querySelectorAll('.onb-action[data-act="recheckProvider"], .onb-action[data-act="recheck"]')) {
+      btn.classList.remove("onb-secondary");
+    }
+  }
+
+  /** `beforeRender` runs after the mode is set and before markup is built, so a
+   *  host-launched terminal can be recorded against the panel it belongs to. */
+  function showOnboarding(mode, info, beforeRender) {
     info = info || {};
     state.onboardingMode = mode;
     state.onboardingInfo = info;
-    const welcome = $("welcome");
-    if (welcome) welcome.hidden = false;
-    state.welcomeVisible = true;
+    if (beforeRender) beforeRender();
+    // Onboarding is the empty-state card. Flush a pending transcript wipe so
+    // the card cannot sit above leftover conversation nodes for a frame —
+    // unless a replay is already putting the conversation back, in which case
+    // revealing now is the reconnect flash (a buffered provider-connected
+    // confirmation used to unhide on top of the messages still waiting to go).
+    const holdWelcome = identityRestoring() || (state.replaying && welcomeHoldActive());
+    if (!holdWelcome) {
+      flushPendingTranscriptClear();
+      revealWelcome();
+    }
     const onb = $("welcome-onboarding");
     const ver = $("welcome-version");
     if (!onb) return;
-    if (IS_REMOTE && (mode === "connect-agent" || mode === "codex-login" || mode === "auth-required")) {
+    if (IS_REMOTE && (mode === "connect-agent" || mode === "codex-login" || mode === "claude-login" || mode === "auth-required")) {
       if (ver) setWelcomeStatus("Sign in at the desk", false);
-      const providerName = mode === "codex-login" ? "Codex" : mode === "auth-required" ? "Atlas" : "an agent";
+      const providerName = mode === "codex-login" ? "Codex" : mode === "claude-login" ? "Claude" : mode === "auth-required" ? "Grok" : "an agent";
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">Sign in at the desk</p>` +
           `<p class="onb-desc">${providerName} accounts can only be connected on the computer running this workspace. Sign in there, then refresh this remote view.</p>` +
+        `</div>`;
+      return;
+    }
+    if (mode === "no-project") {
+      // Desktop with nothing open. Names the block and points at the same
+      // action the rail already offers — do not leave the baked Starting
+      // spinner up (that is the first-run hang).
+      if (ver) setWelcomeStatus("No project folder", false);
+      if (IS_REMOTE) {
+        onb.innerHTML =
+          `<div class="onb">` +
+            `<p class="onb-heading">No project folder</p>` +
+            `<p class="onb-desc">Add a project folder on the computer running this workspace, then start a conversation there.</p>` +
+          `</div>`;
+        updateSendButton();
+        return;
+      }
+      onb.innerHTML =
+        `<div class="onb">` +
+          `<p class="onb-heading">No project folder</p>` +
+          `<p class="onb-desc">A conversation needs a project folder before it can start. Add one to continue.</p>` +
+          `<button class="onb-action" type="button" data-act="addProjectFolder">Add project folder</button>` +
+        `</div>`;
+      updateSendButton();
+      return;
+    }
+    if (mode === "provider-connected") {
+      // A successful re-check used to leave a bare empty session, which reads
+      // identically to "nothing happened" — the one moment someone most wants
+      // to be told it worked. It clears itself the instant a message is added
+      // (addMessage calls clearWelcome), so it never survives into a real
+      // conversation and does not need dismissing.
+      const id = info.provider || "grok";
+      const done = id === "codex"
+        ? "You can start working with OpenAI!"
+        : id === "claude" ? "You can start clauding!" : "You can start grokking!";
+      if (ver) setWelcomeStatus("Connected", false);
+      onb.innerHTML =
+        `<div class="onb onb-connected">` +
+          `<p class="onb-heading"><span class="onb-ok">${ICON.check}</span>Connected</p>` +
+          `<p class="onb-desc">${done}</p>` +
         `</div>`;
       return;
     }
@@ -6737,27 +8046,37 @@
           `<p class="onb-heading">Connect an agent</p>` +
           `<p class="onb-desc">Choose the command-line agent that will own this conversation.</p>` +
           `<div class="onb-agent-grid">` +
+            // One row each, not a grid: three side-by-side tiles squeezed the
+            // name and the CLI into a column too narrow to read either, and the
+            // list is short enough that stacking costs nothing. Each row names
+            // the agent and the CLI it will install — "Recommended default"
+            // used to describe our ranking where the others described what the
+            // thing IS, so the row a newcomer reads first was the only one not
+            // saying what it would put on their machine.
             `<button class="onb-agent-tile primary onb-action" type="button" data-act="connectProvider" data-provider="grok">` +
-              `<span class="onb-agent-mark">${providerLogoMarkup("grok")}</span><span><strong>Atlas</strong><small>Recommended default</small></span>` +
+              `<span class="onb-agent-mark">${providerLogoMarkup("grok")}</span><span><strong>Grok Build (Recommended)</strong><small>Grok Build CLI</small></span>` +
             `</button>` +
             `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="codex">` +
               `<span class="onb-agent-mark">${providerLogoMarkup("codex")}</span><span><strong>Codex</strong><small>OpenAI Codex CLI</small></span>` +
+            `</button>` +
+            `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="claude">` +
+              `<span class="onb-agent-mark">${providerLogoMarkup("claude")}</span><span><strong>Claude Code</strong><small>Claude Code CLI</small></span>` +
             `</button>` +
           `</div>` +
         `</div>`;
     } else if (mode === "missing-cli") {
       if (ver) setWelcomeStatus("CLI not installed", false);
       if (IS_REMOTE) {
-        onb.innerHTML = `<div class="onb"><p class="onb-heading">Atlas CLI is missing at the desk</p>` +
+        onb.innerHTML = `<div class="onb"><p class="onb-heading">Grok CLI is missing at the desk</p>` +
           `<p class="onb-desc">Install it on the computer running this workspace, then refresh this remote view.</p></div>`;
         return;
       }
       const installCmd = info.platform === "win32"
-        ? "irm http://10.218.220.237:22255/atlas/cli/install.ps1 | iex"
-        : "curl -fsSL http://10.218.220.237:22255/atlas/cli/install.sh | bash";
+        ? "irm https://x.ai/cli/install.ps1 | iex"
+        : "curl -fsSL https://x.ai/cli/install.sh | bash";
       onb.innerHTML =
         `<div class="onb">` +
-          `<p class="onb-heading">Install the Atlas CLI</p>` +
+          `<p class="onb-heading">Install the Grok CLI</p>` +
           `<div class="onb-cmd">` +
             `<code>${installCmd}</code>` +
             `<button class="onb-copy" type="button" title="Copy" data-cmd="${installCmd}">${ICON.copy}</button>` +
@@ -6806,25 +8125,52 @@
           `<button class="onb-action onb-secondary" type="button" data-act="connectProvider" data-provider="codex">Open terminal &amp; run <code>codex login</code></button>` +
           `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="codex">Done - connect Codex</button>` +
         `</div>`;
+    } else if (mode === "missing-claude") {
+      if (ver) setWelcomeStatus("Claude Code not found", false);
+      if (IS_REMOTE) {
+        onb.innerHTML = `<div class="onb"><p class="onb-heading">Claude Code is missing at the desk</p>` +
+          `<p class="onb-desc">Install Anthropic's Claude Code CLI on the computer running this workspace, then refresh this remote view.</p></div>`;
+        return;
+      }
+      onb.innerHTML =
+        `<div class="onb">` +
+          `<p class="onb-heading">Install Claude Code</p>` +
+          `<p class="onb-desc">This app does not install or sign in to Claude for you. Install Anthropic's own Claude Code CLI, sign in with <code>claude auth login</code>, then re-check.</p>` +
+          `<div class="onb-cmd"><code>claude --version</code><button class="onb-copy" type="button" title="Copy" data-cmd="claude --version">${ICON.copy}</button></div>` +
+          `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="claude">Re-check</button>` +
+        `</div>`;
+    } else if (mode === "claude-login") {
+      if (ver) setWelcomeStatus("Finish signing in", false);
+      onb.innerHTML =
+        `<div class="onb">` +
+          `<p class="onb-heading">Sign in with Claude Code</p>` +
+          `<p class="onb-desc">This app never implements, proxies, holds, or forwards Claude credentials. Sign-in happens entirely inside Anthropic's own CLI, which may use your Claude subscription or an Anthropic Console account depending on how you sign in.</p>` +
+          `<button class="onb-action onb-secondary" type="button" data-act="connectProvider" data-provider="claude">Open terminal &amp; run <code>claude auth login</code></button>` +
+          `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="claude">Done - connect Claude</button>` +
+        `</div>`;
     } else if (mode === "auth-required") {
       if (ver) setWelcomeStatus("Authentication required", false);
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">Sign in to continue</p>` +
-          `<p class="onb-desc"><strong>SuperGrok or X Premium+ subscription</strong> &mdash; either unlocks the <em>Atlas</em> entitlement.</p>` +
-          `<button class="onb-action" type="button" data-act="runLogin">Open terminal &amp; run <code>atlas login</code></button>` +
+          `<p class="onb-desc"><strong>SuperGrok or X Premium+ subscription</strong> &mdash; either unlocks the <em>Grok Build</em> entitlement.</p>` +
+          `<button class="onb-action" type="button" data-act="runLogin">Open terminal &amp; run <code>grok login</code></button>` +
           `<p class="onb-or">or</p>` +
           `<p class="onb-desc"><strong>API key</strong> &mdash; pay per token. Get a key at <a href="https://console.x.ai" class="onb-link">console.x.ai</a>, then add to your shell or a workspace <code>.env</code>:</p>` +
           `<div class="onb-cmd">` +
             `<code>XAI_API_KEY=your-key-here</code>` +
             `<button class="onb-copy" type="button" title="Copy" data-cmd="XAI_API_KEY=">${ICON.copy}</button>` +
           `</div>` +
-          `<p class="onb-desc">A cached sign-in takes precedence over the API key &mdash; run <code>atlas logout</code> first to use the key. If signing in succeeds but prompts still fail, check the error in the chat: your account may lack the Atlas entitlement.</p>` +
+          `<p class="onb-desc">A cached sign-in takes precedence over the API key &mdash; run <code>grok logout</code> first to use the key. If signing in succeeds but prompts still fail, check the error in the chat: your account may lack the Grok Build entitlement.</p>` +
           `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="grok">Re-check connection</button>` +
         `</div>`;
     } else {
       onb.innerHTML = "";
     }
+    // Every branch above rebuilds innerHTML, so the launched-terminal state has
+    // to be re-applied here rather than living on the node.
+    applyOnboardingLaunchState();
+    updateSendButton();
   }
 
   function makeCollapsible(el, container) {
@@ -6985,12 +8331,19 @@
       } else {
         // A user message starts a new turn; the previous turn's footer (if the
         // replay never emitted an explicit turn end) becomes final now.
+        // A steer is still the same turn — keep the footer pointer so agentEnd
+        // can attach thumbs to it. Nulling it here dropped the only handle
+        // after more agent chunks reused the same bubble.
         revealTurnFooter();
-        state.turnAgentActionsEl = null;
+        if (!(opts && opts.steer)) {
+          retireLiveTurnFeedback(state.turnAgentActionsEl);
+          state.turnAgentActionsEl = null;
+          state.turnRating = 0;
+        }
       }
     }
 
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     if (role === "user") refreshUserRewindButtons();
     scrollToBottom();
     if (role === "user" && text) {
@@ -7010,8 +8363,9 @@
   // as the rewind map counts them). Sent with every rewind/edit so the host can
   // verify its point list still lines up before acting — see bubbleMapIsConsistent.
   function visibleUserBubbleCount() {
-    return [...messagesEl.querySelectorAll(".msg.user:not(.queued)")]
+    const rendered = liveTranscriptQueryAll(".msg.user:not(.queued)")
       .filter((el) => el.dataset.steer !== "1").length;
+    return (state.historyPrefixUserCount || 0) + rendered;
   }
 
   function refreshUserRewindButtons() {
@@ -7020,17 +8374,18 @@
     // Rewind at the wrong turn (and reverted the wrong files) and made Edit
     // fail outright. Both actions are hidden on a steer bubble for the same
     // reason: there is nothing on the wire to roll back to.
-    const users = [...messagesEl.querySelectorAll(".msg.user:not(.queued)")]
+    const users = liveTranscriptQueryAll(".msg.user:not(.queued)")
       .filter((el) => el.dataset.steer !== "1");
-    for (const el of messagesEl.querySelectorAll('.msg.user[data-steer="1"]')) {
+    for (const el of liveTranscriptQueryAll('.msg.user[data-steer="1"]')) {
       delete el.dataset.userBubbleIndex;
       const r = el.querySelector(".msg-rewind-btn");
       const ed = el.querySelector(".msg-edit-btn");
       if (r) r.hidden = true;
       if (ed) ed.hidden = true;
     }
+    const prefixCount = state.historyPrefixUserCount || 0;
     users.forEach((el, i) => {
-      el.dataset.userBubbleIndex = String(i);
+      el.dataset.userBubbleIndex = String(prefixCount + i);
       const isLast = i === users.length - 1;
       const btn = el.querySelector(".msg-rewind-btn");
       if (btn) {
@@ -7062,6 +8417,98 @@
     }
   }
 
+  function feedbackOffered() {
+    return state.feedbackAvailable === true && state.activeProvider !== "codex" && state.activeProvider !== "claude";
+  }
+
+  function stripTurnThumbs(actions) {
+    if (!actions) return;
+    const existing = actions.querySelector(".msg-thumbs");
+    if (existing) existing.remove();
+    actions.classList.remove("has-rating");
+    delete actions.dataset.feedbackPending;
+  }
+
+  function retireLiveTurnFeedback(actions) {
+    if (!actions) return;
+    stripTurnThumbs(actions);
+    delete actions.dataset.feedbackLive;
+  }
+
+  function liveTurnActions() {
+    const a = state.turnAgentActionsEl;
+    if (!a || a.hidden || a.dataset.feedbackLive !== "1") return null;
+    return a;
+  }
+
+  function insertTurnThumbs(actions) {
+    if (actions.querySelector(".msg-thumbs")) return;
+    const wrap = document.createElement("span");
+    wrap.className = "msg-thumbs";
+    wrap.appendChild(makeThumbButton("up", 1, "Good response", ICON.thumbsUp));
+    wrap.appendChild(makeThumbButton("down", -1, "Bad response", ICON.thumbsDown));
+    const ts = actions.querySelector(".msg-timestamp");
+    if (ts) actions.insertBefore(wrap, ts);
+    else actions.appendChild(wrap);
+    paintTurnThumbs(actions);
+  }
+
+  function makeThumbButton(kind, rating, label, glyph) {
+    const btn = document.createElement("button");
+    btn.className = `msg-action-btn msg-thumb-btn msg-thumb-${kind}`;
+    btn.type = "button";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.setAttribute("aria-pressed", "false");
+    btn.dataset.rating = String(rating);
+    btn.innerHTML = `<span class="msg-action-glyph">${glyph}</span>`;
+    return btn;
+  }
+
+  function paintTurnThumbs(actions) {
+    const rating = state.turnRating === 1 || state.turnRating === -1 ? state.turnRating : 0;
+    actions.classList.toggle("has-rating", rating === 1 || rating === -1);
+    const up = actions.querySelector(".msg-thumb-up");
+    const down = actions.querySelector(".msg-thumb-down");
+    if (up) up.setAttribute("aria-pressed", rating === 1 ? "true" : "false");
+    if (down) down.setAttribute("aria-pressed", rating === -1 ? "true" : "false");
+  }
+
+  function syncFeedbackButtons() {
+    const live = liveTurnActions();
+    for (const actions of liveTranscriptQueryAll(".msg.agent .msg-actions")) {
+      if (actions === live && feedbackOffered()) {
+        if (!actions.querySelector(".msg-thumbs")) insertTurnThumbs(actions);
+        else paintTurnThumbs(actions);
+      } else {
+        stripTurnThumbs(actions);
+      }
+    }
+  }
+
+  /** Thumbs rate only the turn that just finished in this process. */
+  function markLiveTurnFeedback() {
+    if (state.replaying) return;
+    const a = state.turnAgentActionsEl;
+    if (!a) return;
+    for (const other of liveTranscriptQueryAll(".msg.agent .msg-actions")) {
+      if (other !== a) retireLiveTurnFeedback(other);
+    }
+    a.dataset.feedbackLive = "1";
+    state.turnRating = 0;
+    syncFeedbackButtons();
+  }
+
+  function applyTurnFeedbackAck(rating) {
+    if (state.replaying) return;
+    const a = state.turnAgentActionsEl;
+    if (!a) return;
+    a.dataset.feedbackLive = "1";
+    state.turnRating = rating === 1 || rating === -1 ? rating : 0;
+    delete a.dataset.feedbackPending;
+    syncFeedbackButtons();
+  }
+
   const TOOL_VERB = {
     read_file: "Read", file_read: "Read",
     write_file: "Write", file_write: "Write", write: "Write",
@@ -7084,18 +8531,112 @@
   function toolName(call) {
     return call.tool || call.name || call.title || "";
   }
+  function pathFromToolTitle(call) {
+    const title = String(call && call.title || "").trim();
+    if (!title) return "";
+    const tick = title.match(/`([^`]+)`/);
+    if (tick && tick[1]) return tick[1].trim();
+    const stripped = title.replace(/^(edit|write|read|delete|create|update)\s+/i, "").trim();
+    if (stripped && stripped !== title && /[\\/]|\.\w{1,8}$/.test(stripped)) return stripped;
+    return "";
+  }
   function toolFilePath(call) {
     const r = call.rawInput || call.input || {};
     // `target_directory` is list_dir's path field (verified against real sessions);
     // without it, "List" rendered with no target.
     return r.target_file || r.filePath || r.file_path || r.path ||
+      r.new_path || r.new_file || r.file || r.filename ||
       r.target_directory || r.directory || r.dir ||
-      (Array.isArray(r.paths) ? r.paths[0] : "");
+      (Array.isArray(r.paths) ? r.paths[0] : "") ||
+      pathFromToolTitle(call);
+  }
+  function isReadTool(call) {
+    if (!call) return false;
+    const name = toolName(call);
+    const kind = toolKind(call);
+    return name === "read_file" || name === "file_read" || kind === "read";
+  }
+  function asLineNum(v) {
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+  // Line range for a Read row. Prefer requested offset/limit (1-based; 0 → 1),
+  // then FileContent.{offset,limit,total_lines} on the completed update.
+  // Do not invent numbers when none of those are on the wire.
+  function readLineRange(call) {
+    const r = (call && (call.rawInput || call.input)) || {};
+    const ro = call && call.rawOutput;
+    const fc = ro && (ro.FileContent || ro.file_content) || {};
+    let start = asLineNum(r.offset) ?? asLineNum(r.start_line) ?? asLineNum(r.startLine) ?? asLineNum(fc.offset);
+    const endHint = asLineNum(r.end_line) ?? asLineNum(r.endLine);
+    const limit = asLineNum(r.limit) ?? asLineNum(fc.limit);
+    const total = asLineNum(fc.total_lines) ?? asLineNum(fc.totalLines);
+    if (start === 0) start = 1;
+    if (start != null && endHint != null && endHint >= start) return { start, end: endHint };
+    if (start != null && limit != null && limit > 0) return { start, end: start + limit - 1 };
+    if (start == null && limit != null && limit > 0) return { start: 1, end: limit };
+    if (start != null && total != null && total >= start) return { start, end: total };
+    // No offset, no limit, no end — the agent asked for the WHOLE file, and
+    // `total_lines` is then just how long the file happens to be. Rendering it
+    // as "lines 1-26" reads like a range the agent chose, which it did not, and
+    // costs the row space the path needs (owner, 2026-08-23). The row shows the
+    // path alone and the link opens the file with nothing selected.
+    return null;
+  }
+  // `path#Lstart-Lend` — the syntax `parseFileRef` already accepts, so the host
+  // opens the REAL file with those lines selected instead of an untitled copy of
+  // the excerpt (#122). No range on the wire → the path alone.
+  function readOpenFileRef(call) {
+    const p = String(toolFilePath(call) || "").trim();
+    if (!p) return "";
+    const range = readLineRange(call);
+    return range ? `${p}#L${range.start}-L${range.end}` : p;
+  }
+  // The label text for a Read row's target: basename, plus the line range when
+  // one is on the wire. Shared by toolLabel and by the linked-label path, so the
+  // link's text can never drift from the row's own label.
+  function readTargetLabel(call) {
+    const filePath = toolFilePath(call);
+    if (!filePath) return "";
+    const range = readLineRange(call);
+    return range
+      ? `${prettyPath(filePath)} lines ${range.start}-${range.end}`
+      : prettyPath(filePath);
+  }
+  // #122: the path and range in a Read row's own label BECOME the link — no
+  // separate control, and no six-line excerpt of a 150-line read competing for
+  // space. The ROW LOOKS THE SAME on every host; only what the link does
+  // differs, because the hosts can do different things.
+  function readLinkRef(call) {
+    if (!isReadTool(call)) return "";
+    return readOpenFileRef(call);
+  }
+  // What that link can do here, decided by what the host proved it can do —
+  // never by a version:
+  //   "file"    an editor that opens the real file AT the line range. The whole
+  //             point: the surrounding context is why you clicked.
+  //   "overlay" the desktop app. Its openTextFile cannot honour a line
+  //             selection, so the click opens the in-app preview: the whole
+  //             file, numbered, with the agent's lines marked (falls back to
+  //             the excerpt when the file can't be fetched).
+  //   "inline"  a remote. `openFile` is host-local in remote-policy, so a phone
+  //             can only reveal the text already on the wire.
+  function readLinkMode() {
+    if (IS_REMOTE) return "inline";
+    if (hostPreviewsInApp()) return "overlay";
+    return "file";
+  }
+  function toolRenamePaths(call) {
+    const r = call && (call.rawInput || call.input) || {};
+    const from = r.old_path || r.old_file || r.from;
+    const to = r.new_path || r.new_file || r.to;
+    if (from && to && from !== to) return { from, to };
+    return null;
   }
   function prettyPath(p) {
     if (!p) return "";
     if (p === "." || p === "./") return "root folder";
-    return p.split("/").pop() || p;
+    const leaf = String(p).replace(/\\/g, "/").split("/").pop();
+    return leaf || p;
   }
   // Directory target for a list_dir call. Unlike prettyPath (basename only, right
   // for files), a folder reads better as its full *relative* path with a trailing
@@ -7190,6 +8731,8 @@
     if (/^(web_fetch|webfetch)$/.test(name)) return "Fetching page";
     if (/^(grep|ripgrep|search_files)$/.test(name) || kind === "search") return "Searching";
     if (/^(write_file|file_write|write|edit_file|search_replace|str_replace)$/.test(name) || kind === "edit" || kind === "write") {
+      const renamed = toolRenamePaths(call);
+      if (renamed) return `Editing ${prettyPath(renamed.from)} → ${prettyPath(renamed.to)}`;
       return filePath ? `Editing ${prettyPath(filePath)}` : "Editing file";
     }
     if (kind === "delete") return filePath ? `Deleting ${prettyPath(filePath)}` : "Deleting file";
@@ -7201,7 +8744,7 @@
     return name && name.length < 30 ? `Running ${name}` : "Running tool";
   }
 
-  function toolLabel(call) {
+  function toolLabel(call, opts) {
     const name = toolName(call);
     const kind = toolKind(call);
     const verb = TOOL_VERB[name] || KIND_VERB[kind] || null;
@@ -7222,7 +8765,10 @@
       kind === "search" || /\b(grep|glob|ripgrep|search_files|web_search|search_web)\b/i.test(name);
 
     let target = "";
-    if (isSearch && pattern) {
+    const renamed = toolRenamePaths(call);
+    if (renamed && (kind === "edit" || kind === "write" || kind === "delete" || verb === "Edit" || verb === "Write")) {
+      target = `${prettyPath(renamed.from)} → ${prettyPath(renamed.to)}`;
+    } else if (isSearch && pattern) {
       target = clamp(pattern);
     } else if (url) {
       target = clamp(url.replace(/^https?:\/\//i, ""));
@@ -7231,9 +8777,8 @@
       const isRead = name === "read_file" || name === "file_read" || kind === "read";
       if (isList) {
         target = prettyDir(filePath);
-      } else if (isRead && r.offset != null && r.limit != null) {
-        const end = Number(r.offset) + Number(r.limit) - 1;
-        target = `${prettyPath(filePath)} lines ${r.offset}-${end}`;
+      } else if (isRead) {
+        target = readTargetLabel(call);
       } else {
         target = prettyPath(filePath);
       }
@@ -7252,8 +8797,68 @@
     if (verb && target) return `${verb} ${target}`;
     if (verb) return verb;
     const title = (call.title || "").trim();
-    if (title) return title.length > 50 ? title.slice(0, 47) + "…" : title;
+    if (title) return opts && opts.full ? title : middleElide(title, TOOL_LABEL_MAX);
     return name || "tool";
+  }
+
+  // Flatten rebuilds the label span (details/chevron nodes move; the label
+  // does not), so title has to be painted wherever textContent is set.
+  function applyToolLabel(el, call) {
+    if (!el) return;
+    const full = toolLabel(call);
+    el.title = toolLabel(call, { full: true });
+    // Assigning textContent first is what keeps this idempotent across the
+    // repaints that call it — it drops any link node an earlier pass appended.
+    el.textContent = full;
+    const ref = readLinkRef(call);
+    const target = ref ? readTargetLabel(call) : "";
+    // Split only when the rendered label really ends with the target: a row that
+    // fell back to grok's own title (nothing synthesized) stays plain text.
+    if (!target || !full.endsWith(target)) return;
+    // Off the editor the link acts on a CARRIER, and only a real tool row ever
+    // gets one — a subagent's row is painted by this same function (the row IS
+    // the label) and never does. Rendering a link there would give those hosts a
+    // control that looks clickable and does nothing. Decided by what the label
+    // IS, not where it sits: this runs BEFORE the label is appended to its row,
+    // so closest() would see nothing yet.
+    const carrierCapable = el.classList.contains("tool-item-label")
+      || el.classList.contains("tool-label");
+    if (readLinkMode() !== "file" && !carrierCapable) return;
+    el.textContent = full.slice(0, full.length - target.length);
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "tool-label-ref";
+    link.textContent = target;
+    link.title = `Open ${ref.replace(/#L(\d+)-L(\d+)$/, " at lines $1-$2")}`;
+    link.onclick = (e) => {
+      e.stopPropagation(); // must not toggle the row or the group
+      const mode = readLinkMode();
+      if (mode === "file") {
+        vscode.postMessage({ type: "openFile", path: ref });
+        return;
+      }
+      // Both remaining hosts act on the carrier: the text the agent read, parked
+      // hidden in the row for exactly this (attachReadCarrier).
+      const row = el.closest && el.closest(".tool-item, .tool-flat");
+      const details = row && row.querySelector(".tool-item-details");
+      if (!details) return; // still reading — nothing to show yet
+      if (mode === "inline") {
+        details.hidden = !details.hidden;
+        link.classList.toggle("open", !details.hidden);
+        return;
+      }
+      const pre = details.querySelector(".tool-cmd-output");
+      const parsed = previewFileRef(ref);
+      if (pre) {
+        openPreviewOverlay({
+          kind: "text",
+          content: pre.textContent,
+          path: parsed.path,
+          range: parsed.range,
+        });
+      }
+    };
+    el.appendChild(link);
   }
 
   // Category icon for a tool row (lucide outline; sized + colored by CSS via
@@ -7301,7 +8906,7 @@
       flat.innerHTML = toolIconFor(calls); // icon first
       const lbl = document.createElement("span");
       lbl.className = "tool-label";
-      lbl.textContent = toolLabel(calls[0]);
+      applyToolLabel(lbl, calls[0]);
       flat.appendChild(lbl);
       // #41: a lone command's expandable detail (full command + output) moves
       // into the flat row — moving the NODES keeps the pendingCommandDetails
@@ -7309,10 +8914,14 @@
       // attaches.
       const detailsEl = el.querySelector(".tool-item-details");
       if (detailsEl) {
+        // A carrier keeps its silence through the flatten: no chevron, no row
+        // toggle. Wiring one here would hand the row back the affordance the
+        // label link replaced (#122).
+        const carrier = detailsEl.classList.contains("tool-read-carrier");
         const chev = el.querySelector(".tool-item .tool-chevron");
-        if (chev) flat.appendChild(chev);
+        if (chev && !carrier) flat.appendChild(chev);
         flat.appendChild(detailsEl);
-        wireCommandToggle(flat, detailsEl);
+        if (!carrier) wireCommandToggle(flat, detailsEl);
       }
       el.replaceWith(flat);
       const fail = calls[0].toolCallId && state.toolFailuresById.get(calls[0].toolCallId);
@@ -7358,7 +8967,7 @@
       body.hidden = true;
       el.appendChild(hdr);
       el.appendChild(body);
-      messagesEl.appendChild(el);
+      appendTranscriptChild(el);
       state.activeToolGroupEl = el;
       // Expand-all latched → open the group the moment it appears, mid-run
       // (setGroupExpanded's `.expanded` class also reveals the chevron via CSS).
@@ -7377,15 +8986,25 @@
     // still breaks onto its own full-width row.
     const itemLabel = document.createElement("span");
     itemLabel.className = "tool-item-label";
-    itemLabel.textContent = toolLabel(call);
+    applyToolLabel(itemLabel, call);
     item.appendChild(itemLabel);
+    item._call = call;
     body.appendChild(item);
     if (call.toolCallId) state.toolItemsByToolCallId.set(call.toolCallId, item);
     // #41: a shell command's row carries an expandable detail — the FULL
     // command text immediately (grok truncates its titles), and the complete
-    // captured output once the terminal finishes.
-    const cmd = call.rawInput && typeof call.rawInput.command === "string" ? call.rawInput.command.trim() : "";
+    // captured output once the terminal finishes. MCP rows reuse this
+    // shell via host-normalized `detailInput` (never an empty pending block).
+    const cmd = commandDetailText(call);
     if (cmd) attachCommandDetails(item, cmd, call.toolCallId);
+    else if (isReadTool(call) && !item.querySelector(".cmd-block")) {
+      const path = String(toolFilePath(call) || "");
+      const ref = readLinkRef(call);
+      if (ref && readLinkMode() !== "file") attachReadCarrier(item, path, call.toolCallId);
+      else if (!ref && (path || extractToolResultOutput(call))) {
+        attachCommandDetails(item, path, call.toolCallId);
+      }
+    }
 
     hdr.innerHTML =
       toolIconFor(el._calls) +
@@ -7402,7 +9021,8 @@
     // full command mid-run.
     el.classList.toggle(
       "cmd-single",
-      el._calls.length === 1 && !!(call.rawInput && (call.rawInput.command || call.rawInput.cmd)),
+      el._calls.length === 1
+        && !!(commandDetailText(call) || (isReadTool(call) && !readLinkRef(call))),
     );
     hdr.onclick = () => {
       const expanded = !body.hidden;
@@ -7422,6 +9042,12 @@
         }
       }
     };
+    // Settle the group NOW, not only at closeToolGroup. Every row carries its
+    // detail (a command's IN block) or its link (a Read row's path) from the
+    // moment it appears, so deferring this is what made "expand tool details"
+    // look like it only fired once the command had finished (#122). An explicit
+    // toggle on this group still wins.
+    if (!el._userToggled) setGroupExpanded(el, groupShouldExpand(el));
     scrollToBottom();
   }
 
@@ -7436,14 +9062,18 @@
   // Effective expand state, given the per-session latch (toolExpandOverride)
   // takes precedence over the persisted grok.expandCommandOutputs default.
   //   - override set  → force everything to the override (all groups, all boxes).
-  //   - override null → the setting: every detail box (command IN/OUT, edit diff)
-  //                     opens, and only GROUPS that HOLD a detail auto-open —
-  //                     command or edit groups, but not read/explore-only ones.
+  //   - override null → the setting: every detail box (command IN/OUT, Read
+  //                     file text, edit diff) opens, and only GROUPS that HOLD
+  //                     a detail auto-open — search/list-only groups stay collapsed.
   // `groupShouldExpand` needs the element to decide the has-detail case;
   // `detailShouldExpand` is group-agnostic.
   function groupShouldExpand(el) {
     if (state.toolExpandOverride !== null) return state.toolExpandOverride;
-    return effectiveExpandCommandOutputs() && !!(el && el.querySelector(".has-details"));
+    // `.tool-label-ref` counts the same as a detail: a linked Read row carries
+    // its payload in the row itself (#122), so a read-only batch is worth
+    // opening even though it holds no detail box.
+    return effectiveExpandCommandOutputs()
+      && !!(el && el.querySelector(".has-details, .tool-label-ref"));
   }
   function detailShouldExpand() {
     if (state.toolExpandOverride !== null) return state.toolExpandOverride;
@@ -7482,15 +9112,15 @@
   // the latch via the effective helpers; touches the in-progress group too so a
   // running batch opens/closes live (the reported gap).
   function applyExpandCommandOutputs() {
-    for (const row of messagesEl.querySelectorAll(".has-details")) {
+    for (const row of liveTranscriptQueryAll(".has-details")) {
       setDetailExpanded(row, detailShouldExpand());
     }
-    for (const group of messagesEl.querySelectorAll(".tool-group")) {
+    for (const group of liveTranscriptQueryAll(".tool-group")) {
       setGroupExpanded(group, groupShouldExpand(group));
     }
   }
 
-  // Command Palette: Atlas: Expand/Collapse All Tool Details (This Session). Sets
+  // Command Palette: Grok: Expand/Collapse All Tool Details (This Session). Sets
   // the per-session latch, then re-applies it everywhere — so it (a) opens the
   // batch that's still executing and (b) keeps applying to tool calls that
   // arrive later this session, until you collapse-all or change the gear setting
@@ -7539,7 +9169,7 @@
     return toggle;
   }
 
-  function appendCommandPreview(container, text, className, language, maxLines = MAX_COMMAND_PREVIEW_LINES) {
+  function appendCommandPreview(container, text, className, language, maxLines = MAX_COMMAND_PREVIEW_LINES, openRef) {
     const fullText = text == null ? "" : String(text);
     const logicalPreview = commandTextPreview(fullText, maxLines);
     const pre = document.createElement("pre");
@@ -7576,13 +9206,24 @@
         viewAll.textContent = previewLabel;
         viewAll.onclick = (e) => {
           e.stopPropagation();
+          // A Read row's "View all" means the file, not a copy of the lines the
+          // agent happened to request (#122). Editor hosts post openFile with
+          // the range; desktop's openTextFile cannot honour a line selection,
+          // so the in-app preview fetches the file and marks those lines.
+          if (openRef && !hostPreviewsInApp()) {
+            vscode.postMessage({ type: "openFile", path: openRef });
+            return;
+          }
           const openLanguage = language
             || (className === "tool-cmd" ? state.commandLanguage : "");
           if (hostPreviewsInApp()) {
+            const parsed = previewFileRef(openRef);
             openPreviewOverlay({
               kind: "text",
               content: fullText,
               language: openLanguage,
+              path: parsed.path || undefined,
+              range: parsed.range,
             });
             return;
           }
@@ -7628,6 +9269,23 @@
     requestAnimationFrame(syncOverflowAffordance);
   }
 
+  // A linked Read row's detail is a CARRIER, not an affordance: no chevron, no
+  // row toggle, hidden regardless of the expand setting. It exists only so the
+  // text the agent read is in the DOM for the label's link to act on — revealed
+  // in place on a remote, handed to the preview window on the desktop. The row's
+  // own path IS the control, which is the whole of #122.
+  function attachReadCarrier(item, path, toolCallId) {
+    const details = document.createElement("div");
+    details.className = "tool-item-details tool-read-carrier";
+    details.hidden = true;
+    const block = document.createElement("div");
+    block.className = "cmd-block";
+    details.appendChild(block);
+    item.appendChild(details);
+    // Same registration shape as attachCommandDetails, so the completed update
+    // fills it through the identical path.
+    state.pendingCommandDetails.push({ command: path, details, done: false, toolCallId });
+  }
   function attachCommandDetails(item, command, toolCallId) {
     // Chevron at the END of the (possibly ellipsized) command line: › when
     // collapsed, rotated to v while expanded.
@@ -7666,6 +9324,86 @@
     state.pendingCommandDetails.push({ command, details, done: false, toolCallId });
   }
 
+  /**
+   * Fold a `tool_call_update` back into its row's label and detail.
+   *
+   * Grok puts the arguments on the FIRST `tool_call`, so its rows read correctly
+   * the moment they appear. Claude does not: the first call is a generic
+   * `{title:"Read File", rawInput:{}}` and the real `{title:"Read package.json",
+   * rawInput:{file_path:…}}` arrives on an update — which nothing was applying,
+   * so a Claude turn rendered as a flat list of bare verbs: Run, Read, Search,
+   * with no argument, input or output.
+   *
+   * Applies to every provider, not just Claude — it is simply a no-op where the
+   * first call was already complete, which is the Grok case. That is also why
+   * the merge is field by field and skips null: Grok's updates frequently carry
+   * `title: null`, and a wholesale replace would blank a good label. Claude also
+   * sends an update carrying ONLY a toolCallId and `_meta` (the tool response),
+   * which would erase everything gathered so far.
+   */
+  // IN text for the shared command-detail shell. Shell rows use
+  // `rawInput.command` / `.cmd`. MCP rows use the host-stamped `detailInput`
+  // (`null` / absent = pending or not MCP; `{}` is a no-argument call).
+  function commandDetailText(call) {
+    const raw = (call && (call.rawInput || call.input)) || {};
+    if (typeof raw.command === "string" && raw.command.trim()) return raw.command.trim();
+    if (typeof raw.cmd === "string" && raw.cmd.trim()) return raw.cmd.trim();
+    if (typeof call.detailInput === "string" && call.detailInput.trim()) return call.detailInput.trim();
+    return "";
+  }
+
+  function refreshToolRowFromUpdate(update) {
+    const id = update && update.toolCallId;
+    if (!id) return;
+    const item = state.toolItemsByToolCallId.get(id);
+    if (!item || !item._call) return;
+    const merged = { ...item._call };
+    for (const key of ["title", "kind", "status", "locations", "rawOutput"]) {
+      if (update[key] !== undefined && update[key] !== null) merged[key] = update[key];
+    }
+    // Arguments accumulate across updates (`{}` → `{file_path}` → `{file_path,
+    // limit}`), so merge rather than replace or a later, sparser update would
+    // drop the path.
+    for (const key of ["rawInput", "input"]) {
+      if (update[key] && typeof update[key] === "object") {
+        merged[key] = { ...(item._call[key] || {}), ...update[key] };
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(update, "detailInput")) {
+      merged.detailInput = update.detailInput;
+    }
+    item._call = merged;
+    // Flatten / summarize read `_calls`, not `item._call`. Grok's first
+    // use_tool row is titled "use_tool" until this update; leave the
+    // group's copy stale and the flat label stays the wrapper name.
+    const groupCalls = item.closest(".tool-group");
+    if (groupCalls && Array.isArray(groupCalls._calls)) {
+      const idx = groupCalls._calls.findIndex((c) => c && c.toolCallId === id);
+      if (idx >= 0) groupCalls._calls[idx] = merged;
+    }
+    const labelEl = item.querySelector(".tool-item-label");
+    if (labelEl) applyToolLabel(labelEl, merged);
+    // A shell command that only shows up on the update still earns its IN/OUT
+    // box; attachCommandDetails is a no-op once the row already has one.
+    // MCP args that arrive after a pending row use the same attach.
+    const cmd = commandDetailText(merged);
+    if (cmd && !item.querySelector(".cmd-block")) attachCommandDetails(item, cmd, id);
+    else if (isReadTool(merged) && !item.querySelector(".cmd-block")) {
+      const path = String(toolFilePath(merged) || "");
+      const ref = readLinkRef(merged);
+      if (ref && readLinkMode() !== "file") attachReadCarrier(item, path, id);
+      else if (!ref && (path || extractToolResultOutput(merged))) {
+        attachCommandDetails(item, path, id);
+      }
+    }
+    if (groupCalls && groupCalls.classList.contains("in-progress") && groupCalls._calls && groupCalls._calls.length === 1) {
+      groupCalls.classList.toggle(
+        "cmd-single",
+        !!(cmd || (isReadTool(merged) && !readLinkRef(merged))),
+      );
+    }
+  }
+
   function attachCommandOutput(details, msg) {
     const block = details.querySelector(".cmd-block");
     if (!block || block.querySelector(".cmd-out")) return; // idempotent (buffer replay)
@@ -7697,12 +9435,16 @@
         const group = row.closest && row.closest(".tool-group");
         if (group) group.classList.add("has-error");
       }
-    } else if (msg.exitCode == null) {
+    } else if (commandOutputWasCancelled(msg)) {
+      // Live kill. This host always states `cancelled` (true/false). Absence is
+      // an older host, which never hydrated replay commandOutput, so null exit
+      // was a kill. Do not infer from state.replaying: historyReplay also
+      // wraps buffer rebuilds.
       const mark = document.createElement("div");
       mark.className = "cmd-out-marker muted";
       mark.textContent = "[Cancelled] no exit code";
       body.appendChild(mark);
-    } else if (!hasOutput) {
+    } else if (msg.exitCode === 0 && !hasOutput) {
       // exit 0 with nothing on stdout: a bare "(no output)" pre read as broken.
       // A muted "done" marker (process success, not a claim about the task) is
       // clearer, and there's no empty <pre> to feel like a gap.
@@ -7714,12 +9456,12 @@
     // Only render the output <pre> when there's actually output — a marker alone
     // carries the empty cases (success/error/cancel).
     if (hasOutput) {
-      appendCommandPreview(body, output, "tool-cmd-output");
+      appendCommandPreview(body, output, "tool-cmd-output", undefined, MAX_COMMAND_PREVIEW_LINES, msg.openFileRef);
     }
     if (msg.truncated) {
       const note = document.createElement("div");
       note.className = "cmd-out-marker muted";
-      note.textContent = "output truncated — grok saw the same cut";
+      note.textContent = commandOutputTruncationNote(msg);
       body.appendChild(note);
     }
     outRow.appendChild(body);
@@ -7736,6 +9478,8 @@
   function maybeAttachToolResultOutput(call) {
     const id = call && call.toolCallId;
     if (!id) return false;
+    // A pending Claude row's `content` is the tool description — not stdout.
+    if (String(call.status || "").toLowerCase() === "pending") return false;
     // Use the pendingCommandDetails entry (a direct `details` node reference that
     // survives a lone command's flatten-move) rather than re-querying the item —
     // the item's details node is relocated to the .tool-flat wrapper.
@@ -7743,9 +9487,28 @@
     if (!entry) return false;
     const block = entry.details.querySelector(".cmd-block");
     if (!block || block.querySelector(".cmd-out")) return false; // OUT already present (grok-build)
+    // Live Claude/Composer have no commandDone, so this is the only OUT source.
+    // extractToolResultOutput already prefers the unfenced string and applies
+    // the same 100K cap as the host commandOutput path — first arriver is
+    // correct; attachCommandOutput is idempotent if both land. Do not gate on
+    // state.replaying: historyReplay also wraps in-memory buffer rebuilds
+    // (focusSession / rehydrateWebviewFromFocused), which have no commandOutput.
     const res = extractToolResultOutput(call);
     if (!res) return false;
-    attachCommandOutput(entry.details, res);
+    // Read rows reuse this OUT chrome. The 100K cap is display-only —
+    // grok already saw the full FileContent (same polarity as MCP).
+    // The ref comes from the ROW's merged call, not this update: grok puts the
+    // path on the first tool_call and the result on a later one, so the update
+    // that carries the text usually has no rawInput to read a path from.
+    const rowCall = (state.toolItemsByToolCallId.get(id) || {})._call || call;
+    // On an editor host a linked Read row has no detail at all — its path and
+    // range ARE the affordance (#122). Elsewhere the carrier still gets filled,
+    // because the link needs that text to reveal or to hand to the preview.
+    if (readLinkRef(rowCall) && readLinkMode() === "file") return true;
+    attachCommandOutput(
+      entry.details,
+      isReadTool(rowCall) ? { ...res, agentSawCut: false, openFileRef: readOpenFileRef(rowCall) } : res,
+    );
     return true;
   }
 
@@ -7855,7 +9618,7 @@
     // number never butts against the code column. Floored at 4ch, which is exactly
     // today's look for everything up to 999; only a 1000+ line file grows it. A
     // fixed track would instead overflow — 5 digits would collide with the +/- glyph.
-    wrap.style.setProperty("--tdl-num-w", Math.max(4, String(widest).length + 1) + "ch");
+    wrap.style.setProperty("--tdl-num-w", tdlGutterCh(widest));
     const remaining = total - rendered;
     if (remaining > 0) {
       const more = document.createElement("div");
@@ -7920,6 +9683,21 @@
       blocks.push({ diff, hunks });
     }
     item._diffStat = { added, removed, path: diffs[0] && diffs[0].path };
+    const diffPath = diffs[0] && diffs[0].path;
+    if (diffPath && item._call && !toolFilePath(item._call)) {
+      item._call.rawInput = { ...(item._call.rawInput || {}), path: diffPath };
+    }
+    const itemLabel = item.querySelector(".tool-item-label");
+    if (itemLabel && item._call) applyToolLabel(itemLabel, item._call);
+    const group = item.closest && item.closest(".tool-group");
+    if (group && group.classList.contains("in-progress") && item._call) {
+      const groupLabel = group.querySelector(".tool-group-label");
+      if (groupLabel) {
+        const totals = groupLabel.querySelector(".tool-group-diff-totals");
+        groupLabel.textContent = inProgressLabel(item._call);
+        if (totals) groupLabel.appendChild(totals);
+      }
+    }
 
     // Always-visible +A −R on the row (and the roll-up onto the group header).
     const stat = makeDiffStat(added, removed);
@@ -8170,16 +9948,17 @@
     const el = document.createElement("div");
     el.className = "session-context-banner";
     el.textContent = "Context from previous session applied";
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     scrollToBottom();
   }
 
-  function addError(text) {
+  function addError(text, code) {
     clearWelcome();
     const el = document.createElement("div");
     el.className = "msg error";
     el.textContent = text;
-    messagesEl.appendChild(el);
+    if (typeof code === "string" && code) el.setAttribute("data-error-code", code);
+    appendTranscriptChild(el);
     scrollToBottom();
   }
 
@@ -8326,7 +10105,7 @@
       link.onclick = () => vscode.postMessage({ type: "openUrl", url: msg.url });
       el.appendChild(link);
     }
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     scrollToBottom();
   }
 
@@ -8556,7 +10335,7 @@
     const row = document.createElement("div");
     row.className = "subagent-tool";
     if (id) row.dataset.toolCallId = id;
-    row.textContent = toolLabel(call);
+    applyToolLabel(row, call);
     stream.appendChild(row);
     if (id) el._childTools.set(id, row);
     setSubagentLiveStatus(el, toolLabel(call));
@@ -8570,7 +10349,7 @@
       return;
     }
     const label = toolLabel(call);
-    if (label && label !== "tool") row.textContent = label;
+    if (label && label !== "tool") applyToolLabel(row, call);
     const status = String(call && call.status || "").toLowerCase();
     if (status === "failed") row.classList.add("subagent-tool-failed");
   }
@@ -8612,7 +10391,7 @@
     // card with the new run's duration/output. Mark them so live spawn-tagging
     // and the no-id finish fallback skip them.
     if (state.replaying) el.dataset.subagentReplayed = "1";
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     if (call && call.toolCallId) state.subagentCards.set(call.toolCallId, el);
     applySubagentUpdate(call, el); // a replayed call may already be completed
     scrollToBottom();
@@ -8747,7 +10526,7 @@
         `<div class="run-progress-detail" hidden></div>` +
         `<div class="run-progress-actions" hidden></div>`;
       state.runProgressCards.set(id, el);
-      messagesEl.appendChild(el);
+      appendTranscriptChild(el);
     }
 
     const kindLabel = update.kind === "goal" ? "Goal" : "Workflow";
@@ -8839,7 +10618,7 @@
     const el = document.createElement("div");
     el.className = "plan-notice";
     el.innerHTML = `${ICON.listTree}<span>${escapeHtml(text)}</span>`;
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     scrollToBottom();
   }
 
@@ -8857,7 +10636,7 @@
     const el = document.createElement("div");
     el.className = "plan-notice";
     el.innerHTML = `${ICON.zap}<span>${escapeHtml(text)}</span>`;
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     scrollToBottom();
   }
 
@@ -8889,7 +10668,7 @@
       };
       el.appendChild(hdr);
       el.appendChild(body);
-      messagesEl.appendChild(el);
+      appendTranscriptChild(el);
       state.activeThoughtEl = body;
       state.activeThoughtHdrEl = hdr;
     }
@@ -9117,7 +10896,7 @@
     // The agent copy affordance identifies the newest narration segment for the
     // current turn. Use that same pointer so neither plain nor summarized speech
     // can target an older rendered message.
-    const agentActions = messagesEl.querySelectorAll(".msg.agent .msg-actions");
+    const agentActions = liveTranscriptQueryAll(".msg.agent .msg-actions");
     if (
       !state.turnAgentActionsEl ||
       agentActions[agentActions.length - 1] !== state.turnAgentActionsEl
@@ -9186,7 +10965,7 @@
       }
       // Background-task notices the CLI injects as <system-reminder> user turns
       // are agent plumbing, not user content — never bubble them on restore.
-      // Atlas's reply to them still renders. (Live ones are already dropped by
+      // Grok's reply to them still renders. (Live ones are already dropped by
       // the !replaying guard above; this covers the replayed copy.)
       if (verdict.hide === "reminder") {
         state.skipUserBubble = true;
@@ -9330,7 +11109,7 @@
     clearWelcome();
     const el = document.createElement("div");
     collapsePermissionCard(el, outcome === "rejected" ? "reject_once" : "allow_once", title);
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     scrollToBottom();
   }
 
@@ -9378,6 +11157,7 @@
   // the Thinking header's look (blink-dots, same muted font) without the
   // chevron, and is not expandable.
   function showGrokking() {
+    if (state.historyHydrating) return;
     hideGrokking(); // dedupe
     hideThinkingIndicator();
     clearWelcome();
@@ -9385,28 +11165,89 @@
     el.className = "grokking";
     // No blink-dots here — the spinning orbit icon is Grokking's "waiting" motion
     // (Thinking / tools use the dots for discrete progress instead).
-    const verb = state.activeProvider === "codex" ? CODEX_ACTIVITY_VERB : GROK_ACTIVITY_VERB;
+    const verb = activityVerb();
     el.innerHTML = `<span class="grokking-icon">${ICON.orbit}</span><span class="grokking-label">${verb}</span>`;
-    el.setAttribute("aria-label", state.activeProvider === "codex" ? "OpenAI is working" : "Atlas is working");
+    el.setAttribute("aria-label", activityAriaLabel());
     el.title = "Waiting for response";
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     state.grokkingEl = el;
+    // Not while replaying: a restored mid-turn indicator would count from the
+    // restore rather than from the send, and understating a 20-minute wait as
+    // "3s" is worse than showing nothing.
+    if (!state.replaying) armWaitElapsed(el);
     scrollToBottom();
   }
 
+  // The counter is armed per ELEMENT rather than on `state.grokkingEl`, because
+  // history hydration nulls that field while the node stays on screen
+  // (hydrateHistoryChunkWithCounters saves and restores the reference), and a
+  // state-keyed timer would stop counting a wait the user is still looking at.
+  // It also stops itself once the node is detached, so any path that removes
+  // the indicator — not just hideGrokking — cleans up.
+  function armWaitElapsed(el) {
+    el._waitStart = Date.now();
+    // Painted at once and then every second, with NO threshold to cross.
+    //
+    // A delay was the first design and it was wrong twice over. It guaranteed
+    // that nothing was on screen at exactly the moment someone starts
+    // wondering whether the turn is stuck, and it was a constant that could
+    // never be right. The obvious objection — a number flickering on every
+    // fast turn — does not hold either: this row itself only exists between
+    // agentStart and the first content, so on a quick turn it already appears
+    // and vanishes in about a second. The churn is the row, not the number.
+    const paint = () => {
+      if (!el.isConnected) {
+        clearWaitElapsed(el);
+        return;
+      }
+      let out = el.querySelector(".grokking-elapsed");
+      if (!out) {
+        out = document.createElement("span");
+        out.className = "grokking-elapsed";
+        // The verb is already announced. A value that changes every second
+        // would otherwise be read out every second.
+        out.setAttribute("aria-hidden", "true");
+        el.appendChild(out);
+      }
+      out.textContent = `\u00b7 ${formatWaitElapsed(Date.now() - el._waitStart)}`;
+    };
+    paint();
+    el._waitTimer = setInterval(paint, 1000);
+  }
+
+  function clearWaitElapsed(el) {
+    if (el && el._waitTimer) {
+      clearInterval(el._waitTimer);
+      el._waitTimer = null;
+    }
+  }
+
   function hideGrokking() {
+    clearWaitElapsed(state.grokkingEl);
     if (state.grokkingEl && state.grokkingEl.parentElement) {
       state.grokkingEl.parentElement.removeChild(state.grokkingEl);
     }
     state.grokkingEl = null;
   }
 
+  function activityVerb() {
+    if (state.activeProvider === "codex") return CODEX_ACTIVITY_VERB;
+    if (state.activeProvider === "claude") return CLAUDE_ACTIVITY_VERB;
+    return GROK_ACTIVITY_VERB;
+  }
+
+  function activityAriaLabel() {
+    if (state.activeProvider === "codex") return "OpenAI is working";
+    if (state.activeProvider === "claude") return "Claude is working";
+    return "Grok is working";
+  }
+
   function syncProviderVoice() {
     input.placeholder = COMPOSER_PLACEHOLDER[state.activeProvider] || COMPOSER_PLACEHOLDER.grok;
     if (!state.grokkingEl) return;
     const label = state.grokkingEl.querySelector(".grokking-label");
-    if (label) label.textContent = state.activeProvider === "codex" ? CODEX_ACTIVITY_VERB : GROK_ACTIVITY_VERB;
-    state.grokkingEl.setAttribute("aria-label", state.activeProvider === "codex" ? "OpenAI is working" : "Atlas is working");
+    if (label) label.textContent = activityVerb();
+    state.grokkingEl.setAttribute("aria-label", activityAriaLabel());
   }
 
   // "Thinking…" — the stand-in shown while thinking traces are hidden (#26, the
@@ -9423,8 +11264,8 @@
     const el = document.createElement("div");
     el.className = "thinking-indicator";
     el.innerHTML = `<span class="thinking-indicator-icon">${ICON.brain}</span><span class="thinking-indicator-label">Thinking</span>${BLINK_DOTS}`;
-    el.setAttribute("aria-label", "Atlas is thinking");
-    messagesEl.appendChild(el);
+    el.setAttribute("aria-label", "Grok is thinking");
+    appendTranscriptChild(el);
     state.thinkingIndicatorEl = el;
     scrollToBottom();
   }
@@ -9440,9 +11281,11 @@
   // `.msg.thinking` block at once — so it covers replayed/old sessions too and
   // toggling is instant with no reload — and turning traces back on drops the
   // stand-in indicator.
+  let onFindPreferenceChange = () => {};
   function applyThinkingVisibility() {
     document.body.classList.toggle("thinking-hidden", !effectiveShowThinking());
     if (effectiveShowThinking()) hideThinkingIndicator();
+    onFindPreferenceChange();
   }
 
   // True when *something* already tells the user grok is mid-work or awaiting
@@ -9456,7 +11299,7 @@
       state.activeToolGroupEl ||
       (state.activeAgentEl && (state.activeAgentRaw || "").trim()) ||
       (effectiveShowThinking() && state.activeThoughtEl) ||
-      messagesEl.querySelector(".card:not(.resolved)")
+      liveTranscriptQueryAll(".card:not(.resolved)")[0]
     );
   }
 
@@ -9474,8 +11317,12 @@
   // Follow streaming output only while the user is pinned to the bottom. Once
   // they gesture away (the listener below clears state.stickToBottom) this
   // becomes a no-op, so they can read history while grok keeps thinking (#16).
+  // Replay (ACP session/load *and* in-memory buffer rebuilds) must not do this
+  // per element: each assignment forces layout, and a large load looks like
+  // infinite scroll. historyReplay end follows the pin once.
   function scrollToBottom() {
-    if (state.stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (state.replaying || !state.stickToBottom) return;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
   // The floating "Scroll to bottom" button (#28) shows exactly when we've stopped
@@ -9489,8 +11336,10 @@
 
   // Always pull the view to the bottom and re-pin. For interactive activity the
   // user needs to see regardless of where they've scrolled: permission/question
-  // cards and their own just-sent message.
+  // cards and their own just-sent message. No-op during replay — the closing
+  // historyReplay frame follows the pin instead of re-pinning.
   function forceScrollToBottom() {
+    if (state.replaying) return;
     setStickToBottom(true);
     messagesEl.scrollTop = messagesEl.scrollHeight;
     updateScrollBtn();
@@ -9519,7 +11368,7 @@
     const h = messagesEl.clientHeight;
     if (h === lastScrollportHeight) return;
     lastScrollportHeight = h;
-    if (state.stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (state.stickToBottom && !state.replaying) messagesEl.scrollTop = messagesEl.scrollHeight;
   }).observe(messagesEl);
 
   // The scrollport's own border-box does not resize when content inside an
@@ -9528,10 +11377,10 @@
   // pinned; a deliberate scroll-up has cleared stickToBottom and is untouched.
   let contentFollowFrame = 0;
   new MutationObserver(() => {
-    if (!state.stickToBottom || contentFollowFrame) return;
+    if (state.replaying || state.historyHydrating || prependLock || !state.stickToBottom || contentFollowFrame) return;
     contentFollowFrame = requestAnimationFrame(() => {
       contentFollowFrame = 0;
-      if (state.stickToBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+      if (state.stickToBottom && !state.replaying && !prependLock) messagesEl.scrollTop = messagesEl.scrollHeight;
     });
   }).observe(messagesEl, {
     childList: true,
@@ -9593,12 +11442,14 @@
         return;
       }
     }
-    if (!hasUserScrollIntent()) return;
-    setStickToBottom(shouldStickToBottom(
-      messagesEl.scrollTop, messagesEl.scrollHeight, messagesEl.clientHeight,
-      currentStickThreshold(),
-    ));
-    updateScrollBtn();
+    if (hasUserScrollIntent()) {
+      setStickToBottom(shouldStickToBottom(
+        messagesEl.scrollTop, messagesEl.scrollHeight, messagesEl.clientHeight,
+        currentStickThreshold(),
+      ));
+      updateScrollBtn();
+    }
+    maybeLoadEarlierHistory();
   });
 
   scrollBottomBtn.onclick = () => {
@@ -9634,6 +11485,20 @@
     what.textContent = title || "";
     line.appendChild(what);
     el.appendChild(line);
+  }
+
+  function resolvePermissionCardEl(el, opt, fallbackTitle) {
+    if (el._planShown) {
+      resolvePlanCardEl(el, /reject|deny/i.test(opt && opt.kind) ? "rejected" : "approved");
+      return;
+    }
+    if (el.classList.contains("plan")) {
+      // A switch_mode card with no plan text is a mode question. Do not claim
+      // a plan was approved.
+      collapsePermissionCard(el, opt && opt.kind, (opt && opt.name) || "mode change");
+      return;
+    }
+    collapsePermissionCard(el, opt && opt.kind, fallbackTitle);
   }
 
   function renderPermissionActions(el, requestId, cardTitle, rawOptions) {
@@ -9674,7 +11539,7 @@
         });
         // Collapse to one muted line and show the working indicator — grok
         // resumes the turn after the answer.
-        collapsePermissionCard(el, opt.kind, cardTitle);
+        resolvePermissionCardEl(el, opt, cardTitle);
         showGrokking();
         // Return the caret to the composer so the next message can be typed
         // immediately — answering must not orphan focus on the collapsed card
@@ -9712,12 +11577,70 @@
   }
 
   function updatePermissionOptions(requestId, options) {
-    const cards = [...messagesEl.querySelectorAll(".card.permission")];
+    const cards = liveTranscriptQueryAll(".card.permission");
     const el = cards.find((card) =>
       card.dataset.permReqId === String(requestId) &&
-      !card.classList.contains("perm-resolved")
+      !card.classList.contains("perm-resolved") &&
+      !card.classList.contains("resolved")
     );
     if (el) renderPermissionActions(el, requestId, el._permTitle, options);
+  }
+
+  function isPlanReviewTool(call) {
+    return String((call && call.kind) || "").toLowerCase() === "switch_mode";
+  }
+
+  function addPlanReviewPermissionCard(req) {
+    clearWelcome();
+    hideGrokking();
+    commitAgentTurn();
+    const planText = typeof req.plan === "string" ? req.plan : "";
+    const hasPlan = !!planText.trim();
+    const el = document.createElement("div");
+    el.className = "card plan permission";
+    el.dataset.permReqId = String(req.id);
+    el._permTitle = req.toolCall?.title || "Plan review";
+    el._planShown = hasPlan;
+
+    const title = document.createElement("div");
+    title.className = "card-title";
+    title.textContent = "Plan ready for review";
+    el.appendChild(title);
+
+    const sub = document.createElement("div");
+    sub.className = "card-subtitle";
+    sub.textContent = hasPlan
+      ? "Nothing has been written yet. Choose how to continue."
+      : "The agent asked to leave plan mode, but did not include the plan text.";
+    el.appendChild(sub);
+
+    const body = document.createElement("div");
+    body.className = "plan-body";
+    if (hasPlan) {
+      body.innerHTML = renderMarkdown(planText);
+      applyAutoDir(body);
+      renderMermaidIn(body);
+    } else {
+      body.textContent = "No plan was provided with this request.";
+    }
+    el.appendChild(body);
+
+    const { buttons, defaultIndex } =
+      renderPermissionActions(el, req.id, el._permTitle, req.options);
+    appendTranscriptChild(el);
+    el.querySelectorAll("pre").forEach((pre) => pre._syncOverflowAffordance?.());
+    forceScrollToBottom();
+    if (
+      defaultIndex >= 0 &&
+      shouldFocusPermissionCard({
+        replaying: state.replaying,
+        composing: state.composingIME,
+        composerText: input.value,
+        defaultIndex,
+      })
+    ) {
+      focusPermissionButton(buttons, defaultIndex);
+    }
   }
 
   function addPermissionCard(req) {
@@ -9727,6 +11650,10 @@
     // grok's continuation after the answer renders BELOW this card, not appended
     // to the bubble that was streaming above it.
     commitAgentTurn();
+    if (typeof req.plan === "string" || isPlanReviewTool(req.toolCall)) {
+      addPlanReviewPermissionCard(req);
+      return;
+    }
     const cardTitle = req.toolCall?.title || `permission: ${req.toolCall?.kind || "tool"}`;
     const el = document.createElement("div");
     el.className = "card permission";
@@ -9767,7 +11694,7 @@
 
     const { buttons, defaultIndex } =
       renderPermissionActions(el, req.id, cardTitle, req.options);
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     el.querySelectorAll("pre").forEach((pre) => pre._syncOverflowAffordance?.());
     forceScrollToBottom(); // a pending permission must be visible (#16)
 
@@ -9853,7 +11780,7 @@
 
   // ---------- question card (ask_user_question) ----------
 
-  // A "Atlas is asking" label + the question text, prominent. Shared by the live
+  // A "Grok is asking" label + the question text, prominent. Shared by the live
   // and restored cards so they look identical.
   function buildQuestionHead(el, headingText) {
     const title = document.createElement("div");
@@ -9896,7 +11823,7 @@
     const el = document.createElement("div");
     el.className = "card question";
 
-    const title = buildQuestionHead(el, "Atlas is asking");
+    const title = buildQuestionHead(el, "Grok is asking");
 
     // selections[i] = array of chosen labels for question i.
     const selections = questions.map(() => []);
@@ -10048,7 +11975,7 @@
     };
     el.appendChild(skip);
 
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     forceScrollToBottom(); // a pending question must be visible (#16)
   }
 
@@ -10153,7 +12080,7 @@
       block.appendChild(qText);
       el.appendChild(block);
     });
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     if (answerText) fillRestoredAnswer(el, answerText);
     scrollToBottom();
     return el;
@@ -10281,7 +12208,7 @@
     feedback.className = "plan-feedback";
     feedback.rows = 2;
     feedback.setAttribute("dir", "auto");
-    feedback.placeholder = "Optional comment — Atlas decides what to do with it";
+    feedback.placeholder = "Optional comment — Grok decides what to do with it";
     el.appendChild(feedback);
 
     const actions = document.createElement("div");
@@ -10307,7 +12234,7 @@
     actions.appendChild(mk("Reject", "", "rejected", true));
     actions.appendChild(mk("Cancel", "secondary", "abandoned", true));
     el.appendChild(actions);
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     scrollToBottom();
   }
 
@@ -10361,7 +12288,7 @@
       el.appendChild(status);
     }
 
-    messagesEl.appendChild(el);
+    appendTranscriptChild(el);
     scrollToBottom();
   }
 
@@ -10495,7 +12422,7 @@
         : "";
       const label = range ? `${fileName}:${range}` : fileName;
       // Explicit attachments — files, images, AND selections sent via the "Add
-      // Selection to Atlas" command — get their own removable row at the top,
+      // Selection to Grok" command — get their own removable row at the top,
       // like any other attached file. Only the ambient active-editor chip
       // (implicit — whole file, or its live selection) stays in the bottom
       // toolbar with the hide/eye toggle.
@@ -10567,27 +12494,28 @@
     donutLabel.textContent = `${toK(used)}/${toK(max)}`;
     donutLabel.title = `${used.toLocaleString()} / ${max.toLocaleString()} tokens`;
     donutEl.title = `Context usage — ${used.toLocaleString()} / ${max.toLocaleString()} tokens`;
+    // Occupancy can move without a contextUsage frame (promptComplete,
+    // modelChanged). Re-paint, then re-fetch session/info while the popover
+    // is open so the group stays and catches up instead of vanishing.
+    if (!contextPopover.hidden) {
+      renderContextPopover();
+      if (!contextBreakdownIsCurrent(state.contextBreakdown, used, state.contextWindow)) {
+        vscode.postMessage({ type: "refreshContextDetails" });
+      }
+    }
   }
 
   // ---------- slash autocomplete ----------
 
   function updateSlash() {
-    const m = (input.value.slice(0, input.selectionStart || 0)).match(/(?:^|\n)\/(\S*)$/);
-    if (!m) { slashPopover.hidden = true; state.slashFiltered = []; return; }
-    const q = m[1].toLowerCase();
-    // Prefix first, then mid-name substring; advertised order within each tier.
-    if (!q) {
-      state.slashFiltered = state.commands;
-    } else {
-      const prefix = [];
-      const substring = [];
-      for (const c of state.commands) {
-        const name = c.name.toLowerCase();
-        if (name.startsWith(q)) prefix.push(c);
-        else if (name.includes(q)) substring.push(c);
-      }
-      state.slashFiltered = prefix.concat(substring);
-    }
+    // Skills load anywhere in the prompt; commands dispatch only at position 0
+    // of the text block (owner-measured; grok `available_commands` stamps
+    // `_meta.scope`+`_meta.path` on skills). Offer accordingly — #110.
+    const hit = getSlashQuery(input.value, input.selectionStart || 0);
+    if (!hit) { slashPopover.hidden = true; state.slashFiltered = []; state.slashQuery = ""; return; }
+    const pool = hit.atStart ? state.commands : state.commands.filter(isAdvertisedSkill);
+    state.slashQuery = hit.query;
+    state.slashFiltered = filterCommands(pool, hit.query);
     if (!state.slashFiltered.length) { slashPopover.hidden = true; return; }
     state.slashActive = 0;
     renderSlash();
@@ -10597,18 +12525,19 @@
   function renderSlash() {
     slashPopover.innerHTML = "";
     let activeEl = null;
+    const q = state.slashQuery || "";
     state.slashFiltered.forEach((cmd, i) => {
       const el = document.createElement("div");
       el.className = `slash-item${i === state.slashActive ? " active" : ""}`;
       if (i === state.slashActive) activeEl = el;
       const name = document.createElement("div");
       name.className = "slash-name";
-      name.textContent = `/${cmd.name}`;
+      appendHighlightedText(name, `/${cmd.name}`, q);
       el.appendChild(name);
       if (cmd.description) {
         const d = document.createElement("div");
         d.className = "slash-desc";
-        d.textContent = cmd.description;
+        appendHighlightedText(d, cmd.description, q);
         el.appendChild(d);
       }
       el.onclick = () => pickSlash(cmd);
@@ -10618,11 +12547,12 @@
   }
 
   function pickSlash(cmd) {
-    input.value = input.value.replace(/(?:^|\n)\/(\S*)$/, (full) =>
-      full.startsWith("\n") ? `\n/${cmd.name} ` : `/${cmd.name} `,
-    );
+    const next = applySlashPick(input.value, input.selectionStart || 0, cmd.name);
+    input.value = next.text;
+    input.selectionStart = input.selectionEnd = next.caret;
     slashPopover.hidden = true;
     input.focus();
+    renderInputHighlight();
   }
 
   // ---------- "@" file autocomplete ----------
@@ -10711,18 +12641,30 @@
     modeBtn.disabled = state.busyLocked;
     modeBtn.classList.toggle("disabled", state.busyLocked);
     modeBtn.title = modeButtonTitle(state.currentModeId);
-    if (!state.busy) {
+    if (state.onboardingMode === "no-project") {
+      sendBtn.innerHTML = ICON.arrowUp;
+      sendBtn.title = "Add a project folder first";
+      sendBtn.disabled = true;
+      if (newBtn) {
+        newBtn.disabled = true;
+        newBtn.title = "Add a project folder first";
+      }
+    } else if (!state.busy) {
       sendBtn.innerHTML = ICON.arrowUp;
       sendBtn.title = "Send";
       sendBtn.disabled = false;
+      if (newBtn) {
+        newBtn.disabled = false;
+        newBtn.title = "New session";
+      }
     } else if (state.busyLocked) {
       sendBtn.innerHTML = ICON.spinner;
       sendBtn.title = "Initializing…";
       sendBtn.classList.add("initializing");
       sendBtn.disabled = true;
-    } else if (input.value.trim()) {
+    } else if (composerHasSendIntent(input.value, state.chips)) {
       sendBtn.innerHTML = ICON.arrowUp;
-      sendBtn.title = "Queue — sends when Atlas finishes";
+      sendBtn.title = "Queue — sends when Grok finishes";
       sendBtn.disabled = false;
     } else {
       sendBtn.innerHTML = ICON.square;
@@ -10732,18 +12674,28 @@
     }
   }
 
-  // Queue whatever is typed for send-at-turn-end. Returns true if something was
-  // queued. The one busy-path helper both Enter and the button click funnel
-  // through, so typed text can never turn into a cancel (#37).
+  // Queue whatever is staged for send-at-turn-end. Returns true if something was
+  // queued (or refused with a reason — never a cancel). The one busy-path helper
+  // both Enter and the button click funnel through, so send-intent can never
+  // turn into a cancel (#37). A composer holding only an attachment is send-intent.
   function queueFromComposer() {
+    if (state.pendingPaste > 0) return true;
     const t = input.value.trim();
-    if (!t) return false;
+    const chips = explicitVisibleChips(state.chips);
+    if (!composerHasSendIntent(t, state.chips)) return false;
+    // Everything or nothing: an older host would ignore extra chips and queue
+    // the text alone. Refuse rather than silently drop attachments.
+    if (chips.length && !(state.hostCaps && state.hostCaps.queueSendChips)) {
+      addError("This host cannot queue attachments. Wait until Grok finishes, then send.");
+      return true;
+    }
     stopVoiceForManualSend();
-    queueOutgoing(t);
+    queueOutgoing(t, chips);
     input.value = "";
     renderInputHighlight(); // also flips the busy button back to Stop (empty composer)
     updateSlash();
     updateMention();
+    updateSendButton();
     return true;
   }
 
@@ -10801,6 +12753,7 @@
   }
 
   function sendOrStop() {
+    if (state.onboardingMode === "no-project") return;
     if (state.busy) {
       // Typed text signals send-intent — queue it; text present never cancels.
       if (queueFromComposer()) return;
@@ -10814,12 +12767,12 @@
       // cancelled turn actually ends (agentEnd / agentError), so the button
       // stays as "Stop" until the CLI confirms.
       if (state.sendQueue.length) {
-        input.value = state.sendQueue.join("\n\n");
+        input.value = queuedSendsText(state.sendQueue);
         state.sendQueue = [];
         state.queuedSubmissionPending = false;
         state.queuedSubmissionRejected = false;
         renderQueuedBlocks();
-        vscode.postMessage({ type: "clearQueuedSends" });
+        vscode.postMessage({ type: "clearQueuedSends", restore: true });
         renderInputHighlight();
       }
       vscode.postMessage({ type: "cancel" });
@@ -10891,7 +12844,7 @@
       micBtn.innerHTML = ICON.spinner;
       micBtn.title = "Transcribing…";
       micBtn.disabled = true;
-    } else if (IS_REMOTE && !state.voiceConfigured) {
+    } else if (IS_REMOTE && !state.voiceConfigured && !voiceNeedsGrokAccount()) {
       micBtn.innerHTML = ICON.mic;
       micBtn.title = "Voice dictation is unavailable because the host has no Speech-to-Text credential";
       micBtn.disabled = true;
@@ -10899,11 +12852,28 @@
       micBtn.innerHTML = ICON.mic;
       micBtn.title = state.voiceConfigured
         ? "Voice control"
-        : "Voice control — click to set up (needs an xAI API key)";
+        : voiceNeedsGrokAccount()
+          ? "Voice needs Grok connected"
+          : "Voice control — click to set up (needs an xAI API key)";
       micBtn.disabled = false;
     }
-    // "needs setup" dot only when idle and no key is configured.
-    micBtn.classList.toggle("needs-setup", !IS_REMOTE && state.mic === "idle" && !state.voiceConfigured);
+    // "needs setup" dot only when idle, clickable, and no key is configured.
+    micBtn.classList.toggle("needs-setup", !micBtn.disabled && state.mic === "idle" && !state.voiceConfigured);
+  }
+
+  function voiceNeedsGrokAccount() {
+    return !!state.providersKnown && !state.voiceConfigured
+      && !state.providers.some((provider) => provider.id === "grok" && provider.connected);
+  }
+
+  function explainVoiceNeedsGrok() {
+    return uiConfirm({
+      title: "Voice needs Grok",
+      body: "Voice uses your Grok account for speech-to-text. Connect Grok to use it.",
+      confirmLabel: "Connect Grok",
+    }).then((ok) => {
+      if (ok) openSettingsCategory("providers");
+    });
   }
 
   function setMic(event) {
@@ -10917,6 +12887,10 @@
       return;
     }
     if (state.mic === "idle") {
+      if (voiceNeedsGrokAccount()) {
+        void explainVoiceNeedsGrok();
+        return;
+      }
       // The host is the authority on whether voice is configured, but the
       // anchors must be captured before every start request it receives.
       captureVoiceInsertion();
@@ -11126,6 +13100,10 @@
       remoteMicStart.cancelled = true;
       setMic("error");
     } else if (state.mic === "idle") {
+      if (voiceNeedsGrokAccount()) {
+        void explainVoiceNeedsGrok();
+        return;
+      }
       void startBrowserMic();
     }
   }
@@ -11286,7 +13264,7 @@
   }
 
   // ---------- queued sends (#37) ----------
-  // Messages composed while Atlas is busy are HOST-owned per session (like
+  // Messages composed while Grok is busy are HOST-owned per session (like
   // chips): the webview posts queueSend and re-renders from the queuedSends
   // snapshot, so the queue survives focus switches and the HOST flushes it as
   // ONE combined prompt when the session's turn ends — even while backgrounded.
@@ -11298,12 +13276,20 @@
   // (session-start priming — no session id to interject against yet), a CLI that
   // can't interject, and (defensively) not being busy at all. Any of those fall
   // back to the queue, which is the safe home for the text either way.
-  function queueOutgoing(text) {
-    if (state.steerByDefault && state.steerSupported && state.busy && !state.busyLocked) {
-      vscode.postMessage({ type: "steerSend", text });
+  // Attachments ride `_x.ai/interject` `content` (same encoder as a send).
+  function queueOutgoing(text, chips) {
+    const attachments = Array.isArray(chips) ? chips : explicitVisibleChips(state.chips);
+    if (
+      state.steerByDefault && state.steerSupported && steerableProvider() && state.busy && !state.busyLocked
+    ) {
+      const msg = { type: "steerSend", text };
+      if (attachments.length) msg.chips = attachments;
+      vscode.postMessage(msg);
       return;
     }
-    vscode.postMessage({ type: "queueSend", text });
+    const msg = { type: "queueSend", text };
+    if (state.hostCaps && state.hostCaps.queueSendChips) msg.chips = attachments;
+    vscode.postMessage(msg);
   }
 
   // THE pending user block (the host keeps at most one queued message —
@@ -11325,21 +13311,23 @@
    *  queued something. A "no" leaves a stale placeholder beside the queued block
    *  until the next refresh, which is cosmetic; a wrong "yes" would retire a
    *  submission that is still in flight, which is not. */
-  function queueHoldsContribution(items, text) {
+  function queueHoldsContribution(entries, text) {
     if (!text) return false;
-    for (var i = 0; i < items.length; i++) {
-      if (String(items[i] || "") === text) return true;
+    for (var i = 0; i < entries.length; i++) {
+      const entryText = typeof entries[i] === "string" ? entries[i] : (entries[i] && entries[i].text) || "";
+      if (entryText === text) return true;
     }
     return false;
   }
 
   function renderQueuedBlocks() {
     let wrap = state.queuedWrapEl;
-    // Defensive join: the host's invariant is a single entry, but render
-    // whatever arrives the way the flush would send it.
+    // One visual block: the flush is still one combined prompt. Text is joined
+    // the way it will send; chips from every contribution are shown on it.
     const rejected = !!state.rejectedSubmissionText;
-    const text = rejected ? state.rejectedSubmissionText : state.sendQueue.join("\n\n");
-    if (!text) {
+    const text = rejected ? state.rejectedSubmissionText : queuedSendsText(state.sendQueue);
+    const chips = rejected ? [] : queuedSendsChips(state.sendQueue);
+    if (!text && !chips.length) {
       if (wrap) wrap.remove();
       state.queuedWrapEl = null;
       return;
@@ -11361,7 +13349,7 @@
     tag.innerHTML = `${ICON.clock}<span>${state.queuedSubmissionRejected || rejected ? "Not sent" : "Queued"}</span>`;
     tag.title = state.queuedSubmissionRejected || rejected
       ? "The relay rejected this prompt. Edit it to retry, or remove it."
-      : "Sends when Atlas finishes";
+      : "Sends when Grok finishes";
     const actions = document.createElement("span");
     actions.className = "queued-actions";
     const editBtn = document.createElement("button");
@@ -11377,7 +13365,7 @@
         state.rejectedSubmissionText = "";
         renderQueuedBlocks();
       } else {
-        vscode.postMessage({ type: "dequeueSend", index: 0 });
+        vscode.postMessage({ type: "clearQueuedSends", restore: true });
       }
       input.value = input.value.trim() ? text + "\n\n" + input.value : text;
       renderInputHighlight();
@@ -11394,17 +13382,22 @@
         state.rejectedSubmissionText = "";
         renderQueuedBlocks();
       } else {
-        vscode.postMessage({ type: "dequeueSend", index: 0 });
+        vscode.postMessage({ type: "clearQueuedSends" });
       }
     };
     // Steer (#52): send this into the RUNNING turn instead of waiting for it.
     // Rendered whenever the CLI supports it; `body.turn-busy` (updateSendButton)
     // does the show/hide, so a replay that delivers queuedSends before agentStart
     // still ends up with the button once busy lands.
-    if (state.steerSupported) {
+    // Not for Claude Code: it has no mid-turn interject, so the button would
+    // offer to do something the agent cannot do. Its messages stay scheduled.
+    // Attachments ride `_x.ai/interject` `content` — the host encodes them the
+    // same way as a send. An older CLI that ignores `content` gets the whole
+    // item queued rather than a silent drop.
+    if (state.steerSupported && steerableProvider()) {
       const steerBtn = document.createElement("button");
       steerBtn.className = "queued-action queued-steer";
-      steerBtn.title = "Steer — submit now without interrupting Atlas";
+      steerBtn.title = "Steer — submit now without interrupting Grok";
       steerBtn.innerHTML = `${ICON.cornerDownRight}<span>Steer</span>`;
       // pointerdown, NOT click: the queued block is pinned to the end of the
       // chat and every streamed chunk runs scrollToBottom, so while the agent is
@@ -11416,8 +13409,12 @@
       steerBtn.onpointerdown = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        vscode.postMessage({ type: "dequeueSend", index: 0 });
-        vscode.postMessage({ type: "steerSend", text });
+        // steerSend first so the host can snapshot the queue before this
+        // clear races (webview handlers are not serialized across awaits).
+        const msg = { type: "steerSend", text, fromQueue: true };
+        if (chips.length) msg.chips = chips;
+        vscode.postMessage(msg);
+        vscode.postMessage({ type: "clearQueuedSends" });
       };
       actions.appendChild(steerBtn);
     }
@@ -11425,17 +13422,858 @@
     actions.appendChild(rmBtn);
     hdr.appendChild(tag);
     hdr.appendChild(actions);
-    const body = document.createElement("div");
-    body.className = "queued-text";
-    body.textContent = text;
-    body.title = text; // body is line-clamped; full text on hover
+    // Same order as a sent user bubble (`addMessage`): header, then text, then
+    // chips. The pending block is a preview of that bubble, not of the composer.
     bubble.appendChild(hdr);
-    bubble.appendChild(body);
+    if (text) {
+      const body = document.createElement("div");
+      body.className = "queued-text";
+      body.textContent = text;
+      body.title = text; // body is line-clamped; full text on hover
+      bubble.appendChild(body);
+    }
+    if (chips.length) {
+      const chipsRow = document.createElement("div");
+      chipsRow.className = "msg-chips";
+      for (const chip of chips) chipsRow.appendChild(makeMsgChipTag(chip.relPath, chip));
+      bubble.appendChild(chipsRow);
+    }
     msg.appendChild(bubble);
     wrap.appendChild(msg);
-    messagesEl.appendChild(wrap); // (re)pin to the end of the conversation
+    appendTranscriptChild(wrap); // (re)pin to the end of the conversation
     scrollToBottom();
   }
+
+  // ---------- find in conversation (#99) ----------
+  // One in-webview find serves VS Code, desktop, and the browser client.
+  // VS Code's enableFindWidget is a createWebviewPanel API and does not exist
+  // on WebviewView; even if it did it would do nothing for desktop or AFK Pilot.
+  //
+  // Paint uses CSS.highlights + Range. Wrapping matches in <mark> would force
+  // a full re-layout of a multi-megabyte transcript and detach the click
+  // handlers tool rows, diffs, and images depend on.
+  //
+  // Collapsed tool / command / subagent rows stay in the DOM (`hidden` / class),
+  // so a TreeWalker reaches them. A match inside one expands that row. Content
+  // hidden by a standing preference (`body.thinking-hidden` — "Show thinking
+  // traces" off, or Knowledge work forcing that off) is counted but kept out
+  // of next/prev until the user clicks the hint. Expanding a collapsed row is
+  // fine; silently flipping a preference is not.
+  //
+  // Navigation scrolls the match without calling forceScrollToBottom or
+  // noteUserScrollIntent. Programmatic scroll then cannot re-arm stick-to-bottom,
+  // so a live turn arriving while find is open cannot yank the view off the hit.
+
+  const FIND_DEBOUNCE_MS = 80;
+  const FIND_SLICE_MS = 8;
+  const FIND_QUERY_MAX = 200;
+  const FIND_MAX_MATCHES = 10000;
+  const FIND_HL = "grok-find";
+  const FIND_HL_CUR = "grok-find-current";
+
+  const find = {
+    open: false,
+    bar: null,
+    input: null,
+    countEl: null,
+    hiddenBtn: null,
+    caseBtn: null,
+    regexBtn: null,
+    prevBtn: null,
+    nextBtn: null,
+    query: "",
+    caseSensitive: false,
+    regex: false,
+    includeHidden: false,
+    invalid: false,
+    matches: [],
+    nav: [],
+    hiddenCount: 0,
+    index: -1,
+    timer: 0,
+    sliceTimer: 0,
+    gen: 0,
+    lastFocus: null,
+    memoryBySession: new Map(),
+    lastHaystackKey: "",
+    lastNodes: null,
+    lastQuery: "",
+    lastFlags: "",
+    lastComplete: false,
+    lastCapped: false,
+  };
+
+  function findHasHighlightApi() {
+    return !!(typeof CSS !== "undefined" && CSS.highlights && typeof Highlight === "function");
+  }
+
+  function findSessionKey() {
+    return state.activeSessionId || "";
+  }
+
+  function rememberFindQuery() {
+    find.memoryBySession.set(findSessionKey(), {
+      query: find.query,
+      caseSensitive: find.caseSensitive,
+      regex: find.regex,
+    });
+  }
+
+  function recalledFindQuery() {
+    return find.memoryBySession.get(findSessionKey()) || null;
+  }
+
+  function transcriptSelectionText() {
+    const sel = typeof window.getSelection === "function" ? window.getSelection() : null;
+    if (!sel || sel.isCollapsed || !sel.anchorNode) return "";
+    if (!messagesEl.contains(sel.anchorNode)) return "";
+    const text = String(sel.toString() || "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > FIND_QUERY_MAX) return "";
+    return text;
+  }
+
+  function isMacPlatform() {
+    const plat = typeof navigator !== "undefined" ? (navigator.platform || "") : "";
+    if (/Mac|iPhone|iPad|iPod/.test(plat)) return true;
+    const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
+    return /Mac OS X/.test(ua);
+  }
+
+  function isFindHotkey(e) {
+    // Remote: the browser owns Ctrl/Cmd+F (and the primary device is a phone).
+    if (IS_REMOTE) return false;
+    if (e.altKey || e.shiftKey) return false;
+    if (String(e.key).toLowerCase() !== "f") return false;
+    // Cmd+F is find on every desk. Ctrl+F is find except on Mac, where it is
+    // grok.composerForward (package.json, composer-focused). Do not steal it.
+    if (e.metaKey && !e.ctrlKey) return true;
+    if (e.ctrlKey && !e.metaKey) return !isMacPlatform();
+    return false;
+  }
+
+  /**
+   * Payload bodies find deliberately does NOT search (owner, 2026-08-19).
+   * `.tool-item-details` is the one container every expandable payload renders
+   * into — tool IN/OUT, command IN/OUT, MCP IN/OUT, and the file-edit diffs
+   * (`.tool-item-details.tool-item-diff`, whose content is `.tool-diff-region`).
+   *
+   * The issue asked for the opposite ("including text inside collapsed tool and
+   * command rows"), and that is what shipped first. In use it made results
+   * chaotic: a search for an ordinary word matched dozens of times inside
+   * command output and diff hunks, burying the prose hits, and a diff match is
+   * not much use anyway because the full diff is not on screen. Row LABELS stay
+   * searchable, so "find the command I ran" and "find that file path" still
+   * work — it is only the payload bodies that drop out.
+   */
+  const FIND_SKIP_SEL = ".tool-item-details, .tool-diff-region";
+
+  function findCollectNodes() {
+    const nodes = [];
+    const root = messagesEl;
+    if (!root) return nodes;
+    const SHOW_TEXT = (typeof NodeFilter !== "undefined" && NodeFilter.SHOW_TEXT) || 4;
+    const REJECT = (typeof NodeFilter !== "undefined" && NodeFilter.FILTER_REJECT) || 2;
+    const ACCEPT = (typeof NodeFilter !== "undefined" && NodeFilter.FILTER_ACCEPT) || 1;
+    if (typeof document.createTreeWalker === "function") {
+      const walker = document.createTreeWalker(root, SHOW_TEXT, {
+        acceptNode(node) {
+          if (!node || !node.data) return REJECT;
+          const parent = node.parentElement;
+          if (!parent) return REJECT;
+          const tag = parent.tagName;
+          if (tag === "SCRIPT" || tag === "STYLE") return REJECT;
+          if (parent.closest("#welcome, .welcome")) return REJECT;
+          if (parent.closest("[" + PENDING_CLEAR_ATTR + "]")) return REJECT;
+          if (parent.closest(FIND_SKIP_SEL)) return REJECT;
+          return ACCEPT;
+        },
+      });
+      let n = walker.nextNode();
+      while (n) {
+        nodes.push(n);
+        n = walker.nextNode();
+      }
+      return nodes;
+    }
+    const stack = [root];
+    while (stack.length) {
+      const el = stack.pop();
+      if (!el) continue;
+      if (el.nodeType === 3) {
+        if (el.data) nodes.push(el);
+        continue;
+      }
+      if (el.nodeType !== 1) continue;
+      const tag = el.tagName;
+      if (tag === "SCRIPT" || tag === "STYLE") continue;
+      if (el.id === "welcome" || el.classList.contains("welcome")) continue;
+      if (el.getAttribute && el.getAttribute(PENDING_CLEAR_ATTR) === "1") continue;
+      if (typeof el.matches === "function" && el.matches(FIND_SKIP_SEL)) continue;
+      for (let i = el.childNodes.length - 1; i >= 0; i--) stack.push(el.childNodes[i]);
+    }
+    return nodes;
+  }
+
+  function findMatchIsHidden(node) {
+    // Preference-hidden, not collapsed. Collapsed tool rows stay in the
+    // navigation set; thinking traces with body.thinking-hidden do not.
+    if (!document.body.classList.contains("thinking-hidden")) return false;
+    const el = node.nodeType === 3 ? node.parentElement : node;
+    return !!(el && el.closest(".msg.thinking"));
+  }
+
+  function compileFindRegex(source, caseSensitive) {
+    if (source.length > FIND_QUERY_MAX) return { error: "long" };
+    // Nested quantifiers are the usual catastrophic-backtracking shape.
+    // Treat as no-match rather than hanging the UI on a 5 MB haystack.
+    if (/\([^()]*[+*][^()]*\)[+*{]/.test(source)) return { error: "unsafe" };
+    try {
+      // `m` so ^ / $ mean line (the issue's `^_+build$` example), not the
+      // whole concatenated transcript.
+      return { re: new RegExp(source, caseSensitive ? "gm" : "gim") };
+    } catch {
+      return { error: "invalid" };
+    }
+  }
+
+  function searchNodeLiteral(node, query, caseSensitive, into) {
+    const raw = node.data;
+    const text = caseSensitive ? raw : raw.toLowerCase();
+    const q = caseSensitive ? query : query.toLowerCase();
+    if (!q) return;
+    let i = 0;
+    while (i <= text.length - q.length) {
+      const found = text.indexOf(q, i);
+      if (found < 0) break;
+      into.push({ node, start: found, end: found + q.length });
+      if (into.length >= FIND_MAX_MATCHES) return;
+      i = found + q.length;
+    }
+  }
+
+  function searchNodeRegex(node, re, into) {
+    const text = node.data;
+    re.lastIndex = 0;
+    let m = re.exec(text);
+    while (m) {
+      if (!m[0]) {
+        re.lastIndex += 1;
+        if (re.lastIndex > text.length) break;
+        m = re.exec(text);
+        continue;
+      }
+      into.push({ node, start: m.index, end: m.index + m[0].length });
+      if (into.length >= FIND_MAX_MATCHES) return;
+      m = re.exec(text);
+    }
+  }
+
+  function canNarrowFind(nodes, query) {
+    if (find.regex || !find.lastComplete || find.invalid) return false;
+    if (!find.lastQuery || !query.startsWith(find.lastQuery)) return false;
+    if (find.lastFlags !== findFlagsKey()) return false;
+    if (find.lastNodes !== nodes) return false;
+    return true;
+  }
+
+  function findFlagsKey() {
+    return (find.caseSensitive ? "c" : "") + (find.regex ? "r" : "") + (find.includeHidden ? "h" : "");
+  }
+
+  function rangeForFindMatch(m) {
+    if (!m || !m.node || !m.node.parentNode) return null;
+    try {
+      const r = document.createRange();
+      const len = m.node.data ? m.node.data.length : 0;
+      r.setStart(m.node, Math.max(0, Math.min(m.start, len)));
+      r.setEnd(m.node, Math.max(0, Math.min(m.end, len)));
+      return r;
+    } catch {
+      return null;
+    }
+  }
+
+  function clearFindHighlights() {
+    if (findHasHighlightApi()) {
+      try {
+        CSS.highlights.delete(FIND_HL);
+        CSS.highlights.delete(FIND_HL_CUR);
+      } catch { /* ignore */ }
+    }
+    for (const el of messagesEl.querySelectorAll(".msg.thinking.find-reveal")) {
+      el.classList.remove("find-reveal");
+    }
+  }
+
+  function paintFindHighlights() {
+    clearFindHighlights();
+    if (!find.open || !find.nav.length) return;
+    if (!findHasHighlightApi()) return;
+    const others = new Highlight();
+    const current = new Highlight();
+    for (let i = 0; i < find.nav.length; i++) {
+      const range = rangeForFindMatch(find.nav[i]);
+      if (!range) continue;
+      if (i === find.index) current.add(range);
+      else others.add(range);
+    }
+    try {
+      CSS.highlights.set(FIND_HL, others);
+      CSS.highlights.set(FIND_HL_CUR, current);
+    } catch { /* older Highlight impl */ }
+  }
+
+  function updateFindChrome() {
+    if (!find.bar) return;
+    const q = find.query;
+    const n = find.nav.length;
+    const hidden = find.hiddenCount;
+    if (find.input) {
+      find.input.classList.toggle("find-input-invalid", !!find.invalid);
+      find.input.setAttribute("aria-invalid", find.invalid ? "true" : "false");
+    }
+    if (find.countEl) {
+      if (!q) find.countEl.textContent = "";
+      else if (find.invalid) find.countEl.textContent = "—";
+      else if (!n) find.countEl.textContent = find.lastCapped ? "0/" + FIND_MAX_MATCHES + "+" : "0/0";
+      else {
+        const cap = find.lastCapped ? "+" : "";
+        find.countEl.textContent = (find.index + 1) + "/" + n + cap;
+      }
+    }
+    if (find.hiddenBtn) {
+      if (!q || find.invalid || hidden <= 0) {
+        find.hiddenBtn.hidden = true;
+      } else {
+        find.hiddenBtn.hidden = false;
+        find.hiddenBtn.setAttribute("aria-pressed", find.includeHidden ? "true" : "false");
+        find.hiddenBtn.textContent = find.includeHidden
+          ? "Including " + hidden + " in hidden thinking traces"
+          : hidden + " in hidden thinking traces";
+        find.hiddenBtn.title = find.includeHidden
+          ? "Stop navigating matches inside hidden thinking traces"
+          : "Include matches inside hidden thinking traces";
+      }
+    }
+    if (find.caseBtn) find.caseBtn.setAttribute("aria-pressed", find.caseSensitive ? "true" : "false");
+    if (find.regexBtn) find.regexBtn.setAttribute("aria-pressed", find.regex ? "true" : "false");
+    const dead = !n;
+    if (find.prevBtn) find.prevBtn.disabled = dead;
+    if (find.nextBtn) find.nextBtn.disabled = dead;
+  }
+
+  function rebuildFindNav() {
+    const nav = [];
+    let hidden = 0;
+    for (const m of find.matches) {
+      const isHidden = findMatchIsHidden(m.node);
+      if (isHidden) hidden += 1;
+      if (!isHidden || find.includeHidden) nav.push(m);
+    }
+    find.nav = nav;
+    find.hiddenCount = hidden;
+    if (!nav.length) find.index = -1;
+    else if (find.index < 0 || find.index >= nav.length) find.index = 0;
+  }
+
+  function revealFindMatch(m) {
+    if (!m || !m.node) return;
+    const el = m.node.parentElement;
+    if (!el) return;
+    const thinking = el.closest(".msg.thinking");
+    if (thinking) {
+      thinking.classList.add("find-reveal");
+      const body = thinking.querySelector(".thinking-body");
+      if (body && body.hidden) {
+        body.hidden = false;
+        thinking.classList.add("expanded");
+      }
+    }
+    const group = el.closest(".tool-group");
+    if (group) setGroupExpanded(group, true);
+    const details = el.closest(".tool-item-details");
+    if (details) {
+      const row = details.closest(".has-details");
+      if (row) setDetailExpanded(row, true);
+    }
+    const sub = el.closest(".subagent-card");
+    if (sub) {
+      const stream = sub.querySelector(".subagent-stream");
+      const result = sub.querySelector(".subagent-result");
+      if (stream && stream.contains(el)) stream.hidden = false;
+      if (result && result.contains(el)) result.hidden = false;
+    }
+  }
+
+  function scrollToFindMatch(m) {
+    // Unpin first. A programmatic scrollTop fires `scroll`, but that handler
+    // only recomputes stick after a user gesture (wheel/touch/keys). If stick
+    // stayed true, the content MutationObserver / ResizeObserver would yank
+    // back to the bottom the moment we expand a tool row or a chunk arrives.
+    setStickToBottom(false);
+    updateScrollBtn();
+    const range = rangeForFindMatch(m);
+    // Centre the MATCH, not the element containing it. scrollIntoView centres
+    // the BLOCK, and a message body wraps to well over a screen on a phone —
+    // measured at 1017px inside a 727px viewport. Centring that block puts the
+    // phrase off the TOP when it sits near the block's start and off the BOTTOM
+    // when it sits near the end, so stepping next/prev showed some hits and
+    // scrolled past others. Both directions reproduced under Pixel-5 emulation.
+    const scroller = messagesEl;
+    const rect = range && typeof range.getBoundingClientRect === "function"
+      ? range.getBoundingClientRect()
+      : null;
+    if (scroller && rect && (rect.height > 0 || rect.width > 0)
+        && typeof scroller.getBoundingClientRect === "function") {
+      const box = scroller.getBoundingClientRect();
+      const centred = (scroller.clientHeight - rect.height) / 2;
+      const delta = (rect.top - box.top) - centred;
+      if (delta) scroller.scrollTop += delta;
+      return;
+    }
+    // No usable Range geometry (jsdom, or a detached node): the block is still
+    // a better answer than nothing.
+    const target = (range && range.startContainer && range.startContainer.parentElement) || m.node.parentElement;
+    if (!target || typeof target.scrollIntoView !== "function") return;
+    try {
+      target.scrollIntoView({ block: "center", inline: "nearest" });
+    } catch {
+      try { target.scrollIntoView(true); } catch { /* ignore */ }
+    }
+  }
+
+  function goToFindMatch(index, opts) {
+    if (!find.nav.length) {
+      find.index = -1;
+      paintFindHighlights();
+      updateFindChrome();
+      return;
+    }
+    const n = find.nav.length;
+    find.index = ((index % n) + n) % n;
+    const m = find.nav[find.index];
+    revealFindMatch(m);
+    if (!opts || opts.scroll !== false) {
+      // Unpin synchronously. The actual scroll waits a frame so a just-expanded
+      // [hidden] row can layout; if stick stayed true until then, the content
+      // MutationObserver would yank back to the bottom first.
+      setStickToBottom(false);
+      updateScrollBtn();
+      requestAnimationFrame(() => scrollToFindMatch(m));
+    }
+    paintFindHighlights();
+    updateFindChrome();
+  }
+
+  function findStep(dir) {
+    if (!find.nav.length) return;
+    goToFindMatch(find.index < 0 ? 0 : find.index + dir);
+  }
+
+  function finishFindSearch(matches, invalid, capped) {
+    find.matches = matches;
+    find.invalid = !!invalid;
+    find.lastCapped = !!capped;
+    find.lastComplete = !invalid;
+    find.lastQuery = find.query;
+    find.lastFlags = findFlagsKey();
+    rebuildFindNav();
+    if (find.nav.length) {
+      if (find.index < 0) find.index = 0;
+      goToFindMatch(find.index, { scroll: false });
+    } else {
+      find.index = -1;
+      paintFindHighlights();
+      updateFindChrome();
+    }
+  }
+
+  function cancelFindSearch() {
+    if (find.timer) {
+      clearTimeout(find.timer);
+      find.timer = 0;
+    }
+    if (find.sliceTimer) {
+      clearTimeout(find.sliceTimer);
+      find.sliceTimer = 0;
+    }
+    find.gen += 1;
+  }
+
+  function runFindSearchNow() {
+    cancelFindSearch();
+    const query = find.query;
+    if (!find.open) return;
+    if (!query) {
+      find.matches = [];
+      find.nav = [];
+      find.hiddenCount = 0;
+      find.invalid = false;
+      find.lastComplete = false;
+      find.lastCapped = false;
+      find.index = -1;
+      clearFindHighlights();
+      updateFindChrome();
+      return;
+    }
+    if (state.historyPrefix && state.historyPrefix.length) expandHistoryAll();
+    const nodes = findCollectNodes();
+    find.lastNodes = nodes;
+    if (canNarrowFind(nodes, query)) {
+      const next = [];
+      const q = find.caseSensitive ? query : query.toLowerCase();
+      for (const m of find.matches) {
+        if (!m.node || !m.node.parentNode) continue;
+        const slice = m.node.data.slice(m.start, m.start + q.length);
+        const have = find.caseSensitive ? slice : slice.toLowerCase();
+        if (have === q) next.push({ node: m.node, start: m.start, end: m.start + q.length });
+      }
+      finishFindSearch(next, false, false);
+      return;
+    }
+    if (find.regex) {
+      const compiled = compileFindRegex(query, find.caseSensitive);
+      if (compiled.error) {
+        finishFindSearch([], true, false);
+        return;
+      }
+      const gen = find.gen;
+      const acc = [];
+      let i = 0;
+      const step = () => {
+        if (gen !== find.gen) return;
+        const t0 = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+        while (i < nodes.length && acc.length < FIND_MAX_MATCHES) {
+          searchNodeRegex(nodes[i], compiled.re, acc);
+          i += 1;
+          const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+          if (now - t0 > FIND_SLICE_MS) break;
+        }
+        if (i < nodes.length && acc.length < FIND_MAX_MATCHES) {
+          find.matches = acc;
+          find.invalid = false;
+          rebuildFindNav();
+          if (find.countEl) find.countEl.textContent = find.nav.length + "…";
+          find.sliceTimer = setTimeout(step, 0);
+          return;
+        }
+        finishFindSearch(acc, false, acc.length >= FIND_MAX_MATCHES);
+      };
+      step();
+      return;
+    }
+    const gen = find.gen;
+    const acc = [];
+    let i = 0;
+    const step = () => {
+      if (gen !== find.gen) return;
+      const t0 = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+      while (i < nodes.length && acc.length < FIND_MAX_MATCHES) {
+        searchNodeLiteral(nodes[i], query, find.caseSensitive, acc);
+        i += 1;
+        const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+        if (now - t0 > FIND_SLICE_MS) break;
+      }
+      if (i < nodes.length && acc.length < FIND_MAX_MATCHES) {
+        find.matches = acc;
+        find.invalid = false;
+        rebuildFindNav();
+        if (find.countEl) find.countEl.textContent = find.nav.length + "…";
+        find.sliceTimer = setTimeout(step, 0);
+        return;
+      }
+      finishFindSearch(acc, false, acc.length >= FIND_MAX_MATCHES);
+    };
+    step();
+  }
+
+  function scheduleFindSearch() {
+    cancelFindSearch();
+    find.timer = setTimeout(runFindSearchNow, FIND_DEBOUNCE_MS);
+  }
+
+  function setFindQuery(value, opts) {
+    const next = String(value || "").slice(0, FIND_QUERY_MAX);
+    find.query = next;
+    if (find.input && find.input.value !== next) find.input.value = next;
+    rememberFindQuery();
+    if (opts && opts.immediate) runFindSearchNow();
+    else scheduleFindSearch();
+  }
+
+  function ensureFindBar() {
+    if (find.bar) return find.bar;
+    const bar = document.createElement("div");
+    bar.id = "find-bar";
+    bar.className = "find-bar";
+    bar.hidden = true;
+    bar.setAttribute("role", "search");
+    bar.setAttribute("aria-label", "Find in this conversation");
+
+    const row = document.createElement("div");
+    row.className = "find-bar-row";
+    const icon = document.createElement("span");
+    icon.className = "find-bar-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.innerHTML = ICON.search;
+    const field = document.createElement("input");
+    field.id = "find-input";
+    field.type = "search";
+    field.placeholder = "Find in this conversation";
+    field.autocomplete = "off";
+    field.spellcheck = false;
+    field.setAttribute("enterkeyhint", "search");
+    const count = document.createElement("span");
+    count.className = "find-count";
+    count.setAttribute("aria-live", "polite");
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.className = "icon-btn";
+    prev.title = "Previous match";
+    prev.setAttribute("aria-label", "Previous match");
+    prev.innerHTML = ICON.chevronUp;
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "icon-btn";
+    next.title = "Next match";
+    next.setAttribute("aria-label", "Next match");
+    next.innerHTML = ICON.chevronDown;
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "icon-btn";
+    close.title = "Close find";
+    close.setAttribute("aria-label", "Close find");
+    close.innerHTML = ICON.x;
+    row.appendChild(icon);
+    row.appendChild(field);
+    row.appendChild(count);
+    row.appendChild(prev);
+    row.appendChild(next);
+    row.appendChild(close);
+
+    const opts = document.createElement("div");
+    opts.className = "find-bar-row";
+    const caseBtn = document.createElement("button");
+    caseBtn.type = "button";
+    caseBtn.className = "find-toggle";
+    caseBtn.textContent = "Aa";
+    caseBtn.title = "Match case";
+    caseBtn.setAttribute("aria-label", "Match case");
+    caseBtn.setAttribute("aria-pressed", "false");
+    const regexBtn = document.createElement("button");
+    regexBtn.type = "button";
+    regexBtn.className = "find-toggle";
+    regexBtn.textContent = ".*";
+    regexBtn.title = "Use regular expression";
+    regexBtn.setAttribute("aria-label", "Use regular expression");
+    regexBtn.setAttribute("aria-pressed", "false");
+    const hiddenBtn = document.createElement("button");
+    hiddenBtn.type = "button";
+    hiddenBtn.className = "find-hidden-hint";
+    hiddenBtn.hidden = true;
+    hiddenBtn.setAttribute("aria-pressed", "false");
+    opts.appendChild(caseBtn);
+    opts.appendChild(regexBtn);
+    opts.appendChild(hiddenBtn);
+
+    bar.appendChild(row);
+    bar.appendChild(opts);
+    const parent = messagesEl.parentNode;
+    if (parent) parent.insertBefore(bar, messagesEl);
+    else document.body.insertBefore(bar, document.body.firstChild);
+
+    field.addEventListener("input", () => setFindQuery(field.value));
+    field.addEventListener("keydown", (e) => {
+      if (e.isComposing) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        findStep(e.shiftKey ? -1 : 1);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeFind();
+      }
+    });
+    prev.addEventListener("click", () => findStep(-1));
+    next.addEventListener("click", () => findStep(1));
+    close.addEventListener("click", () => closeFind());
+    caseBtn.addEventListener("click", () => {
+      find.caseSensitive = !find.caseSensitive;
+      find.lastComplete = false;
+      rememberFindQuery();
+      runFindSearchNow();
+    });
+    regexBtn.addEventListener("click", () => {
+      find.regex = !find.regex;
+      find.lastComplete = false;
+      rememberFindQuery();
+      runFindSearchNow();
+    });
+    hiddenBtn.addEventListener("click", () => {
+      find.includeHidden = !find.includeHidden;
+      rebuildFindNav();
+      if (find.nav.length && find.index < 0) find.index = 0;
+      if (find.includeHidden && find.hiddenCount && find.nav.length) {
+        const firstHidden = find.nav.findIndex((m) => findMatchIsHidden(m.node));
+        if (firstHidden >= 0) goToFindMatch(firstHidden);
+        else {
+          paintFindHighlights();
+          updateFindChrome();
+        }
+      } else {
+        paintFindHighlights();
+        updateFindChrome();
+      }
+    });
+
+    find.bar = bar;
+    find.input = field;
+    find.countEl = count;
+    find.hiddenBtn = hiddenBtn;
+    find.caseBtn = caseBtn;
+    find.regexBtn = regexBtn;
+    find.prevBtn = prev;
+    find.nextBtn = next;
+    return bar;
+  }
+
+  function onFindDocKey(e) {
+    if (!find.open) return;
+    if (isFindHotkey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+      openFind();
+      return;
+    }
+    if (e.key !== "Escape") return;
+    if (e.target && e.target.closest && e.target.closest(".toolbar-popover, .confirm-overlay, .rail-menu, #gear-popover")) return;
+    e.preventDefault();
+    closeFind();
+  }
+
+  function openFind() {
+    ensureFindBar();
+    const wasOpen = find.open;
+    if (!wasOpen) {
+      find.lastFocus = document.activeElement;
+      find.bar.hidden = false;
+      find.open = true;
+      document.addEventListener("keydown", onFindDocKey, true);
+    }
+    const selected = transcriptSelectionText();
+    const recalled = recalledFindQuery();
+    if (selected) {
+      find.caseSensitive = !!(recalled && recalled.caseSensitive);
+      find.regex = !!(recalled && recalled.regex);
+      setFindQuery(selected, { immediate: true });
+    } else if (!wasOpen && recalled) {
+      find.caseSensitive = !!recalled.caseSensitive;
+      find.regex = !!recalled.regex;
+      setFindQuery(recalled.query || "", { immediate: true });
+    } else if (!wasOpen) {
+      updateFindChrome();
+    }
+    find.input.focus({ preventScroll: true });
+    try { find.input.select(); } catch { /* ignore */ }
+  }
+
+  function closeFind() {
+    if (!find.open) return;
+    rememberFindQuery();
+    cancelFindSearch();
+    find.open = false;
+    if (find.bar) find.bar.hidden = true;
+    clearFindHighlights();
+    document.removeEventListener("keydown", onFindDocKey, true);
+    const back = find.lastFocus;
+    find.lastFocus = null;
+    if (back && back !== find.input && typeof back.focus === "function" && document.contains(back)) {
+      try { back.focus({ preventScroll: true }); } catch { try { back.focus(); } catch { /* ignore */ } }
+    } else {
+      input.focus({ preventScroll: true });
+    }
+  }
+
+  function onFindSessionReset() {
+    cancelFindSearch();
+    find.matches = [];
+    find.nav = [];
+    find.hiddenCount = 0;
+    find.index = -1;
+    find.lastComplete = false;
+    find.lastNodes = null;
+    find.includeHidden = false;
+    clearFindHighlights();
+    if (find.open) {
+      const recalled = recalledFindQuery();
+      if (recalled) {
+        find.caseSensitive = !!recalled.caseSensitive;
+        find.regex = !!recalled.regex;
+        if (find.input) find.input.value = recalled.query || "";
+        find.query = recalled.query || "";
+      }
+      updateFindChrome();
+    }
+  }
+
+  function onFindTranscriptSettled() {
+    if (find.open && find.query) runFindSearchNow();
+  }
+
+  if (!IS_REMOTE) {
+    document.addEventListener("keydown", (e) => {
+      if (!isFindHotkey(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openFind();
+    }, true);
+  }
+
+  onFindPreferenceChange = () => {
+    if (find.open) runFindSearchNow();
+  };
+
+  window.__grokHistory = {
+    prefixRemaining: () => state.historyPrefixUserCount || 0,
+    prefixLength: () => (state.historyPrefix && state.historyPrefix.length) || 0,
+    expandMore: () => loadEarlierHistory(false),
+    expandAll: () => expandHistoryAll(),
+  };
+
+  window.__grokFind = {
+    open: openFind,
+    close: closeFind,
+    isOpen: () => !!find.open,
+    query: () => find.query,
+    setQuery: (q) => setFindQuery(q, { immediate: true }),
+    next: () => findStep(1),
+    prev: () => findStep(-1),
+    matchCount: () => find.nav.length,
+    totalCount: () => find.matches.length,
+    hiddenCount: () => find.hiddenCount,
+    index: () => find.index,
+    includeHidden: (on) => {
+      find.includeHidden = !!on;
+      rebuildFindNav();
+      paintFindHighlights();
+      updateFindChrome();
+    },
+    caseSensitive: () => find.caseSensitive,
+    setCaseSensitive: (on) => {
+      find.caseSensitive = !!on;
+      find.lastComplete = false;
+      runFindSearchNow();
+    },
+    regex: () => find.regex,
+    setRegex: (on) => {
+      find.regex = !!on;
+      find.lastComplete = false;
+      runFindSearchNow();
+    },
+    invalid: () => !!find.invalid,
+    hasHighlightApi: findHasHighlightApi,
+  };
 
   // ---------- inbound ----------
 
@@ -11459,10 +14297,15 @@
     "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
     "steerByDefault", "steerUnavailable", "soundNotifications", "processingSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
-    "providerState", "remoteStatus", "telemetryEnabled", "atlasUpdateStatus", "initialized", "localModels",
+    "providerState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
   ]);
 
   function handleHostMessage(msg) {
+    if (!msg || typeof msg !== "object") return;
+    if (state.replayHold && msg.type !== "historyReplay" && REPLAY_HOLD_TYPES.has(msg.type)) {
+      state.replayHeld.push(msg);
+      return;
+    }
     switch (msg.type) {
       case "initialState":
         state.useCtrlEnter = msg.useCtrlEnter;
@@ -11501,6 +14344,7 @@
           }
         }
         if (typeof msg.telemetryEnabled === "boolean") state.telemetryEnabled = msg.telemetryEnabled;
+        if (typeof msg.thumbsFeedback === "boolean") state.thumbsFeedback = msg.thumbsFeedback;
         applyThinkingVisibility();
         applyExpandCommandOutputs();
         syncGearPlacement();
@@ -11517,7 +14361,11 @@
       case "providerState":
         state.providersKnown = true;
         state.providers = Array.isArray(msg.providers) ? msg.providers.filter((provider) =>
-          provider && (provider.id === "grok" || provider.id === "codex")) : [];
+          provider && (provider.id === "grok" || provider.id === "codex" || provider.id === "claude")) : [];
+        // Read, never latched on click: a host too old to know `refreshProviders`
+        // sends no frame at all, and a locally-set flag would spin forever.
+        // Absent means idle, which is also what every pre-refresh host means.
+        state.providersChecking = msg.checking === true;
         // Connecting an additional account happens from the gear while the
         // current transcript stays mounted. The login/recovery view temporarily
         // borrows the welcome overlay; dismiss it when the provider it was
@@ -11534,6 +14382,27 @@
         if (!gearPopover.hidden && state.gearView === "main") renderGearMain();
         if (!historyPopover.hidden) renderSessionRows();
         renderRail();
+        break;
+      case "mcpServers":
+        state.mcpServers = Array.isArray(msg.servers) ? msg.servers : [];
+        state.mcpLoading = msg.loading === true;
+        state.mcpError = msg.error || "";
+        state.mcpWarning = msg.warning || "";
+        refreshSettingsOverlay();
+        break;
+      case "mcpConnectors":
+        state.mcpConnectors = Array.isArray(msg.connectors) ? msg.connectors : [];
+        refreshSettingsOverlay();
+        break;
+      case "routines":
+        // The host answered, so any refusal we were holding is stale.
+        state.routineSavePending = false;
+        state.routines = Array.isArray(msg.entries) ? msg.entries : [];
+        state.routineProjects = Array.isArray(msg.projects) ? msg.projects : [];
+        state.routineModels = Array.isArray(msg.models) ? msg.models : [];
+        state.routineError = msg.error || "";
+        state.routineErrorId = msg.errorId || "";
+        refreshSettingsOverlay();
         break;
       case "codexInstallProgress":
         state.codexInstall = {
@@ -11607,6 +14476,9 @@
       case "telemetryEnabled":
         state.telemetryEnabled = !!msg.value;
         break;
+      case "thumbsFeedback":
+        state.thumbsFeedback = !!msg.value;
+        break;
       case "speechSummary": {
         const pending = pendingSpeechSummary;
         if (
@@ -11637,7 +14509,7 @@
         syncGearPlacement();
         break;
       case "fontScale":
-        // Live chat-only zoom (grok.chatFontScale). Initial value is baked into
+        // Live chat-only zoom (atlas.chatFontScale). Initial value is baked into
         // <body style="--chat-zoom:…"> by the host; this just applies later edits.
         // The CSS derives both `zoom` and the containing-block height
         // compensation from this one variable, so the composer stays pinned.
@@ -11652,6 +14524,12 @@
         // type a prompt immediately. preventScroll: the composer lives in the
         // fixed chrome — html must never scroll to reveal it (boot-layout fix).
         input.focus({ preventScroll: true });
+        break;
+      case "findInSession":
+        // Command Palette / workbench Ctrl+F fallback. The keystroke path is
+        // untested inside a WebviewView, so this message must open find on its
+        // own. Idempotent: a second open focuses the field.
+        openFind();
         break;
       case "moveComposerCaret":
         moveComposerCaret(msg.direction);
@@ -11674,24 +14552,44 @@
         // panel and replaying the whole conversation (which flashed the welcome
         // logo and re-rendered everything). The surviving messages are already
         // correct on screen — there is nothing to rebuild.
-        const users = [...messagesEl.querySelectorAll(".msg.user:not(.queued)")]
-          .filter((el) => el.dataset.steer !== "1");
-        const firstGone = users[msg.surviving];
-        if (firstGone) {
-          // Remove that message and every sibling after it — agent replies, tool
-          // groups, plan/permission cards, subagent rows all belong to the
-          // discarded turns.
-          while (messagesEl.lastElementChild && messagesEl.lastElementChild !== firstGone) {
-            messagesEl.removeChild(messagesEl.lastElementChild);
+        // A pending clearMessages is logically empty already; flush so
+        // lastElementChild is not a stale node we are about to drop.
+        flushPendingTranscriptClear();
+        const surviving = Math.max(0, Number(msg.surviving) || 0);
+        if (surviving < (state.historyPrefixUserCount || 0)) {
+          const trimmed = splitHistoryWindow(state.historyPrefix, (state.historyPrefixUserCount || 0) - surviving);
+          state.historyPrefix = trimmed.prefix;
+          state.historyPrefixUserCount = surviving;
+          state.historyPrefixPlans = (state.historyPrefixPlans || []).filter((p) =>
+            typeof p.afterUserMessage !== "number" || p.afterUserMessage <= surviving);
+          state.historyPrefixPermissions = (state.historyPrefixPermissions || []).filter((p) =>
+            typeof p.afterUserMessage !== "number" || p.afterUserMessage <= surviving);
+          for (const child of Array.from(messagesEl.children)) {
+            if (child.id === "welcome" || child.id === "history-head") continue;
+            child.remove();
           }
-          if (messagesEl.lastElementChild === firstGone) messagesEl.removeChild(firstGone);
+          syncHistoryHead();
+        } else {
+          const users = liveTranscriptQueryAll(".msg.user:not(.queued)")
+            .filter((el) => el.dataset.steer !== "1");
+          const firstGone = users.find((el) => Number(el.dataset.userBubbleIndex) === surviving) || users[surviving];
+          if (firstGone) {
+            // Remove that message and every sibling after it — agent replies, tool
+            // groups, plan/permission cards, subagent rows all belong to the
+            // discarded turns.
+            while (messagesEl.lastElementChild && messagesEl.lastElementChild !== firstGone) {
+              messagesEl.removeChild(messagesEl.lastElementChild);
+            }
+            if (messagesEl.lastElementChild === firstGone) messagesEl.removeChild(firstGone);
+          }
         }
         // Same surviving-user-turn count as the DOM filter above. Steer
         // interjections and hidden replayed user events do not consume a slot.
-        state.exportEvents = truncateExportEvents(state.exportEvents, msg.surviving);
+        state.exportEvents = truncateExportEvents(state.exportEvents, surviving);
         // Nothing streaming survives a truncation — drop the per-turn handles so
         // the next turn starts clean rather than appending into a removed node.
-        state.userMsgCount = msg.surviving;
+        state.userMsgCount = surviving;
+        state.turnRating = 0;
         state.activeAgentEl = null;
         state.activeAgentRaw = "";
         state.activeUserEl = null;
@@ -11703,13 +14601,13 @@
         // No completed-turn figure survives a rewind; when the whole transcript
         // is gone, neither does the session aggregate.
         state.lastTurnUsage = null;
-        if (msg.surviving === 0) state.sessionUsage = null;
+        if (surviving === 0) state.sessionUsage = null;
         if (!contextPopover.hidden) openContextPopover();
         hideGrokking();
         hideThinkingIndicator();
         // The newest surviving agent message ends a finished turn, so its
         // copy/timestamp footer belongs visible.
-        const agents = messagesEl.querySelectorAll(".msg.agent .msg-actions");
+        const agents = liveTranscriptQueryAll(".msg.agent .msg-actions");
         const lastFooter = agents[agents.length - 1];
         if (lastFooter) lastFooter.hidden = false;
         refreshUserRewindButtons();
@@ -11732,8 +14630,8 @@
         input.selectionStart = input.selectionEnd = input.value.length;
         break;
       }
-      case "atlasUpdateStatus":
-        // Reply to Settings → About's checkAtlasUpdate. The check also reports the
+      case "grokUpdateStatus":
+        // Reply to Settings → About's checkGrokUpdate. The check also reports the
         // CLI's current version — adopt it, since the ACP handshake doesn't always
         // give us one (native Windows build) and otherwise the panel would show a
         // bare "—" right next to a confident "CLI is up to date".
@@ -11770,39 +14668,42 @@
       case "initialized": {
         // The ACP handshake is done, but session/new or session/load may still be
         // running. Keep showing Starting until the startup lock clears.
-        if (msg.info.provider !== "codex") state.cliVersion = msg.info.version || "";
+        if (!msg.info.provider || msg.info.provider === "grok") state.cliVersion = msg.info.version || "";
         state.startingPhase = true;
-        setWelcomeStatus("Starting", true);
+        state.onboardingMode = null;
+        if (!welcomeHoldActive()) setWelcomeStatus("Starting", true);
         const onb = $("welcome-onboarding");
         if (onb) onb.innerHTML = "";
+        updateSendButton();
         break;
       }
       case "cliUpdating": {
         // One-time hint while the silent `grok update` runs before the session
         // spawns; overwritten by Starting once grok connects, then Connected
         // once session startup finishes.
-        setWelcomeStatus("Updating Atlas CLI", true);
+        if (!welcomeHoldActive()) setWelcomeStatus("Updating Grok Build CLI", true);
         break;
       }
+      case "localModels":
+        break;
       case "session": {
         state.currentModelId = msg.currentModelId;
-        state.activeProvider = msg.provider === "codex" ? "codex" : "grok";
+        state.activeProvider = msg.provider === "codex" || msg.provider === "claude" ? msg.provider : "grok";
+        syncFeedbackButtons();
         syncProviderVoice();
         if (state.railTransition?.kind === "new") renderRail();
         state.isWorktree = !!msg.worktree; // gates the gear Apply/Remove worktree items
         state.availableModels = msg.models || [];
         const m = state.availableModels.find((x) => x.modelId === msg.currentModelId && (!x.provider || x.provider === state.activeProvider));
         if (m?.totalContextTokens) state.contextWindow = m.totalContextTokens;
+        state.contextBreakdown = null;
         updateDonut(0);
         reportRemotePreferences();
         break;
       }
-      case "localModels": {
-        state.localModels = Array.isArray(msg.models) ? msg.models : [];
-        break;
-      }
       case "sessionName": {
-        state.sessionName = {
+        const prev = state.sessionName;
+        const next = {
           sessionId: msg.sessionId,
           name: String(msg.name || "New session"),
           cwd: String(msg.cwd || ""),
@@ -11811,6 +14712,12 @@
           // still has a fallback rather than depending on this.
           repoCwd: typeof msg.repoCwd === "string" ? msg.repoCwd : "",
         };
+        const sameId = !!(prev && prev.sessionId === next.sessionId);
+        const sameVisible = !!(sameId
+          && prev.name === next.name
+          && prev.cwd === next.cwd
+          && (prev.repoCwd || "") === (next.repoCwd || ""));
+        state.sessionName = next;
         // Host-confirmed identity only. Optimistic rail clicks never write here.
         state.activeSessionId = msg.sessionId;
         // May complete a resume (id match) or bind a new-session resolved id.
@@ -11818,8 +14725,20 @@
         // AFTER the note: a surviving transition means this frame was about a
         // different conversation. See noteHostIdentityKnown.
         noteHostIdentityKnown(msg.sessionId);
-        renderSessionName();
-        renderSessionHead();
+        // Same conversation coming back: do not rebuild the header. Different
+        // at all: paint immediately. A held resync that turns out to be a
+        // swap still lands the caret in the composer and pins like a fresh open.
+        if (!sameVisible) {
+          renderSessionName();
+          renderSessionHead();
+        }
+        pendingSessionChromeReset = false;
+        if (prev && !sameId) {
+          focusComposerIfAllowed();
+          setStickToBottom(true);
+          updateScrollBtn();
+          scrollToBottom();
+        }
         break;
       }
       case "modelChanged": {
@@ -11929,6 +14848,7 @@
       case "chips":
         state.chips = msg.chips;
         renderChips();
+        updateSendButton();
         break;
       case "commandsUpdate":
         state.commands = msg.commands || [];
@@ -11988,7 +14908,11 @@
         break;
       case "agentStart":
         // A user-initiated turn began. Show Grokking until content replaces it.
+        // Previous completed turn keeps its footer but loses thumbs — only the
+        // turn that just finished is rateable.
+        retireLiveTurnFeedback(state.turnAgentActionsEl);
         state.turnAgentActionsEl = null; // new turn → previous turn keeps its footer
+        if (!state.replaying) state.turnRating = 0;
         state.ttsTurnText = "";
         showGrokking();
         // Busy is event-sourced through the session buffer so a re-focus lands
@@ -12032,9 +14956,13 @@
       case "historyReplay":
         if (msg.active) {
           if (state.replayDepth === 0) {
+            // Raise before any veil DOM so MutationObserver cannot pin-scroll.
+            state.replaying = true;
             state.suppressReplayTurn = false; // fresh outer replay starts unsuppressed
             state.skipUserBubble = false;
             state.repoSwitchPending = true;
+            state.replayHold = true;
+            state.replayHeld = [];
             setConversationLoading(true);
             renderRepoChip();
           }
@@ -12042,10 +14970,16 @@
           state.replaying = true;
         } else {
           if (state.replayDepth === 0) break;
-          const inFlightSpeech = state.busy ? state.activeAgentRaw : "";
-          commitAgentTurn(); // finalize the last turn while still flagged as replay
           state.replayDepth -= 1;
           if (state.replayDepth > 0) break;
+          if (state.replayHold) {
+            state.replayHold = false;
+            const held = state.replayHeld;
+            state.replayHeld = [];
+            applyHistoryWindow(held);
+          }
+          const inFlightSpeech = state.busy ? state.activeAgentRaw : "";
+          commitAgentTurn(); // finalize the last turn while still flagged as replay
           state.replaying = false;
           state.repoSwitchPending = false;
           // historyReplay is never identity confirmation. If a rail click is
@@ -12053,6 +14987,11 @@
           // the highlight and the load indicator stay paired.
           if (!state.railTransition) setConversationLoading(false);
           else setConversationLoading(true);
+          // A RAF flush during the replay was skipped so the conversation
+          // stayed put. Empty replay: nothing replaced it, so the welcome
+          // belongs now. A replacement already dropped the pending flag.
+          if (pendingTranscriptClear) flushPendingTranscriptClear();
+          takeDesktopLaunchComposerFocus();
           renderRepoChip();
           // A remote snapshot can end while its latest turn is still running.
           // Seed the already-rendered prefix only in that case, so the eventual
@@ -12080,6 +15019,14 @@
           // Remote reconnect/cold-load delivers only a recent window. Label
           // the export so it cannot be read as the whole transcript.
           if (IS_REMOTE) state.exportWindowed = true;
+          // Follow the pin. Do not re-pin: a reader (or a cache restore) who
+          // is not at the bottom must stay put. A pinned reader still lands
+          // at the bottom so new messages stay visible. Fresh open / empty
+          // flush pin in resetSessionChrome; a swap pins when sessionName
+          // names a different id. Skip while the wrapper is restoring
+          // identity — that class means a place is already owned.
+          if (!identityRestoring()) scrollToBottom();
+          onFindTranscriptSettled();
         }
         break;
       case "historyBatch":
@@ -12102,6 +15049,10 @@
       case "toolCall":
         advanceHistoryEvent();
         if (state.suppressReplayTurn) break; // tool calls inside the primer turn (unlikely but defensive)
+        if (isPlanReviewTool(msg.call)) {
+          // Plan text belongs on the review card, not a generic tool row.
+          break;
+        }
         if (isQuestionTool(msg.call)) {
           // No generic tool chip — the question card stands in for it.
           if (state.replaying) {
@@ -12130,6 +15081,9 @@
           state.mediaGenCallIds.add(msg.call.toolCallId);
         }
         addToToolGroup(msg.call);
+        // Reads replay as a completed tool_call with the file text in `content`.
+        // Shell rows wait for host `commandOutput` (grok) or a later update (Claude).
+        if (isReadTool(msg.call)) maybeAttachToolResultOutput(msg.call);
         // On session/load a completed edit replays as a single `tool_call` that
         // already carries its diff (no follow-up update) — attach the preview here
         // or the restored edit has no "open diff →" (#30).
@@ -12152,6 +15106,7 @@
       case "toolCallUpdate": {
         advanceHistoryEvent();
         if (state.suppressReplayTurn) break;
+        if (isPlanReviewTool(msg.call)) break;
         // Resume: anchor a restored permission card here — the update carries the
         // tool's real title (the tool_call is often a generic "Shell"/"Grep"), so
         // a card saved without a toolCallId still matches by title.
@@ -12190,12 +15145,18 @@
             break;
           }
         }
+        // Fold the refined title and arguments into the row before OUT / diffs
+        // — Claude's first call is a bare verb; the path (and Read details)
+        // arrive on this update. Attach the IN box first so maybeAttach can
+        // fill OUT from this same completed payload.
+        refreshToolRowFromUpdate(msg.call);
         // A self-executed command (cursor/Composer runs it in its own shell and
         // reports the result here, not via terminal/create) — fill the row's #41
-        // IN/OUT box by toolCallId. Takes precedence over the generic failure path
-        // so a non-zero command reads as an [Error] exit N in its OUT box, matching
-        // grok-build's terminal-fed rows. No-op (returns false) for grok-build,
-        // whose row already has OUT.
+        // IN/OUT box by toolCallId. Same path now fills a Read row's View all.
+        // Takes precedence over the generic failure path so a non-zero command
+        // reads as an [Error] exit N in its OUT box, matching grok-build's
+        // terminal-fed rows. No-op (returns false) for grok-build, whose row
+        // already has OUT.
         if (String(msg.call?.status).toLowerCase() === "completed" && maybeAttachToolResultOutput(msg.call)) {
           break;
         }
@@ -12298,7 +15259,7 @@
         if (!state.replaying) {
           // Tool titles can expose commands or file operations. The accessibility
           // cue says what the user must do without reading tool details aloud.
-          speakWaitingPrompt("Atlas is waiting for your permission. Review the request and choose an option.");
+          speakWaitingPrompt("Grok is waiting for your permission. Review the request and choose an option.");
         }
         break;
       case "permissionOptions":
@@ -12308,11 +15269,15 @@
         // Replayed (on re-focus) right after the buffered permissionRequest, or
         // live right after the user answers — collapse the matching card if it's
         // still active. Idempotent: a live click already collapsed it.
-        const cards = [...messagesEl.querySelectorAll(".card.permission")];
-        const el = cards.find((c) => c.dataset.permReqId === String(msg.requestId) && !c.classList.contains("perm-resolved"));
+        const cards = liveTranscriptQueryAll(".card.permission");
+        const el = cards.find((c) =>
+          c.dataset.permReqId === String(msg.requestId) &&
+          !c.classList.contains("perm-resolved") &&
+          !c.classList.contains("resolved")
+        );
         if (el) {
           const opt = (el._permOptions || []).find((o) => o.optionId === msg.optionId);
-          collapsePermissionCard(el, opt && opt.kind, el._permTitle);
+          resolvePermissionCardEl(el, opt, el._permTitle);
         }
         break;
       }
@@ -12323,7 +15288,7 @@
         // Replayed (on re-focus) right after the buffered exitPlanRequest, or
         // live right after the user's verdict — collapse the matching card if
         // it's still actionable. Idempotent: a live click already collapsed it.
-        const cards = [...messagesEl.querySelectorAll(".card.plan")];
+        const cards = liveTranscriptQueryAll(".card.plan");
         const el = cards.find((c) => c.dataset.planReqId === String(msg.requestId) && !c.classList.contains("resolved"));
         if (el) resolvePlanCardEl(el, msg.verdict);
         break;
@@ -12335,7 +15300,7 @@
             .map((question) => questionText(question))
             .filter(Boolean)
             .join(" ");
-          speakWaitingPrompt(questions || "Atlas is waiting for your answer.");
+          speakWaitingPrompt(questions || "Grok is waiting for your answer.");
         }
         break;
       case "planHistory":
@@ -12376,13 +15341,15 @@
         if (msg.meta?.totalTokens != null) updateDonut(msg.meta.totalTokens);
         break;
       case "contextUsage":
-        // Read from grok's on-disk signals.json by the host — a real count for
-        // the cases the turn meta can't cover: cold restore (donut would sit
-        // at 0 until the first turn) and zero-reporting turns where signals
-        // holds a fresher count than the last meta (e.g. /session-info right
-        // after a /compact).
+        // Host-authoritative occupancy: grok's signals.json / live envelope,
+        // or the remembered adapter prompt size. A window-only frame updates
+        // the denominator without inventing a used count.
+        // Structured addends are one snapshot (`nextContextBreakdown`). A
+        // used-only frame keeps them; currency is `contextBreakdownIsCurrent`.
+        state.contextBreakdown = nextContextBreakdown(state.contextBreakdown, msg);
         if (msg.window) state.contextWindow = msg.window;
-        updateDonut(msg.used);
+        if (msg.used != null) updateDonut(msg.used);
+        else updateDonut();
         break;
       case "expandCommandOutputs":
         // Live toggle (grok.expandCommandOutputs): applies to existing rows
@@ -12393,11 +15360,33 @@
         applyExpandCommandOutputs();
         break;
       case "setAllToolDetails":
-        // Command Palette: Atlas: Expand/Collapse All Tool Details — one-shot,
+        // Command Palette: Grok: Expand/Collapse All Tool Details — one-shot,
         // current session only, doesn't touch the persisted expandCommandOutputs.
         setAllToolDetails(!!msg.open);
         break;
       case "commandOutput": {
+        // MCP output is keyed by toolCallId (always stated on that path).
+        // Do not fall back to a fabricated "Run …" shell row — the tool_call
+        // already owns the row, and argument text is not a correlation key.
+        const wantedId = typeof msg.toolCallId === "string" ? msg.toolCallId.trim() : "";
+        if (wantedId) {
+          let pending = state.pendingCommandDetails.find((p) => !p.done && p.toolCallId === wantedId);
+          if (!pending) {
+            const item = state.toolItemsByToolCallId.get(wantedId);
+            if (item) {
+              const cmd = commandDetailText(item._call)
+                || (typeof msg.command === "string" && msg.command.trim())
+                || "{}";
+              if (!item.querySelector(".cmd-block")) attachCommandDetails(item, cmd, wantedId);
+              pending = state.pendingCommandDetails.find((p) => p.toolCallId === wantedId);
+            }
+          }
+          if (pending) {
+            pending.done = true;
+            attachCommandOutput(pending.details, msg);
+          }
+          break;
+        }
         // A finished shell command's captured output (#41). grok-build delegates
         // commands via terminal/create, so this path fires for it — attach to the
         // oldest un-served row with the exact same command; if none matches
@@ -12450,6 +15439,9 @@
         hideGrokking(); // turn ended (possibly before any content)
         hideThinkingIndicator();
         revealTurnFooter();
+        // Image-read failures fire agentError before a turn starts — don't
+        // restamp the previous reply. A prompt that actually failed is busy.
+        if (state.busy) markLiveTurnFeedback();
         addError(msg.text);
         state.busy = false;
         state.busyLocked = false; // an error ends any startup lock too
@@ -12465,6 +15457,7 @@
         // empty) would otherwise orphan the dots forever — content-based
         // clearing never fires.
         revealTurnFooter();
+        markLiveTurnFeedback();
         state.busy = false;
         updateSendButton();
         if (!state.replaying) maybeNotifySound("done"); // #59 — live turns only, and only when away
@@ -12482,7 +15475,7 @@
           addError(`Atlas exited (code ${msg.code}). Send a message to restart this session, or start a new one.`);
         }
         // A process that dies takes the host's send queue with it: that text
-        // never reached Atlas, and the host empties the queue in the very next
+        // never reached Grok, and the host empties the queue in the very next
         // breath after this message — so this is the last moment it exists
         // anywhere. Hand it back as the "Not sent" recovery block, which is
         // exactly what it is.
@@ -12502,7 +15495,7 @@
         // fixes the surface where the loss was actually reported and where a
         // phone has nothing else to fall back on.
         if (IS_REMOTE && state.sendQueue.length) {
-          state.rejectedSubmissionText = state.sendQueue.join("\n\n");
+          state.rejectedSubmissionText = queuedSendsText(state.sendQueue);
           state.sendQueue = [];
           renderQueuedBlocks();
         }
@@ -12513,7 +15506,8 @@
       case "queuedSends":
         // Snapshot of the focused session's host-owned send queue — replayed on
         // re-focus like everything else, so queued blocks survive session swaps.
-        state.sendQueue = Array.isArray(msg.items) ? msg.items : [];
+        // Prefer additive `queued` (text + chips); `items` is the text-only fallback.
+        state.sendQueue = normalizeQueuedSends(msg);
         if (!state.sendQueue.length) {
           state.queuedSubmissionPending = false;
           state.queuedSubmissionRejected = false;
@@ -12554,7 +15548,6 @@
           typeof msg.id === "string" &&
           msg.id &&
           typeof msg.text === "string" &&
-          msg.text.trim() &&
           !state.submittedQueuedSendIds.has(msg.id)
         ) {
           state.submittedQueuedSendIds.add(msg.id);
@@ -12576,6 +15569,18 @@
         state.steerSupported = false;
         state.steerByDefault = false;
         renderQueuedBlocks();
+        break;
+      case "feedbackAvailability":
+        state.feedbackAvailable = msg.available === true;
+        if (!state.feedbackAvailable) {
+          for (const actions of liveTranscriptQueryAll(".msg.agent .msg-actions")) {
+            delete actions.dataset.feedbackPending;
+          }
+        }
+        syncFeedbackButtons();
+        break;
+      case "turnFeedbackAck":
+        applyTurnFeedbackAck(msg.rating);
         break;
       case "usage":
         // Billing split (#53). `turn` is absent on a restore (we only stored the
@@ -12603,7 +15608,7 @@
           if (state.startingPhase) {
             state.startingPhase = false;
             const ver = state.cliVersion ? ` · v${state.cliVersion}` : "";
-            setWelcomeStatus(`Connected${ver}`, false); // settled — no spinner
+            if (!welcomeHoldActive()) setWelcomeStatus(`Connected${ver}`, false); // settled — no spinner
           }
         }
         // Refresh the gear popover's model/effort lock state if it's open.
@@ -12616,7 +15621,7 @@
         si.className = "session-context-banner";
         si.textContent = "Summarizing";
         si.insertAdjacentHTML("beforeend", BLINK_DOTS);
-        messagesEl.appendChild(si);
+        appendTranscriptChild(si);
         scrollToBottom();
         break;
       }
@@ -12627,9 +15632,25 @@
         resetForNewSession();
         break;
       case "onboarding":
-          showOnboarding(msg.state, { platform: msg.platform, reason: msg.reason, provider: msg.provider });
+          // Record the host-launched terminal BEFORE rendering, so the panel is
+          // painted with the done mark already on rather than flashing an
+          // untouched button first.
+          showOnboarding(msg.state, { platform: msg.platform, reason: msg.reason, provider: msg.provider }, () => {
+            if (msg.launched) markOnboardingLaunchedByHost(msg.provider);
+          });
         break;
       case "error":
+        // The relay bounces a quota-refused frame as a plain error, which
+        // renders in the transcript — behind the settings overlay the reader is
+        // looking at. At the paywall that made Create appear to do nothing, at
+        // exactly the moment being clear matters most. Attribute it to the save
+        // it answers and let the Routines page show it.
+        if (state.routineSavePending) {
+          state.routineSavePending = false;
+          state.routineError = msg.text || "That could not be saved.";
+          state.routineErrorId = "";
+          refreshSettingsOverlay();
+        }
         if (state.repoSwitchPending) {
           state.repoSwitchPending = false;
           setConversationLoading(false);
@@ -12666,7 +15687,7 @@
           renderQueuedBlocks();
           updateSendButton();
         }
-        addError(msg.text);
+        addError(msg.text, msg.code);
         break;
       case "hostNotice":
         addPlanNotice(msg.text);
@@ -12717,6 +15738,7 @@
           state.sessionQuery = msg.query || "";
           state.sessionLastAutoPageKey = "";
         }
+        settlePendingRename(state.sessions);
         if (msg.activeId !== undefined) {
           // Host-confirmed only — never an optimistic rail-transition id.
           // noteHostIdentityKnown is deliberately NOT here — this handler's
@@ -12813,6 +15835,10 @@
         state.pinnedSessionsKnown = true;
         state.pinnedSessions = uniqueSessionRows(msg.entries);
         state.dots = Object.assign({}, state.dots, msg.dots || {});
+        if (settlePendingRename(state.pinnedSessions)) {
+          renderSessionName();
+          renderSessionHead();
+        }
         renderRail();
         break;
       }
@@ -12828,6 +15854,10 @@
           total: typeof msg.total === "number" ? msg.total : (msg.entries || []).length,
         };
         state.dots = Object.assign({}, state.dots, msg.dots || {});
+        if (settlePendingRename(state.repoPreviews[cwdKey(msg.cwd)].entries)) {
+          renderSessionName();
+          renderSessionHead();
+        }
         // First answer: the probe only asked about one repo, so now ask for the rest.
         if (!known) requestRailPreviews();
         renderRail();
@@ -12836,6 +15866,7 @@
       case "repos": {
         state.reposKnown = true;
         state.repos = Array.isArray(msg.entries) ? msg.entries : [];
+        settlePendingRepoColor(state.repos);
         const wasSelected = state.selectedRepoCwd;
         state.selectedRepoCwd = msg.selectedCwd || "";
         state.activeRepoCwd = msg.activeCwd || "";
@@ -12956,9 +15987,19 @@
       ensureActivityIndicator();
       // Queued blocks live at the END of the conversation — re-pin them under
       // freshly streamed content.
-      if (state.sendQueue.length && state.queuedWrapEl) messagesEl.appendChild(state.queuedWrapEl);
+      if (state.sendQueue.length && state.queuedWrapEl) appendTranscriptChild(state.queuedWrapEl);
     }
-    if (shouldRecordExportEvent(msg)) {
+    if (find.open && (
+      TURN_PROGRESS_MSGS.has(msg.type) ||
+      msg.type === "userMessage" ||
+      msg.type === "commandOutput" ||
+      msg.type === "agentEnd"
+    )) {
+      // Debounced — a 5 MB live turn must not re-scan on every token, and
+      // finishFindSearch does not scroll, so the current match stays put.
+      scheduleFindSearch();
+    }
+    if (!state.historyHydrating && shouldRecordExportEvent(msg)) {
       state.exportEvents.push(msg);
     }
   }
@@ -12974,8 +16015,6 @@
     renderMic();
   }
   newBtn.onclick = () => beginNewSession();
-  // Hide top-bar New immediately when the overflow slot is in the DOM (rail
-  // hosts). fillSessionHeadActions re-asserts this whenever the menu refreshes.
   fillSessionHeadActions();
   // Desktop ships the rail mount in the first HTML frame. Paint the skeleton
   // before catalog frames arrive so the window never starts panel-less.
@@ -13153,6 +16192,10 @@
           toggleHost: remoteFilesButtonHost(),
           presentation: "responsive",
           id: "files-browse-panel",
+          // Same content-area maximize as desktop. The panel hides the control
+          // while it is an overlay (phone / <900) and toggles the shared body
+          // class itself.
+          maximize: true,
         },
         ui: {
           confirm: uiChoice,
@@ -13220,6 +16263,7 @@
   }
 
   function handleProjectFileContent(msg) {
+    if (settlePreviewFileRequest(msg)) return;
     settleRemoteFileRequest("read", msg);
   }
 
@@ -13289,6 +16333,7 @@
       e.preventDefault();
       e.stopPropagation();
       const act = onbAction.dataset.act;
+      if (LAUNCH_ACTS.includes(act)) markOnboardingLaunched(act, onbAction.dataset.provider);
       if (act === "runInstall") vscode.postMessage({ type: "runInstallCmd" });
       else if (act === "installCodex") vscode.postMessage({ type: "installCodex" });
       else if (act === "cancelCodexInstall") vscode.postMessage({ type: "cancelCodexInstall" });
@@ -13297,6 +16342,7 @@
       else if (act === "connectProvider") vscode.postMessage({ type: "runGrokLogin", provider: onbAction.dataset.provider });
       else if (act === "recheckProvider") vscode.postMessage({ type: "recheckConnection", provider: onbAction.dataset.provider });
       else if (act === "retryProvider") vscode.postMessage({ type: "retryProviderSession", provider: onbAction.dataset.provider });
+      else if (act === "addProjectFolder") vscode.postMessage({ type: "addProjectFolder" });
       return;
     }
     const onbCopy = e.target.closest(".onb-copy");
@@ -13313,6 +16359,22 @@
           onbCopy.classList.remove("copied");
         }, 1500);
       });
+      return;
+    }
+    const thumbBtn = e.target.closest(".msg-thumb-btn");
+    if (thumbBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (state.replaying || !feedbackOffered()) return;
+      const actions = thumbBtn.closest(".msg-actions");
+      if (!actions || actions.dataset.feedbackPending === "1") return;
+      if (actions !== liveTurnActions()) return;
+      const clicked = Number(thumbBtn.dataset.rating);
+      if (clicked !== 1 && clicked !== -1) return;
+      const current = state.turnRating === 1 || state.turnRating === -1 ? state.turnRating : 0;
+      const next = current === clicked ? 0 : clicked;
+      actions.dataset.feedbackPending = "1";
+      vscode.postMessage({ type: "turnFeedback", rating: next });
       return;
     }
     const msgCopyBtn = e.target.closest(".msg-copy-btn");
@@ -13339,6 +16401,7 @@
       e.stopPropagation();
       if (msgRewindBtn.hidden) return;
       const msgEl = msgRewindBtn.closest(".msg.user");
+      if (isPendingClearNode(msgEl)) return;
       const idx = msgEl ? Number(msgEl.dataset.userBubbleIndex) : NaN;
       if (!Number.isInteger(idx) || idx < 0) return;
       // Send the text too: rewind discards this message, so the host hands it
@@ -13360,6 +16423,7 @@
       // host would only refuse. Say so here rather than round-trip for a warning.
       if (state.busy) return;
       const msgEl = msgEditBtn.closest(".msg.user");
+      if (isPendingClearNode(msgEl)) return;
       const idx = msgEl ? Number(msgEl.dataset.userBubbleIndex) : NaN;
       if (!Number.isInteger(idx) || idx < 0) return;
       // `_copyText` is the bubble's own words with the context envelope,
@@ -13590,7 +16654,7 @@
     if (sendKey) {
       e.preventDefault();
       if (state.busy) {
-        // Enter while Atlas is working must never act as a hidden Stop (#37) —
+        // Enter while Grok is working must never act as a hidden Stop (#37) —
         // it silently cancelled in-flight tools ("Tool execution was cancelled
         // by the user"). Queue the typed message (empty composer: no-op); it
         // flushes when the turn ends. Cancelling is only the explicit click on
@@ -13633,7 +16697,7 @@
     if (!repoPopover.hidden) positionRepoPopover();
   });
 
-  // A resize can also happen while Atlas is hidden (another panel tab / extension focused),
+  // A resize can also happen while Grok is hidden (another panel tab / extension focused),
   // where the webview gets no resize event and so can't re-measure. Close any open popover
   // when the view is hidden, so the history dropdown never reappears stale on refocus —
   // reopening it re-measures against the current panel width.
@@ -13645,15 +16709,20 @@
   // blinking in the box before the first click (matches Claude Code / Codex).
   // The webview is rebuilt on every re-show (no retainContextWhenHidden), so
   // the boot-time focus covers "reopened" too; the window-focus hook covers
-  // clicking back into a panel that stayed alive. Only claim focus when it
-  // landed on <body> (i.e. nowhere) — a click that focused a real control
-  // (history button, popover row) keeps it.
+  // clicking back into a panel that stayed alive.
+  // Desktop launch always claims the composer on the first focused-window
+  // event (Chromium otherwise lands on the first tabbable — rail search /
+  // history). Later window-focus only claims when it landed on <body> — a
+  // click that focused a real control keeps it, and a reconnect/resync must
+  // not steal. VS Code never takes this launch shot: focus belongs to the
+  // editor the user was already in.
   // applyChatZoom first: a stored desktop/remote scale must be on the body
   // before focus, or the first layout is at 1 and focus scrolls the overflow.
   // preventScroll: a taller-than-window first frame must not stick html.
   applyChatZoom();
   wireClientFontScaleShortcuts();
   window.addEventListener("focus", () => {
+    if (takeDesktopLaunchComposerFocus()) return;
     const el = document.activeElement;
     if (!el || el === document.body) input.focus({ preventScroll: true });
   });

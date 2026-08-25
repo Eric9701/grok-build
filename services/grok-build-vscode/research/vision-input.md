@@ -59,9 +59,31 @@ Run it: `node research/vision-probe.cjs` (env: `PROBE_PNG_SIZE=<px>`,
   (or none) — hint-less legacy tags and leading/inline legacy shapes from the
   first build are also stripped; a tag-looking string in the *middle* of the
   user's words is left alone.
-- **`[Image #N]` numbering is session-scoped** (`Session.imageCounter`,
-  re-seeded from replayed prompts on restore) so two screenshots in one
-  conversation never share a tag.
+- **`[Image #N]` is assigned once, at attach, and never rewritten.**
+  `allocateImageIndex` (`src/chips.ts`) stamps the chip from
+  `Session.imageIndexHighWater`. That high-water resets to zero only when
+  nothing is staged — composer empty *and* queue empty — so a plain send
+  still starts at `#1`, while a chip shown as `#2` keeps `#2` after `#1`
+  flushes or is removed. Tags may be non-contiguous (`#2`, `#5`);
+  `parseImageTags` stores the captured number as a Map key, and
+  `buildPromptWithImages` sorts by index, so holes do not disturb restore
+  or block order. The composer label, the bubble chip, and the prompt tag
+  all read that stored index. Authored text is copied verbatim — never
+  rewritten, never compacted. There is no `withPerMessageImageIndices` /
+  `composerImageIndexStart` / `reindexQueuedImageChips`. The CLI still
+  resolves a reference against the images attached to THIS message
+  (`research/image-index-probe.cjs`); a number from an earlier *turn*
+  (staging already idle, next paste is `#1` again) matches nothing:
+
+  > image reference "[Image #9]" matches no image attached to THIS MESSAGE. If
+  > it was attached earlier in the conversation, ask the user to re-attach it
+  > here; otherwise pass an absolute filesystem path or a data: URL.
+
+  Restore matches previews to the tags found in the very same text, whatever
+  numbers that text happens to carry. Two pictures in two sequential turns
+  are both "Image #1", each in its own bubble, because the high-water reset
+  between them. Two pictures staged together stay `#1` and `#2` even if the
+  first contribution is flushed or removed.
 - **Send is validated, never silent.** Every visible image chip is pre-read on
   the host before anything is cleared or sent; any failure blocks the send
   with the chips intact and an error in the chat. Formats are whitelisted to

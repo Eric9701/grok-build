@@ -26,6 +26,9 @@ import type { FileChip } from "./chips";
 import type { RepoListEntry, SessionListEntry } from "./sessions";
 import type { Dot } from "./session-pool";
 import type { RunProgressUpdate } from "./run-progress";
+import type { McpServerView } from "./mcp";
+import type { ConnectorView } from "./mcp-connectors";
+import type { RoutineDraft, RoutineModelOption, RoutineProjectOption, RoutineView } from "./routines";
 
 /** grok's tool-call payload as it comes off the wire (acp emits it untyped). The
  *  webview reads a handful of fields; the index signature keeps assignment from
@@ -37,6 +40,13 @@ export interface ToolCallPayload {
   kind?: string;
   rawInput?: unknown;
   content?: unknown;
+  /**
+   * Host-normalized MCP argument text (`prepareMcpToolCall`). Always stated
+   * on recognized MCP rows: a string shows IN (`{}` is a no-argument call);
+   * `null` means pending (do not render an empty IN). Absent on non-MCP
+   * rows and older hosts — the client must not invent IN from that absence.
+   */
+  detailInput?: string | null;
   [k: string]: unknown;
 }
 
@@ -60,6 +70,10 @@ export const HOST_CAPABILITIES = {
   // went, so the delete did not stick — and a client that offers the control
   // anyway is offering one that answers with a refusal. Capability, not version.
   deleteActiveSession: true,
+  // Queued follow-ups carry their attachments. OPT-IN: absent/false = the
+  // webview must not post `queueSend.chips` (a v2.0.4 host would ignore them
+  // and silently drop the files). Field presence, not a version check.
+  queueSendChips: true,
   // Read-only project file browse for AFK Pilot (phone/browser). Field presence
   // is the gate — never a version check. Local VS Code / desktop webviews
   // receive the flag but must not draw a second explorer; only IS_REMOTE clients
@@ -69,6 +83,9 @@ export const HOST_CAPABILITIES = {
   // host can offer list/read without a write path. OPT-IN field presence.
   editProjectFiles: true,
 } as const;
+
+/** Machine-readable `error.code` for a send abandoned after its userMessage echo. */
+export const INTERRUPTED_SEND_CODE = "interrupted-send" as const;
 
 /** Host-kind affordances merged into `initialState.capabilities` at post time. */
 export type HostUiCapabilities = {
@@ -88,6 +105,13 @@ export type HostUiCapabilities = {
    * No create/delete/rename in this pass.
    */
   editProjectFiles?: boolean;
+  /**
+   * Settings → Connectors. OPT-IN: absent/false = hide the nav row and keep
+   * the page unreachable. Desktop and VS Code set true; remotes inherit the
+   * desk machine's capabilities. The webview still keys on this field so an
+   * older host that never sent it keeps the page hidden.
+   */
+  mcpSettings?: boolean;
   /**
    * Whether generated media is served with honest byte-range responses. This
    * is opt-in: hosts without this capability must keep generated videos lazy.
@@ -154,6 +178,19 @@ export type HostUiCapabilities = {
    * and VS Code deliberately does not — its workspace is VS Code's to manage.
    */
   addProjectFolder?: boolean;
+  /**
+   * `queueSend` / `queuedSends` carry per-item attachments. OPT-IN: absent/false
+   * = the webview posts text-only `queueSend` (and refuses to queue when the
+   * composer holds a chip — everything or nothing). Older hosts omit the field
+   * and would ignore extra `chips` / `queued` keys.
+   */
+  queueSendChips?: boolean;
+};
+
+/** One host-owned queued follow-up. `chips` omitted means none. */
+export type QueuedSend = {
+  text: string;
+  chips?: FileChip[];
 };
 
 export type HostMsg =
@@ -173,6 +210,12 @@ export type HostMsg =
       /** Product telemetry opt-out. Absent on older hosts; remotes treat that
        *  as unknown and show the explanation without an on/off claim. */
       telemetryEnabled?: boolean;
+      /**
+       * Settings → General "Thumbs feedback to SpaceXAI" (`atlas.thumbsFeedback`).
+       * Default off. Absent on older hosts — the webview must not invent thumbs
+       * from this field; `feedbackAvailability` remains the affordance gate.
+       */
+      thumbsFeedback?: boolean;
       capabilities: HostUiCapabilities }
   /** Live retraction of `capabilities.moveViewHint`, sent the moment the user
    *  opens the host's move-view picker. `initialState` is not re-sent on a
@@ -184,8 +227,39 @@ export type HostMsg =
    * `needsLogin` is the account that is still configured but answered an
    * auth-shaped failure: every affordance that would otherwise imply it works
    * (a selectable model row, a silently empty history) becomes the same sign-in
-   * action the connect flow uses. */
-  | { type: "providerState"; providers: { id: "grok" | "codex"; connected: boolean; needsLogin?: boolean; cliVersion?: string; adapterVersion?: string; latestCliVersion?: string; updateAvailable?: boolean }[] }
+   * action the connect flow uses.
+   * `checking` is a re-observation in flight (Settings → Providers Refresh). It
+   * is the ONLY source of that spinner: a client must never latch it locally,
+   * or an older host that ignores `refreshProviders` would spin forever. */
+  | { type: "providerState"; providers: { id: "grok" | "codex" | "claude"; connected: boolean; needsLogin?: boolean; cliVersion?: string; adapterVersion?: string; latestCliVersion?: string; updateAvailable?: boolean }[]; checking?: boolean }
+  /** Grok's grok.com + user-level MCP inventory (`_x.ai/mcp/list`; project-file
+   *  servers omitted). The desk keeps launch recipes and `configFile`; remotes
+   *  receive `projectMcpServerForRemote` (page fields only — no `tag`).
+   *  Connect/disconnect stay desk-only. */
+  | { type: "mcpServers"; servers: McpServerView[]; loading?: boolean; error?: string; warning: string }
+  /** Host-owned Tier-1 connector catalog. Mirrored so a remote can SEE which
+   *  apps are connected; connect/disconnect stay desk-only (OAuth + ~/.mcp-auth
+   *  and key-auth HostSecrets live on the machine running the host). Views
+   *  never carry the key. */
+  | { type: "mcpConnectors"; connectors: ConnectorView[] }
+  /**
+   * The Routines page, whole. Carries its own pickers rather than leaning on
+   * the chat state, because the VS Code settings TAB loads settings.js and
+   * nothing else — and because `projects` is then filtered by the same
+   * authorization pass that filters `entries`, so a remote cannot be offered a
+   * project it may not reach.
+   *
+   * `error` is the last save/delete refusal, cleared by the next successful
+   * write. Folded in here rather than given its own type, matching `mcpServers`.
+   */
+  | {
+      type: "routines";
+      entries: RoutineView[];
+      projects: RoutineProjectOption[];
+      models: RoutineModelOption[];
+      error?: string;
+      errorId?: string;
+    }
   | { type: "codexInstallProgress"; phase: "downloading" | "verifying" | "installing" | "idle"; receivedBytes?: number; totalBytes?: number; reason?: string }
   /** Plan picker gate. `recheckable` means the version probe failed (not a
    *  verified-old CLI) — the row stays clickable so a later pick re-probes. */
@@ -205,17 +279,17 @@ export type HostMsg =
   // Local-webview chrome — never mirrored to remotes.
   | { type: "remoteStatus"; linked: boolean }
   | { type: "fontScale"; value: number }
-  | { type: "atlasUpdateStatus"; current?: string | null; latest?: string | null; updateAvailable?: boolean; policy?: unknown; error?: string }
+  | { type: "grokUpdateStatus"; current?: string | null; latest?: string | null; updateAvailable?: boolean; policy?: unknown; error?: string }
   /** Desktop app update notice (manual download page). Host-local; VS Code
    *  never sends this. Capability = frame arrived; no host flag. Fallback when
    *  the in-app updater cannot check or download. */
   | { type: "updateAvailable"; version: string; url: string }
   /** Desktop in-app update is downloaded and waiting for restart. Host-local. */
   | { type: "updateReady"; version: string }
-  | { type: "initialized"; info: { cliPath: string; cwd: string; version: string | null; provider?: "grok" | "codex"; init: { protocolVersion?: unknown } } }
+  | { type: "initialized"; info: { cliPath: string; cwd: string; version: string | null; provider?: "grok" | "codex" | "claude"; init: { protocolVersion?: unknown } } }
   | { type: "cliUpdating" }
   // `worktree` gates the gear's Apply/Remove worktree items to worktree sessions.
-  | { type: "session"; sessionId: string; models: ModelInfo[]; currentModelId: string | undefined; worktree?: boolean; provider?: "grok" | "codex" }
+  | { type: "session"; sessionId: string; models: ModelInfo[]; currentModelId: string | undefined; worktree?: boolean; provider?: "grok" | "codex" | "claude" }
   /** User-appended `[model.*]` tables from the global Atlas config (no api_key). */
   | { type: "localModels"; models: Array<{ id: string; model?: string; name?: string; description?: string; baseUrl?: string; envKey?: string; hasApiKey: boolean; contextWindow?: number }> }
   // The focused conversation's display name, using the same precedence as a
@@ -235,6 +309,8 @@ export type HostMsg =
   | { type: "voiceConfigured"; value: boolean; sendPhrase?: string; keyterms?: string[] }
   /** Live `atlas.telemetry.enabled` so the settings surface stays in sync. */
   | { type: "telemetryEnabled"; value: boolean }
+  /** Live `atlas.thumbsFeedback` so the settings surface stays in sync. */
+  | { type: "thumbsFeedback"; value: boolean }
   | { type: "voicePartial"; text: string }
   | { type: "voiceSubmit"; text: string }
   | { type: "voiceTranscript"; text: string; send?: boolean }
@@ -280,6 +356,9 @@ export type HostMsg =
       text?: string;
       dataUrl?: string;
       pretty?: boolean;
+      /** The JSON pretty-printer actually CHANGED the text, so line numbers
+       *  here do not describe the file on disk. `pretty` only says it ran. */
+      reformatted?: boolean;
       /** Present for editable text when host advertises edit — mtime+size. */
       stamp?: { mtimeMs: number; size: number };
       /**
@@ -349,10 +428,21 @@ export type HostMsg =
   | { type: "autoCompactNotice"; text: string }
   | { type: "planBlocked"; kind: string; target: string }
   | { type: "promptComplete"; meta: PromptResultMeta }
-  // Context size read from grok's on-disk signals.json — the source that has a
-  // real count when the turn meta can't: a cold restore (no turn yet) and a
-  // /compact turn (its meta reports 0, stripped by gateZeroTokenMeta).
-  | { type: "contextUsage"; used: number; window?: number }
+  // Context occupancy for the donut. `used` is optional so an adapter can
+  // deliver `usage_update.size` (the real window) before any occupancy exists.
+  // The structured fields are only populated by Grok's `_x.ai/session/info`.
+  | {
+      type: "contextUsage";
+      used?: number;
+      window?: number;
+      categories?: { label: string; tokens: number; detail?: string }[];
+      systemPromptTokens?: number;
+      toolDefinitionsTokens?: number;
+      toolDefinitionsCount?: number;
+      messageTokens?: number;
+      freeTokens?: number;
+      autoCompactThresholdPercent?: number;
+    }
   | { type: "agentReset" }
   | { type: "agentError"; text: string }
   | { type: "agentEnd"; meta?: PromptResultMeta }
@@ -361,10 +451,21 @@ export type HostMsg =
   | { type: "summarizing" }
   | { type: "sessionContext" }
   | { type: "clearMessages" }
-  | { type: "onboarding"; state: "connect-agent" | "missing-cli" | "auth-required" | "missing-codex" | "codex-login"; platform?: string; reason?: string; provider?: "grok" | "codex" }
+  // "provider-connected" is the one SUCCESS state here: a re-check that worked
+  // used to leave a bare empty session, indistinguishable from nothing having
+  // happened. It clears itself when the first message paints.
+  // "no-project" is the desktop empty-open-set state: chat cannot start until
+  // the user adds a folder. It replaces the baked "Starting" spinner that
+  // otherwise never clears (startSession used to return without unlocking).
+  // `launched` says the HOST already opened the login terminal, so the panel can
+  // show it as done. Without it an automatically opened terminal leaves the
+  // button looking untouched, which reads as "press it again".
+  | { type: "onboarding"; state: "connect-agent" | "missing-cli" | "auth-required" | "missing-codex" | "codex-login" | "missing-claude" | "claude-login" | "provider-connected" | "no-project"; platform?: string; reason?: string; provider?: "grok" | "codex" | "claude"; launched?: boolean }
   // resumeFailed is additive: a remote resume refusal names the requested id so
   // the browser outbox can fail closed. Older clients ignore the extra field.
-  | { type: "error"; text: string; resumeFailed?: { id: string } }
+  // code is additive too — a harness must not match user-facing `text`.
+  // "interrupted-send" is a send abandoned after its userMessage echo.
+  | { type: "error"; text: string; resumeFailed?: { id: string }; code?: typeof INTERRUPTED_SEND_CODE }
   | { type: "hostNotice"; level: "info" | "warning"; text: string }
   | { type: "xaiNotification"; update?: unknown }
   // Persisted xAI lifecycle (method _x.ai/session/update): subagent spawn/finish
@@ -384,10 +485,24 @@ export type HostMsg =
   // live `_x.ai/session_notification` rail (`workflow_updated` / `goal_updated`).
   // Cards update in place by `id`; terminal phases stop the live dots.
   | { type: "runProgress"; update: RunProgressUpdate }
-  // A finished shell command's full text + captured output (#41) — snapshotted
-  // host-side at terminal/release (the extension runs the commands, so the
-  // buffer is exactly what grok received). exitCode null = killed/cancelled.
-  | { type: "commandOutput"; command: string; output: string; exitCode: number | null; truncated: boolean }
+  // A finished shell command's full text + captured output (#41). Live grok
+  // snapshots at terminal/release; session/load hydrates the same message from
+  // the replayed tool_call (`commandOutputForToolCall`). This host always
+  // states `cancelled` (true = live `commandDone` with no exit; false = not a
+  // kill, including hydrated / Claude "exit not reported"). The field stays
+  // optional on the wire because older hosts omit it; the client treats
+  // absence as that older rule (`exitCode == null` → [Cancelled]), which was
+  // correct then — those hosts never emitted replay-hydrated commandOutput.
+  // `toolCallId` is always stated on MCP commandOutput (the ACP id the
+  // webview joins IN to OUT by). Shell output omits it — absence means join
+  // by `command` (this host's shell path, or an older host).
+  // `agentSawCut` is always stated by this host. `true` is a cut the agent
+  // already saw (terminal byte cap / CLI `truncated` on a replayed execute).
+  // `false` is this host's 100K display cap on an MCP result the provider
+  // returned in full. Older hosts omit the field; the client must not
+  // attribute that cut either way (do not claim the agent saw it, and do
+  // not claim this is display-only).
+  | { type: "commandOutput"; command: string; output: string; exitCode: number | null; truncated: boolean; cancelled?: boolean; toolCallId?: string; agentSawCut?: boolean }
   // grok.expandCommandOutputs — pre-expand every command's IN/OUT detail.
   | { type: "expandCommandOutputs"; value: boolean }
   // grok.steerByDefault — send-while-busy skips the queue and steers (#52).
@@ -400,6 +515,10 @@ export type HostMsg =
   // Selection / Send File / @-mention so the user can type a prompt right away.
   // Ephemeral UI action, not session-scoped (goes via `post`, never buffered).
   | { type: "focusInput" }
+  /** Open the in-webview find bar (#99). Command Palette + Ctrl/Cmd+F fallback
+   *  when the workbench swallows the keystroke inside a WebviewView. Ephemeral
+   *  (`post`, never buffered). Host-local — remotes open find from their own ⋯. */
+  | { type: "findInSession" }
   /** Put text back in the composer (Edit-and-resend, #56). Posted after the
    *  rewind + reload so it survives the clearMessages/replay that follows. */
   | { type: "restoreComposer"; text: string }
@@ -452,7 +571,10 @@ export type HostMsg =
   | { type: "sessionDot"; id: string; dot: Dot }
   // Full snapshot of the focused session's host-owned send queue (#37) — the
   // webview renders pending user blocks from this; replay rebuilds them.
-  | { type: "queuedSends"; items: string[] }
+  // `items` stays string[] so an older webview still renders text. `queued` is
+  // additive: same contributions plus per-item chips. A client that never sees
+  // it keeps today's text-only block.
+  | { type: "queuedSends"; items: string[]; queued?: QueuedSend[] }
   // A remote queued prompt is ready to run. The browser echoes this as an
   // ordinary send carrying the same host-issued id, so relay quota/rate metering
   // applies at dequeue time and replayed/outbox copies are recognisably one send.
@@ -460,6 +582,19 @@ export type HostMsg =
   // Steer (#52) is unavailable on this CLI (`_x.ai/interject` → -32601). Latches
   // the button off for the session; the queue stays as the fallback.
   | { type: "steerUnavailable" }
+  /**
+   * Grok-only thumbs (#114). Off until the host has a positive signal
+   * (`session/new` `_meta.feedbackEnabled` or an advertised `feedback` command)
+   * and not latched off by `-32601` / "Feedback is disabled." Older hosts omit
+   * the frame — the webview must not invent buttons.
+   */
+  | { type: "feedbackAvailability"; available: boolean }
+  /**
+   * Host-confirmed rating for the live-process turn that just finished.
+   * `0` clears. Also restores the thumbs affordance after a focus-swap
+   * (the only turn that can be rated). Nothing is read back from the agent.
+   */
+  | { type: "turnFeedbackAck"; rating: -1 | 0 | 1 }
   // Session-cumulative billing (#53), summed by the host across the session's
   // turns. `turn` is the last prompt's own usage. Both omitted when the CLI sent
   // no `_meta.usage` — the popover then shows only the context row, never zeros.
@@ -519,7 +654,21 @@ export type WebviewMsg =
   | { type: "editLocalModel"; id: string }
   | { type: "removeLocalModel"; id: string }
   | { type: "openProjectConfig" }
-  | { type: "runMcpList" }
+  | { type: "listMcpServers" }
+  /** Open the Routines page — the host answers with a `routines` frame. */
+  | { type: "listRoutines" }
+  /** Create when `id` is absent, replace when it is present. The host
+   *  validates: a draft that cannot run is refused rather than stored. */
+  | { type: "saveRoutine"; id?: string; draft: RoutineDraft }
+  | { type: "deleteRoutine"; id: string }
+  | { type: "setRoutinePaused"; id: string; paused: boolean }
+  /** Fire once, now. Deliberately takes no window key — a manual run must not
+   *  consume the scheduled one. */
+  | { type: "runRoutineNow"; id: string }
+  /** Desk-only: OAuth opens a browser; key-auth sends `key` once (never echoed). */
+  | { type: "connectMcpConnector"; id: string; key?: string; readOnly?: boolean }
+  /** Desk-only: drop the id from our list. Key-auth also deletes the HostSecrets entry. OAuth does not delete ~/.mcp-auth tokens. */
+  | { type: "disconnectMcpConnector"; id: string }
   | { type: "showLogs" }
   /** Unpackaged desktop only — toggle Chromium DevTools (gear / F12). */
   | { type: "toggleDevTools" }
@@ -559,6 +708,8 @@ export type WebviewMsg =
   | { type: "setVoiceKeyterms"; value: string[] }
   /** Persist `atlas.telemetry.enabled`. Desktop toggle; remotes do not send this. */
   | { type: "setTelemetryEnabled"; value: boolean }
+  /** Persist `atlas.thumbsFeedback`. Host-owned; remotes honour the desk value. */
+  | { type: "setThumbsFeedback"; value: boolean }
   /**
    * Attach a user-selected file. VS Code posts a `path` (file URI or absolute)
    * from the webview drag-drop surface. Desktop posts only a host-minted
@@ -569,16 +720,21 @@ export type WebviewMsg =
   | { type: "exitPlanAnswer"; requestId: number | string; verdict: "approved" | "abandoned" | "rejected"; comment?: string }
   | { type: "questionAnswer"; requestId: number | string; answers?: Record<string, string>; annotations?: Record<string, { notes?: string; preview?: string }> }
   | { type: "questionCancel"; requestId: number | string }
-  | { type: "setModel"; modelId: string; provider?: "grok" | "codex" }
+  | { type: "setModel"; modelId: string; provider?: "grok" | "codex" | "claude" }
   | { type: "installCodex" }
   | { type: "cancelCodexInstall" }
   | { type: "runInstallCmd" }
-  | { type: "runGrokLogin"; provider?: "grok" | "codex" }
-  | { type: "logout"; provider?: "grok" | "codex" }
-  | { type: "checkAtlasUpdate" }
-  | { type: "updateAtlas" }
-  | { type: "recheckConnection"; provider?: "grok" | "codex" }
-  | { type: "retryProviderSession"; provider?: "grok" | "codex" }
+  | { type: "runGrokLogin"; provider?: "grok" | "codex" | "claude" }
+  | { type: "logout"; provider?: "grok" | "codex" | "claude" }
+  | { type: "checkGrokUpdate" }
+  | { type: "updateGrok" }
+  | { type: "recheckConnection"; provider?: "grok" | "codex" | "claude" }
+  /** Re-observe every account without asserting anything about it. Unlike
+   *  `recheckConnection` this never marks a provider connected — it re-runs the
+   *  CLI locators and re-probes the credentials of accounts already connected,
+   *  so Settings → Providers can be made to tell the truth on demand. */
+  | { type: "refreshProviders" }
+  | { type: "retryProviderSession"; provider?: "grok" | "codex" | "claude" }
   | { type: "listSessions"; offset?: number; limit?: number; providerCursor?: { grokOffset: number; codexHighWater?: { updatedAt: number; id: string } }; query?: string }
   // Preview rows for a repo the client is NOT currently in — the projects rail
   // shows a few sessions per repo without switching to it. `cwd` is matched
@@ -667,13 +823,30 @@ export type WebviewMsg =
   | { type: "remoteVoiceStop"; cancel?: boolean }
   // Host-owned send queue mutations (#37): the webview never mutates its local
   // mirror — it posts these and re-renders from the queuedSends snapshot.
-  | { type: "queueSend"; text: string }
+  // `chips` is additive (capabilities.queueSendChips). `text` stays required so
+  // an image-only queue is `{ text: "", chips }` — a v2.0.4 host still accepts
+  // the type and no-ops on empty text rather than dropping an unknown message.
+  | { type: "queueSend"; text: string; chips?: FileChip[] }
+  // Old webviews: `index: 0` is the pending block (every host entry). Chip-aware
+  // clients use `clearQueuedSends` for that block; a live host therefore treats
+  // this message as the pre-split meaning.
   | { type: "dequeueSend"; index: number }
-  | { type: "clearQueuedSends" }
-  // Steer (#52): inject the composed text into the RUNNING turn instead of
-  // waiting for it. Host-owned like the queue — the webview never sends the
-  // prompt itself, so a -32601 fallback can re-queue the text without losing it.
-  | { type: "steerSend"; text: string }
+  // `restore` is additive: Stop/Edit set true so queued chips return to the
+  // composer. Absent/false discards them (Remove). Older hosts ignore the field
+  // and only empty the queue.
+  | { type: "clearQueuedSends"; restore?: boolean }
+  // Steer (#52): inject the composed text (and, additively, attachments) into
+  // the RUNNING turn instead of waiting. Host-owned like the queue — the
+  // webview never sends the prompt itself, so a capability gap can re-queue
+  // the whole item without losing it. `chips` is additive (same as queueSend).
+  // `fromQueue` marks the pending-block button so the host snapshots
+  // `queuedSends` before any await (a following `clearQueuedSends` can race).
+  | { type: "steerSend"; text: string; chips?: FileChip[]; fromQueue?: boolean }
+  /**
+   * Rate the agent turn that just finished in this process. `rating` 0 clears.
+   * No bubble index: the host does not reconstruct CLI `turn_number`.
+   */
+  | { type: "turnFeedback"; rating: -1 | 0 | 1 }
   // Fork (#48): branch this session's conversation into a new one and focus it.
   // `sessionId` is additive: old clients omit it and keep today's path; a
   // present id that is not the dispatch-resolved session is refused.
@@ -698,6 +871,8 @@ export type WebviewMsg =
   | { type: "uiConfirmAnswer"; id: string; ok: boolean }
   // Workflow card controls (P2-10): pause / resume / stop by display name.
   | { type: "workflowControl"; action: "pause" | "resume" | "stop"; displayName: string }
+  /** Read-only Grok context snapshot for the open donut popover. */
+  | { type: "refreshContextDetails" }
   // Relay account (gear "AFK Pilot" section, local webview only): start the
   // device-link flow / drop the device token / open the relay web portal.
   | { type: "remoteSignIn" }
@@ -716,7 +891,7 @@ export type WebviewMsg =
 // error). The runtime arrays are just the keys, so they can never drift from the
 // union without failing the build.
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
-  initialState: true, moveViewHint: true, providerState: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, atlasUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true,
+  initialState: true, moveViewHint: true, providerState: true, mcpServers: true, mcpConnectors: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
   initialized: true, cliUpdating: true, session: true, localModels: true, sessionName: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
@@ -730,9 +905,9 @@ const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
   sessionContext: true, clearMessages: true, onboarding: true, error: true, hostNotice: true,
   xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true,
   soundNotifications: true, processingSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, moveComposerCaret: true, remoteStatus: true,
-  setAllToolDetails: true, focusInput: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true,
+  setAllToolDetails: true, focusInput: true, findInSession: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true,
   sessions: true, repoSessions: true, pinnedSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
-  steerUnavailable: true, usage: true,
+  steerUnavailable: true, feedbackAvailability: true, turnFeedbackAck: true, usage: true,
 };
 
 const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
@@ -740,13 +915,14 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   setMode: true, removeChip: true, toggleChip: true, openFile: true, showInFolder: true, openUrl: true,
   openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true,
   addProjectFolder: true, removeProjectFolder: true,
-  openProjectConfig: true, runMcpList: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, moveView: true,
+  openProjectConfig: true, listMcpServers: true, connectMcpConnector: true, disconnectMcpConnector: true,
+  listRoutines: true, saveRoutine: true, deleteRoutine: true, setRoutinePaused: true, runRoutineNow: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, moveView: true,
   listLocalModels: true, addLocalModel: true, editLocalModel: true, removeLocalModel: true,
   setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true,
-  setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, summarizeSpeech: true, requestImageFull: true, composerFocus: true,
+  setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, summarizeSpeech: true, requestImageFull: true, composerFocus: true,
   dropFile: true, permissionAnswer: true, exitPlanAnswer: true, questionAnswer: true,
   questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, runInstallCmd: true, runGrokLogin: true,
-  logout: true, checkAtlasUpdate: true, updateAtlas: true, recheckConnection: true, retryProviderSession: true,
+  logout: true, checkGrokUpdate: true, updateGrok: true, recheckConnection: true, refreshProviders: true, retryProviderSession: true,
   listSessions: true, listRepoSessions: true, selectRepo: true, toggleRepoPin: true, toggleSessionPin: true,
   setRepoArchived: true, setRepoColor: true,
   resumeSession: true, renameSession: true, deleteSession: true,
@@ -755,9 +931,10 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   pasteImage: true, uploadFile: true, voiceStart: true,
   voiceStop: true, remoteVoiceStart: true, remoteVoiceChunk: true,
   remoteVoiceStop: true, queueSend: true, dequeueSend: true, clearQueuedSends: true,
-  steerSend: true, forkSession: true,
+  steerSend: true, turnFeedback: true, forkSession: true,
   newWorktreeSession: true, applyWorktree: true, removeWorktree: true,
   rewindSession: true, editLastMessage: true, uiConfirmAnswer: true, workflowControl: true,
+  refreshContextDetails: true,
   remoteSignIn: true, remoteSignOut: true, unlinkRemoteDevice: true, openRemotePortal: true,
   openUpdateRelease: true, restartToUpdate: true,
 };

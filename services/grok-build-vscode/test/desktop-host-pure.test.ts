@@ -620,6 +620,38 @@ describe("desktop main wiring (source gates)", () => {
     expect(sidebar.slice(unlinkStart, unlinkEnd)).not.toContain("confirmHostExecute");
   });
 
+  it("first-run default project is provisioned from paths.ts before the sidebar starts", () => {
+    const main = fs.readFileSync(path.join(testRepoRoot, "src", "desktop", "main.ts"), "utf8");
+    expect(main).toContain("provisionDefaultProjectDir");
+    expect(main).toContain("desktopUserHomeDir");
+    expect(main).toContain("provisionDefaultProject:");
+    // Sidebar must already see the root — constructing it first left
+    // RemoteClientState / defaultProvider on "".
+    const provisionAt = main.indexOf("provisionDefaultProjectDir");
+    const sidebarAt = main.indexOf("new GrokSidebar");
+    expect(provisionAt).toBeGreaterThan(0);
+    expect(sidebarAt).toBeGreaterThan(provisionAt);
+
+    const host = fs.readFileSync(path.join(testRepoRoot, "src", "desktop", "electron-host.ts"), "utf8");
+    expect(host).toContain("provisionDefaultProject?.()");
+    expect(host).toContain("seeded.length");
+
+    const sidebar = fs.readFileSync(path.join(testRepoRoot, "src", "sidebar.ts"), "utf8");
+    expect(sidebar).toContain("presentEmptyProjectState");
+    const startBody = sidebar.slice(
+      sidebar.indexOf("private async startSessionBody("),
+      sidebar.indexOf("private async startSessionBody(") + 1800,
+    );
+    expect(startBody).toContain("presentEmptyProjectState(target)");
+    expect(startBody).toContain("refused startSession");
+    const removeBody = sidebar.slice(
+      sidebar.indexOf("async removeProjectFolder("),
+      sidebar.indexOf("private presentEmptyProjectState("),
+    );
+    expect(removeBody).toContain("presentEmptyProjectState(this.focused)");
+    expect(sidebar).toMatch(/if \(this\.host\.canSwitchWorkspaceFolder\) return "";/);
+  });
+
   it("registers file-tree IPC while getHtml loads the component only for desktop", () => {
     const main = fs.readFileSync(
       path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "desktop", "main.ts"),
@@ -1197,6 +1229,54 @@ describe("app-resource serve policy (no credential leak)", () => {
   });
 });
 
+describe("webview message schema validation — routines", () => {
+  // This validator is a strict allowlist ending in `default: return null`, so
+  // TypeScript does NOT force a new message type to be handled here. The
+  // Routines page shipped without these five and every one of them was dropped
+  // silently on the desktop app: the page rendered, asked for its data, and got
+  // nothing back — empty project and model pickers, no error anywhere.
+  it("lets every routine message through", () => {
+    expect(parseWebviewMsg({ type: "listRoutines" })).toEqual({ type: "listRoutines" });
+    expect(parseWebviewMsg({ type: "deleteRoutine", id: "r1" })?.type).toBe("deleteRoutine");
+    expect(parseWebviewMsg({ type: "runRoutineNow", id: "r1" })?.type).toBe("runRoutineNow");
+    expect(parseWebviewMsg({ type: "setRoutinePaused", id: "r1", paused: true })?.type)
+      .toBe("setRoutinePaused");
+    expect(parseWebviewMsg({
+      type: "saveRoutine",
+      draft: {
+        title: "Morning brief", prompt: "What changed?", cwd: "C:/repo",
+        provider: "grok", model: "grok-4.6",
+        cadence: { every: 6, unit: "hours" },
+      },
+    })?.type).toBe("saveRoutine");
+    // Editing carries an id; creating does not.
+    expect(parseWebviewMsg({ type: "saveRoutine", id: "r1", draft: { title: "x" } })?.type)
+      .toBe("saveRoutine");
+  });
+
+  it("drops malformed routine messages", () => {
+    expect(parseWebviewMsg({ type: "deleteRoutine" })).toBeNull();
+    expect(parseWebviewMsg({ type: "deleteRoutine", id: 7 })).toBeNull();
+    expect(parseWebviewMsg({ type: "setRoutinePaused", id: "r1" })).toBeNull();
+    expect(parseWebviewMsg({ type: "setRoutinePaused", id: "r1", paused: "yes" })).toBeNull();
+    expect(parseWebviewMsg({ type: "saveRoutine" })).toBeNull();
+    expect(parseWebviewMsg({ type: "saveRoutine", draft: "nope" })).toBeNull();
+    expect(parseWebviewMsg({ type: "saveRoutine", id: 7, draft: {} })).toBeNull();
+    expect(parseWebviewMsg({ type: "saveRoutine", draft: { title: 7 } })).toBeNull();
+    expect(parseWebviewMsg({ type: "saveRoutine", draft: { cadence: "daily" } })).toBeNull();
+    expect(parseWebviewMsg({ type: "saveRoutine", draft: { cadence: { every: "six" } } })).toBeNull();
+  });
+
+  it("refuses an absurd prompt at the boundary rather than downstream", () => {
+    // The renderer is untrusted and validateRoutine's cap runs after this gate
+    // has already accepted whatever arrived.
+    const huge = "x".repeat(8000 * 4 + 1);
+    expect(parseWebviewMsg({ type: "saveRoutine", draft: { prompt: huge } })).toBeNull();
+    expect(parseWebviewMsg({ type: "saveRoutine", draft: { prompt: "x".repeat(9000) } })?.type)
+      .toBe("saveRoutine");
+  });
+});
+
 describe("webview message schema validation", () => {
   it("accepts known well-formed messages", () => {
     expect(parseWebviewMsg({ type: "ready" })).toEqual({ type: "ready" });
@@ -1231,6 +1311,41 @@ describe("webview message schema validation", () => {
       type: "setTelemetryEnabled",
       value: false,
     });
+    expect(parseWebviewMsg({ type: "setThumbsFeedback", value: true })).toEqual({
+      type: "setThumbsFeedback",
+      value: true,
+    });
+    expect(parseWebviewMsg({ type: "setThumbsFeedback", value: "yes" })).toBeNull();
+    expect(parseWebviewMsg({ type: "turnFeedback", rating: 1 })).toEqual({
+      type: "turnFeedback",
+      rating: 1,
+    });
+    expect(parseWebviewMsg({ type: "turnFeedback", rating: 0 })).toEqual({
+      type: "turnFeedback",
+      rating: 0,
+    });
+    expect(parseWebviewMsg({ type: "turnFeedback", rating: 2 })).toBeNull();
+    expect(parseWebviewMsg({ type: "turnFeedback" })).toBeNull();
+    expect(parseWebviewMsg({ type: "connectMcpConnector", id: "linear" })).toEqual({
+      type: "connectMcpConnector",
+      id: "linear",
+    });
+    expect(parseWebviewMsg({
+      type: "connectMcpConnector",
+      id: "github",
+      key: "ghp_TESTSECRET_do_not_store",
+      readOnly: true,
+    })).toEqual({
+      type: "connectMcpConnector",
+      id: "github",
+      key: "ghp_TESTSECRET_do_not_store",
+      readOnly: true,
+    });
+    expect(parseWebviewMsg({ type: "connectMcpConnector", id: "github", key: 12 })).toBeNull();
+    expect(parseWebviewMsg({ type: "connectMcpConnector", id: "github", readOnly: "yes" })).toBeNull();
+    expect(parseWebviewMsg({ type: "disconnectMcpConnector", id: "linear" })?.type)
+      .toBe("disconnectMcpConnector");
+    expect(parseWebviewMsg({ type: "connectMcpConnector" })).toBeNull();
     expect(parseWebviewMsg({ type: "setVoiceSendPhrase" })).toBeNull();
     expect(parseWebviewMsg({ type: "setVoiceKeyterms", value: ["ok", 1] })).toBeNull();
     expect(parseWebviewMsg({ type: "setTelemetryEnabled", value: "no" })).toBeNull();
@@ -1797,6 +1912,7 @@ describe("desktop DevTools gate (non-production only)", () => {
     expect(host).toMatch(/devTools:\s*!app\.isPackaged/);
     expect(host).not.toContain("openDevTools");
     expect(host).toMatch(/canToggleDevTools/);
+    expect(host).toMatch(/canShowMcpSettings/);
     expect(host).toContain("toggleDevTools()");
     const settingsJs = fs.readFileSync(
       path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "media", "settings.js"),
@@ -1924,7 +2040,15 @@ describe("desktop branding and menu", () => {
     // must keep its document scroller (URL-bar hide, keyboard pans).
     expect(chatCss).toMatch(/html:has\(body\.desk\)\s*\{[^}]*overflow:\s*hidden/s);
     expect(chatCss).not.toMatch(/^html\s*\{[^}]*overflow:\s*hidden/ms);
-    expect(chatCss).toContain("calc(100% / var(--chat-zoom, 1))");
+    // #119. The body must NOT divide the zoom back out. That was correct under
+    // the old non-standard `zoom`; the CSS Zoom spec (Chromium 128+) resolves
+    // percentages against the zoom-adjusted containing block, so `height: 100%`
+    // already fills the window and dividing again halves it. Measured in
+    // Chromium 149 at an 800px viewport, the old formula put the composer at
+    // 400px at zoom 2 and overflowed to 1333px at zoom 0.6 — wrong at every
+    // scale but 1. Both older shapes stay pinned out so neither comes back.
+    expect(chatCss).toMatch(/zoom: var\(--chat-zoom, 1\);\s+height: 100%;/);
+    expect(chatCss).not.toContain("calc(100% / var(--chat-zoom, 1))");
     expect(chatCss).not.toContain("calc(100vh / var(--chat-zoom, 1))");
   });
 
@@ -2050,8 +2174,8 @@ describe("IPC sender validation helper", () => {
 });
 
 describe("file-tree panel assets", () => {
-  it("top-bar order is Remote, History, overflow, then Panel with separator on Panel only", () => {
-    // Owner preference: Remote, Session history, ⋯, |, Panel — not ⋯ first.
+  it("top-bar order is Remote, History, New, overflow, then Panel with separator on Panel only", () => {
+    // Owner preference: Remote, Session history, New, ⋯, |, Panel — not ⋯ first.
     // Separator lives on the Panel toggle so remote (no panel) has no dangling |.
     const sidebar = fs.readFileSync(
       path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "sidebar.ts"),
@@ -2061,10 +2185,12 @@ describe("file-tree panel assets", () => {
     expect(topBar).toBeTruthy();
     const remote = topBar.indexOf('id="remote-btn"');
     const history = topBar.indexOf('id="history-btn"');
+    const newSession = topBar.indexOf('id="new-btn"');
     const overflow = topBar.indexOf('id="session-head-actions"');
     expect(remote).toBeGreaterThan(-1);
     expect(history).toBeGreaterThan(remote);
-    expect(overflow).toBeGreaterThan(history);
+    expect(newSession).toBeGreaterThan(history);
+    expect(overflow).toBeGreaterThan(newSession);
     // Mutation: overflow before remote would fail.
     expect(overflow).toBeGreaterThan(remote);
 
@@ -2095,6 +2221,7 @@ describe("file-tree panel assets", () => {
     const iconBtnRule = chatCss.match(/^\.icon-btn\s*\{[^}]+\}/m)?.[0] ?? "";
     expect(iconBtnRule).toMatch(/border-radius:\s*8px/);
     expect(iconBtnRule).toMatch(/color:\s*var\(--vscode-descriptionForeground\)/);
+    expect(chatCss).toMatch(/#add-popover \.toolbar-popover-item\s*\{[^}]*justify-content:\s*flex-start/s);
 
     // Created and torn down together. A border could not be orphaned; a
     // sibling can, and a re-inject would stack them up.
@@ -2124,6 +2251,8 @@ describe("file-tree panel assets", () => {
     expect(boot).toContain("desk-ft-maximize");
     expect(boot).toContain("desk-ft-maximized");
     expect(filePanelCss).toContain("body.desk-ft-maximized .desk-ft-chat");
+    expect(filePanelCss).toContain("body.desk-ft-maximized #chat-stack");
+    expect(filePanelCss).toContain("body.desk-ft-maximized #file-panel-dock");
     expect(filePanelJs).toContain("mount.maximize");
     expect(boot).toContain("absPath: request.expectedAbsPath");
     expect(boot).toContain("__grokDeskFtOpen");
@@ -3480,6 +3609,8 @@ describe("watcher chain helpers (A4)", () => {
     expect(src).toContain("nearestExistingAncestor");
     expect(src).toContain("scheduleRebind");
     expect(src).toContain("bindChainWatcher");
+    expect(src).toContain("fs.watch listener failed");
+    expect(src).toMatch(/const notify = \(listeners: Set<\(\) => void>\): void =>/);
   });
 });
 
@@ -4454,11 +4585,11 @@ describe("openFile / openDiff session roots (P2-4 / P2-5)", () => {
     const initialStart = sidebar.indexOf("private postInitialState(");
     const initialEnd = sidebar.indexOf("private rehydrateWebviewFromFocused(", initialStart);
     const initialBody = sidebar.slice(initialStart, initialEnd);
-    expect(initialBody).toContain("startSession()");
+    expect(initialBody).toContain('startSession(undefined, this.focused, "ensure")');
     expect(initialBody).toContain("postSessionsList()");
     expect(initialBody).toContain("sweepEmptySessions()");
     // postSessionsList must run on the startSession success path (not only on ready).
-    const thenIdx = initialBody.indexOf("startSession().then");
+    const thenIdx = initialBody.indexOf('startSession(undefined, this.focused, "ensure").then');
     expect(thenIdx).toBeGreaterThan(0);
     expect(initialBody.indexOf("postSessionsList()", thenIdx)).toBeGreaterThan(thenIdx);
   });
@@ -4633,7 +4764,7 @@ describe("typed config open intents (host-resolved paths)", () => {
     );
     const projectCase = sidebar.slice(
       sidebar.indexOf('case "openProjectConfig"'),
-      sidebar.indexOf('case "runMcpList"'),
+      sidebar.indexOf('case "listMcpServers"'),
     );
     expect(globalCase).toMatch(/openGlobalConfig\s*\(/);
     expect(globalCase).not.toMatch(/openResource\s*\(/);

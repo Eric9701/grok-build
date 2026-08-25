@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Window } from "happy-dom";
 // @ts-expect-error Plain-JS webview module intentionally has no TS build step.
 import {
@@ -12,7 +15,37 @@ import {
   planStrip,
   STRIP_COMPACT_MAX,
   STRIP_EXTREME_MAX,
+  relativeCopyPath,
+  scopeCwd,
+  joinHostPath,
 } from "../media/file-panel.js";
+import { chatZoomFactor, unzoomClientPx } from "../media/webview-helpers.js";
+
+const filePanelCss = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "media", "file-panel.css"),
+  "utf8",
+);
+
+function injectPanelCss(document: Document) {
+  const style = document.createElement("style");
+  // The touch block always lays the ⋯ out; these tests are the pointer/keyboard
+  // reveal rules, so strip that media query or happy-dom's hover:none matches it.
+  style.textContent = filePanelCss.replace(
+    /@media \(hover: none\) and \(pointer: coarse\) \{[\s\S]*?^\}\s*/m,
+    "",
+  );
+  document.head.appendChild(style);
+}
+
+function rowActions(row: Element): HTMLElement {
+  const actions = row.querySelector(".gfp-row-actions") as HTMLElement | null;
+  expect(actions).toBeTruthy();
+  return actions!;
+}
+
+function actionsDisplay(row: Element): string {
+  return row.ownerDocument.defaultView!.getComputedStyle(rowActions(row)).display;
+}
 
 type Scope = { id: string; label: string; title?: string };
 
@@ -175,6 +208,35 @@ describe("shared file-panel model", () => {
 
     expect(tab.dirty).toBe(false);
     expect(tab.editing).toBe(true);
+  });
+});
+
+describe("copy-path helpers", () => {
+  it("keeps the listing's forward-slash relative form", () => {
+    expect(relativeCopyPath("src/a.ts")).toBe("src/a.ts");
+    expect(relativeCopyPath("src\\a.ts")).toBe("src/a.ts");
+    expect(relativeCopyPath("notes.md")).toBe("notes.md");
+  });
+
+  it("reads the host cwd from a path-shaped scope id, else title", () => {
+    expect(scopeCwd({ id: "C:\\repo", title: "repo" })).toBe("C:\\repo");
+    expect(scopeCwd({ id: "/work/app", title: "app" })).toBe("/work/app");
+    expect(scopeCwd({ id: "scope-a", title: "/work/app" })).toBe("/work/app");
+    expect(scopeCwd({ id: "scope-a", label: "app" })).toBe("scope-a");
+    expect(scopeCwd(null)).toBe("");
+  });
+
+  it("joins with the desk's separator, never a mix", () => {
+    expect(joinHostPath("C:\\repo", "src/foo.ts")).toBe("C:\\repo\\src\\foo.ts");
+    expect(joinHostPath("C:\\repo\\", "src/foo.ts")).toBe("C:\\repo\\src\\foo.ts");
+    expect(joinHostPath("\\\\server\\share", "src/foo.ts")).toBe("\\\\server\\share\\src\\foo.ts");
+    expect(joinHostPath("/work/app", "src/foo.ts")).toBe("/work/app/src/foo.ts");
+    expect(joinHostPath("/work/app/", "src/foo.ts")).toBe("/work/app/src/foo.ts");
+    expect(joinHostPath("/", "foo.ts")).toBe("/foo.ts");
+    expect(joinHostPath("C:\\repo", "notes.md")).toBe("C:\\repo\\notes.md");
+    expect(joinHostPath("C:\\repo", "src")).toBe("C:\\repo\\src");
+    expect(joinHostPath("/work/app", "")).toBe("/work/app");
+    expect(joinHostPath("C:\\repo", "src/foo.ts")).not.toContain("/");
   });
 });
 
@@ -700,6 +762,74 @@ describe("shared file-panel component", () => {
   });
 });
 
+describe("file panel resize drag", () => {
+  function widthOf(el: unknown, px: number) {
+    (el as { getBoundingClientRect: () => { width: number } }).getBoundingClientRect =
+      () => ({ width: px });
+  }
+
+  function drag(window: Window, resizer: Element, fromX: number, toX: number) {
+    const ev = (type: string, clientX: number) =>
+      new window.MouseEvent(type, { bubbles: true, cancelable: true, clientX });
+    resizer.dispatchEvent(Object.assign(ev("pointerdown", fromX), { pointerId: 1 }));
+    resizer.dispatchEvent(Object.assign(ev("pointermove", toX), { pointerId: 1 }));
+    resizer.dispatchEvent(Object.assign(ev("pointerup", toX), { pointerId: 1 }));
+  }
+
+  function dockedPanel(zoom: string) {
+    const window = new Window({ url: "https://example.test/" });
+    const document = window.document;
+    document.body.style.setProperty("--chat-zoom", zoom);
+    (window as unknown as { GrokWebviewHelpers: { chatZoomFactor: typeof chatZoomFactor; unzoomClientPx: typeof unzoomClientPx } }).GrokWebviewHelpers = {
+      chatZoomFactor,
+      unzoomClientPx,
+    };
+
+    const row = document.createElement("div");
+    const dock = document.createElement("div");
+    row.appendChild(dock);
+    document.body.appendChild(row);
+    widthOf(row, 1400);
+
+    const panel = createFilePanel({
+      access: {
+        currentScope: async () => null,
+        list: async () => ({ ok: true, entries: [], truncated: false }),
+        read: async () => ({ ok: false, reason: "none" }),
+      },
+      document,
+      window,
+      mount: {
+        panelHost: document.body,
+        dockHost: dock,
+        toggleHost: document.body,
+        presentation: "dock",
+        widthBasis: row,
+      },
+      ui: { confirm: async () => "discard", renderMarkdown: (s: string) => s },
+    });
+    panel.setOpen(true);
+    return { window, document, panel };
+  }
+
+  it("dragging at zoom 1 matches the cursor delta", () => {
+    const h = dockedPanel("1");
+    widthOf(h.panel.element, 280);
+    // Panel is on the right: drag left (smaller X) → wider.
+    drag(h.window, h.panel.resizer, 1000, 900);
+    expect((h.panel.element as HTMLElement).style.getPropertyValue("--gfp-width")).toBe("380px");
+  });
+
+  it("dragging at a non-1 zoom tracks the cursor in layout px", () => {
+    // getBoundingClientRect / clientX are visual; --gfp-width is layout.
+    // A 280px panel at 1.5× reports 420 visual; 150 visual px is 100 layout px.
+    const h = dockedPanel("1.5");
+    widthOf(h.panel.element, 420);
+    drag(h.window, h.panel.resizer, 1000, 850);
+    expect((h.panel.element as HTMLElement).style.getPropertyValue("--gfp-width")).toBe("380px");
+  });
+});
+
 // Syntax highlighting. The panel reads the highlighter off the global the way a
 // browser sets it via <script>; these tests install it explicitly and restore
 // it afterwards, so the rest of the file keeps exercising the no-highlighter
@@ -1056,6 +1186,184 @@ describe("the overflow menu opens from every button that offers it", () => {
   });
 });
 
+function mockClipboard(window: Window): { value: string; writes: number; fail: boolean } {
+  const box = { value: "", writes: 0, fail: false };
+  Object.defineProperty((window as unknown as { navigator: Navigator }).navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText: (text: string) => {
+        box.writes += 1;
+        if (box.fail) return Promise.reject(new Error("denied"));
+        box.value = text;
+        return Promise.resolve();
+      },
+    },
+  });
+  return box;
+}
+
+function menuLabels(document: Document): string[] {
+  return [...document.querySelectorAll(".gfp-menu-item")].map((el) => el.textContent || "");
+}
+
+function menuItem(document: Document, label: string): Element | null {
+  return [...document.querySelectorAll(".gfp-menu-item")].find((el) => el.textContent === label) || null;
+}
+
+function treeRow(document: Document, name: string): Element | null {
+  return [...document.querySelectorAll(".gfp-row")].find((row) => row.textContent?.includes(name)) || null;
+}
+
+describe("copy path on the file-panel row menu", () => {
+  it("offers copy items only on a client with no OS access, with no leading gap", async () => {
+    const h = harness();
+    h.panel.setOpen(true);
+    await settle();
+
+    const fileRow = treeRow(h.document, "notes.md");
+    expect(fileRow?.querySelector(".gfp-icon-button"), "remote rows must still have ⋯").toBeTruthy();
+    expect(treeRow(h.document, "src")?.querySelector(".gfp-icon-button"), "directories have paths too").toBeTruthy();
+
+    fileRow!.dispatchEvent(new h.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    await settle();
+    expect(menuLabels(h.document)).toEqual(["Copy relative path", "Copy path"]);
+    expect(h.document.querySelector(".gfp-menu-sep, .gfp-sep")).toBeNull();
+  });
+
+  it("copies the listing-relative path and the desk-joined absolute path", async () => {
+    const h = harness();
+    const copied = mockClipboard(h.window);
+    h.panel.setOpen(true);
+    await settle();
+    click(h.window, treeRow(h.document, "src"));
+    await settle();
+
+    const fileRow = treeRow(h.document, "a.ts");
+    fileRow!.dispatchEvent(new h.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    await settle();
+    click(h.window, menuItem(h.document, "Copy relative path"));
+    await settle();
+    expect(copied.value).toBe("src/a.ts");
+
+    fileRow!.dispatchEvent(new h.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    await settle();
+    click(h.window, menuItem(h.document, "Copy path"));
+    await settle();
+    expect(copied.value).toBe("/work/app/src/a.ts");
+    h.panel.destroy();
+  });
+
+  it("joins a Windows cwd with the desk separator, not the client's", async () => {
+    const h = harness();
+    const copied = mockClipboard(h.window);
+    await settle();
+    await h.panel.setScope({ id: "C:\\GitHub\\repo", label: "repo", title: "C:\\GitHub\\repo" });
+    h.panel.setOpen(true);
+    await settle();
+    click(h.window, treeRow(h.document, "src"));
+    await settle();
+
+    treeRow(h.document, "a.ts")!.dispatchEvent(new h.window.MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true,
+    }));
+    await settle();
+    click(h.window, menuItem(h.document, "Copy path"));
+    await settle();
+    expect(copied.value).toBe("C:\\GitHub\\repo\\src\\a.ts");
+    expect(copied.value).not.toMatch(/\//);
+    h.panel.destroy();
+  });
+
+  it("copies a directory path the same way", async () => {
+    const h = harness();
+    const copied = mockClipboard(h.window);
+    h.panel.setOpen(true);
+    await settle();
+    treeRow(h.document, "src")!.dispatchEvent(new h.window.MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true,
+    }));
+    await settle();
+    expect(menuLabels(h.document)[0]).toBe("Copy relative path");
+    expect(menuLabels(h.document)).toEqual(["Copy relative path", "Copy path"]);
+    click(h.window, menuItem(h.document, "Copy relative path"));
+    await settle();
+    expect(copied.value).toBe("src");
+
+    treeRow(h.document, "src")!.dispatchEvent(new h.window.MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true,
+    }));
+    await settle();
+    click(h.window, menuItem(h.document, "Copy path"));
+    await settle();
+    expect(copied.value).toBe("/work/app/src");
+    h.panel.destroy();
+  });
+
+  it("puts Open / Reveal above the copy items when the host can act", async () => {
+    const h = harness();
+    (h.access as { openExternal?: unknown; reveal?: unknown }).openExternal = async () => ({ ok: true });
+    (h.access as { reveal?: unknown }).reveal = async () => ({ ok: true });
+    h.panel.setOpen(true);
+    await settle();
+    treeRow(h.document, "notes.md")!.dispatchEvent(new h.window.MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true,
+    }));
+    await settle();
+    expect(menuLabels(h.document)).toEqual([
+      "Open in default app",
+      "Reveal in file manager",
+      "Copy relative path",
+      "Copy path",
+    ]);
+
+    h.document.querySelector(".gfp-menu")?.remove();
+    treeRow(h.document, "src")!.dispatchEvent(new h.window.MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true,
+    }));
+    await settle();
+    expect(menuLabels(h.document)).toEqual([
+      "Reveal in file manager",
+      "Copy relative path",
+      "Copy path",
+    ]);
+  });
+
+  it("copies from the viewer's More actions and flashes the chat checkmark", async () => {
+    const h = harness();
+    const copied = mockClipboard(h.window);
+    await settle();
+    await h.panel.openPath("src/a.ts");
+    const more = h.document.querySelector(".gfp-viewer .gfp-more");
+    expect(more, "the viewer ⋯ is not gated on OS access").toBeTruthy();
+    click(h.window, more);
+    await settle();
+    click(h.window, menuItem(h.document, "Copy relative path"));
+    await settle();
+    expect(copied.value).toBe("src/a.ts");
+    expect(more!.classList.contains("copied")).toBe(true);
+    expect(more!.querySelector("svg")).toBeTruthy();
+    h.panel.destroy();
+  });
+
+  it("swallows a rejected clipboard write", async () => {
+    const h = harness();
+    const copied = mockClipboard(h.window);
+    copied.fail = true;
+    h.panel.setOpen(true);
+    await settle();
+    treeRow(h.document, "notes.md")!.dispatchEvent(new h.window.MouseEvent("contextmenu", {
+      bubbles: true, cancelable: true,
+    }));
+    await settle();
+    click(h.window, menuItem(h.document, "Copy relative path"));
+    await settle();
+    expect(copied.writes).toBe(1);
+    expect(copied.value).toBe("");
+    expect(h.document.querySelector(".gfp-icon-button.copied")).toBeNull();
+    h.panel.destroy();
+  });
+});
+
 // A non-previewable file used to be handed straight to the OS on the desktop,
 // so the same click meant different things on different clients: a tab with a
 // message in the browser, a silently launched external app on the desktop.
@@ -1106,7 +1414,7 @@ describe("a non-previewable file behaves the same on every client", () => {
   });
 });
 
-// An empty toolbar over an error message is a row of chrome explaining nothing.
+// Copy path is always in the ⋯ menu, so a failed open still keeps the bar.
 describe("the error tab's action row appears only when it has actions", () => {
   const unopenable = (withOs: boolean) => {
     const h = harness({
@@ -1116,11 +1424,12 @@ describe("the error tab's action row appears only when it has actions", () => {
     return h;
   };
 
-  it("drops the bar on a client with nothing to put in it", async () => {
+  it("keeps the bar so you can still copy the path", async () => {
     const h = unopenable(false);
     await settle();
     await h.panel.openPath("app.bin");
-    expect(h.document.querySelector(".gfp-viewer-head")).toBeNull();
+    expect(h.document.querySelector(".gfp-viewer-head")).toBeTruthy();
+    expect(h.document.querySelector(".gfp-more")).toBeTruthy();
     expect(h.document.querySelector(".gfp-viewer-body")?.textContent)
       .toContain("file type not previewable");
   });
@@ -1207,7 +1516,7 @@ describe("desktop maximize is opt-in on the mount", () => {
   it("toggles the maximized class and restores on Escape", async () => {
     const seen: boolean[] = [];
     const h = harness({
-      mount: { maximize: true },
+      mount: { maximize: true, presentation: "dock" },
       onMaximizedChanged: (max) => { seen.push(max); },
     });
     await settle();
@@ -1218,6 +1527,7 @@ describe("desktop maximize is opt-in on the mount", () => {
     click(h.window, btn);
     expect(h.panel.isMaximized()).toBe(true);
     expect(h.panel.element.classList.contains("gfp-maximized")).toBe(true);
+    expect(h.document.body.classList.contains("desk-ft-maximized")).toBe(true);
     expect(btn!.getAttribute("aria-pressed")).toBe("true");
     expect(btn!.getAttribute("aria-label")).toBe("Restore file panel");
     expect(seen).toEqual([true]);
@@ -1225,11 +1535,12 @@ describe("desktop maximize is opt-in on the mount", () => {
     h.window.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(h.panel.isMaximized()).toBe(false);
     expect(h.panel.element.classList.contains("gfp-maximized")).toBe(false);
+    expect(h.document.body.classList.contains("desk-ft-maximized")).toBe(false);
     expect(seen).toEqual([true, false]);
   });
 
   it("closing the panel drops maximize so the next open is the split", async () => {
-    const h = harness({ mount: { maximize: true } });
+    const h = harness({ mount: { maximize: true, presentation: "dock" } });
     await settle();
     h.panel.setOpen(true);
     h.panel.setMaximized(true);
@@ -1239,6 +1550,36 @@ describe("desktop maximize is opt-in on the mount", () => {
     h.panel.setOpen(true);
     expect(h.panel.isMaximized()).toBe(false);
     expect(h.panel.element.classList.contains("gfp-maximized")).toBe(false);
+  });
+
+  it("hides the control and drops maximize when the panel is an overlay", async () => {
+    const seen: boolean[] = [];
+    const window = new Window({ url: "https://example.test/" });
+    const document = window.document;
+    const panelHost = document.createElement("main");
+    const dockHost = document.createElement("aside");
+    dockHost.style.display = "block";
+    document.body.append(panelHost, dockHost);
+    const panel = createFilePanel({
+      access: { currentScope: async () => null, list: async () => ({ ok: true, entries: [] }) },
+      document,
+      window,
+      mount: { panelHost, dockHost, presentation: "responsive", maximize: true },
+      onMaximizedChanged: (max) => { seen.push(max); },
+    });
+    panel.setOpen(true);
+    await settle();
+    expect(document.querySelector(".gfp-maximize")).toBeTruthy();
+    expect((document.querySelector(".gfp-maximize") as HTMLButtonElement).hidden).toBe(false);
+    panel.setMaximized(true);
+    expect(panel.isMaximized()).toBe(true);
+
+    dockHost.style.display = "none";
+    window.dispatchEvent(new window.Event("resize"));
+    expect(panel.element.classList.contains("gfp-overlay")).toBe(true);
+    expect(panel.isMaximized()).toBe(false);
+    expect((document.querySelector(".gfp-maximize") as HTMLButtonElement).hidden).toBe(true);
+    expect(seen).toEqual([true, false]);
   });
 });
 
@@ -1447,5 +1788,75 @@ describe("tab strip structure follows the overflow design", () => {
     title.dispatchEvent(new h.window.MouseEvent("click", { bubbles: true }));
     await settle();
     expect(title.classList.contains("gfp-title-selected")).toBe(true);
+  });
+});
+
+describe("file-tree row actions stay on hover / keyboard / open menu, not a mouse click", () => {
+  async function openTree() {
+    const h = harness();
+    injectPanelCss(h.document);
+    h.panel.setOpen(true);
+    await settle();
+    const row = treeRow(h.document, "notes.md");
+    expect(row).toBeTruthy();
+    const more = row!.querySelector(".gfp-icon-button") as HTMLButtonElement | null;
+    expect(more).toBeTruthy();
+    return { h, row: row as HTMLElement, more: more! };
+  }
+
+  it("a mouse click on a row does not leave its actions visible once the pointer leaves", async () => {
+    const { h, row, more } = await openTree();
+    expect(actionsDisplay(row)).toBe("none");
+    click(h.window, row);
+    await settle();
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    row.dispatchEvent(new h.window.MouseEvent("mouseleave", { bubbles: true }));
+    // A mouse click must not pin the ⋯ via :focus-within. happy-dom does not
+    // focus a tabindex row on click; if it starts treating click as
+    // :focus-visible, the CSS source test is the remaining contract.
+    if (row.matches(":focus-visible") || row.querySelector(":focus-visible")) {
+      expect(filePanelCss).not.toMatch(/\.gfp-row:focus-within\s+\.gfp-row-actions/);
+    } else {
+      expect(actionsDisplay(row)).toBe("none");
+    }
+    h.panel.destroy();
+  });
+
+  it("a keyboard-focused row shows its actions", async () => {
+    const { h, row, more } = await openTree();
+    row.focus();
+    expect(h.document.activeElement).toBe(row);
+    if (!row.matches(":focus-visible")) more.focus();
+    if (row.matches(":focus-visible") || more.matches(":focus-visible")) {
+      expect(actionsDisplay(row)).toBe("flex");
+    } else {
+      expect(filePanelCss).toMatch(/\.gfp-row:focus-visible \.gfp-row-actions/);
+      expect(filePanelCss).toMatch(/\.gfp-row:has\(:focus-visible\) \.gfp-row-actions/);
+    }
+    h.panel.destroy();
+  });
+
+  it("an open overflow menu keeps its row's actions visible", async () => {
+    const { h, row, more } = await openTree();
+    expect(actionsDisplay(row)).toBe("none");
+    row.classList.add("gfp-menu-open");
+    expect(actionsDisplay(row)).toBe("flex");
+    row.classList.remove("gfp-menu-open");
+    expect(actionsDisplay(row)).toBe("none");
+
+    click(h.window, more);
+    await settle();
+    expect(more.getAttribute("aria-expanded")).toBe("true");
+    expect(row.classList.contains("gfp-menu-open")).toBe(true);
+    expect(h.document.querySelector(".gfp-menu")).toBeTruthy();
+    more.blur();
+    expect(actionsDisplay(row)).toBe("flex");
+
+    h.document.body.dispatchEvent(new h.window.MouseEvent("click", { bubbles: true }));
+    await settle();
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(row.classList.contains("gfp-menu-open")).toBe(false);
+    expect(h.document.querySelector(".gfp-menu")).toBeNull();
+    h.panel.destroy();
   });
 });

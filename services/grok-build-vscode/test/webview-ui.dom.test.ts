@@ -109,6 +109,58 @@ describe("focused conversation name chip", () => {
     ]);
   });
 
+  it("paints a header rename on the history row before any host frame", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "sessions", entries: [row("s1", "Keep this")], activeId: "s1", dots: {} });
+    dispatch(window, { type: "sessionName", sessionId: "s1", name: "Keep this", cwd: "/work/repo" });
+    click(window, doc.getElementById("history-btn")!);
+    click(window, doc.getElementById("session-name-edit")!);
+    const input = doc.getElementById("session-name-label") as HTMLInputElement;
+    input.value = "Painted now";
+    input.dispatchEvent(new (window as any).KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+
+    expect(doc.getElementById("session-name-label")!.textContent).toBe("Painted now");
+    expect(doc.querySelector(".history-row-name")!.textContent).toBe("Painted now");
+
+    dispatch(window, { type: "sessionName", sessionId: "s1", name: "Painted now", cwd: "/work/repo" });
+    expect(doc.getElementById("session-name-label")!.textContent).toBe("Painted now");
+    expect(doc.querySelector(".history-row-name")!.textContent).toBe("Painted now");
+
+    dispatch(window, {
+      type: "sessions",
+      entries: [row("s1", "Painted now")],
+      activeId: "s1",
+      dots: {},
+    });
+    expect(doc.getElementById("session-name-label")!.textContent).toBe("Painted now");
+    expect(doc.querySelector(".history-row-name")!.textContent).toBe("Painted now");
+  });
+
+  it("paints a history-row rename on the header before any host frame", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "sessions", entries: [row("s1", "Keep this")], activeId: "s1", dots: {} });
+    dispatch(window, { type: "sessionName", sessionId: "s1", name: "Keep this", cwd: "/work/repo" });
+    click(window, doc.getElementById("history-btn")!);
+    click(window, doc.querySelector(".history-row .history-action-btn") as HTMLElement);
+    const inp = doc.querySelector(".history-rename") as HTMLInputElement;
+    inp.value = "From history";
+    inp.dispatchEvent(new (window as any).KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+
+    expect(doc.getElementById("session-name-label")!.textContent).toBe("From history");
+    expect(doc.querySelector(".history-row-name")!.textContent).toBe("From history");
+
+    // Contradict while the overlay is still live — a catalog that names this
+    // id is the authority, including a refusal that sends the old title back.
+    dispatch(window, {
+      type: "sessions",
+      entries: [row("s1", "Catalog override")],
+      activeId: "s1",
+      dots: {},
+    });
+    expect(doc.getElementById("session-name-label")!.textContent).toBe("Catalog override");
+    expect(doc.querySelector(".history-row-name")!.textContent).toBe("Catalog override");
+  });
+
   it("stays quiet against an older host that never sends the name frame", () => {
     const local = bootWebview();
     dispatch(local.window, { type: "sessions", entries: [row("s1", "Legacy title")], activeId: "s1", dots: {} });
@@ -430,6 +482,62 @@ describe("session rows (regression: only the label was clickable)", () => {
 
     expect(doc.querySelector(".history-row input.history-rename")).not.toBeNull();
     expect(types(posted)).not.toContain("resumeSession");
+  });
+
+  it("opening a history row paints the title and hides the old transcript before any host frame", () => {
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, {
+      type: "sessions",
+      entries,
+      activeId: "s1",
+      dots: {},
+    });
+    dispatch(window, { type: "sessionName", sessionId: "s1", name: "Add subtract fn", cwd: "/work/project" });
+    dispatch(window, { type: "userMessage", text: "old transcript" });
+    expect(doc.querySelector(".msg.user")?.textContent).toContain("old transcript");
+    expect(doc.getElementById("session-name-label")!.textContent).toBe("Add subtract fn");
+
+    click(window, doc.getElementById("history-btn")!);
+    posted.length = 0;
+    const rows = doc.querySelectorAll(".history-row");
+    click(window, rows[1] as HTMLElement);
+
+    expect(posted.filter((p) => p.type === "resumeSession")).toEqual([
+      { type: "resumeSession", id: "s2", cwd: undefined },
+    ]);
+    expect(doc.getElementById("session-name-label")!.textContent).toBe("Refactor parser");
+    expect((doc.querySelector(".msg.user") as HTMLElement).hidden).toBe(true);
+    expect(doc.getElementById("welcome")!.hidden).toBe(false);
+    const ver = doc.getElementById("welcome-version") as HTMLElement;
+    expect(ver.dataset.status).toBe("Loading conversation");
+
+    dispatch(window, { type: "clearMessages" });
+    expect(doc.getElementById("session-name-label")!.textContent).toBe("Refactor parser");
+
+    dispatch(window, { type: "sessionName", sessionId: "s2", name: "Refactor parser", cwd: "/work/project" });
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, { type: "userMessage", text: "new transcript" });
+    dispatch(window, { type: "historyReplay", active: false });
+    expect(doc.getElementById("session-name-label")!.textContent).toBe("Refactor parser");
+    expect(doc.querySelector(".msg.user")?.textContent).toContain("new transcript");
+    expect((doc.querySelector(".msg.user") as HTMLElement).hidden).toBe(false);
+  });
+
+  it("a failed history open restores the previous title and transcript", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "sessions", entries, activeId: "s1", dots: {} });
+    dispatch(window, { type: "sessionName", sessionId: "s1", name: "Add subtract fn", cwd: "/work/project" });
+    dispatch(window, { type: "userMessage", text: "old transcript" });
+
+    click(window, doc.getElementById("history-btn")!);
+    click(window, doc.querySelectorAll(".history-row")[1] as HTMLElement);
+    expect(doc.getElementById("session-name-label")!.textContent).toBe("Refactor parser");
+    expect((doc.querySelector(".msg.user") as HTMLElement).hidden).toBe(true);
+
+    dispatch(window, { type: "error", text: "Session is owned by another client.", resumeFailed: { id: "s2" } });
+    expect(doc.getElementById("session-name-label")!.textContent).toBe("Add subtract fn");
+    expect((doc.querySelector(".msg.user") as HTMLElement).hidden).toBe(false);
+    expect(doc.querySelector(".msg.user")?.textContent).toContain("old transcript");
   });
 
   it("shows a Clear all footer that confirms in-page, then posts clearAllSessions", async () => {
@@ -760,7 +868,7 @@ describe("mode picker (the plan-gate entry path)", () => {
 
   it("disables only Plan with the host's version reason, then re-enables it", () => {
     const { window, posted, doc } = bootWebview();
-    const reason = "Plan mode requires Atlas CLI 0.2.117 or newer; installed version is 0.2.100.";
+    const reason = "Plan mode requires Grok CLI 0.2.117 or newer; installed version is 0.2.100.";
     dispatch(window, { type: "planModeAvailability", available: false, reason });
 
     const modeBtn = $(doc, "mode-btn") as HTMLButtonElement;
@@ -790,7 +898,7 @@ describe("mode picker (the plan-gate entry path)", () => {
   it("keeps Plan clickable when the host marks an unverified probe recheckable (#105)", () => {
     const { window, posted, doc } = bootWebview();
     const reason =
-      "Could not verify the installed Atlas CLI version, so Plan mode is unavailable. " +
+      "Could not verify the installed Grok CLI version, so Plan mode is unavailable. " +
       "The version check failed or timed out — a first run after install can be slow. " +
       "Pick Plan again or reload the window to retry. " +
       "Once verified, Plan requires 0.2.117 or newer.";
@@ -920,6 +1028,13 @@ describe("context donut (token usage)", () => {
     dispatch(window, { type: "promptComplete", meta: {} });
     dispatch(window, { type: "contextUsage", used: 29088 });
     expect($(doc, "donut-label").textContent).toBe("29K/100K");
+  });
+
+  it("a window-only contextUsage rescales without inventing a used count", () => {
+    const { window, doc } = boot();
+    dispatch(window, { type: "contextUsage", used: 44123, window: 100000 });
+    dispatch(window, { type: "contextUsage", window: 1000000 });
+    expect($(doc, "donut-label").textContent).toBe("44K/1000K");
   });
 });
 
@@ -1102,10 +1217,44 @@ describe("gear settings lock (model + effort disabled while busy / priming)", ()
 });
 
 describe("provider onboarding", () => {
+  it("names a missing project and blocks send instead of leaving Starting up", () => {
+    const { window, doc, posted } = bootWebview();
+    const send = doc.getElementById("send-btn") as HTMLButtonElement;
+    const welcome = doc.getElementById("welcome-version")!;
+    expect(welcome.textContent).toContain("Starting");
+
+    dispatch(window, { type: "onboarding", state: "no-project" });
+    const onboarding = doc.getElementById("welcome-onboarding")!;
+    expect(onboarding.textContent).toContain("No project folder");
+    expect(onboarding.textContent).toContain("Add one to continue");
+    expect(welcome.textContent).toContain("No project folder");
+    expect(welcome.classList.contains("welcome-status-busy")).toBe(false);
+    expect(send.disabled).toBe(true);
+    expect(send.title).toContain("Add a project folder");
+
+    (doc.getElementById("input") as HTMLTextAreaElement).value = "hello";
+    click(window, send);
+    expect(posted.filter((p) => p.type === "send")).toEqual([]);
+
+    const add = onboarding.querySelector('[data-act="addProjectFolder"]') as HTMLButtonElement;
+    expect(add).toBeTruthy();
+    click(window, add);
+    expect(posted).toContainEqual({ type: "addProjectFolder" });
+  });
+
+  it("tells a remote client to add the folder at the desk", () => {
+    const { window, doc, posted } = bootWebview({ remote: true });
+    dispatch(window, { type: "onboarding", state: "no-project" });
+    const onboarding = doc.getElementById("welcome-onboarding")!;
+    expect(onboarding.textContent).toContain("Add a project folder on the computer");
+    expect(onboarding.querySelectorAll("button")).toHaveLength(0);
+    expect(posted).toEqual([]);
+  });
+
   it("shows desk sign-in guidance remotely and posts no provider-management action", () => {
     const { window, doc, posted } = bootWebview({ remote: true });
 
-    for (const state of ["connect-agent", "auth-required", "codex-login"] as const) {
+    for (const state of ["connect-agent", "auth-required", "codex-login", "claude-login"] as const) {
       dispatch(window, { type: "onboarding", state });
       const onboarding = doc.getElementById("welcome-onboarding")!;
       expect(onboarding.textContent).toContain("Sign in at the desk");
@@ -1122,14 +1271,35 @@ describe("provider onboarding", () => {
     dispatch(window, { type: "onboarding", state: "connect-agent" });
 
     const tiles = [...doc.querySelectorAll(".onb-agent-tile")] as HTMLButtonElement[];
-    expect(tiles).toHaveLength(2);
-    expect(tiles[0].textContent).toContain("Atlas");
+    expect(tiles).toHaveLength(3);
+    expect(tiles[0].textContent).toContain("Grok");
     expect(tiles[0].classList.contains("primary")).toBe(true);
     expect(tiles[1].textContent).toContain("Codex");
+    expect(tiles[2].textContent).toContain("Claude");
     expect(tiles.every((tile) => !!tile.querySelector("svg.provider-logo path"))).toBe(true);
 
     click(window, tiles[1]);
     expect(posted).toContainEqual({ type: "runGrokLogin", provider: "codex" });
+    click(window, tiles[2]);
+    expect(posted).toContainEqual({ type: "runGrokLogin", provider: "claude" });
+  });
+
+  it("tells the user to install and sign in with Anthropic's own Claude CLI", () => {
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, { type: "onboarding", state: "missing-claude" });
+    expect(doc.getElementById("welcome-onboarding")!.textContent).toContain("does not install or sign in to Claude");
+    expect(doc.getElementById("welcome-onboarding")!.textContent).toContain("claude auth login");
+
+    dispatch(window, { type: "onboarding", state: "claude-login" });
+    const loginCopy = doc.getElementById("welcome-onboarding")!.textContent ?? "";
+    expect(loginCopy).toContain("never implements, proxies, holds, or forwards Claude credentials");
+    expect(loginCopy).toContain("Claude subscription");
+    expect(loginCopy).toContain("Anthropic Console");
+    expect(loginCopy).not.toContain("does not offer Claude.ai login");
+    const recheck = [...doc.querySelectorAll("#welcome-onboarding button")]
+      .find((el) => el.textContent?.includes("connect Claude")) as HTMLElement;
+    click(window, recheck);
+    expect(posted).toContainEqual({ type: "recheckConnection", provider: "claude" });
   });
 
   it("shows Codex install guidance and provider-specific re-check", () => {
@@ -1275,7 +1445,7 @@ describe("gear menu — AFK Pilot onboarding", () => {
     click(window, $(doc, "gear-btn"));
     expect(gearItem(doc, "Unlink this device…")).toBeUndefined();
     openSettingsOverlay(window, doc);
-    clickSettingsNav(window, doc, "Account");
+    clickSettingsNav(window, doc, "Remote control");
     const unlink = doc.querySelector('[data-id="unlinkDevice"] .settings-action') as HTMLElement;
     expect(unlink).toBeTruthy();
     click(window, unlink);
@@ -1477,6 +1647,19 @@ describe("Grokking… indicator (waiting placeholder)", () => {
     expect(el.querySelector(".grokking-label")?.textContent).toBe("Opening AI");
     expect(el.getAttribute("aria-label")).toBe("OpenAI is working");
     expect(el.querySelector(".grokking-icon svg")).not.toBeNull();
+  });
+
+  it("uses Clauding for Claude and Ask Claude in the composer", () => {
+    const h = bootWebview();
+    const input = h.doc.getElementById("input") as HTMLTextAreaElement;
+    dispatch(h.window, {
+      type: "session", sessionId: "cl1", models: [], currentModelId: "claude-sonnet-4-5", provider: "claude",
+    });
+    expect(input.placeholder).toBe("Ask Claude…");
+    dispatch(h.window, { type: "agentStart" });
+    const el = grokking(h.doc)!;
+    expect(el.querySelector(".grokking-label")?.textContent).toBe("Clauding");
+    expect(el.getAttribute("aria-label")).toBe("Claude is working");
   });
 
   it("mounts on agentStart with a spinning orbit icon, a label, and no dots or chevron", () => {
@@ -1697,6 +1880,7 @@ describe("user message (regression: doubled on grok 0.2.33)", () => {
 
     dispatch(window, { type: "historyReplay", active: true });
     dispatch(window, { type: "userMessageChunk", text: "resumed prompt" });
+    dispatch(window, { type: "historyReplay", active: false });
 
     expect(users(doc).length).toBe(1);
     expect(users(doc)[0].textContent).toContain("resumed prompt");
@@ -1755,7 +1939,7 @@ describe("welcome version line (session-start lifecycle)", () => {
     const { window, doc } = bootWebview();
 
     dispatch(window, { type: "cliUpdating" });
-    expect(ver(doc)).toBe("Updating Atlas CLI");
+    expect(ver(doc)).toBe("Updating Grok Build CLI");
     expect(animating(doc)).toBe(true);
 
     dispatch(window, { type: "initialized", info: { version: "0.2.40" } });
@@ -1833,6 +2017,7 @@ describe("gear menu — Other group + About / Settings", () => {
         deleteActiveSession: true,
         relocateView: true,
         showOutput: true,
+        mcpSettings: true,
       },
     });
     dispatch(h.window, { type: "initialized", info: { version: "0.2.33" } });
@@ -1871,9 +2056,9 @@ describe("gear menu — Other group + About / Settings", () => {
     const text = overlay.textContent || "";
     expect(text).toContain("This extension");
     expect(text).toContain("v1.4.0");
-    expect(text).toContain("Atlas CLI");
+    expect(text).toContain("Grok Build CLI");
     expect(text).toContain("v0.2.33");
-    expect(types(h.posted)).toContain("checkAtlasUpdate");
+    expect(types(h.posted)).toContain("checkGrokUpdate");
   });
 
   it("About shows connected Grok and Codex versions without relabelling the adapter as the CLI", () => {
@@ -1888,14 +2073,18 @@ describe("gear menu — Other group + About / Settings", () => {
     const overlay = openAbout(h);
 
     const text = overlay.textContent || "";
-    expect(text).toContain("Atlas CLI");
+    expect(text).toContain("Grok Build CLI");
     expect(text).toContain("v0.2.117");
     expect(text).toContain("Codex CLI");
     expect(text).toContain("v0.146.0");
-    expect(text).toContain("Codex ACP adapter");
-    expect(text).toContain("v1.1.14");
-    expect(text).toContain("at its install source");
-    expect(text).toContain("Codex update available");
+    // The ACP adapters and the "Codex updates" status left About on 2026-08-19.
+    // The adapters are pinned deps of this extension and ship in the vsix, so
+    // they move only when it does; and "managed at its install source" pointed
+    // at US whenever the user let us install the managed Codex. Grok is the
+    // only CLI this extension updates, so it is the only one with an update row.
+    expect(text).not.toContain("Codex ACP adapter");
+    expect(text).not.toContain("at its install source");
+    expect(text).not.toContain("Codex update available");
     expect(overlay.querySelector('[data-id="aboutUpdateGrok"]')).toBeNull();
   });
 
@@ -1912,10 +2101,10 @@ describe("gear menu — Other group + About / Settings", () => {
 
     const text = overlay.textContent || "";
     expect(text).toContain("Codex CLI");
-    expect(text).toContain("Codex ACP adapter");
+    expect(text).not.toContain("Codex ACP adapter");
     expect(overlay.querySelector('[data-id="aboutGrokCli"]')).toBeNull();
     expect(overlay.querySelector('[data-id="aboutUpdateGrok"]')).toBeNull();
-    expect(types(h.posted)).not.toContain("checkAtlasUpdate");
+    expect(types(h.posted)).not.toContain("checkGrokUpdate");
   });
 
   describe("on a remote, About describes the desk machine and offers nothing", () => {
@@ -1961,14 +2150,14 @@ describe("gear menu — Other group + About / Settings", () => {
       // The old panel did, and the answer never arrived — a spinner that could
       // not resolve. Not sending it is what removes the spinner.
       const h = bootRemoteAbout();
-      expect(types(h.posted)).not.toContain("checkAtlasUpdate");
+      expect(types(h.posted)).not.toContain("checkGrokUpdate");
       expect(aboutSurface(h).textContent).not.toContain("Checking for updates");
     });
 
     it("reports an available CLI update but offers no way to run it", () => {
       const h = bootRemoteAbout();
       dispatch(h.window, {
-        type: "atlasUpdateStatus", current: "0.2.3", latest: "0.2.33", updateAvailable: true,
+        type: "grokUpdateStatus", current: "0.2.3", latest: "0.2.33", updateAvailable: true,
       });
       const overlay = aboutSurface(h);
       const text = overlay.textContent || "";
@@ -1988,12 +2177,11 @@ describe("gear menu — Other group + About / Settings", () => {
       });
       const overlay = aboutSurface(h);
       const text = overlay.textContent || "";
-      expect(text).toContain("Atlas CLI");
+      expect(text).toContain("Grok Build CLI");
       expect(text).toContain("Codex CLI");
-      expect(text).toContain("Codex ACP adapter");
-      expect(text).toContain("Codex update available");
-      expect(text).toContain("at the desk");
-      expect(types(h.posted)).not.toContain("checkAtlasUpdate");
+      expect(text).not.toContain("Codex ACP adapter");
+      expect(text).not.toContain("Codex update available");
+      expect(types(h.posted)).not.toContain("checkGrokUpdate");
       expect(overlay.querySelector('[data-id="aboutUpdateGrok"]')).toBeNull();
     });
 
@@ -2005,10 +2193,10 @@ describe("gear menu — Other group + About / Settings", () => {
     });
   });
 
-  it("enables Update Atlas when an update is available and posts updateAtlas", () => {
+  it("enables Update Grok Build when an update is available and posts updateGrok", () => {
     const h = boot();
     const overlay = openAbout(h);
-    dispatch(h.window, { type: "atlasUpdateStatus", current: "0.2.3", latest: "0.2.33", updateAvailable: true });
+    dispatch(h.window, { type: "grokUpdateStatus", current: "0.2.3", latest: "0.2.33", updateAvailable: true });
 
     expect(overlay.textContent).toContain("Update available");
     const btn = overlay.querySelector('[data-id="aboutUpdateGrok"] .settings-action') as HTMLElement;
@@ -2017,13 +2205,13 @@ describe("gear menu — Other group + About / Settings", () => {
 
     h.posted.length = 0;
     click(h.window, btn);
-    expect(types(h.posted)).toContain("updateAtlas");
+    expect(types(h.posted)).toContain("updateGrok");
   });
 
   it("shows a grayed up-to-date status and no update action when current", () => {
     const h = boot();
     const overlay = openAbout(h);
-    dispatch(h.window, { type: "atlasUpdateStatus", current: "0.2.33", latest: "0.2.33", updateAvailable: false });
+    dispatch(h.window, { type: "grokUpdateStatus", current: "0.2.33", latest: "0.2.33", updateAvailable: false });
 
     expect(overlay.textContent).toContain("up to date");
     expect(overlay.querySelector('[data-id="aboutUpdateGrok"]')).toBeNull();
@@ -2035,10 +2223,10 @@ describe("gear menu — Other group + About / Settings", () => {
     // No `initialized` version (native Windows build) — the panel starts at "—".
     dispatch(h.window, { type: "session", sessionId: "s1", models: [], currentModelId: "grok-build" });
     const overlay = openAbout(h);
-    dispatch(h.window, { type: "atlasUpdateStatus", current: "0.2.3", latest: "0.2.3", updateAvailable: false });
+    dispatch(h.window, { type: "grokUpdateStatus", current: "0.2.3", latest: "0.2.3", updateAvailable: false });
 
     const text = overlay.textContent || "";
-    expect(text).toContain("Atlas CLI");
+    expect(text).toContain("Grok Build CLI");
     expect(text).toContain("v0.2.3");
     expect(overlay.querySelector('[data-id="aboutGrokCli"]')!.textContent).not.toContain("—");
   });
@@ -2058,11 +2246,27 @@ describe("gear menu — Other group + About / Settings", () => {
     const overlay = h.doc.getElementById("settings-overlay")!;
     expect(overlay.querySelector('[data-id="openGlobalConfig"]')).toBeTruthy();
     expect(overlay.querySelector('[data-id="openProjectConfig"]')).toBeTruthy();
-    expect(overlay.querySelector('[data-id="runMcpList"]')).toBeTruthy();
     expect(overlay.querySelector('[data-id="showLogs"]')).toBeTruthy();
 
     click(h.window, overlay.querySelector('[data-id="showLogs"] .settings-action')!);
     expect(types(h.posted)).toContain("showLogs");
+  });
+
+  it("Settings → Connectors is a read-only live Grok inventory plus host-owned apps", () => {
+    const h = boot();
+    openSettingsOverlay(h.window, h.doc);
+    clickSettingsNav(h.window, h.doc, "Connectors");
+    expect(types(h.posted)).toContain("listMcpServers");
+    expect(h.doc.querySelector('#settings-overlay [data-id="mcpCatalog"] .settings-mcp-state')?.textContent).toContain("Loading");
+    dispatch(h.window, {
+      type: "mcpServers",
+      servers: [{ name: "managed_gateway:canva", displayName: "Canva", managed: true, enabled: true, status: "ready", toolCount: 32 }],
+      warning: "This list is read-only. Connector enable/disable is machine-global and is not controlled here.",
+    });
+    expect(h.doc.querySelector("#settings-overlay")?.textContent).toContain("Grok.com connectors");
+    expect(h.doc.querySelector("#settings-overlay")?.textContent).toContain("Local Grok connectors");
+    expect(h.doc.querySelector("#settings-overlay")?.textContent).not.toContain("atlas.com managed");
+    expect(h.doc.querySelector("#settings-overlay .settings-switch")).toBeNull();
   });
 });
 
@@ -2304,7 +2508,7 @@ describe("thinking traces toggle (#26)", () => {
 
     expect(spoken).toEqual([
       "Which database should I use?",
-      "Atlas is waiting for your permission. Review the request and choose an option.",
+      "Grok is waiting for your permission. Review the request and choose an option.",
     ]);
     expect(spoken.join(" ")).not.toContain("private-file.txt");
   });
@@ -2949,16 +3153,195 @@ describe("gear entry: Move view (Settings → Advanced)", () => {
 
 describe("context popover (donut click, #39)", () => {
   it("opens on donut click with the context line, closes on outside click", () => {
-    const { window, doc } = bootWebview();
+    const { window, doc, posted } = bootWebview();
     dispatch(window, { type: "promptComplete", meta: { totalTokens: 44123 } });
 
     click(window, $(doc, "donut"));
     const pop = $(doc, "context-popover");
     expect((pop as any).hidden).toBe(false);
     expect(pop.textContent).toContain("Context used");
+    expect(posted).toContainEqual({ type: "refreshContextDetails" });
 
     click(window, $(doc, "messages"));
     expect((pop as any).hidden).toBe(true);
+  });
+
+  it("renders a structured session/info breakdown without changing adapter occupancy", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "contextUsage", used: 16017, window: 512000 });
+    dispatch(window, {
+      type: "contextUsage",
+      used: 16017,
+      window: 512000,
+      systemPromptTokens: 1039,
+      toolDefinitionsTokens: 812,
+      messageTokens: 12166,
+      freeTokens: 495983,
+      autoCompactThresholdPercent: 92,
+      categories: [{ label: "Skills", tokens: 1200 }, { label: "MCP", tokens: 800, detail: "2 servers" }],
+    });
+    click(window, $(doc, "donut"));
+    const text = $(doc, "context-popover").textContent!;
+    expect(text).toContain("In this window");
+    expect(text).toContain("System");
+    expect(text).toContain("Messages");
+    expect(text).toContain("Free");
+    expect(text).toContain("Auto-compact at");
+    expect(text).toContain("Already counted above");
+    expect(text).toContain("Tool definitions");
+    expect(text).not.toContain("Tool definitions (");
+    expect(text).toContain("Skills");
+    expect(text).toContain("MCP (2 servers)");
+    // 16,017 used − 1,039 system − 12,166 messages = 2,812 overhead.
+    expect(text).toMatch(/Reasoning\/overhead\s*2,812/);
+    const windowAt = text.indexOf("In this window");
+    const countedAt = text.indexOf("Already counted above");
+    expect(text.indexOf("System")).toBeGreaterThan(windowAt);
+    expect(text.indexOf("Messages")).toBeGreaterThan(windowAt);
+    expect(text.indexOf("Messages")).toBeLessThan(countedAt);
+    expect(text.indexOf("Reasoning/overhead")).toBeLessThan(countedAt);
+    expect(text.indexOf("Tool definitions")).toBeGreaterThan(countedAt);
+    expect(text.indexOf("Skills")).toBeGreaterThan(countedAt);
+  });
+
+  it("does not mix a used-only occupancy update into a stale session/info snapshot", () => {
+    // Authoritative 100 / 10 system / 80 messages → overhead 10. Keep the
+    // group (overhead stays 10, not an invented 40) and re-fetch session/info.
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, {
+      type: "contextUsage",
+      used: 100,
+      window: 200000,
+      systemPromptTokens: 10,
+      messageTokens: 80,
+      freeTokens: 199890,
+      toolDefinitionsTokens: 50,
+      categories: [{ label: "Skills", tokens: 20 }],
+    });
+    click(window, $(doc, "donut"));
+    const first = $(doc, "context-popover").textContent!;
+    expect(first).toMatch(/Context used\s*100/);
+    expect(first).toContain("In this window");
+    expect(first).toMatch(/System\s*10/);
+    expect(first).toMatch(/Messages\s*80/);
+    expect(first).toMatch(/Reasoning\/overhead\s*10/);
+    expect(first).toMatch(/Free\s*199,890/);
+    expect(first).toContain("Already counted above");
+    expect(first).toContain("Tool definitions");
+    expect(first).toContain("Skills");
+
+    posted.length = 0;
+    dispatch(window, { type: "contextUsage", used: 130 });
+    const after = $(doc, "context-popover").textContent!;
+    expect(after).toMatch(/Context used\s*130/);
+    expect(after).toContain("In this window");
+    expect(after).toMatch(/System\s*10/);
+    expect(after).toMatch(/Messages\s*80/);
+    expect(after).toMatch(/Reasoning\/overhead\s*10/);
+    expect(after).not.toMatch(/Reasoning\/overhead\s*40/);
+    expect(after).toContain("Already counted above");
+    expect(posted).toContainEqual({ type: "refreshContextDetails" });
+  });
+
+  it("keeps the snapshot when a used-only frame restates the same used", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "contextUsage",
+      used: 100,
+      window: 200000,
+      systemPromptTokens: 10,
+      messageTokens: 80,
+      freeTokens: 199890,
+    });
+    click(window, $(doc, "donut"));
+    dispatch(window, { type: "contextUsage", used: 100 });
+    const text = $(doc, "context-popover").textContent!;
+    expect(text).toContain("In this window");
+    expect(text).toMatch(/Reasoning\/overhead\s*10/);
+    expect(text).toMatch(/Free\s*199,890/);
+  });
+
+  it("keeps the snapshot after promptComplete moves used and re-fetches session/info", () => {
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, {
+      type: "contextUsage",
+      used: 100,
+      window: 200000,
+      systemPromptTokens: 10,
+      messageTokens: 80,
+      freeTokens: 199890,
+    });
+    click(window, $(doc, "donut"));
+    expect($(doc, "context-popover").textContent).toContain("In this window");
+    posted.length = 0;
+    dispatch(window, { type: "promptComplete", meta: { totalTokens: 130 } });
+    const text = $(doc, "context-popover").textContent!;
+    expect(text).toMatch(/Context used\s*130/);
+    expect(text).toContain("In this window");
+    expect(text).toMatch(/Reasoning\/overhead\s*10/);
+    expect(text).toContain("Free");
+    expect(posted).toContainEqual({ type: "refreshContextDetails" });
+  });
+
+  it("shows Reasoning/overhead only when used exceeds system + messages", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "contextUsage",
+      used: 25000,
+      window: 100000,
+      systemPromptTokens: 2000,
+      toolDefinitionsTokens: 8000,
+      messageTokens: 20000,
+      freeTokens: 75000,
+    });
+    click(window, $(doc, "donut"));
+    const text = $(doc, "context-popover").textContent!;
+    expect(text).toMatch(/Reasoning\/overhead\s*3,000/);
+    const windowAt = text.indexOf("In this window");
+    const countedAt = text.indexOf("Already counted above");
+    expect(text.indexOf("Reasoning/overhead")).toBeGreaterThan(windowAt);
+    expect(text.indexOf("Reasoning/overhead")).toBeLessThan(countedAt);
+    expect(text.indexOf("Tool definitions")).toBeGreaterThan(countedAt);
+  });
+
+  it("labels Tool definitions with the CLI's tool count when present", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "contextUsage",
+      used: 24273,
+      window: 500000,
+      systemPromptTokens: 1516,
+      toolDefinitionsTokens: 8471,
+      toolDefinitionsCount: 51,
+      messageTokens: 22757,
+      freeTokens: 475727,
+      categories: [{ label: "Skills", tokens: 4886, detail: "51 skills" }],
+    });
+    click(window, $(doc, "donut"));
+    const text = $(doc, "context-popover").textContent!;
+    expect(text).toContain("Tool definitions (51 tools)");
+    expect(text).not.toContain("Reasoning/overhead");
+    expect(text.indexOf("Messages")).toBeLessThan(text.indexOf("Already counted above"));
+    expect(text.indexOf("Tool definitions")).toBeGreaterThan(text.indexOf("Already counted above"));
+    expect(text.indexOf("Skills (51 skills)")).toBeGreaterThan(text.indexOf("Already counted above"));
+  });
+
+  it("labels Claude and Codex occupancy as context used, not last prompt", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, {
+      type: "session",
+      sessionId: "s1",
+      provider: "claude",
+      currentModelId: "claude-opus-4-6",
+      models: [{ modelId: "claude-opus-4-6", name: "Opus", totalContextTokens: 1000000 }],
+    });
+    dispatch(window, { type: "contextUsage", used: 389000, window: 1000000 });
+    click(window, $(doc, "donut"));
+    const text = $(doc, "context-popover").textContent!;
+    expect(text).toContain("Context used");
+    expect(text).not.toContain("Last prompt");
+    expect(text).not.toMatch(/last turn's prompt size/i);
+    expect($(doc, "donut").title).toMatch(/^Context usage —/);
   });
 
   it("offers Compact, disabled until there is context to compact", () => {

@@ -44,6 +44,7 @@ const REQUIRED: SessionStartProps = {
   voiceLanguageSet: false,
   grokConnected: true,
   codexConnected: false,
+  claudeConnected: false,
 };
 
 describe("aptabaseHost — region from app key", () => {
@@ -172,6 +173,7 @@ describe("buildSessionStartEvent", () => {
       voiceLanguageSet: false,
       grokConnected: true,
       codexConnected: false,
+      claudeConnected: false,
     });
   });
 
@@ -269,7 +271,23 @@ describe("session_start — feature flags + host (analytics)", () => {
     expect(ev.props.remoteReadRepliesAloud).toBe(false);
     // Still no content, ever — only the anonymous install id and config values.
     // Optional fields ride the same closed set when they are present.
-    expect(Object.keys(ev.props).sort()).toEqual([...SESSION_START_ALLOWED_KEYS].sort());
+    const withAll: SessionStartProps = {
+      ...base,
+      showThinking: false,
+      expandToolDetails: false,
+      steerByDefault: false,
+      remoteFontScale: 140,
+      remoteReadRepliesAloud: false,
+      host: "Visual Studio Code",
+      provider: "grok",
+      connectorCount: 0,
+      worktree: false,
+      returningInstall: true,
+    };
+    const full = buildSessionStartEvent(
+      withAll, sys, "s", "2026-07-17T00:00:00.000Z",
+    );
+    expect(Object.keys(full.props).sort()).toEqual([...SESSION_START_ALLOWED_KEYS].sort());
   });
 
   it("pins the closed property set the builder is allowed to emit", () => {
@@ -296,6 +314,11 @@ describe("session_start — feature flags + host (analytics)", () => {
       "voiceLanguageSet",
       "grokConnected",
       "codexConnected",
+      "claudeConnected",
+      "provider",
+      "connectorCount",
+      "worktree",
+      "returningInstall",
     ]);
   });
 });
@@ -383,6 +406,7 @@ describe("sanitizeSessionStartProps — allowlist, no paths, no free text", () =
       voiceLanguageSet: true,
       grokConnected: true,
       codexConnected: false,
+      claudeConnected: false,
     };
     const out = sanitizeSessionStartProps(dirty);
     expect(out).toEqual({
@@ -397,6 +421,7 @@ describe("sanitizeSessionStartProps — allowlist, no paths, no free text", () =
       voiceLanguageSet: true,
       grokConnected: true,
       codexConnected: false,
+      claudeConnected: false,
     });
     for (const value of Object.values(out)) {
       if (typeof value === "string") {
@@ -441,9 +466,55 @@ describe("sanitizeSessionStartProps — allowlist, no paths, no free text", () =
     expect(sanitizeSessionStartProps({ ...REQUIRED, mode: "auto-accept" }).mode).toBeUndefined();
   });
 
-  it("omits an unknown host name rather than forwarding free text", () => {
-    const out = sanitizeSessionStartProps({ ...REQUIRED, host: "My Custom Fork 9000" });
-    expect("host" in out).toBe(false);
+  it("forwards previously-dropped host product names and still drops sensitive ones", () => {
+    expect(sanitizeSessionStartProps({ ...REQUIRED, host: "Antigravity IDE" }).host).toBe("Antigravity IDE");
+    expect(sanitizeSessionStartProps({ ...REQUIRED, host: "code-server" }).host).toBe("code-server");
+    expect(sanitizeSessionStartProps({ ...REQUIRED, host: "Kiro" }).host).toBe("Kiro");
+    expect(sanitizeSessionStartProps({ ...REQUIRED, host: "VS Code Web" }).host).toBe("VS Code Web");
+    expect(sanitizeSessionStartProps({ ...REQUIRED, host: "My Custom Fork 9000" }).host).toBe("My Custom Fork 9000");
+    expect(sanitizeSessionStartProps({ ...REQUIRED, host: "Visual Studio Code - Insiders" }).host)
+      .toBe("Visual Studio Code - Insiders");
+    expect("host" in sanitizeSessionStartProps({ ...REQUIRED, host: "C:\\Users\\me\\AppData" })).toBe(false);
+    expect("host" in sanitizeSessionStartProps({ ...REQUIRED, host: "/home/user/.ssh/id_rsa" })).toBe(false);
+    expect("host" in sanitizeSessionStartProps({ ...REQUIRED, host: "please rewrite README.md" })).toBe(false);
+    expect("host" in sanitizeSessionStartProps({ ...REQUIRED, host: "https://evil.example" })).toBe(false);
+  });
+
+  it("accepts the selected-CLI enum and drops a free-text stand-in", () => {
+    expect(sanitizeSessionStartProps({ ...REQUIRED, provider: "grok" }).provider).toBe("grok");
+    expect(sanitizeSessionStartProps({ ...REQUIRED, provider: "codex" }).provider).toBe("codex");
+    expect(sanitizeSessionStartProps({ ...REQUIRED, provider: "claude" }).provider).toBe("claude");
+    expect("provider" in sanitizeSessionStartProps({ ...REQUIRED, provider: "openai" as SessionStartProps["provider"] })).toBe(false);
+    expect("provider" in sanitizeSessionStartProps({
+      ...REQUIRED,
+      provider: "grok-4.5" as SessionStartProps["provider"],
+    })).toBe(false);
+    expect("provider" in sanitizeSessionStartProps({ ...REQUIRED })).toBe(false);
+  });
+
+  it("keeps connectorCount in 0–10 and omits it when missing or out of range", () => {
+    expect(sanitizeSessionStartProps({ ...REQUIRED, connectorCount: 0 }).connectorCount).toBe(0);
+    expect(sanitizeSessionStartProps({ ...REQUIRED, connectorCount: 10 }).connectorCount).toBe(10);
+    expect(sanitizeSessionStartProps({ ...REQUIRED, connectorCount: 3 }).connectorCount).toBe(3);
+    expect("connectorCount" in sanitizeSessionStartProps({ ...REQUIRED, connectorCount: 11 })).toBe(false);
+    expect("connectorCount" in sanitizeSessionStartProps({ ...REQUIRED, connectorCount: -1 })).toBe(false);
+    expect("connectorCount" in sanitizeSessionStartProps({ ...REQUIRED })).toBe(false);
+  });
+
+  it("emits worktree/returningInstall as booleans and omits them when unavailable or malformed", () => {
+    expect(sanitizeSessionStartProps({ ...REQUIRED, worktree: true }).worktree).toBe(true);
+    expect(sanitizeSessionStartProps({ ...REQUIRED, worktree: false }).worktree).toBe(false);
+    expect(sanitizeSessionStartProps({ ...REQUIRED, returningInstall: false }).returningInstall).toBe(false);
+    expect("worktree" in sanitizeSessionStartProps({ ...REQUIRED })).toBe(false);
+    expect("returningInstall" in sanitizeSessionStartProps({ ...REQUIRED })).toBe(false);
+    expect("worktree" in sanitizeSessionStartProps({
+      ...REQUIRED,
+      worktree: "yes" as unknown as boolean,
+    })).toBe(false);
+    expect("returningInstall" in sanitizeSessionStartProps({
+      ...REQUIRED,
+      returningInstall: 1 as unknown as boolean,
+    })).toBe(false);
   });
 
   it("keeps only finite numbers inside the documented zoom ranges", () => {
@@ -492,6 +563,11 @@ describe("sanitizeSessionStartProps — allowlist, no paths, no free text", () =
       voiceLanguageSet: true,
       grokConnected: false,
       codexConnected: true,
+      claudeConnected: false,
+      provider: "codex",
+      connectorCount: 2,
+      worktree: true,
+      returningInstall: false,
     };
     const extra = { ...valid, unlistedPicker: true, prompt: "do not send" };
     const out = sanitizeSessionStartProps(extra);
@@ -514,7 +590,7 @@ function sidebarMethodBody(signature: string): string {
 
 function makeTelemetrySidebar(cwd = "/repo"): any {
   const instance = Object.create(GrokSidebar.prototype) as any;
-  instance.lastProviderConnected = { grok: true, codex: false };
+  instance.lastProviderConnected = { grok: true, codex: false, claude: false };
   instance.lastVoiceConfiguredByCwd = new Map([[normalizeRepoPath(cwd), true]]);
   instance.locatedProviders = vi.fn(() => {
     throw new Error("reportSessionStart must not rediscover providers");
@@ -528,6 +604,13 @@ function makeTelemetrySidebar(cwd = "/repo"): any {
   instance.providerConnections = vi.fn(() => {
     throw new Error("reportSessionStart must not re-read provider connections");
   });
+  instance.repoCatalog = vi.fn(() => {
+    throw new Error("reportSessionStart must not scan the repo catalog");
+  });
+  instance.connectedConnectorStore = vi.fn(() => ({}));
+  instance.state = {
+    get: vi.fn((key: string) => (key === "atlas.installId" ? "already-installed" : undefined)),
+  };
   instance.remoteClients = new RemoteClientState<Session>(cwd);
   instance.focused = new Session();
   instance.focused.provider = "grok";
@@ -556,6 +639,17 @@ function makeTelemetrySidebar(cwd = "/repo"): any {
   return instance;
 }
 
+describe("docs/privacy.md discloses every session_start prop", () => {
+  const privacy = readFileSync(new URL("../docs/privacy.md", import.meta.url), "utf8");
+  it("names each allowed key so a shipped prop cannot miss the disclosure surface", () => {
+    for (const key of SESSION_START_ALLOWED_KEYS) {
+      expect(privacy, `docs/privacy.md must name ${key}`).toMatch(
+        key === "installId" ? /install id/i : new RegExp(key),
+      );
+    }
+  });
+});
+
 describe("sidebar session_start wiring", () => {
   it("passes every allowed key into the payload builder from the call site", () => {
     const body = sidebarMethodBody("private reportSessionStart(");
@@ -569,7 +663,17 @@ describe("sidebar session_start wiring", () => {
     expect(body).not.toContain("resolveVoiceApiKey(");
     expect(body).toContain("this.lastProviderConnected?.grok");
     expect(body).toContain("this.lastProviderConnected?.codex");
+    expect(body).toContain("this.lastProviderConnected?.claude");
     expect(body).toContain("this.lastVoiceConfiguredByCwd.get(");
+    expect(body).toContain("session.provider");
+    expect(body).toContain("this.connectedConnectorStore()");
+    expect(body).toContain("session.worktree");
+    expect(body).not.toContain("repoCatalog(");
+    expect(body).not.toContain("discoverRepos(");
+    expect(body).not.toContain("refreshMcpServers(");
+    expect(body).not.toContain("connectors:");
+    expect(body).not.toContain("mcpServerCount:");
+    expect(body).not.toContain("projectCount:");
   });
 
   it("builds hostKind/appPurpose/flags from the last refresh snapshot, not a live probe", () => {
@@ -591,6 +695,11 @@ describe("sidebar session_start wiring", () => {
         voiceLanguageSet: true,
         grokConnected: true,
         codexConnected: false,
+        claudeConnected: false,
+        provider: "grok",
+        connectorCount: 0,
+        worktree: false,
+        returningInstall: true,
         chatFontScale: 125,
         readRepliesAloud: false,
         soundNotifications: false,
@@ -611,12 +720,12 @@ describe("sidebar session_start wiring", () => {
 
   it("snapshots connected flags when providerState refreshes", () => {
     const sidebar = Object.create(GrokSidebar.prototype) as any;
-    sidebar.providerConnections = vi.fn(() => ({ grok: true, codex: true }));
-    sidebar.locatedProviders = vi.fn(() => ({ grok: true, codex: false }));
+    sidebar.providerConnections = vi.fn(() => ({ grok: true, codex: true, claude: true }));
+    sidebar.locatedProviders = vi.fn(() => ({ grok: true, codex: false, claude: true }));
     sidebar.providerCliVersions = {};
     sidebar.providerNeedsLogin = {};
     sidebar.providerStateMessage();
-    expect(sidebar.lastProviderConnected).toEqual({ grok: true, codex: false });
+    expect(sidebar.lastProviderConnected).toEqual({ grok: true, codex: false, claude: true });
   });
 
   it("omits voice and provider flags when no snapshot exists (never a fake false)", () => {
@@ -631,6 +740,7 @@ describe("sidebar session_start wiring", () => {
       expect(input.voiceConfigured).toBeUndefined();
       expect(input.grokConnected).toBeUndefined();
       expect(input.codexConnected).toBeUndefined();
+      expect(input.claudeConnected).toBeUndefined();
       const props = telemetry.sanitizeSessionStartProps(
         telemetry.buildSessionStartEvent(
           input as any,
@@ -640,6 +750,68 @@ describe("sidebar session_start wiring", () => {
       expect(props).not.toHaveProperty("voiceConfigured");
       expect(props).not.toHaveProperty("grokConnected");
       expect(props).not.toHaveProperty("codexConnected");
+      expect(props).not.toHaveProperty("claudeConnected");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("reports the session CLI independently of the connected flags", () => {
+    const spy = vi.spyOn(telemetry, "buildSessionStartEvent");
+    try {
+      const sidebar = makeTelemetrySidebar("/repo");
+      sidebar.focused.provider = "codex";
+      sidebar.lastProviderConnected = { grok: true, codex: false, claude: false };
+      sidebar.reportSessionStart(sidebar.focused, "local");
+      expect(spy.mock.calls[0][0]).toMatchObject({
+        provider: "codex",
+        grokConnected: true,
+        codexConnected: false,
+        claudeConnected: false,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("reads connectorCount, worktree, and returningInstall from sync fields already on the session/store", () => {
+    const spy = vi.spyOn(telemetry, "buildSessionStartEvent");
+    try {
+      const sidebar = makeTelemetrySidebar("/repo");
+      sidebar.connectedConnectorStore = vi.fn(() => ({ linear: { endpoint: "https://mcp.linear.app/mcp" }, github: { endpoint: "https://api.githubcopilot.com/mcp/" } }));
+      sidebar.focused.worktree = { path: "/tmp/wt", label: "wt", sourceGitRoot: "/repo" };
+      sidebar.reportSessionStart(sidebar.focused, "local");
+      expect(spy.mock.calls[0][0]).toMatchObject({
+        connectorCount: 2,
+        worktree: true,
+        returningInstall: true,
+      });
+      expect(sidebar.repoCatalog).not.toHaveBeenCalled();
+
+      spy.mockClear();
+      sidebar.state.get = vi.fn(() => undefined);
+      sidebar.connectedConnectorStore = vi.fn(() => ({}));
+      sidebar.focused.worktree = undefined;
+      sidebar.reportSessionStart(sidebar.focused, "local");
+      expect(spy.mock.calls[0][0]).toMatchObject({
+        connectorCount: 0,
+        worktree: false,
+        returningInstall: false,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("forwards a previously-dropped host product name from the emission site", () => {
+    const spy = vi.spyOn(telemetry, "buildSessionStartEvent");
+    try {
+      const sidebar = makeTelemetrySidebar("/repo");
+      sidebar.host.appName = "Antigravity IDE";
+      sidebar.reportSessionStart(sidebar.focused, "local");
+      const input = spy.mock.calls[0][0] as SessionStartProps;
+      expect(input.host).toBe("Antigravity IDE");
+      expect(telemetry.sanitizeSessionStartProps(input).host).toBe("Antigravity IDE");
     } finally {
       spy.mockRestore();
     }
@@ -667,8 +839,40 @@ describe("sidebar session_start wiring", () => {
     sidebar.postLocal = vi.fn();
     sidebar.remoteClients = new RemoteClientState<Session>("/repo");
     sidebar.lastVoiceConfiguredByCwd = new Map([[normalizeRepoPath("/gone"), true]]);
+    sidebar.lastPostedVoiceConfigured = new Map();
     sidebar.postVoiceConfigured();
     expect(sidebar.lastVoiceConfiguredByCwd.has(normalizeRepoPath("/gone"))).toBe(false);
+    expect(sidebar.lastVoiceConfiguredByCwd.get(normalizeRepoPath("/repo"))).toBe(true);
+  });
+
+  it("postVoiceConfigured skips a connected client that has no project yet", () => {
+    const sidebar = Object.create(GrokSidebar.prototype) as any;
+    sidebar.focused = new Session();
+    sidebar.focused.cwd = "/desk";
+    sidebar.sessionCwd = vi.fn((session: Session) => session.cwd || "/desk");
+    sidebar.resolveVoiceApiKey = vi.fn(() => "key");
+    sidebar.voiceSetting = vi.fn((_c: string, _k: string, fb: unknown) => fb);
+    sidebar.postLocal = vi.fn();
+    sidebar.sendRemoteClient = vi.fn();
+    sidebar.remoteClients = new RemoteClientState<Session>("");
+    sidebar.lastVoiceConfiguredByCwd = new Map();
+    sidebar.lastPostedVoiceConfigured = new Map();
+    sidebar.remoteClients.ready("c49");
+    sidebar.remoteClients.ready("ok");
+    sidebar.remoteClients.select("ok", "/repo");
+
+    expect(() => sidebar.remoteClients.cwd("c49")).toThrow(/not ready/);
+    expect(() => sidebar.remoteSessionFor("c49")).toThrow(/not ready/);
+    expect(() => sidebar.postVoiceConfigured()).not.toThrow();
+
+    expect(sidebar.sendRemoteClient).toHaveBeenCalledTimes(1);
+    expect(sidebar.sendRemoteClient).toHaveBeenCalledWith(
+      "ok",
+      expect.objectContaining({ type: "voiceConfigured", value: true }),
+      "/repo",
+    );
+    expect(sidebar.remoteClients.active("c49")).toBeUndefined();
+    expect(sidebar.remoteClients.active("ok")).toBeUndefined();
     expect(sidebar.lastVoiceConfiguredByCwd.get(normalizeRepoPath("/repo"))).toBe(true);
   });
 

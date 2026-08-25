@@ -1,7 +1,7 @@
 # Atlas Desktop
 
 Standalone Electron host for the same Atlas agent UI that the VS Code
-extension uses. It speaks ACP over `atlas agent stdio`, stores nothing private
+extension uses. It speaks ACP over `grok agent stdio`, stores nothing private
 beyond what the extension already does, and is published from this public repo.
 
 Not affiliated with or endorsed by SpaceXAI (formerly xAI).
@@ -13,18 +13,18 @@ Asset names are stable so a landing page can link them by version:
 
 | Platform | Architecture | File pattern |
 |---|---|---|
-| macOS | Apple Silicon (arm64) | `Atlas-Build-Desktop-<version>-mac-arm64.dmg` |
-| macOS | Intel (x64) | `Atlas-Build-Desktop-<version>-mac-x64.dmg` |
-| macOS | arm64 / x64 (archive) | `Atlas-Build-Desktop-<version>-mac-arm64.zip` / `…-mac-x64.zip` |
-| Windows | x64 | `Atlas-Build-Desktop-<version>-win-x64.exe` |
+| macOS | Apple Silicon (arm64) | `Grok-Build-Desktop-<version>-mac-arm64.dmg` |
+| macOS | Intel (x64) | `Grok-Build-Desktop-<version>-mac-x64.dmg` |
+| macOS | arm64 / x64 (archive) | `Grok-Build-Desktop-<version>-mac-arm64.zip` / `…-mac-x64.zip` |
+| Windows | x64 | `Grok-Build-Desktop-<version>-win-x64.exe` |
 
 Example for version `3.1.0`:
 
-- `Atlas-Build-Desktop-3.1.0-mac-arm64.dmg`
-- `Atlas-Build-Desktop-3.1.0-mac-x64.dmg`
-- `Atlas-Build-Desktop-3.1.0-win-x64.exe`
+- `Grok-Build-Desktop-3.1.0-mac-arm64.dmg`
+- `Grok-Build-Desktop-3.1.0-mac-x64.dmg`
+- `Grok-Build-Desktop-3.1.0-win-x64.exe`
 
-Optional Linux AppImage (when built on Linux): `Atlas-Build-Desktop-<version>-linux-x64.AppImage`.
+Optional Linux AppImage (when built on Linux): `Grok-Build-Desktop-<version>-linux-x64.AppImage`.
 
 ## Build commands
 
@@ -42,25 +42,11 @@ Artifacts land in `dist-desktop/` (gitignored). The VS Code VSIX path is unchang
 `npm run package` still produces `grok-vscode-phuryn-<version>.vsix` and still
 excludes all desktop sources via `.vscodeignore`.
 
-**If `dist:win` fails downloading Electron (`release-assets.githubusercontent.com` … `EOF`):**
-GitHub 发行包在国内常被掐断。本地 `npm run dist:win` 会走 `scripts/with-electron-mirrors.cjs`：未设置环境变量时改用 npmmirror，并复用已安装的 `node_modules/electron/dist`。CI（`CI` / `GITHUB_ACTIONS`）仍走官方地址。
-
-若本机还没有 Electron 二进制，先拉一次再打包：
-
-```powershell
-$env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
-node node_modules/electron/install.js
-npm run dist:win
-```
-
-也可自行覆盖：`ELECTRON_MIRROR`、`ELECTRON_BUILDER_BINARIES_MIRROR`。
-
 **If `dist:win` fails on `Cannot create symbolic link` (local Windows only):**
 electron-builder downloads its `winCodeSign` bundle for `rcedit` / `signtool`,
 and that archive contains macOS symlinks a normal Windows account may not create
-— it retries four times and gives up. CI is unaffected (the runner can).
-`scripts/with-electron-mirrors.cjs` now seeds the cache without the darwin half
-when a `.7z` is already present. To do it by hand:
+— it retries four times and gives up. CI is unaffected (the runner can). Extract
+it once, without the macOS half, and every later build finds it cached:
 
 ```bash
 CACHE="$LOCALAPPDATA/electron-builder/Cache/winCodeSign"
@@ -86,33 +72,31 @@ build Windows installers on Windows, macOS installers on macOS.
 
 Dev run without packaging: `npm run desktop` (compile tree + local Electron).
 
-## Unsigned installs — what users see
+## Install warnings — what users see
 
-**There is no code signing certificate yet.** Builds are intentionally unsigned.
-That is the largest install-conversion friction until certificates exist.
+**macOS is signed and notarised from 3.2.7 onward; Windows is still unsigned.**
+Only the Windows half remains install-conversion friction.
 
-### macOS (Gatekeeper)
+### macOS — no warning
 
-On first open of a signed-but-not-notarised download, macOS shows:
+Builds are signed with a Developer ID, notarised by Apple and stapled
+(`desktop-release.yml`, using `CSC_LINK` / `CSC_KEY_PASSWORD` plus an App Store
+Connect API key for `notarytool`). The app opens straight from the `.dmg`: no
+Gatekeeper block, nothing to allow through in System Settings, and no quarantine
+flag for anyone to clear.
 
-> “Atlas Desktop” cannot be opened because it is from an unidentified developer.
+Keep this in step with `/desktop` and `/desktop-update` on the relay — those are
+the other two places a user reads it, and steps for a dialog that never appears
+read as "you did it wrong" rather than "we are out of date".
 
-**Workaround for users — and NOT "right-click → Open" any more.** macOS 15
-removed that shortcut; the block dialog offers only *Move to Trash* and *Done*.
-The override lives in Settings:
+<details>
+<summary>History — what users saw before 3.2.7, and why <code>adhoc-sign-mac.cjs</code> still runs</summary>
 
-1. Click **Done** on the warning (not *Move to Trash*).
-2. System Settings → **Privacy & Security** → scroll to **Security**.
-3. **Open Anyway** beside the blocked-app message, then authenticate. The button
-   is only offered for about an hour after the blocked launch, so if it is not
-   there, try opening the app again first.
-
-Or clear the quarantine flag and skip the dance:
+Unsigned downloads were blocked with “cannot be opened because it is from an
+unidentified developer”, and macOS 15 had already removed the right-click → Open
+shortcut, so the only overrides were System Settings → **Privacy & Security** →
+**Open Anyway** (offered for roughly an hour after the blocked launch) or
 `xattr -dr com.apple.quarantine "/Applications/Atlas Desktop.app"`.
-
-Keep this in step with the same steps on `/desktop` in the relay repo — they are
-the two places a user reads it, and stale unblock instructions read as "you did
-it wrong" rather than "we are out of date".
 
 **The failure mode one step worse than that**, and what 3.2.2 shipped:
 
@@ -129,11 +113,14 @@ confers no trust; it is a floor, not a destination.
 A user already holding a 3.2.2 download can recover it by dropping the quarantine
 flag: `xattr -dr com.apple.quarantine "/Applications/Atlas Desktop.app"`.
 
-**To remove the warning for real:** Apple Developer Program membership +
-Developer ID Application certificate, codesign the app (hardened runtime +
-entitlements as required), then **notarize** with Apple (`notarytool`) and
-staple the ticket. electron-builder supports this via `mac.identity`,
-`CSC_LINK` / `CSC_KEY_PASSWORD`, and notarize hooks once credentials exist.
+**That is what 3.2.7 finally did:** Apple Developer Program membership and a
+Developer ID Application certificate, codesigning with the hardened runtime,
+then `notarytool` and a stapled ticket — wired through electron-builder's
+`mac.identity`, `CSC_LINK` / `CSC_KEY_PASSWORD` and notarize hooks. The ad-hoc
+`afterPack` signing stays regardless: it is what keeps a repackaged bundle
+loadable at all.
+
+</details>
 
 ### Windows (SmartScreen)
 
@@ -156,18 +143,18 @@ cert is available.
 
 ## Auto-update
 
-Packaged Windows and macOS builds check the Atlas CLI host
-(`http://10.218.220.237:22255/atlas/cli/latest.yml` and
-`…/latest-mac.yml`, overridable with `GROK_CLI_BASE_URL`) on start and every 12 hours, download in the
+Packaged Windows and macOS builds check a relay-served generic feed
+(`https://afkpilot.com/update/win/latest.yml` and
+`…/mac/latest-mac.yml`) on start and every 12 hours, download in the
 background, and install on quit or when the rail button says **Restart to
 update**. Check or download failure is silent and falls back to the
-**Update available** notice (opens the same `/atlas/cli` origin).
+**Update available** notice (opens `https://afkpilot.com/desktop-update`).
 No GitHub provider — a vsix-only release would stall that feed.
 
 `electron-builder.yml` has a generic `publish` block so `latest.yml` /
-`latest-mac.yml` are generated; `dist*` still uses `--publish never`.
-Copy those yml files plus the installers into atlas-server `releases/`.
-Windows signature verification is off until an Authenticode cert lands.
+`latest-mac.yml` are generated; `dist*` still uses `--publish never` and
+the workflow attaches those yml files to the GitHub Release. Windows
+signature verification is off until an Authenticode cert lands.
 
 Full contract (relay rewrite rules, dual-arch `latest-mac.yml`, local
 `dev-app-update.yml` test): [desktop-update-spec.md](desktop-update-spec.md).
@@ -177,7 +164,7 @@ Full contract (relay rewrite rules, dual-arch `latest-mac.yml`, local
 electron-builder packs (into `app.asar` by default):
 
 ```
-package.json          # main → out/desktop/main.js (extraMetadata)
+package.json          # main → out/desktop/main.js; grokExtensionName (extraMetadata)
 out/**                # including out/desktop/*
 media/**              # chat.js, CSS, MathJax, Mermaid, …
 resources/**          # icon

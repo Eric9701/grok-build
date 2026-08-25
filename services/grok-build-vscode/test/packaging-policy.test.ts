@@ -21,10 +21,15 @@ describe("marketplace vs GitHub README", () => {
     scripts: Record<string, string>;
   };
 
-  it("GitHub README covers Atlas CLI and the VS Code extension", () => {
-    expect(github).toMatch(/Atlas for VS Code/);
-    expect(github).toMatch(/Atlas CLI/);
-    expect(github).toMatch(/atlas\.cliPath|atlas login/);
+  it("GitHub README covers Atlas Desktop and both hosts", () => {
+    expect(github).toMatch(/Atlas Desktop/);
+    expect(github).toMatch(/VS Code extension/i);
+    // Desktop downloads moved from GitHub Releases to the site, which detects
+    // the visitor's platform. The assertion follows the download source rather
+    // than pinning the old one.
+    expect(github).toMatch(/afkpilot\.com\/desktop/);
+    expect(github).toMatch(/Grok-Build-Desktop-<version>-mac-arm64\.dmg/);
+    expect(github).toMatch(/Grok-Build-Desktop-<version>-win-x64\.exe/);
   });
 
   // Owner, 2026-08-07: *"the key for me is what people see in marketplaces
@@ -33,7 +38,7 @@ describe("marketplace vs GitHub README", () => {
   // app outright, which also banned telling an extension user that the thing
   // they might actually want exists.
   it("marketplace README stays extension-primary, companions only as a footnote", () => {
-    expect(marketplace).toMatch(/Grok Build for VS Code \(Community\)/);
+    expect(marketplace).toMatch(/Atlas for VS Code \(Community\)/);
     // The non-affiliation line must be there; WHO it names moved when xAI
     // rebranded to SpaceXAI, so match the shape rather than the company. The
     // trademark attribution is asserted separately and deliberately still says
@@ -50,8 +55,8 @@ describe("marketplace vs GitHub README", () => {
     // Primacy, enforced mechanically: the extension must be established before
     // another product is named. "Later in the document" is the only
     // machine-checkable form of "not the headline".
-    const firstExtension = marketplace.search(/Grok Build for VS Code \(Community\)/);
-    const firstDesktop = marketplace.search(/Grok Build Desktop/i);
+    const firstExtension = marketplace.search(/Atlas for VS Code \(Community\)/);
+    const firstDesktop = marketplace.search(/Atlas Desktop/i);
     expect(firstExtension).toBeGreaterThanOrEqual(0);
     if (firstDesktop >= 0) {
       expect(firstDesktop).toBeGreaterThan(firstExtension);
@@ -59,7 +64,7 @@ describe("marketplace vs GitHub README", () => {
       // sold, not mentioned.
       expect(firstDesktop).toBeGreaterThan(marketplace.length / 2);
       // A footnote is named a handful of times, not threaded throughout.
-      expect((marketplace.match(/Grok Build Desktop/gi) || []).length).toBeLessThanOrEqual(3);
+      expect((marketplace.match(/Atlas Desktop/gi) || []).length).toBeLessThanOrEqual(3);
     }
     // AFK Pilot may be named anywhere — it IS the extension's Remote Control
     // feature, not a separate product being cross-sold.
@@ -89,8 +94,8 @@ describe("marketplace vs GitHub README", () => {
     // `npx @vscode/vsce` resolves on the network that day.
     // Exact pin (no caret/tilde) so lockfile + package.json agree on the tool.
     expect(full.devDependencies?.["@vscode/vsce"]).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(full.scripts.package).toMatch(/vsce-node18\.cjs package\b/);
-    expect(full.scripts.publish).toMatch(/vsce-node18\.cjs publish\b/);
+    expect(full.scripts.package).toMatch(/^vsce package\b/);
+    expect(full.scripts.publish).toMatch(/^vsce publish\b/);
     // Mutation: dropping the dep while keeping `npx @vscode/vsce` reopens float.
     expect(full.scripts.package).not.toMatch(/npx\s+@vscode\/vsce/);
   });
@@ -106,6 +111,7 @@ describe("VSIX excludes desktop app", () => {
     expect(vscodeignore).toMatch(/^\s*out\/desktop\/\*\*/m);
     expect(vscodeignore).toMatch(/^\s*src\/desktop\/\*\*/m);
     expect(vscodeignore).toMatch(/^\s*scripts\/run-desktop\.cjs\s*$/m);
+    expect(vscodeignore).toMatch(/^\s*scripts\/lifecycle-host\.mjs\s*$/m);
     expect(vscodeignore).toMatch(/^\s*vitest\.desktop\.config\.ts\s*$/m);
     expect(vscodeignore).toMatch(/^\s*electron-builder\.yml\s*$/m);
     expect(vscodeignore).toMatch(/^\s*docs\/desktop-update-spec\.md\s*$/m);
@@ -134,13 +140,6 @@ describe("VSIX excludes desktop app", () => {
     expect(vscodeignore).toMatch(/^\s*!out\/desktop\/file-tree\.js\s*$/m);
   });
 
-  it("vsce-node18 shim covers Node 18 File and npm list ELSPROBLEMS", () => {
-    const shim = read("scripts/vsce-node18.cjs");
-    expect(shim).toMatch(/globalThis\.File/);
-    expect(shim).toMatch(/npm list --production --parseable/);
-    expect(shim).toMatch(/ELSPROBLEMS/);
-  });
-
   it("packaging cannot run without the require check", () => {
     // The check has to be reachable from `npm run package`, which CI already
     // runs on every push and PR — otherwise it is a script nobody invokes.
@@ -148,11 +147,19 @@ describe("VSIX excludes desktop app", () => {
     expect(pkg.scripts.prepackage).toMatch(/check:vsix/);
   });
 
+  it("packaging cannot run without the production-relay check", () => {
+    expect(pkg.scripts["check:relay"]).toMatch(/check-production-relay/);
+    expect(pkg.scripts.prepackage).toMatch(/check:relay/);
+    expect(pkg.scripts.prepackage.indexOf("check:vsix")).toBeGreaterThan(
+      pkg.scripts.prepackage.indexOf("check:relay"),
+    );
+  });
+
   it("desktop dist scripts exist and do not replace npm run package", () => {
-    expect(pkg.scripts["dist:win"]).toMatch(/with-electron-mirrors\.cjs electron-builder/);
-    expect(pkg.scripts["dist:mac"]).toMatch(/with-electron-mirrors\.cjs electron-builder/);
-    expect(pkg.scripts.dist).toMatch(/with-electron-mirrors\.cjs electron-builder/);
-    expect(pkg.scripts.package).toMatch(/vsce-node18\.cjs package\b/);
+    expect(pkg.scripts["dist:win"]).toMatch(/electron-builder/);
+    expect(pkg.scripts["dist:mac"]).toMatch(/electron-builder/);
+    expect(pkg.scripts.dist).toMatch(/electron-builder/);
+    expect(pkg.scripts.package).toMatch(/\bvsce package\b/);
   });
 
   it("generates updater yml without publishing from electron-builder", () => {
@@ -167,7 +174,6 @@ describe("VSIX excludes desktop app", () => {
     expect(builder).not.toMatch(/^publish:\s*null\s*$/m);
     expect(builder).toMatch(/provider:\s*generic/);
     expect(builder).toMatch(/10\.218\.220\.237:22255\/atlas\/cli/);
-    expect(builder).not.toMatch(/afkpilot\.com\/update/);
     expect(builder).toMatch(/verifyUpdateCodeSignature:\s*false/);
     expect(builder).not.toMatch(/publisherName:/);
     for (const s of ["dist", "dist:mac", "dist:win"]) {
@@ -186,6 +192,34 @@ describe("VSIX excludes desktop app", () => {
     expect(full.scripts["dist:mac"]).toMatch(/electron-builder --mac/);
     expect(full.scripts["dist:mac"]).not.toMatch(/--arm64/);
     expect(full.scripts["dist:mac"]).not.toMatch(/--x64/);
+  });
+
+  it("does not pack Claude Agent SDK type declarations", () => {
+    const vscodeignore = read(".vscodeignore");
+    const builder = read("electron-builder.yml");
+    expect(vscodeignore).not.toMatch(/claude-agent-sdk\/\*\.d\.ts/);
+    expect(builder).not.toMatch(/claude-agent-sdk\/\*\.d\.ts/);
+    expect(vscodeignore).toMatch(/!node_modules\/@anthropic-ai\/claude-agent-sdk\/\*\.js/);
+    expect(builder).toMatch(/node_modules\/@anthropic-ai\/claude-agent-sdk\/\*\.js/);
+  });
+
+  it("packages the pinned Claude ACP runtime without native SDK binaries", () => {
+    const builder = read("electron-builder.yml");
+    const full = JSON.parse(read("package.json")) as { dependencies?: Record<string, string> };
+    expect(full.dependencies?.["@agentclientprotocol/claude-agent-acp"]).toBe("0.69.0");
+    expect(builder).toMatch(/node_modules\/@agentclientprotocol\/claude-agent-acp\/package\.json/);
+    expect(builder).toMatch(/node_modules\/@agentclientprotocol\/claude-agent-acp\/dist\/\*\*\/\*/);
+    expect(builder).not.toMatch(/node_modules\/@agentclientprotocol\/claude-agent-acp\/\*\*\/\*/);
+    expect(builder).toMatch(/node_modules\/@anthropic-ai\/claude-agent-sdk\/package\.json/);
+    expect(builder).toMatch(/^\s*- "!node_modules\/@anthropic-ai\/claude-agent-sdk-\*\/\*\*"\s*$/m);
+    expect(fs.existsSync(path.join(
+      root,
+      "node_modules",
+      "@agentclientprotocol",
+      "claude-agent-acp",
+      "dist",
+      "index.js",
+    ))).toBe(true);
   });
 
   it("packages the pinned Codex ACP runtime in the desktop artifact", () => {
@@ -248,6 +282,18 @@ describe("VSIX excludes desktop app", () => {
     expect(vscodeignore).not.toMatch(
       /^\s*!node_modules\/@agentclientprotocol\/codex-acp\/\*\*\s*$/m,
     );
+    expect(vscodeignore).toMatch(
+      /^\s*!node_modules\/@agentclientprotocol\/claude-agent-acp\/package\.json\s*$/m,
+    );
+    expect(vscodeignore).toMatch(
+      /^\s*!node_modules\/@agentclientprotocol\/claude-agent-acp\/dist\/\*\*\s*$/m,
+    );
+    expect(vscodeignore).not.toMatch(
+      /^\s*!node_modules\/@agentclientprotocol\/claude-agent-acp\/\*\*\s*$/m,
+    );
+    expect(vscodeignore).not.toMatch(
+      /^\s*!node_modules\/@anthropic-ai\/claude-agent-sdk-\*\*?\s*$/m,
+    );
   });
 });
 
@@ -260,6 +306,21 @@ describe("desktop artifact naming (electron-builder.yml)", () => {
     );
     expect(yml).toMatch(/productName:\s*Atlas Desktop/);
     expect(yml).toMatch(/extraMetadata:[\s\S]*main:\s*out\/desktop\/main\.js/);
+    // The telemetry identity must NOT be committed. Nothing in the source
+    // tree can tell our build from a fork's — a fork copies every file, and
+    // a desktop-only fork has no reason to change `publisher` — so a build
+    // made from this config alone reports nothing, and the official value is
+    // injected by the workflow, gated on the repository it runs in.
+    expect(yml).not.toMatch(/grokExtensionName:\s*\S/);
+    const wf = read(".github/workflows/desktop-release.yml");
+    // QUOTED, and the quotes are the point: the Windows leg runs under pwsh,
+    // which splits a bare `-c.extraMetadata.…=…` at the `-c.` and leaves
+    // electron-builder reading `-c` as a config-FILE path. v3.15.0's Windows
+    // installer failed exactly this way; macOS passed the same token through
+    // intact, so the matrix only half-broke and the release looked complete.
+    expect(wf).toMatch(/-- '-c\.extraMetadata\.grokExtensionName=grok-vscode-phuryn'/);
+    expect(wf).toMatch(/if:\s*github\.repository == 'phuryn\/grok-build-vscode'/);
+    expect(wf).toMatch(/if:\s*github\.repository != 'phuryn\/grok-build-vscode'/);
   });
 
   // Comments in this file explain settings that are deliberately ABSENT, so a

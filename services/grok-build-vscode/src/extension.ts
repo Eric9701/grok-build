@@ -161,10 +161,16 @@ export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
   // view, nobody chose it — that is the entire licence the placement correction
   // has to move it, and it evaporates the moment any other subsystem writes.
   const firstEverRun = isFirstEverRun(context.globalState.keys());
-  const output = vscode.window.createOutputChannel("Atlas");
+  const output = vscode.window.createOutputChannel("Grok");
   const host = createVsCodeHost(output, context);
   const hostContext = createVsCodeHostContext(context);
   const sidebar = new GrokSidebar(hostContext, host);
+  // Test host only. Latch missing-CLI discovery before ensureViewPlacement can
+  // reveal the view (ready → startSession). Production never takes this branch.
+  const testHooks = context.extensionMode === vscode.ExtensionMode.Test
+    ? sidebar.installTestHooks()
+    : undefined;
+  testHooks?.isolateFromInstalledGrok();
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
@@ -178,7 +184,7 @@ export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
         webviewOptions: { retainContextWhenHidden: true },
       },
     ),
-    // Projects rail: its own activity-bar container (`atlasProjects`), never the
+    // Projects rail: its own activity-bar container (`grokProjects`), never the
     // chat's move target — see PROJECTS_CONTAINER_ID for why sharing one welded
     // the two views together. No Cursor special-casing: registering a view in
     // the primary bar works the same in both editors (Cursor only reserves the
@@ -255,6 +261,7 @@ export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
     vscode.commands.registerCommand("atlas.settings", () => sidebar.openSettingsEditor()),
     vscode.commands.registerCommand("atlas.expandAllToolDetails", () => sidebar.setAllToolDetails(true)),
     vscode.commands.registerCommand("atlas.collapseAllToolDetails", () => sidebar.setAllToolDetails(false)),
+    vscode.commands.registerCommand("atlas.findInSession", () => sidebar.findInSession()),
     vscode.commands.registerCommand("atlas.logout", () => sidebar.logout()),
     vscode.commands.registerCommand("atlas.linkRemote", () => sidebar.linkRemoteDevice()),
     vscode.commands.registerCommand("atlas.unlinkRemote", () => sidebar.unlinkRemoteDevice()),
@@ -272,9 +279,7 @@ export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
   // VS Code sets ExtensionMode.Test ONLY when the extension host was launched by
   // a test runner, so an installed build can never reach this branch and the
   // seam is genuinely absent there rather than merely undocumented.
-  return context.extensionMode === vscode.ExtensionMode.Test
-    ? { __test: sidebar.installTestHooks() }
-    : {};
+  return testHooks ? { __test: testHooks } : {};
 }
 
 export function deactivate(): void {

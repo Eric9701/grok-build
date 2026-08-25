@@ -408,18 +408,30 @@ export function createBoundFileSystemWatcher(
     }, 50);
   };
 
+  // A listener throw is a degraded refresh, not a dead desktop. Electron
+  // surfaces uncaught FSWatcher errors as a main-process modal.
+  const notify = (listeners: Set<() => void>): void => {
+    for (const l of listeners) {
+      try {
+        l();
+      } catch (e) {
+        log(`[desktop] fs.watch listener failed: ${(e as Error).message}`);
+      }
+    }
+  };
+
   const emitForEvent = (event: string, filename: string | null, watchTarget: string) => {
     const full = filename ? path.join(watchTarget, filename.toString()) : target;
     if (event === "rename") {
       try {
         if (fs.existsSync(full)) {
-          for (const l of createListeners) l();
-          for (const l of changeListeners) l();
+          notify(createListeners);
+          notify(changeListeners);
         } else {
-          for (const l of deleteListeners) l();
+          notify(deleteListeners);
         }
       } catch {
-        for (const l of changeListeners) l();
+        notify(changeListeners);
       }
       // Base itself may have been deleted — re-supervise the chain.
       if (!fs.existsSync(base)) {
@@ -427,7 +439,7 @@ export function createBoundFileSystemWatcher(
       }
       return;
     }
-    for (const l of changeListeners) l();
+    notify(changeListeners);
   };
 
   const bindBaseWatcher = () => {
@@ -496,7 +508,7 @@ export function createBoundFileSystemWatcher(
       // If auth.json already exists when we first bind, fire create so voice
       // config refreshes without waiting for a later change event.
       if (!pattern.includes("*") && fs.existsSync(target)) {
-        for (const l of createListeners) l();
+        notify(createListeners);
       }
       return;
     }
@@ -1238,6 +1250,7 @@ export function createElectronHost(opts: ElectronHostOptions): Host {
     get canToggleDevTools() {
       return !app.isPackaged;
     },
+    canShowMcpSettings: true,
     // No editor tabs — a generated-image click must use the in-app lightbox,
     // not openFile (which would hand the file to the OS image viewer).
     canOpenInEditor: false,
@@ -1315,7 +1328,10 @@ export function discoverSeedProjectPaths(opts?: {
  * - `--workspace=` / forced path: open that folder (test / CLI launch).
  * - Existing prefs: keep the user's open set.
  * - Empty set on first seed: run host-side discovery — **no folder picker**.
- * - Empty after seed completed: stay empty (user-owned).
+ *   If discovery finds nothing, provision the default chat folder
+ *   (`provisionDefaultProject`) so first run is connect-agent → chat.
+ * - Empty after seed completed: stay empty (user-owned). The default is
+ *   never re-created — it is an ordinary row they can remove.
  *
  * Returns the active root when one exists; undefined when the rail is empty.
  * Never blocks on a dialog. Seeding runs before the window is needed.
@@ -1327,6 +1343,11 @@ export function ensureWorkspaceRoot(
   seed?: {
     /** Override discovery (tests). Default: {@link discoverSeedProjectPaths}. */
     runDiscoverySeed?: () => string[];
+    /**
+     * First-run empty catalog: create `~/Grok Build` (or userData).
+     * Production main always supplies this. Tests omit it to stay off $HOME.
+     */
+    provisionDefaultProject?: () => string | undefined;
   },
 ): string | undefined {
   if (forced && fs.existsSync(forced)) {
@@ -1360,6 +1381,14 @@ export function ensureWorkspaceRoot(
     if (seeded.length) {
       if (!config.setActiveWorkspaceRoot(seeded[0])) {
         config.setWorkspaceRoot(seeded[0]);
+      }
+    } else {
+      // Nothing already in use on this machine. A default folder is the
+      // first-run chat home — not a hidden project, and not re-created
+      // after the user removes it (the seed flag is marked below).
+      const provisioned = seed?.provisionDefaultProject?.();
+      if (provisioned) {
+        config.setWorkspaceRoot(path.resolve(provisioned));
       }
     }
     config.markDiscoverySeedCompleted();

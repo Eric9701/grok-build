@@ -21,6 +21,10 @@
 # reached the PUBLIC repo once already; that is the whole reason this is
 # automated rather than written down. The staging URL itself is NOT in this
 # file - it comes from the gitignored .env, because this repository is public.
+#
+# `npm run package` now refuses a non-production REMOTE_RELAY_URL. This script
+# sets GROK_ALLOW_STAGING_RELAY_VSIX to the required phrase for that one
+# build only — a flag or a leftover `=1` will not pass.
 
 param(
     [string]$VsixPath,
@@ -36,7 +40,11 @@ if (-not $Cli -and $env:CODE_CLI) { $Cli = $env:CODE_CLI }
 if ($All -and $Cli) { throw "-All and -Cli are mutually exclusive." }
 
 $framesPath = Join-Path $repoRoot "src\remote-frames.ts"
-$prodRelayLine = 'export const REMOTE_RELAY_URL = "wss://afkpilot.com";'
+$prodRelayLine = 'export const REMOTE_RELAY_URL = PRODUCTION_RELAY_URL;'
+# Must match scripts/check-production-relay.mjs. A tripwire in
+# test/check-production-relay.test.ts fails if either side drifts.
+$allowStagingRelayEnv = "GROK_ALLOW_STAGING_RELAY_VSIX"
+$allowStagingRelayValue = "I_UNDERSTAND_THIS_VSIX_MUST_NOT_BE_RELEASED"
 
 function Get-DevRelayUrl {
     $envFile = Join-Path $repoRoot ".env"
@@ -63,14 +71,22 @@ $devUrl = $null
 $relayLabel = "production"
 
 if (-not $VsixPath) {
+    if ((-not $Prod) -and (-not (Test-Path (Join-Path $repoRoot '.env')))) {
+        # No .env at all: an ordinary contributor following docs/INSTALL.md.
+        # Build against production rather than refusing the documented command.
+        Write-Host "No .env at the repo root - building against PRODUCTION."
+        Write-Host "Maintainers testing against staging: add GROK_RELAY_URL=wss://... to .env"
+        $Prod = $true
+    }
+
     if (-not $Prod) {
         $devUrl = Get-DevRelayUrl
         if (-not $devUrl) {
             throw @"
-No usable staging relay found for a test build.
-Add a line to the gitignored .env at the repo root:
+.env exists but carries no usable staging relay.
+Fix the line, or build against production explicitly:
     GROK_RELAY_URL=wss://your-staging-relay.example
-Or build against production explicitly: pwsh scripts\install.ps1 -Prod
+    pwsh scripts\install.ps1 -Prod
 "@
         }
         $current = Read-TextFile $framesPath
@@ -93,11 +109,45 @@ Or build against production explicitly: pwsh scripts\install.ps1 -Prod
     Write-Host ""
     Write-Host "Building a fresh .vsix from current source..."
     Push-Location $repoRoot
+    $previousAllowStaging = [Environment]::GetEnvironmentVariable($allowStagingRelayEnv)
+    $beforeVsix = @()
     try {
-        if (-not (Test-Path "node_modules")) { npm install }
+        # npm writes to stderr for things that are not failures - and on the dev
+        # path it ALWAYS does, because `npm run package` warns that it is
+        # packaging a non-production relay, which is the whole point of this
+        # script. Under $ErrorActionPreference = "Stop", Windows PowerShell 5.1
+        # turns any native-command stderr into a terminating error, so the build
+        # aborted on its own success message. (pwsh 7 does not, which is why the
+        # documented `pwsh scripts\install.ps1` invocation never hit it.)
+        #
+        # PS 5.1 also leaves $LASTEXITCODE unchanged when command *resolution*
+        # fails. If npm is missing, both exit-code checks would pass and the
+        # leftover *.vsix would be installed under a "fresh build" banner.
+        if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+            throw "npm is not on PATH. Install Node.js, then re-run."
+        }
+        $beforeVsix = @(Get-ChildItem -Path $repoRoot -Filter "*.vsix" -ErrorAction SilentlyContinue | ForEach-Object {
+            [pscustomobject]@{ Path = $_.FullName; Ticks = $_.LastWriteTimeUtc.Ticks; Length = $_.Length }
+        })
+        $ErrorActionPreference = "Continue"
+        if (-not (Test-Path "node_modules")) {
+            npm install
+            if ($LASTEXITCODE) { $ErrorActionPreference = "Stop"; throw "npm install failed (exit $LASTEXITCODE)" }
+        }
+        if ($swappedRelayLine) {
+            [Environment]::SetEnvironmentVariable($allowStagingRelayEnv, $allowStagingRelayValue)
+        }
         npm run package   # clears stale grok-vscode-phuryn-*.vsix first, then builds
+        $packageExit = $LASTEXITCODE
+        $ErrorActionPreference = "Stop"
+        if ($packageExit) { throw "npm run package failed (exit $packageExit)" }
         $vsix = Get-ChildItem -Path $repoRoot -Filter "*.vsix" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     } finally {
+        if ($null -eq $previousAllowStaging) {
+            [Environment]::SetEnvironmentVariable($allowStagingRelayEnv, $null)
+        } else {
+            [Environment]::SetEnvironmentVariable($allowStagingRelayEnv, $previousAllowStaging)
+        }
         Pop-Location
         if ($swappedRelayLine) {
             # Restore even when the build threw, by swapping OUR line back in the
@@ -118,6 +168,12 @@ Or build against production explicitly: pwsh scripts\install.ps1 -Prod
         }
     }
     if (-not $vsix) { throw "Build did not produce a .vsix." }
+    $unchanged = $beforeVsix | Where-Object {
+        $_.Path -eq $vsix.FullName -and $_.Ticks -eq $vsix.LastWriteTimeUtc.Ticks -and $_.Length -eq $vsix.Length
+    }
+    if ($unchanged) {
+        throw "npm run package did not produce a new .vsix (refusing to install a leftover build)."
+    }
     $VsixPath = $vsix.FullName
 }
 

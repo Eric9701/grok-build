@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   compositeModelId,
   configStateFromCodexOptions,
+  codexEffectiveModeId,
   isCodexCredentialError,
+  isCodexMcpToolCall,
   listAllCodexSessions,
   normalizeCodexModels,
   normalizeCodexPermissionParams,
@@ -11,6 +13,7 @@ import {
   parseCompositeModelId,
   CodexBackend,
 } from "../src/codex-backend";
+import { applyAgentModeToHostPlan } from "../src/plan-gate";
 
 describe("Codex adapter spawn", () => {
   it("always runs the Electron executable as Node in every host", () => {
@@ -79,6 +82,47 @@ describe("Codex composite model mapping", () => {
 });
 
 describe("Codex output and usage normalization", () => {
+  it("remaps an MCP execute call to kind other and keeps the adapter title", () => {
+    const normalized = normalizeCodexUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "mcp-1",
+      kind: "execute",
+      title: "mcp.canva.search-designs",
+      rawInput: { server: "canva", tool: "search-designs", arguments: { query: "logo" } },
+      _meta: { is_mcp_tool_call: true },
+    });
+    expect(normalized.update).toMatchObject({
+      kind: "other",
+      title: "mcp.canva.search-designs",
+      rawInput: { server: "canva", tool: "search-designs", arguments: { query: "logo" } },
+      _meta: { is_mcp_tool_call: true },
+    });
+    expect(isCodexMcpToolCall(normalized.update)).toBe(true);
+  });
+
+  it("fills a missing MCP title from structured server/tool fields", () => {
+    const normalized = normalizeCodexUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "mcp-1",
+      rawInput: { server: "canva", tool: "list-folder-items", arguments: {} },
+    });
+    expect(normalized.update.title).toBe("mcp.canva.list-folder-items");
+    expect(normalized.update.kind).toBeUndefined();
+  });
+
+  it("does not remap a real shell command that happens to mention a server", () => {
+    const update = {
+      sessionUpdate: "tool_call",
+      toolCallId: "cmd-1",
+      kind: "execute",
+      title: "node -e echo",
+      rawInput: { command: "node -e \"console.log('ok')\"", cwd: "C:\\repo" },
+    };
+    expect(isCodexMcpToolCall(update)).toBe(false);
+    expect(normalizeCodexUpdate(update).update.kind).toBe("execute");
+    expect(normalizeCodexUpdate(update).update.title).toBe("node -e echo");
+  });
+
   it("maps formatted command output without losing exit_code", () => {
     const normalized = normalizeCodexUpdate({
       sessionUpdate: "tool_call_update",
@@ -97,12 +141,13 @@ describe("Codex output and usage normalization", () => {
     expect(normalized.update.content[0].newText).toBe("export {};\n");
   });
 
-  it("feeds usage_update into the existing context envelope and records window size", () => {
+  it("feeds usage_update window without treating billed used as occupancy", () => {
     expect(normalizeCodexUpdate({ sessionUpdate: "usage_update", used: 1234, size: 258400 }, { replay: false }))
       .toEqual({
         update: { sessionUpdate: "usage_update", used: 1234, size: 258400 },
-        meta: { replay: false, totalTokens: 1234 },
+        meta: { replay: false },
         contextWindow: 258400,
+        usageUpdateUsed: 1234,
       });
   });
 
@@ -113,7 +158,7 @@ describe("Codex output and usage normalization", () => {
       _meta: { quota: { token_count: 90, model_usage: [{ model: "gpt-5.6-sol", inputTokens: 50 }] } },
     });
     expect(result._meta).toMatchObject({
-      totalTokens: 90,
+      totalTokens: 70,
       reasoningTokens: 10,
       usage: { totalTokens: 90, inputTokens: 50, cachedReadTokens: 20, outputTokens: 30, reasoningTokens: 10 },
       quota: { token_count: 90 },
@@ -158,6 +203,36 @@ describe("Codex config response state", () => {
       { id: "mode", currentValue: "agent-full-access" },
       { id: "collaboration_mode", currentValue: "plan" },
     ] }, {})).toEqual({ modelId: "gpt-5.6-terra", reasoningEffort: "max", modeId: "plan" });
+  });
+
+  it("keeps permission mode when collaboration is default so full-access is not Agent", () => {
+    expect(codexEffectiveModeId("default", "agent-full-access")).toBe("agent-full-access");
+    expect(codexEffectiveModeId("default", "agent")).toBe("agent");
+    expect(codexEffectiveModeId("plan", "agent-full-access")).toBe("plan");
+    expect(codexEffectiveModeId("default", undefined, "plan")).toBe("default");
+
+    const fullAccess = configStateFromCodexOptions({ configOptions: [
+      { id: "mode", currentValue: "agent-full-access" },
+      { id: "collaboration_mode", currentValue: "default" },
+    ] }, { modeId: "plan" });
+    expect(fullAccess.modeId).toBe("agent-full-access");
+    expect(applyAgentModeToHostPlan(fullAccess.modeId!, false)).toEqual({
+      planActive: false,
+      autoApprove: true,
+    });
+
+    const agent = configStateFromCodexOptions({ configOptions: [
+      { id: "mode", currentValue: "agent" },
+      { id: "collaboration_mode", currentValue: "default" },
+    ] }, {});
+    expect(agent.modeId).toBe("agent");
+    expect(applyAgentModeToHostPlan(agent.modeId!, false)).toEqual({
+      planActive: false,
+      autoApprove: false,
+    });
+
+    // Grok's client gate must stay independent of this mapping.
+    expect(applyAgentModeToHostPlan("agent-full-access", true)).toBeNull();
   });
 });
 

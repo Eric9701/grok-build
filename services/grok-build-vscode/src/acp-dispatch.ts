@@ -85,6 +85,7 @@ export type UpdateRoute =
   | { event: "toolCallUpdate"; payload: any }
   | { event: "plan"; payload: any }
   | { event: "modeChanged"; modeId: string }
+  | { event: "configOptionUpdate"; configOptions: any[] }
   | { event: "commandsUpdate"; commands: any[] }
   | { event: "taskBackgrounded"; payload: any }
   | { event: "taskCompleted"; payload: any }
@@ -194,7 +195,7 @@ export function collectToolImages(payload: any): MediaRef[] {
 /** MIRRORED in media/webview-helpers.js so the webview can gate a failure hint
  *  without a host rewrite. KEEP THE TWO IN STEP: test/media-gen-mirror.test.ts
  *  drives one fixture set through both and fails if either changes alone. */
-export function isMediaGenToolCall(payload: any, provider: "grok" | "codex" = "grok"): boolean {
+export function isMediaGenToolCall(payload: any, provider: "grok" | "codex" | "claude" = "grok"): boolean {
   if (!payload || typeof payload !== "object") return false;
   const title = String(payload.title ?? "");
   if (provider === "codex") {
@@ -272,6 +273,11 @@ export function routeSessionUpdate(u: any): UpdateRoute | null {
       return { event: "plan", payload: u };
     case "current_mode_update":
       return { event: "modeChanged", modeId: u.currentModeId };
+    case "config_option_update":
+      return {
+        event: "configOptionUpdate",
+        configOptions: Array.isArray(u.configOptions) ? u.configOptions : [],
+      };
     case "available_commands_update":
       return { event: "commandsUpdate", commands: u.availableCommands ?? [] };
     case "task_backgrounded":
@@ -319,7 +325,9 @@ export function childStreamFromRoute(
  * 16371 context vs 32488 billed. The two never decompose into each other, so the
  * donut arc stays context-only and this drives the popover's usage rows (#53).
  *
- * There is **no cache-CREATION field** anywhere in the CLI — only `cachedRead`.
+ * There is **no cache-CREATION field** anywhere in the grok CLI — only `cachedRead`.
+ * Claude/Codex may send `cachedWriteTokens`; keep it when present so occupancy
+ * can be derived without inventing grok cache-write rows.
  * Wire capture: research/grok-build-oss-findings.md § 3b.
  */
 export interface PromptUsage {
@@ -327,6 +335,7 @@ export interface PromptUsage {
   outputTokens?: number;
   totalTokens?: number;
   cachedReadTokens?: number;
+  cachedWriteTokens?: number;
   reasoningTokens?: number;
   modelCalls?: number;
   apiDurationMs?: number;
@@ -340,6 +349,7 @@ export interface PromptResultMeta {
   inputTokens?: number;
   outputTokens?: number;
   cachedReadTokens?: number;
+  cachedWriteTokens?: number;
   reasoningTokens?: number;
   modelId?: string;
   usage?: PromptUsage;
@@ -357,6 +367,7 @@ export function extractPromptUsage(meta: any): PromptUsage | undefined {
     outputTokens: num(u.outputTokens),
     totalTokens: num(u.totalTokens),
     cachedReadTokens: num(u.cachedReadTokens),
+    ...(num(u.cachedWriteTokens) !== undefined ? { cachedWriteTokens: num(u.cachedWriteTokens) } : {}),
     reasoningTokens: num(u.reasoningTokens),
     modelCalls: num(u.modelCalls),
     apiDurationMs: num(u.apiDurationMs),
@@ -373,6 +384,7 @@ export function extractPromptMeta(result: any): PromptResultMeta {
     inputTokens: m.inputTokens,
     outputTokens: m.outputTokens,
     cachedReadTokens: m.cachedReadTokens,
+    cachedWriteTokens: m.cachedWriteTokens,
     reasoningTokens: m.reasoningTokens,
     modelId: m.modelId,
     usage: extractPromptUsage(m),
@@ -396,8 +408,8 @@ export function addUsage(a: PromptUsage | undefined, b: PromptUsage | undefined)
   if (!b) return { ...a };
   const keys: (keyof PromptUsage)[] = [
     "inputTokens", "outputTokens", "totalTokens", "cachedReadTokens",
-    "reasoningTokens", "modelCalls", "apiDurationMs", "numTurns",
-    "costUsdTicks",
+    "cachedWriteTokens", "reasoningTokens", "modelCalls", "apiDurationMs",
+    "numTurns", "costUsdTicks",
   ];
   const out: PromptUsage = {};
   for (const k of keys) {
@@ -503,6 +515,158 @@ export function contextUsedFromUpdateEnvelope(meta: unknown): number | null {
 }
 
 /**
+ * Adapter occupancy is the prompt actually sent this call: uncached input plus
+ * cache read and cache write. Those three partitions are disjoint on both
+ * Claude and Codex. `usage.totalTokens` / `usage_update.used` add output and
+ * are a billing sum, not conversation occupancy.
+ *
+ * When the parts are missing, `totalTokens - outputTokens` is the same
+ * quantity (verified against Claude 0.69.0 and a live Codex 5.6 turn).
+ *
+ * Claude's PromptResponse.usage is the SUM of every call in the turn — do
+ * not pass that figure here and treat the result as occupancy. Reduce a
+ * turn with `occupancyFromAdapterTurn`.
+ */
+export function adapterContextOccupancy(usage: {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedReadTokens?: number;
+  cachedWriteTokens?: number;
+} | null | undefined): number | undefined {
+  if (!usage || typeof usage !== "object") return undefined;
+  const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
+  const input = num(usage.inputTokens);
+  const output = num(usage.outputTokens);
+  const billed = num(usage.totalTokens);
+  const cacheRead = num(usage.cachedReadTokens) ?? 0;
+  const cacheWrite = num(usage.cachedWriteTokens) ?? 0;
+  if (input !== undefined) return input + cacheRead + cacheWrite;
+  if (billed !== undefined && output !== undefined) return Math.max(0, billed - output);
+  return billed;
+}
+
+function positiveTokens(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * Occupancy for one adapter turn. Claude's PromptResponse.usage is
+ * `accumulatedUsage` — the SUM of every model call — so
+ * `adapterContextOccupancy(result)` is larger than the conversation.
+ * `usage_update.used` is the current call's billed total. Occupancy is
+ * the largest of those, never the sum. When the result does not exceed
+ * that max it is a single/last call and excludes output, so it wins.
+ *
+ * Without per-call observations the wire cannot tell a sum from a
+ * single call; the result is the honest fallback.
+ * Measurement: research/claude-acp.md, adapter-usage-probe.cjs.
+ */
+export function occupancyFromAdapterTurn(
+  resultOccupancy: number | undefined,
+  perCallUsed: readonly number[] | undefined,
+): number | undefined {
+  let callMax: number | undefined;
+  for (const used of perCallUsed ?? []) {
+    const n = positiveTokens(used);
+    if (n === undefined) continue;
+    callMax = callMax === undefined ? n : Math.max(callMax, n);
+  }
+  const result = positiveTokens(resultOccupancy);
+  if (callMax === undefined) return result;
+  if (result === undefined) return callMax;
+  return result > callMax ? callMax : result;
+}
+
+/**
+ * Per-session adapter occupancy. The prompt sent on a call *is* the
+ * conversation at that moment (every call re-sends it). Feed
+ * `occupancyFromAdapterTurn`, not Claude's summed PromptResponse. A later
+ * smaller prompt without a compact is a different-shaped call (subagent,
+ * tool follow-up) and must not replace the conversation figure — that is
+ * the 135k↔389k swing. Compaction is the only reset.
+ */
+export interface ContextOccupancyState {
+  used?: number;
+  window?: number;
+  pendingCompact?: boolean;
+}
+
+export interface ContextOccupancyEvent {
+  occupancy?: number;
+  window?: number;
+  /** Compact started or /compact — the next prompt size may be lower. */
+  compacted?: boolean;
+  /** Compaction failed; keep the stored figure and stop waiting. */
+  compactFailed?: boolean;
+}
+
+export function applyContextOccupancy(
+  state: ContextOccupancyState,
+  event: ContextOccupancyEvent,
+): ContextOccupancyState {
+  const window = positiveTokens(event.window) ?? state.window;
+  if (event.compactFailed) {
+    return { used: state.used, window, pendingCompact: false };
+  }
+  const pendingCompact = event.compacted ? true : !!state.pendingCompact;
+  const occupancy = positiveTokens(event.occupancy);
+  if (occupancy === undefined) {
+    return { used: state.used, window, pendingCompact };
+  }
+  if (pendingCompact || state.used === undefined) {
+    return { used: occupancy, window, pendingCompact: false };
+  }
+  return { used: Math.max(state.used, occupancy), window, pendingCompact: false };
+}
+
+export function occupancyFromUsageLog(
+  entries: readonly { contextUsed?: number; compacted?: boolean }[] | undefined,
+): ContextOccupancyState {
+  let state: ContextOccupancyState = {};
+  for (const entry of entries ?? []) {
+    state = applyContextOccupancy(state, {
+      occupancy: entry.contextUsed,
+      compacted: entry.compacted,
+    });
+  }
+  return state;
+}
+
+/**
+ * Claude emits exact status strings; Codex stamps `_meta.contextCompaction`.
+ * Title matching is the Codex fallback only — a grep titled "compact" is
+ * not a compaction.
+ */
+export function adapterCompactSignal(update: unknown): "started" | "completed" | "failed" | null {
+  if (typeof update === "string") {
+    const text = update.trim();
+    if (/compacting failed/i.test(text)) return "failed";
+    if (/compacting completed/i.test(text)) return "completed";
+    if (/^compacting\.\.\.$/i.test(text)) return "started";
+    return null;
+  }
+  if (!update || typeof update !== "object") return null;
+  const u = update as {
+    sessionUpdate?: unknown;
+    content?: { text?: unknown };
+    title?: unknown;
+    status?: unknown;
+    _meta?: { contextCompaction?: unknown };
+  };
+  if (typeof u.content?.text === "string") {
+    const fromText = adapterCompactSignal(u.content.text);
+    if (fromText) return fromText;
+  }
+  if (u._meta?.contextCompaction === true) {
+    if (u.status === "failed") return "failed";
+    if (u.status === "completed") return "completed";
+    return "started";
+  }
+  return null;
+}
+
+/**
  * The fresh post-compaction context size from an `_x.ai/session_notification`
  * update, or `null` when the update isn't a compaction-completed event or
  * carries no usable count. grok fires `auto_compact_completed` on BOTH a manual
@@ -560,6 +724,101 @@ export function autoCompactStartedNote(update: unknown): string | null {
   return pct != null
     ? `Auto-compacting context (${pct}% full)…`
     : `Auto-compacting context…`;
+}
+
+/** Parse the context line returned by the legacy `/session-info` command. */
+export function parseSessionInfoContext(text: string): { used: number; window: number } | null {
+  const match = /context:\*{0,2}\s*([\d][\d,]*)\s*\/\s*([\d][\d,]*)\s*tokens/i.exec(text ?? "");
+  if (!match) return null;
+  const number = (value: string) => Number(value.replace(/,/g, ""));
+  const used = number(match[1]);
+  const window = number(match[2]);
+  if (!Number.isFinite(used) || used < 0 || !Number.isFinite(window) || window <= 0) return null;
+  return { used, window };
+}
+
+export interface ContextUsageCategory {
+  label: string;
+  tokens: number;
+  detail?: string;
+}
+
+/** Structured context snapshot returned by `_x.ai/session/info`. */
+export interface SessionInfoContext {
+  used: number;
+  window: number;
+  categories?: ContextUsageCategory[];
+  systemPromptTokens?: number;
+  toolDefinitionsTokens?: number;
+  toolDefinitionsCount?: number;
+  messageTokens?: number;
+  freeTokens?: number;
+  autoCompactThresholdPercent?: number;
+}
+
+/** Keep a popover re-open from issuing another control-plane RPC immediately. */
+export const SESSION_INFO_TTL_MS = 3000;
+
+function finiteNonNegative(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function parseSessionInfoCategories(raw: unknown): ContextUsageCategory[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const categories: ContextUsageCategory[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const category = row as { label?: unknown; tokens?: unknown; detail?: unknown };
+    if (typeof category.label !== "string" || !category.label.trim()) continue;
+    if (typeof category.tokens !== "number" || !Number.isFinite(category.tokens) || category.tokens < 0) continue;
+    const parsed: ContextUsageCategory = { label: category.label.trim(), tokens: category.tokens };
+    if (typeof category.detail === "string" && category.detail.trim()) parsed.detail = category.detail.trim();
+    categories.push(parsed);
+  }
+  return categories.length ? categories : undefined;
+}
+
+/**
+ * Normalize `_x.ai/session/info` into the context snapshot consumed by the
+ * donut and popover. Unlike a prompt result's `totalTokens: 0`, an RPC
+ * `context.used: 0` is a valid authoritative reading.
+ */
+export function parseSessionInfoRpcResult(raw: unknown): SessionInfoContext | null {
+  if (!raw || typeof raw !== "object") return null;
+  let body = raw as Record<string, unknown>;
+  const nested = body.result;
+  if (nested && typeof nested === "object" && (nested as { context?: unknown }).context != null && body.context == null) {
+    body = nested as Record<string, unknown>;
+  }
+  const context = body.context;
+  if (!context || typeof context !== "object") return null;
+  const values = context as Record<string, unknown>;
+  const used = finiteNonNegative(values.used);
+  const window = values.total;
+  if (used === undefined || typeof window !== "number" || !Number.isFinite(window) || window <= 0) return null;
+
+  const parsed: SessionInfoContext = { used, window };
+  const categories = parseSessionInfoCategories(values.usageCategories);
+  if (categories) parsed.categories = categories;
+  const system = finiteNonNegative(values.systemPromptTokens);
+  if (system !== undefined) parsed.systemPromptTokens = system;
+  const tools = finiteNonNegative(values.toolDefinitionsTokens);
+  if (tools !== undefined) parsed.toolDefinitionsTokens = tools;
+  const toolCount = finiteNonNegative(values.toolDefinitionsCount);
+  if (toolCount !== undefined) parsed.toolDefinitionsCount = toolCount;
+  const messages = finiteNonNegative(values.messageTokens);
+  if (messages !== undefined) parsed.messageTokens = messages;
+  const free = finiteNonNegative(values.freeTokens);
+  if (free !== undefined) parsed.freeTokens = free;
+  const threshold = values.autoCompactThresholdPercent;
+  if (typeof threshold === "number" && Number.isFinite(threshold) && threshold > 0) {
+    parsed.autoCompactThresholdPercent = threshold;
+  }
+  return parsed;
+}
+
+export function sessionInfoCacheFresh(fetchedAt: number, now: number, ttlMs = SESSION_INFO_TTL_MS): boolean {
+  return fetchedAt > 0 && now - fetchedAt < ttlMs;
 }
 
 export function makePermissionResponse(id: number | string, optionId: string) {
@@ -648,6 +907,209 @@ export function summarizeBackgroundCommand(cmd: string, max = 80): string {
   const flat = (cmd || "").replace(/\s+/g, " ").trim();
   if (flat.length <= max) return flat;
   return flat.slice(0, max - 1).trimEnd() + "…";
+}
+
+/** Display cap shared by the live terminal snapshot and session/load restore. */
+export const MAX_COMMAND_OUTPUT_CHARS = 100_000;
+
+export type CommandOutputPayload = {
+  command: string;
+  output: string;
+  exitCode: number | null;
+  truncated: boolean;
+  /**
+   * Always stated by this host. `true` is a live terminal kill (`commandDone`
+   * with no exit). `false` is everything else, including session/load
+   * hydration whose null exit means "not reported". Older hosts omit the
+   * field; the client treats that absence as the previous null-exit rule.
+   */
+  cancelled: boolean;
+  /**
+   * Always stated on MCP `commandOutput` (the ACP `toolCallId`). The webview
+   * joins IN to OUT by this id. Shell `commandOutput` omits the field —
+   * absence means join by `command`.
+   */
+  toolCallId?: string;
+  /**
+   * Always stated by this host. `true` is a cut the agent already saw
+   * (terminal byte cap, or the CLI's own `truncated` on a replayed
+   * execute). `false` is this host's 100K display cap applied after the
+   * provider returned the full result (MCP). Older hosts omit the field;
+   * the client must not attribute that cut either way.
+   */
+  agentSawCut?: boolean;
+};
+
+export function capCommandOutput(
+  output: string,
+  truncated: boolean,
+  maxChars = MAX_COMMAND_OUTPUT_CHARS,
+): { output: string; truncated: boolean } {
+  const over = output.length > maxChars;
+  return {
+    output: over ? output.slice(0, maxChars) : output,
+    truncated: truncated || over,
+  };
+}
+
+/** Live `terminal/release` snapshot. Null exit is a real cancel, not a missing report. */
+export function commandOutputFromLiveTerminal(info: {
+  command: string;
+  output: string;
+  exitCode: number | null;
+  truncated: boolean;
+}): CommandOutputPayload {
+  const capped = capCommandOutput(info.output, info.truncated);
+  return {
+    command: info.command,
+    output: capped.output,
+    exitCode: info.exitCode,
+    truncated: capped.truncated,
+    cancelled: info.exitCode == null,
+    agentSawCut: true,
+  };
+}
+
+function commandStringFromToolCall(call: any): string {
+  const rawIn = call?.rawInput;
+  if (rawIn && typeof rawIn === "object") {
+    if (typeof rawIn.command === "string" && rawIn.command.trim()) return rawIn.command.trim();
+    if (typeof rawIn.cmd === "string" && rawIn.cmd.trim()) return rawIn.cmd.trim();
+  }
+  const rawOut = call?.rawOutput;
+  if (rawOut && typeof rawOut === "object" && typeof rawOut.command === "string" && rawOut.command.trim()) {
+    return rawOut.command.trim();
+  }
+  return "";
+}
+
+function toolCallIdOf(call: unknown): string {
+  const id = (call as { toolCallId?: unknown } | null | undefined)?.toolCallId;
+  return typeof id === "string" ? id : "";
+}
+
+function executeKindOf(call: unknown): string {
+  const kind = (call as { kind?: unknown } | null | undefined)?.kind;
+  return typeof kind === "string" ? kind.toLowerCase() : "";
+}
+
+/** Claude's completed update has no rawInput; the command lives on the earlier tool_call. */
+function rememberReplayedExecuteCommand(
+  remembered: Map<string, string>,
+  call: unknown,
+): void {
+  if (!call || typeof call !== "object") return;
+  const kind = executeKindOf(call);
+  if (kind && kind !== "execute") return;
+  const id = toolCallIdOf(call);
+  if (!id) return;
+  const title = typeof (call as { title?: unknown }).title === "string"
+    ? (call as { title: string }).title.trim()
+    : "";
+  const command = commandStringFromToolCall(call) || title;
+  if (command) remembered.set(id, command);
+}
+
+function recognizedRawOutput(ro: unknown): {
+  output: unknown;
+  formatted: unknown;
+  exitCode: number | null;
+  truncated: boolean;
+} | null {
+  if (!ro || typeof ro !== "object") return null;
+  const rec = ro as Record<string, unknown>;
+  const exitCode =
+    typeof rec.exit_code === "number" ? rec.exit_code
+    : typeof rec.exitCode === "number" ? rec.exitCode
+    : null;
+  const hasOutput =
+    typeof rec.output === "string"
+    || Array.isArray(rec.output)
+    || ArrayBuffer.isView(rec.output)
+    || typeof rec.formatted_output === "string";
+  if (exitCode == null && !hasOutput) return null;
+  return {
+    output: rec.output,
+    formatted: rec.formatted_output,
+    exitCode,
+    truncated: rec.truncated === true,
+  };
+}
+
+function textFromToolContent(call: any): string | undefined {
+  if (!Array.isArray(call?.content)) return undefined;
+  const block = call.content.find((b: any) => b && b.content && typeof b.content.text === "string");
+  return block ? block.content.text as string : undefined;
+}
+
+function decodeCommandOutputBytes(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  try {
+    if (value instanceof Uint8Array) return new TextDecoder().decode(value);
+    if (ArrayBuffer.isView(value)) {
+      const view = value as ArrayBufferView;
+      return new TextDecoder().decode(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+    }
+    if (Array.isArray(value)) return new TextDecoder().decode(Uint8Array.from(value));
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Hydrate a `commandOutput` payload from a replayed execute tool_call.
+ *
+ * Provider fields are inverted (research/replay-shapes.md):
+ * - grok: `content` is raw stdout; never read `rawOutput.output_for_prompt`
+ *   (it prefixes `exit: N`).
+ * - claude: `rawOutput` is a plain string; `content` is either the tool
+ *   description (first row) or stdout wrapped in a ```console fence
+ *   (completed update). Prefer the string. No exit code is reported.
+ * - A completed Claude update has no `rawInput`; pass the command remembered
+ *   from the earlier `tool_call` by `toolCallId`.
+ * Unknown / unmeasured shapes return null. Always states `cancelled: false`
+ * — a hydrated null exit is "not reported", not a live kill. Omitting the
+ * field would be indistinguishable from an older host's live kill.
+ */
+export function commandOutputFromReplayedToolCall(
+  call: unknown,
+  rememberedCommands?: ReadonlyMap<string, string>,
+): CommandOutputPayload | null {
+  if (!call || typeof call !== "object") return null;
+  const kind = executeKindOf(call);
+  if (kind && kind !== "execute") return null;
+  const id = toolCallIdOf(call);
+  const command = commandStringFromToolCall(call)
+    || (id && rememberedCommands ? rememberedCommands.get(id) ?? "" : "");
+  if (!command) return null;
+  const rawOutput = (call as { rawOutput?: unknown }).rawOutput;
+  // Measured Claude restore: stdout is the string itself. Do not fall through
+  // to content (fenced on the completed row, a description on the first).
+  if (typeof rawOutput === "string") {
+    const capped = capCommandOutput(rawOutput, false);
+    return { command, exitCode: null, ...capped, cancelled: false, agentSawCut: true };
+  }
+  const raw = recognizedRawOutput(rawOutput);
+  if (!raw) return null;
+  const fromContent = textFromToolContent(call);
+  const output =
+    fromContent !== undefined ? fromContent
+    : typeof raw.output === "string" ? raw.output
+    : typeof raw.formatted === "string" ? raw.formatted
+    : decodeCommandOutputBytes(raw.output) ?? "";
+  const capped = capCommandOutput(output, raw.truncated);
+  return { command, exitCode: raw.exitCode, ...capped, cancelled: false, agentSawCut: true };
+}
+
+/** Live turns must not emit from the tool_call — only session/load replay. */
+export function commandOutputForToolCall(
+  call: unknown,
+  opts: { replaying: boolean; rememberedCommands?: Map<string, string> },
+): CommandOutputPayload | null {
+  if (!opts.replaying) return null;
+  if (opts.rememberedCommands) rememberReplayedExecuteCommand(opts.rememberedCommands, call);
+  return commandOutputFromReplayedToolCall(call, opts.rememberedCommands);
 }
 
 /**

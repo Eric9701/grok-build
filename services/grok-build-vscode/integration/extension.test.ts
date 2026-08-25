@@ -1,5 +1,4 @@
 import * as assert from "node:assert";
-import * as cp from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -7,10 +6,12 @@ import * as vscode from "vscode";
 
 // @vscode/test-electron smoke suite — the layer the grok-free vitest suite structurally
 // can't reach: it boots a real VS Code, activates the extension, and resolves the webview
-// inside a genuine Extension Host. It never needs the grok binary (CI has none), so it
-// runs the extension's *missing-CLI* path — which is exactly the host glue we want to
-// exercise: activation, command registration, getHtml/CSP, localResourceRoots, and the
-// first host->webview posts. See CLAUDE.md "What's next" #1.
+// inside a genuine Extension Host. Test-mode activate latches isolateFromInstalledGrok
+// before any view can resolve, so the first suite stays on the *missing-CLI* onboarding
+// path (activation, command registration, getHtml/CSP, localResourceRoots) even on a
+// developer box with grok installed. The repo-selection suite then provisions
+// test/fixtures/fake-grok-acp.cjs so resume and worktree-id tests speak ACP without a
+// real grok binary. See CLAUDE.md "What's next" #1.
 
 const EXT_ID = "PawelHuryn.grok-vscode-phuryn";
 
@@ -30,6 +31,7 @@ suite("grok-build extension smoke", () => {
       "grok.newSession",
       "grok.showLogs",
       "grok.settings",
+      "grok.findInSession",
       "grok.logout",
       // The escape hatch for an editor that hid the view somewhere unreachable —
       // useless if it is not in the palette.
@@ -81,24 +83,17 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
   let grokHome = "";
   const prevGrokHome = process.env.GROK_HOME;
 
-  // A few tests below start a REAL session (a resume or a worktree apply
-  // through the live provider), which needs an installed grok CLI — dev boxes
-  // have one, the CI runner does not. Without it those flows dead-end in the
-  // missing-CLI onboarding with no error posted and time out (first caught
-  // 2026-08-15, the tests' first run on Linux). Skip them loudly there; the
-  // proper fix is a fake ACP CLI provisioned by this fixture, so the flows
-  // run everywhere.
-  const grokCliAvailable = (() => {
-    try {
-      cp.execSync(process.platform === "win32" ? "where grok" : "which grok", { stdio: "ignore" });
-      return true;
-    } catch { return false; }
-  })();
-  const liveSessionTest = grokCliAvailable ? test : test.skip;
-
   const storedSessionDirFor = (cwd: string, id: string) =>
     path.join(grokHome, "sessions", encodeURIComponent(cwd), id);
   const storedSessionDir = (id: string) => storedSessionDirFor(repoB, id);
+
+  const storedSessionReplayMarker = (id: string) => `HERMETIC-RESUME-MARKER:${id}`;
+  const hostMsgCarriesText = (msg: unknown, needle: string): boolean => {
+    if (!msg || typeof msg !== "object") return false;
+    const rec = msg as { text?: unknown; messages?: unknown };
+    if (typeof rec.text === "string" && rec.text.includes(needle)) return true;
+    return Array.isArray(rec.messages) && rec.messages.some((inner) => hostMsgCarriesText(inner, needle));
+  };
 
   const writeStoredSession = (id: string, cwd = repoB, updatedAt?: string) => {
     const dir = storedSessionDirFor(cwd, id);
@@ -107,6 +102,40 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
       path.join(dir, "summary.json"),
       updatedAt ? JSON.stringify({ updated_at: updatedAt }) : "{}",
     );
+    // Resume tests assert this marker reached the client. That is the only
+    // proof session/load read THIS directory rather than a valid-empty miss.
+    const marker = storedSessionReplayMarker(id);
+    fs.writeFileSync(
+      path.join(dir, "updates.jsonl"),
+      [
+        JSON.stringify({
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: marker },
+          },
+        }),
+        JSON.stringify({
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: `ack ${marker}` },
+          },
+        }),
+      ].join("\n") + "\n",
+    );
+  };
+
+  // Hermetic ACP for the two resume tests that actually start a session.
+  // Scoped to those tests so selectRepo/delete in the rest of the suite stay
+  // on the missing-CLI path they were written against.
+  const provisionFakeCli = () => {
+    const fakeCli = process.platform === "win32"
+      ? path.join(__dirname, "..", "test", "fixtures", "fake-grok-acp.cmd")
+      : path.join(__dirname, "..", "test", "fixtures", "fake-grok-acp.sh");
+    if (process.platform !== "win32") {
+      try { fs.chmodSync(fakeCli, 0o755); } catch { /* best-effort */ }
+    }
+    assert.ok(fs.existsSync(fakeCli), `fake ACP CLI missing: ${fakeCli}`);
+    return hooks.provisionFakeGrok(fakeCli);
   };
 
   suiteSetup(async () => {
@@ -132,6 +161,10 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     fs.mkdirSync(path.join(repoB, ".git"));
     fs.mkdirSync(path.join(grokHome, "sessions", encodeURIComponent(repoB)), { recursive: true });
     process.env.GROK_HOME = grokHome;
+    // Test-mode activate already latches isolateFromInstalledGrok so the first
+    // suite's webview focus cannot spawn an installed CLI. Repeat here so this
+    // suite stays isolated even if that activate-time call is later removed.
+    hooks.isolateFromInstalledGrok();
   });
 
   suiteTeardown(() => {
@@ -143,6 +176,41 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
       fs.rmSync(grokHome, { recursive: true, force: true });
     } catch {
       /* best effort — it lives in the throwaway fixture workspace */
+    }
+  });
+
+  test("isolateFromInstalledGrok keeps locateProvider off an installed CLI", async () => {
+    const decoyDir = fs.mkdtempSync(path.join(os.tmpdir(), "grok-iso-decoy-"));
+    const decoy = path.join(decoyDir, process.platform === "win32" ? "grok.cmd" : "grok");
+    fs.writeFileSync(decoy, process.platform === "win32" ? "@echo off\r\nexit 1\r\n" : "#!/bin/sh\nexit 1\n");
+    const cfg = vscode.workspace.getConfiguration("grok");
+    const previous = cfg.inspect<string>("cliPath")?.globalValue;
+    hooks.isolateFromInstalledGrok();
+    try {
+      await cfg.update("cliPath", decoy, vscode.ConfigurationTarget.Global);
+      assert.strictEqual(
+        hooks.locatedGrokCli(),
+        undefined,
+        "isolated discovery must ignore grok.cliPath and PATH",
+      );
+      const restore = provisionFakeCli();
+      try {
+        const located = hooks.locatedGrokCli();
+        assert.ok(
+          located && /fake-grok-acp/.test(located),
+          `provisioned fake must still resolve: ${located}`,
+        );
+      } finally {
+        restore();
+      }
+      assert.strictEqual(
+        hooks.locatedGrokCli(),
+        undefined,
+        "restore after provision must stay isolated",
+      );
+    } finally {
+      await cfg.update("cliPath", previous, vscode.ConfigurationTarget.Global);
+      try { fs.rmSync(decoyDir, { recursive: true, force: true }); } catch { /* best effort */ }
     }
   });
 
@@ -887,10 +955,11 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     assert.strictEqual(norm(catalog.selectedCwd), norm(repoB));
   });
 
-  liveSessionTest("a remote resume waits for the first catalog build before refusing a still-warming session", async () => {
+  test("a remote resume waits for the first catalog build before refusing a still-warming session", async () => {
     // RED without the warmup retry: findSessionCatalogCwd misses, the host
     // immediately sends the permanent-sounding "may have been deleted" error,
     // and writing the session afterward cannot restore it.
+    const restoreCli = provisionFakeCli();
     const id = `warmup-${Date.now()}`;
     const clientId = `warmup-tab-${Date.now()}`;
     const delay = hooks.delayFirstCatalogBuild();
@@ -903,18 +972,28 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
         new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000)),
       ]);
       writeStoredSession(id);
+      // Reservation exists once resume is waiting on the catalog hold — capture
+      // before release, because waitForSessionLoad rejects when nothing is in flight.
+      const loadCompleted = hooks.waitForSessionLoad(id);
       delay.release();
       assert.ok(began, "the resume must defer the not-found refuse until catalog warmup");
+      await loadCompleted;
+      assert.ok(hooks.hasLiveSession(id), "session/load must complete into a live ACP session");
 
+      const marker = storedSessionReplayMarker(id);
+      const replayed = () => posts.some((p) =>
+        p.clientIds?.includes(clientId) && hostMsgCarriesText(p.msg, marker)
+      );
       const deadline = Date.now() + 15000;
-      while (Date.now() < deadline && hooks.activeRemoteSessionId(clientId) !== id) {
+      while (Date.now() < deadline && !(hooks.activeRemoteSessionId(clientId) === id && replayed())) {
         await new Promise((r) => setTimeout(r, 50));
       }
       assert.strictEqual(
         hooks.activeRemoteSessionId(clientId),
         id,
-        `the session must restore after the catalog warmup: ${JSON.stringify(posts.filter((p) => p.msg?.type === "error"))}`,
+        `the session must restore after the catalog warmup: ${JSON.stringify(posts.filter((p) => p.msg?.type === "error" || p.msg?.type === "onboarding"))}`,
       );
+      assert.ok(replayed(), `session/load must replay stored history from the session directory: ${JSON.stringify(posts.filter((p) => p.msg?.type === "historyBatch" || p.msg?.type === "userMessageChunk" || p.msg?.type === "messageChunk" || p.msg?.type === "session" || p.msg?.type === "onboarding" || p.msg?.type === "error"))}`);
       assert.ok(!posts.some((p) =>
         p.clientIds?.includes(clientId) &&
         p.msg?.type === "error" &&
@@ -922,14 +1001,16 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
       ), JSON.stringify(posts.filter((p) => p.msg?.type === "error")));
     } finally {
       delay.release();
+      restoreCli();
     }
   });
 
-  liveSessionTest("a remote resume waits for the deferred session-list, not just the catalog post", async () => {
+  test("a remote resume waits for the deferred session-list, not just the catalog post", async () => {
     // RED if "warmed" is the start/end of postRepoCatalog: the catalog half has
     // already run, the wait is skipped, and writing the session afterward cannot
     // restore it. GREEN only when firstBootScanCompleted waits for the deferred
     // session-list as well.
+    const restoreCli = provisionFakeCli();
     const id = `warmup-list-${Date.now()}`;
     const clientId = `warmup-list-tab-${Date.now()}`;
     const delay = hooks.delayFirstCatalogBuild();
@@ -947,18 +1028,27 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
       // The resume is async. Give the first lookup a chance to miss (session is
       // not on disk yet) and either refuse (old warmed-at-catalog) or wait.
       await new Promise((r) => setTimeout(r, 150));
+      // Still held on the session-list half, so the load reservation is live.
+      const loadCompleted = hooks.waitForSessionLoad(id);
       writeStoredSession(id);
       delay.release();
+      await loadCompleted;
+      assert.ok(hooks.hasLiveSession(id), "session/load must complete into a live ACP session");
 
+      const marker = storedSessionReplayMarker(id);
+      const replayed = () => posts.some((p) =>
+        p.clientIds?.includes(clientId) && hostMsgCarriesText(p.msg, marker)
+      );
       const deadline = Date.now() + 15000;
-      while (Date.now() < deadline && hooks.activeRemoteSessionId(clientId) !== id) {
+      while (Date.now() < deadline && !(hooks.activeRemoteSessionId(clientId) === id && replayed())) {
         await new Promise((r) => setTimeout(r, 50));
       }
       assert.strictEqual(
         hooks.activeRemoteSessionId(clientId),
         id,
-        `the session must restore after the deferred session-list: ${JSON.stringify(posts.filter((p) => p.msg?.type === "error"))}`,
+        `the session must restore after the deferred session-list: ${JSON.stringify(posts.filter((p) => p.msg?.type === "error" || p.msg?.type === "onboarding"))}`,
       );
+      assert.ok(replayed(), `session/load must replay stored history from the session directory: ${JSON.stringify(posts.filter((p) => p.msg?.type === "historyBatch" || p.msg?.type === "userMessageChunk" || p.msg?.type === "messageChunk" || p.msg?.type === "session" || p.msg?.type === "onboarding" || p.msg?.type === "error"))}`);
       assert.ok(!posts.some((p) =>
         p.clientIds?.includes(clientId) &&
         p.msg?.type === "error" &&
@@ -966,6 +1056,7 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
       ), JSON.stringify(posts.filter((p) => p.msg?.type === "error")));
     } finally {
       delay.release();
+      restoreCli();
     }
   });
 
@@ -1609,13 +1700,18 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     assert.strictEqual(model.promptCount(), 0, "the unreadable image must bail before model prompt");
-    assert.deepStrictEqual(model.queuedSends(), [`${first}\n\n${second}`]);
+    assert.deepStrictEqual(model.queuedSends(), [first, second]);
     assert.ok(posts.some((post) =>
       post.msg?.type === "agentError" &&
       post.msg.text?.includes("Could not read missing.png")
     ), JSON.stringify(posts));
 
+    // Chips live on the queued item, not the composer. Edit restores them so
+    // the user can drop the bad attachment; Remove-from-composer must not
+    // silently strip a snapshotted queued chip.
+    hooks.fromRemote({ type: "clearQueuedSends", restore: true }, clientId);
     hooks.fromRemote({ type: "removeChip", id: "missing-image" }, clientId);
+    hooks.fromRemote({ type: "queueSend", text: `${first}\n\n${second}` }, clientId);
     await new Promise((resolve) => setTimeout(resolve, 50));
     // Known limitation: this retained retry is a fresh relay submission, so it
     // is metered again. Pin that behavior until the queue can represent an
@@ -1637,30 +1733,24 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     hooks.remoteClientLeft(clientId);
   });
 
-  test("an image tag is numbered by its position in this message, not by the session", async () => {
-    // grok resolves `[Image #N]` against the images attached to the message it
-    // is reading, numbered from 1 — an index from an earlier message matches
-    // nothing (research/image-index-probe.cjs). The old session-scoped counter
-    // therefore sent a conversation's second image out as `[Image #2]` on a
-    // message carrying one image, and every image_edit on it was refused. The
-    // chip below is seeded with a stale high index, which is exactly what that
-    // counter produced. The pure renumbering has its own unit tests; what this
-    // covers is the wiring — that the send really does renumber before building
-    // the prompt, and that the bubble the user reads agrees with the tag.
+  test("an image tag keeps the number stamped at attach, including a lone #2", async () => {
+    // A chip shown as #2 (the earlier #1 already flushed or was removed) must
+    // still go out as `[Image #2]` so an authored `edit [Image #2]` resolves.
+    // Send must not compact it to #1. The bubble the user reads agrees.
     const suffix = Date.now();
     const clientId = `image-index-${suffix}`;
     const id = `image-index-session-${suffix}`;
-    const text = "make it green";
+    const text = "edit [Image #2]";
     const imgPath = path.join(repoB, `staged-${suffix}.png`);
     fs.writeFileSync(imgPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     const posts: Array<{ msg: any; clientIds?: string[] }> = [];
     hooks.onPost((_dest: string, msg: any, clientIds?: string[]) => posts.push({ msg, clientIds }));
     const model = hooks.seedRemoteQueuedDispatch(clientId, id, repoB, text, [{
-      id: `stale-index-${suffix}`,
+      id: `kept-index-${suffix}`,
       path: imgPath,
-      relPath: "Image #7",
+      relPath: "Image #2",
       hidden: false,
-      imageIndex: 7,
+      imageIndex: 2,
       mimeType: "image/png",
     }]);
     const dispatch = posts.find((post) =>
@@ -1679,20 +1769,18 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     const imageBlocks = blocks!.filter((block: any) => block.type === "image");
     assert.strictEqual(imageBlocks.length, 1, "one visible image chip, one image block");
     assert.ok(
-      /\[Image #1\]/.test(textBlock.text),
-      `the tag must name this message's first image, got: ${textBlock.text}`,
+      /\[Image #2\]/.test(textBlock.text),
+      `the tag must keep the attach-time index, got: ${textBlock.text}`,
     );
     assert.ok(
-      !/\[Image #7\]/.test(textBlock.text),
-      `the stale session-scoped index must not survive, got: ${textBlock.text}`,
+      !/\[Image #1\]/.test(textBlock.text),
+      `send must not compact #2 down to #1, got: ${textBlock.text}`,
     );
 
-    // …and the bubble the user reads must carry the same number as the tag, or
-    // the disagreement is invisible until someone reads a transcript.
     const bubble = [...posts].reverse().find((post) => post.msg?.type === "userMessage")?.msg;
     assert.ok(bubble, JSON.stringify(posts.map((post) => post.msg?.type)));
-    assert.deepStrictEqual(bubble.chips.map((chip: any) => chip.imageIndex), [1]);
-    assert.deepStrictEqual(bubble.chips.map((chip: any) => chip.relPath), ["Image #1"]);
+    assert.deepStrictEqual(bubble.chips.map((chip: any) => chip.imageIndex), [2]);
+    assert.deepStrictEqual(bubble.chips.map((chip: any) => chip.relPath), ["Image #2"]);
 
     hooks.remoteClientLeft(clientId);
   });
@@ -2017,9 +2105,8 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     const posts: Array<{ dest: string; msg: any; clientIds?: string[] }> = [];
     hooks.onPost((dest: string, msg: any, clientIds?: string[]) => posts.push({ dest, msg, clientIds }));
 
-    hooks.fromLocal({ type: "applyWorktree", sessionId: "not-the-focused-session" });
-    hooks.fromLocal({ type: "removeWorktree", sessionId: "not-the-focused-session" });
-    await new Promise((r) => setTimeout(r, 100));
+    await hooks.fromLocal({ type: "applyWorktree", sessionId: "not-the-focused-session" });
+    await hooks.fromLocal({ type: "removeWorktree", sessionId: "not-the-focused-session" });
 
     const refusals = posts.filter((p) =>
       p.dest === "local" &&
@@ -2033,7 +2120,8 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     probe.restore();
   });
 
-  liveSessionTest("local applyWorktree/removeWorktree with a matching sessionId run on the focused session", async () => {
+  test("local applyWorktree/removeWorktree with a matching sessionId run on the focused session", async () => {
+    hooks.isolateFromInstalledGrok();
     const worktree = path.join(hooks.workspaceRoot(), ".int-match-wt");
     const probe = hooks.seedFocusedWorktreeSession("focused-wt-match", {
       path: worktree,
@@ -2043,9 +2131,8 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
     const posts: Array<{ dest: string; msg: any }> = [];
     hooks.onPost((dest: string, msg: any) => posts.push({ dest, msg }));
 
-    hooks.fromLocal({ type: "applyWorktree", sessionId: "focused-wt-match" });
-    hooks.fromLocal({ type: "removeWorktree", sessionId: "focused-wt-match" });
-    await new Promise((r) => setTimeout(r, 100));
+    await hooks.fromLocal({ type: "applyWorktree", sessionId: "focused-wt-match" });
+    await hooks.fromLocal({ type: "removeWorktree", sessionId: "focused-wt-match" });
 
     assert.ok(!posts.some((p) =>
       p.msg?.type === "hostNotice" && /no longer focused/.test(p.msg.text)

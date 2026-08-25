@@ -69,12 +69,28 @@ body.desk .session-name-chip { padding-left: 0; }
 ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
+/* The fallback is the BROWSER's size, and only the browser's: VS Code and the
+   desktop app both define --vscode-font-size (13px), so they never reach it.
+   Without one the declaration is invalid in a browser and lands on the UA
+   default of 16px — nobody chose that, it is just what an absent token does,
+   and it made afkpilot.com on a monitor read a size larger than the same UI in
+   the editor beside it. 13px aligns the three surfaces. */
 html, body {
   margin: 0;
   font-family: var(--vscode-font-family);
-  font-size: var(--vscode-font-size);
+  font-size: var(--vscode-font-size, 13px);
   color: var(--vscode-foreground);
   background: var(--vscode-sideBar-background);
+}
+
+/* Touch keeps 16px, which is the whole point of scoping this to the fallback:
+   the phone pass raised prose deliberately, and inputs want 16px because iOS
+   Safari zoom-lurches on focus below it. A host-defined token still wins here,
+   so a touch-screen VS Code is unaffected — only a phone browser sees this. */
+@media (hover: none), (pointer: coarse) {
+  html, body {
+    font-size: var(--vscode-font-size, 16px);
+  }
 }
 
 html {
@@ -93,14 +109,26 @@ body {
   display: flex;
   flex-direction: column;
   /* grok.chatFontScale zooms the chat via --chat-zoom (set inline on <body>).
-     `zoom` scales layout but the containing block does not, so a 100% body at
-     zoom 0.7 would paint at 70% and leave dead space below the composer —
-     divide the html height back out so the body always fills the window and
-     the composer stays pinned to the bottom at any scale.
      Use 100% of html, not 100vh: vh ignores CSS zoom and can read the
-     unsettled window/monitor size on first paint; html is the settled box. */
+     unsettled window/monitor size on first paint; html is the settled box.
+
+     Do NOT divide the zoom back out (#119). That was right under the old
+     non-standard `zoom`, where a percentage resolved against an unzoomed
+     containing block. The CSS Zoom spec (Chromium 128+) resolves percentages
+     against the ZOOM-ADJUSTED containing block, so `height: 100%` already
+     fills the window at any scale and dividing again halves it. Measured in
+     Chromium 149 against an 800px viewport — footer bottom, want 800:
+
+        zoom          0.6    0.7    1.0    1.5    2.0    3.0
+        calc(100%/z) 1333   1143    800    533    400    267
+        100%          800    800    800    800    800    800
+
+     So the old formula was wrong at EVERY scale but 1 — overflowing below 1
+     and clipping above it, which is what #119 reported at 200%. Electron 33
+     is Chromium 130 and VS Code ships newer, so both surfaces are on the spec
+     behaviour; no build here wants the division. */
   zoom: var(--chat-zoom, 1);
-  height: calc(100% / var(--chat-zoom, 1));
+  height: 100%;
   overflow: hidden;
   /* Shared rail / file-tree row rhythm (desktop tree panel reuses these). */
   --rail-row-font-size: 13px;
@@ -629,11 +657,11 @@ body.rail-resizing * {
     var(--vscode-list-activeSelectionBackground) 28%
   );
 }
-/* Conversation overflow (Ôő») in the top-right cluster: Remote, History, Ôő»,
-   then (desktop only) a separator + Panel. Only rail hosts render the slot ÔÇö
+/* Conversation overflow (⋯) in the top-right cluster: Remote, History, New, ⋯,
+   then (desktop only) a separator + Panel. Only rail hosts render the slot —
    VS Code has no session header, so its gear still carries the Session group.
    The separator lives on the Panel toggle (desktop inject), not here: a remote
-   client has no panel, so a trailing rule after Ôő» would be a dangling divider. */
+   client has no panel, so a trailing rule after ⋯ would be a dangling divider. */
 #session-head-actions {
   display: flex;
   flex: 0 0 auto;
@@ -1110,6 +1138,14 @@ a:hover {
   box-shadow: 0 -4px 12px var(--vscode-widget-shadow);
   z-index: 50;
 }
+/* Shrink-to-fit otherwise takes the fineprint as one line (Claude/Codex
+   "Last prompt" copy is long). 350px still reads on the phone profile. */
+#context-popover {
+  max-width: 350px;
+  box-sizing: border-box;
+}
+#context-popover .popover-fineprint,
+#context-popover .popover-info { white-space: normal; }
 /* .history-popover sets display:flex, which would otherwise beat the UA
    [hidden]{display:none} rule (author styles win), so it could never hide. */
 .toolbar-popover[hidden] { display: none; }
@@ -1175,6 +1211,138 @@ a:hover {
   gap: 10px;
 }
 .messages.stick-to-bottom { overflow-anchor: none; }
+.messages.history-prepending { overflow-anchor: none; }
+#history-head {
+  display: contents;
+}
+/* +5px above the first transcript item. Welcome stays first in the DOM and is
+   hidden once chat starts, so empty/onboarding keep their own spacing; later
+   messages keep the 10px gap. On the scroller, not the item, so it does not
+   stack per message or per repaint, and stick-to-bottom slack is unchanged. */
+.messages:has(> #welcome[hidden]) {
+  padding-top: calc(var(--pad) + 5px);
+}
+
+/* ---- find in conversation (#99) ----
+   Sits under the top bar and pushes the transcript down. Not an overlay:
+   on a phone an overlay covers the hits. Highlight paint uses the CSS
+   Custom Highlight API (no <mark> wrappers — those would re-layout a
+   multi-megabyte transcript and detach tool-row handlers). */
+.find-bar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px var(--pad) 6px;
+  border-bottom: 1px solid var(--vscode-editorWidget-border);
+  background: var(--vscode-sideBar-background);
+}
+.find-bar[hidden] { display: none; }
+.find-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.find-bar-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--vscode-descriptionForeground);
+}
+.find-bar-icon svg { width: 16px; height: 16px; display: block; }
+#find-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border));
+  border-radius: 6px;
+  background: var(--vscode-input-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  font: inherit;
+  font-size: inherit;
+  outline: none;
+}
+#find-input:focus {
+  border-color: var(--vscode-focusBorder);
+}
+#find-input.find-input-invalid {
+  border-color: var(--vscode-inputValidation-errorBorder, #f14c4c);
+}
+.find-count {
+  flex: none;
+  min-width: 3.2em;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.find-toggle {
+  flex: none;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.find-toggle:hover { color: var(--vscode-foreground); }
+.find-toggle[aria-pressed="true"] {
+  color: var(--vscode-charts-blue, #3794ff);
+  background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 16%, transparent);
+}
+.find-toggle:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
+}
+.find-hidden-hint {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.find-hidden-hint:hover { color: var(--vscode-foreground); }
+.find-hidden-hint[aria-pressed="true"] {
+  color: var(--vscode-charts-blue, #3794ff);
+}
+.find-hidden-hint[hidden] { display: none; }
+.find-hidden-hint:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder);
+  outline-offset: -2px;
+}
+::highlight(grok-find) {
+  background-color: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 30%, transparent);
+}
+::highlight(grok-find-current) {
+  background-color: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 55%, transparent);
+}
+
+/* Preference-hidden thinking stays display:none unless this match is the
+   one the user asked to see (include-hidden navigation). Does not flip
+   grok.showThinking. */
+body.thinking-hidden .msg.thinking.find-reveal { display: block; }
 
 .welcome {
   display: flex;
@@ -1340,13 +1508,16 @@ a:hover {
 .onb-install-progress progress { width: 100%; accent-color: var(--vscode-progressBar-background); }
 .onb-manual-label { margin-top: 3px; font-size: 11px; }
 .onb-link { color: var(--vscode-textLink-foreground); text-decoration: underline; }
+/* One agent per row. Two-up meant the name and the CLI fought over a column
+   too narrow for either, and with three short entries a stacked list reads
+   faster than a grid anyway. */
 .onb-agent-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 .onb-agent-tile {
-  min-height: 66px;
+  min-height: 48px;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -1361,8 +1532,41 @@ a:hover {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--vscode-focusBorder) 35%, transparent);
 }
 .onb-agent-tile:hover { background: var(--vscode-list-hoverBackground); }
-.onb-agent-tile > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+/* Name and CLI on one line where there is room, wrapping back to two when there
+   is not — `wrap` rather than `nowrap` so the description drops under the name
+   instead of ellipsizing the thing that says what the agent IS. Now that each
+   agent owns a full row, one line is the common case. */
+.onb-agent-tile > span:last-child {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  row-gap: 0;
+  min-width: 0;
+}
 .onb-agent-tile small { color: var(--vscode-descriptionForeground); font-size: 10px; }
+/* "Already opened" — the terminal was launched, so the next press is Done, not
+   this one again. Dimmed rather than disabled: re-running the login is still
+   legitimate if the terminal was closed by accident. */
+.onb-action.onb-ran { opacity: 0.72; }
+.onb-ran-mark {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #3fb950));
+}
+.onb-connected .onb-heading { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.onb-ok {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #3fb950));
+  border: 1.5px solid currentColor;
+}
 .onb-agent-mark {
   width: 24px;
   height: 24px;
@@ -1400,6 +1604,8 @@ a:hover {
 .provider-status-badge.dot-unread { background: var(--vscode-charts-green); }
 .provider-status-badge.dot-error { background: var(--vscode-errorForeground); }
 .gear-lead .provider-glyph { margin-right: 1px; }
+.model-picker-row .gear-lead { min-width: 0; }
+.model-picker-row .model-picker-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .model-provider-heading { margin-top: 4px; }
 
 .msg {
@@ -1534,11 +1740,13 @@ body.turn-busy .queued-steer:hover {
 .msg.agent:hover .msg-actions,
 .msg-actions:focus-within,
 .msg-actions:focus-visible { opacity: 1; }
+.msg-actions.has-rating { opacity: 1; }
 /* Touch has no hover. The dimmed row is the resting, tappable state — same
    as the rename pencil, which must exist without a gesture first. */
 @media (hover: none) {
   .msg.user .msg-actions,
   .msg.agent .msg-actions { opacity: 0.4; }
+  .msg-actions.has-rating { opacity: 1; }
 }
 /* Codex-style ghost action: 16px glyph centered in a 28px rounded-square hit
    target (glyph size and hit area are deliberately separate ÔÇö a 28px glyph
@@ -1570,6 +1778,10 @@ body.turn-busy .queued-steer:hover {
 }
 .msg-action-btn.copied { color: var(--vscode-charts-green, #4ec9b0); }
 .msg-action-glyph { display: inline-flex; align-items: center; }
+.msg-thumbs { display: inline-flex; align-items: center; }
+.msg-thumb-btn[aria-pressed="true"].msg-thumb-up { color: var(--vscode-charts-green, #4ec9b0); }
+.msg-thumb-btn[aria-pressed="true"].msg-thumb-down { color: var(--vscode-errorForeground, #f14c4c); }
+.msg-actions[data-feedback-pending="1"] .msg-thumb-btn { pointer-events: none; opacity: 0.55; }
 /* Rewind on the latest tip is a no-op ÔÇö hide rather than disable so the row
    stays copy+timestamp only on the current message. */
 .msg-rewind-btn[hidden] { display: none; }
@@ -1651,6 +1863,16 @@ body.thinking-hidden .msg.thinking { display: none; }
 @keyframes grokking-orbit { to { transform: rotate(-360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .grokking-icon svg { animation: none; }
+}
+
+/* The wait counter is a factual readout, so it deliberately sits OUTSIDE
+   .grokking-label: that label paints its text transparent to clip the shimmer
+   gradient, and a number that shimmers reads as decoration rather than data.
+   Tabular figures keep the row from twitching as the digits change. */
+.grokking-elapsed {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.92em;
+  opacity: 0.75;
 }
 
 /* Waiting-for-response shimmer: while grok works, the indicator labels sweep a
@@ -2101,6 +2323,28 @@ body.thinking-hidden .msg.thinking { display: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* #122: a Read row's path + line range IS the link — no separate control below
+   it. Inline, so it still flows inside the label's single-line ellipsis; link
+   colour is the only marking, because the row around it is itself a toggle
+   target and must not read as one large link.
+   Deliberately NOT scoped to a container: the class is only ever created by
+   applyToolLabel, and a SUBAGENT row (.subagent-tool) carries one too. Scoping
+   it left that one an unstyled default <button> — borders, chrome font, the
+   lot — in a compact nowrap row. */
+.tool-label-ref {
+  display: inline;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+}
+.tool-label-ref:hover {
+  color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .tool-item-details {
   flex-basis: 100%;
   min-width: 0;
@@ -2184,14 +2428,18 @@ body.thinking-hidden .msg.thinking { display: none; }
 :root {
   --tdiff-add-bg: #40c9773b;
   --tdiff-del-bg: #fa423e3b;
+  --tdiff-read-bg: #4ea1d93b;
   --tdiff-add-line: #40c977;
   --tdiff-del-line: #fa423e;
+  --tdiff-read-line: #4ea1d9;
 }
 body.vscode-light {
   --tdiff-add-bg: #00a24026;
   --tdiff-del-bg: #ba262326;
+  --tdiff-read-bg: #0e639c26;
   --tdiff-add-line: #00a240;
   --tdiff-del-line: #ba2623;
+  --tdiff-read-line: #0e639c;
 }
 /* Edit rows: the always-visible "+A ÔłĺR" change count (green adds, red removes),
    shown inline after the label AND rolled up onto a collapsed group header, so an
@@ -2248,6 +2496,7 @@ body.vscode-light {
 .tdl-code { min-width: 0; }
 .tdl-add { background: var(--tdiff-add-bg); border-left-color: var(--tdiff-add-line); }
 .tdl-del { background: var(--tdiff-del-bg); border-left-color: var(--tdiff-del-line); }
+.tdl-read { background: var(--tdiff-read-bg); border-left-color: var(--tdiff-read-line); }
 .tdl-add .tdl-sign { color: var(--tdiff-add-line); }
 .tdl-del .tdl-sign { color: var(--tdiff-del-line); }
 /* Hairline between two NON-CONTIGUOUS hunks of one edit ÔÇö a replace_all's sites sit
@@ -3309,6 +3558,27 @@ textarea#input {
 }
 .slash-name { font-family: var(--vscode-editor-font-family); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .slash-desc { font-size: 11px; color: var(--vscode-descriptionForeground); overflow-wrap: anywhere; }
+/* The matched run inside a slash/skill row. Uses the house accent
+   (--vscode-charts-blue, the same one the composer's voice and command tokens
+   ride) rather than the editor's find-match yellow, which read as a different
+   product's highlight sitting in our popover.
+
+   Weight sits between the composer's two: lighter than a command about to fire
+   (45% + ring), heavier than provisional dictation (15%). `color: inherit` keeps
+   the glyphs on the row's own foreground, so it survives a light theme where a
+   solid fill would put near-black text on blue.
+
+   The same treatment on the active/hovered row, deliberately. That row is
+   painted list-activeSelectionBackground, which is itself blue in most themes,
+   so this was first written with a separate currentColor ring in case the wash
+   vanished into it. Tested in both light and dark: it does not, and one rule
+   reads better than two. */
+.slash-hl {
+  background: color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 30%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  font-weight: inherit;
+}
 
 /* ---- "@" file-mention popover ---- */
 /* Container reuses .slash-popover (same anchor/box); rows are one-line
@@ -3929,10 +4199,23 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
 }
 
 /* ---- add popover ---- */
+/* Icon + label as a left-aligned pair, same shape as the gear popover's
+   `.gear-lead`. The shared `.toolbar-popover-item` is `space-between`, which
+   would pin the icon left and the label right once the popover is wider than
+   the text. */
+#add-popover .toolbar-popover-item {
+  justify-content: flex-start;
+}
 .add-item-icon {
   display: inline-flex;
   align-items: center;
+  flex: none;
   color: var(--vscode-descriptionForeground);
+}
+.add-item-icon svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
 }
 
 /* ---- LaTeX math (MathJax SVG) ---- */
@@ -4252,6 +4535,12 @@ body.vscode-light .preview-overlay {
 .preview-body .tool-diff-region {
   margin: 0;
 }
+.preview-notice {
+  margin: 0 0 10px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  line-height: 1.45;
+}
 .remote-explainer-panel {
   position: relative;
 }
@@ -4322,6 +4611,7 @@ body.vscode-light .preview-overlay {
    so desktop VS Code and desktop browsers keep the dense layout. */
 @media (hover: none), (pointer: coarse) {
   .icon-btn { width: 36px; height: 36px; min-width: 36px; min-height: 36px; }
+  .find-toggle, .find-hidden-hint, #find-input { min-height: 36px; height: 36px; }
   .send { width: 36px; height: 36px; }
   .send svg { width: 19px; height: 19px; }
   .toolbar-btn { height: 36px; }
@@ -4428,6 +4718,7 @@ body.vscode-light .preview-overlay {
   /* iOS Safari force-zooms the page when a focused input is under 16px. */
   .rail-search,
   #rail-search,
+  #find-input,
   textarea#input,
   .input-highlight,
   .session-name-input,

@@ -23,10 +23,14 @@ import { writeFileAtomic } from "./safe-secrets";
 export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "atlas.cliPath": "",
   "atlas.codexCliPath": "",
+  "atlas.claudeCliPath": "",
   "atlas.defaultModel": "",
   "atlas.defaultMode": "",
   "atlas.includeActiveFileByDefault": true,
   "atlas.mentionIndexLimit": 5000,
+  "atlas.acp.promptIdleTimeoutMs": 1_800_000,
+  "atlas.acp.promptAbsoluteTimeoutMs": 86_400_000,
+  "atlas.acp.requestTimeoutMs": 120_000,
   "atlas.defaultEffort": "",
   "atlas.useCtrlEnterToSend": false,
   "atlas.terminalShell": "auto",
@@ -38,6 +42,7 @@ export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "atlas.readRepliesAloud": false,
   "atlas.summarizeRepliesAloud": true,
   "atlas.remote.keepAwake": true,
+  "atlas.thumbsFeedback": false,
   "atlas.telemetry.enabled": true,
   "atlas.chatFontScale": 100,
   "atlas.voiceApiKey": "",
@@ -484,7 +489,9 @@ export class ConfigStore {
   private fireChange(fullKey: string): void {
     const event: HostConfigurationChangeEvent = {
       affectsConfiguration(section: string) {
-        return fullKey === section || fullKey.startsWith(section + ".");
+        if (fullKey === section || fullKey.startsWith(section + ".")) return true;
+        if (section === "grok" && (fullKey === "atlas" || fullKey.startsWith("atlas."))) return true;
+        return false;
       },
     };
     for (const l of this.listeners) {

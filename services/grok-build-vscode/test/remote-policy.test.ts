@@ -7,6 +7,7 @@ import {
   allowRemoteRepoTarget,
   bracketRemoteSnapshot,
   mayDeliverRemoteHostMsg,
+  routinesMessageForRemote,
   repoScopeFor,
   sessionForRequest,
   sessionCwdBelongsToRepo,
@@ -22,6 +23,7 @@ import {
   DESK_ONLY_CAPABILITIES,
 } from "../src/remote-policy";
 import { HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, type HostMsg } from "../src/protocol";
+import { connectorViews } from "../src/mcp-connectors";
 import { pathsEqual } from "../src/worktree";
 
 const sorted = (a: readonly string[]) => [...a].sort();
@@ -45,6 +47,7 @@ describe("remote-policy classification tables", () => {
     expect(INBOUND_DISPOSITION.ready).toBe("control");
     expect(INBOUND_DISPOSITION.send).toBe("propose");
     expect(INBOUND_DISPOSITION.steerSend).toBe("propose");
+    expect(INBOUND_DISPOSITION.turnFeedback).toBe("propose");
     expect(INBOUND_DISPOSITION.uploadFile).toBe("propose");
     // Workspace file mutation — propose (not view); existing files only.
     expect(INBOUND_DISPOSITION.writeProjectFile).toBe("propose");
@@ -79,6 +82,8 @@ describe("remote-policy classification tables", () => {
     expect(INBOUND_DISPOSITION.setVoiceKeyterms).toBe("propose");
     expect(INBOUND_DISPOSITION.setTelemetryEnabled).toBe("host-local");
     expect(OUTBOUND_DISPOSITION.telemetryEnabled).toBe("mirror");
+    expect(INBOUND_DISPOSITION.setThumbsFeedback).toBe("host-local");
+    expect(OUTBOUND_DISPOSITION.thumbsFeedback).toBe("mirror");
     expect(INBOUND_DISPOSITION.summarizeSpeech).toBe("propose");
     expect(INBOUND_DISPOSITION.requestImageFull).toBe("propose");
     // Worktree create/apply/remove stay host-local. apply/remove now refuse a
@@ -111,6 +116,8 @@ describe("remote-policy classification tables", () => {
     expect(OUTBOUND_DISPOSITION.messageChunk).toBe("mirror");
     expect(OUTBOUND_DISPOSITION.permissionRequest).toBe("mirror");
     expect(OUTBOUND_DISPOSITION.permissionOptions).toBe("mirror");
+    expect(OUTBOUND_DISPOSITION.feedbackAvailability).toBe("mirror");
+    expect(OUTBOUND_DISPOSITION.turnFeedbackAck).toBe("mirror");
   });
 });
 
@@ -244,6 +251,176 @@ describe("mayDeliverRemoteHostMsg (outbound project authorization)", () => {
         same,
       ),
     ).toBe(true);
+  });
+
+  describe("the routines frame", () => {
+    // Same class of bug as the `message-cwd` one above, mirrored: `entries` was
+    // hardcoded to sessions/pinnedSessions and returned [] for anything else,
+    // so a newly-classified type would `.every()` over nothing and pass. That
+    // fails OPEN rather than closed, which is the worse direction.
+    const routine = (cwd: string) => ({
+      id: "r1", title: "Brief", prompt: "p", cwd,
+      provider: "grok" as const, model: "grok-4.6",
+      cadence: { every: 6, unit: "hours" as const },
+      createdAt: 0, cadenceLabel: "Every 6 hours", nextRunAt: 0,
+      runs: [], health: { ran: 0, skipped: 0, failed: 0, total: 0 },
+      projectLabel: "open",
+    });
+    const frame = (entries: ReturnType<typeof routine>[], projects: { cwd: string; label: string }[]) =>
+      ({ type: "routines", entries, projects, models: [] }) as never;
+
+    it("delivers routines for an authorized project", () => {
+      expect(
+        mayDeliverRemoteHostMsg(frame([routine(open[0])], [{ cwd: open[0], label: "open" }]), open, undefined, same),
+      ).toBe(true);
+    });
+
+    it("refuses a routine that names a project this tab may not reach", () => {
+      expect(
+        mayDeliverRemoteHostMsg(frame([routine(closed)], [{ cwd: open[0], label: "open" }]), open, undefined, same),
+      ).toBe(false);
+    });
+
+    it("refuses when only the PICKER names an unreachable project", () => {
+      // The rows are all fine here. Checking `entries` alone would pass this
+      // and hand the phone the name of every project on the machine through
+      // the dropdown — which is a leak with no row attached to it.
+      expect(
+        mayDeliverRemoteHostMsg(
+          frame([routine(open[0])], [{ cwd: open[0], label: "open" }, { cwd: closed, label: "secret" }]),
+          open,
+          undefined,
+          same,
+        ),
+      ).toBe(false);
+    });
+
+    it("refuses a routine carrying no cwd at all", () => {
+      // Unlike the session lists, an empty cwd is not a legitimate state here:
+      // every routine has a project by construction, so a blank one is
+      // malformed and must not be treated as "nothing to check".
+      expect(
+        mayDeliverRemoteHostMsg(frame([routine("")], []), open, undefined, same),
+      ).toBe(false);
+    });
+
+    it("delivers an empty page", () => {
+      expect(mayDeliverRemoteHostMsg(frame([], []), open, undefined, same)).toBe(true);
+    });
+
+    describe("routinesMessageForRemote", () => {
+      // The desk offers archived projects in the picker on purpose (archiving
+      // hides a project from the RAIL, and a routine is not the rail), while
+      // `remoteAuthorizedCwds` excludes them on purpose (archiving revokes
+      // remote access). Both rules are right; composed without a filter they
+      // meant one archived project anywhere blanked the whole page on a phone.
+      it("drops what a connection may not reach instead of dropping the page", () => {
+        const full = frame(
+          [routine(open[0]), routine(closed)],
+          [{ cwd: open[0], label: "open" }, { cwd: closed, label: "archived" }],
+        ) as Extract<HostMsg, { type: "routines" }>;
+
+        expect(mayDeliverRemoteHostMsg(full, open, undefined, same)).toBe(false);
+
+        const trimmed = routinesMessageForRemote(full, open, same);
+        expect(trimmed.entries.map((e) => e.cwd)).toEqual([open[0]]);
+        expect(trimmed.projects.map((p) => p.cwd)).toEqual([open[0]]);
+        // And what comes out always survives the gate, so the check stays a
+        // backstop rather than an outage.
+        expect(mayDeliverRemoteHostMsg(trimmed, open, undefined, same)).toBe(true);
+      });
+
+      it("leaves an already-authorized frame alone", () => {
+        const clean = frame([routine(open[0])], [{ cwd: open[0], label: "open" }]) as Extract<
+          HostMsg,
+          { type: "routines" }
+        >;
+        const trimmed = routinesMessageForRemote(clean, open, same);
+        expect(trimmed.entries).toHaveLength(1);
+        expect(trimmed.projects).toHaveLength(1);
+        expect(trimmed.models).toEqual(clean.models);
+      });
+
+      // Repoint a routine from A to B, then archive A. The entry now passes
+// under B while a RETAINED run still names A — so the routine's own cwd
+      // does not vouch for its history, and filtering only the top level sends
+      // a revoked project's path and session id across the wire.
+      const withRun = (routineCwd: string, runCwd: string) => {
+        const base = routine(routineCwd);
+        return {
+          ...base,
+          runs: [
+            {
+              routineId: "r1", windowKey: "i0", startedAt: 1, outcome: "ran" as const,
+              sessionId: "s-1", cwd: runCwd, detail: `wrote ${runCwd}/notes.md`,
+            },
+          ],
+        };
+      };
+
+      it("redacts a run whose own project is out of reach", () => {
+        const full = frame(
+          [withRun(open[0], closed)],
+          [{ cwd: open[0], label: "open" }],
+        ) as Extract<HostMsg, { type: "routines" }>;
+
+        // The top-level filter alone would pass this straight through.
+        expect(mayDeliverRemoteHostMsg(full, open, undefined, same)).toBe(false);
+
+        const trimmed = routinesMessageForRemote(full, open, same);
+        const [run] = trimmed.entries[0].runs;
+        // The run survives — it happened, and the health count beside it is
+        // computed host-side from the full list.
+        expect(trimmed.entries[0].runs).toHaveLength(1);
+        expect(run.outcome).toBe("ran");
+        expect(run.startedAt).toBe(1);
+        // Its identity does not. Path, session and the detail that could quote
+        // either are all gone, so the tick is simply unclickable.
+        expect(run.cwd).toBeUndefined();
+        expect(run.sessionId).toBeUndefined();
+        expect(run.detail).toBeUndefined();
+        expect(JSON.stringify(trimmed)).not.toContain(closed);
+
+        expect(mayDeliverRemoteHostMsg(trimmed, open, undefined, same)).toBe(true);
+      });
+
+      it("leaves a run in a reachable project completely alone", () => {
+        const full = frame(
+          [withRun(open[0], open[0])],
+          [{ cwd: open[0], label: "open" }],
+        ) as Extract<HostMsg, { type: "routines" }>;
+        const [run] = routinesMessageForRemote(full, open, same).entries[0].runs;
+        expect(run.cwd).toBe(open[0]);
+        expect(run.sessionId).toBe("s-1");
+        expect(run.detail).toBeTruthy();
+      });
+
+      it("passes a run recorded before runs carried a project", () => {
+        // No cwd means the session resolves against the routine's current
+        // project, which is already checked — so there is nothing to redact.
+        const legacy = routine(open[0]) as ReturnType<typeof routine> & { runs: unknown[] };
+        legacy.runs = [{ routineId: "r1", windowKey: "i0", startedAt: 1, outcome: "ran", sessionId: "s-1" }];
+        const full = frame([legacy], [{ cwd: open[0], label: "open" }]) as Extract<
+          HostMsg,
+          { type: "routines" }
+        >;
+        expect(mayDeliverRemoteHostMsg(full, open, undefined, same)).toBe(true);
+        expect(routinesMessageForRemote(full, open, same).entries[0].runs[0].sessionId).toBe("s-1");
+      });
+
+      it("yields an empty page rather than nothing when NOTHING is reachable", () => {
+        const none = frame([routine(closed)], [{ cwd: closed, label: "archived" }]) as Extract<
+          HostMsg,
+          { type: "routines" }
+        >;
+        const trimmed = routinesMessageForRemote(none, open, same);
+        expect(trimmed.entries).toEqual([]);
+        expect(trimmed.projects).toEqual([]);
+        // An empty page says "no routines here"; a dropped frame says nothing
+        // at all and leaves the phone on a spinner.
+        expect(mayDeliverRemoteHostMsg(trimmed, open, undefined, same)).toBe(true);
+      });
+    });
   });
 
   it("still refuses a file-browser answer for a project that has since closed", () => {
@@ -533,6 +710,29 @@ describe("allowFromRemote tier gating", () => {
     }
   });
 
+  it("refuses remote connector connect/disconnect at every tier but mirrors the list", () => {
+    expect(INBOUND_DISPOSITION.connectMcpConnector).toBe("host-local");
+    expect(INBOUND_DISPOSITION.disconnectMcpConnector).toBe("host-local");
+    expect(OUTBOUND_DISPOSITION.mcpConnectors).toBe("mirror");
+    expect(OUTBOUND_DISPOSITION.mcpServers).toBe("allowlist");
+    expect(OUTBOUND_PROJECT_AUTH.mcpServers).toBe(OUTBOUND_PROJECT_AUTH.mcpConnectors);
+    expect(INBOUND_DISPOSITION.listMcpServers).toBe("view");
+    expect(allowFromRemote("listMcpServers", "read-only")).toBe(true);
+    expect(allowFromRemote("listMcpServers", "propose")).toBe(true);
+    expect(allowFromRemote("listMcpServers", "full")).toBe(true);
+    for (const type of ["connectMcpConnector", "disconnectMcpConnector"] as const) {
+      for (const tier of ["read-only", "propose", "full"] as const) {
+        expect(allowFromRemote(type, tier)).toBe(false);
+      }
+    }
+  });
+
+  it("a remote cannot set, read, or clear a connector key even at full", () => {
+    for (const type of ["connectMcpConnector", "disconnectMcpConnector"] as const) {
+      expect(allowFromRemote(type, "full")).toBe(false);
+    }
+  });
+
   it("refuses remote-origin provider logout and login-terminal actions at every tier", () => {
     for (const type of ["logout", "runGrokLogin"] as const) {
       expect(INBOUND_DISPOSITION[type]).toBe("host-local");
@@ -646,6 +846,113 @@ describe("transformHostMsgForRemote", () => {
       .toEqual({ type: "voiceConfigured", value: true });
   });
 
+  it("projects the Grok MCP inventory so launch recipes cannot reach a remote", () => {
+    const bearer = "Authorization: Bearer sk_live_repro_token";
+    const token = "sk_live_repro_token";
+    const exe = "C:/Users/Alice/AppData/Roaming/npm/npx.cmd";
+    const url = `https://mcp.linear.app/mcp?api_key=${token}`;
+    const desk: HostMsg = {
+      type: "mcpServers",
+      servers: [{
+        name: "linear",
+        displayName: "Linear",
+        enabled: true,
+        source: "local",
+        type: "stdio",
+        status: "unavailable",
+        command: exe,
+        args: ["-y", "mcp-remote", url, "--header", bearer],
+        url,
+        error: `spawn EACCES ${exe} --header ${bearer}`,
+        tools: [{
+          name: "list_issues",
+          description: "List issues",
+          inputSchema: { properties: { token: { default: token } } },
+        }],
+        toolCount: 1,
+      }],
+      warning: "This list is read-only.",
+    };
+    const deskWire = JSON.stringify(desk);
+    expect(deskWire).toContain(bearer);
+    expect(deskWire).toContain(url);
+    expect(deskWire).toContain("C:/Users/Alice");
+
+    const out = transformHostMsgForRemote(desk, deps(null));
+    expect(out).not.toBe(desk);
+    expect(JSON.stringify(desk)).toBe(deskWire);
+    expect(desk.servers[0].command).toBe(exe);
+
+    const wire = JSON.stringify(out);
+    expect(wire).not.toContain(bearer);
+    expect(wire).not.toContain(token);
+    expect(wire).not.toContain("C:/Users/Alice");
+    expect(wire).not.toContain("Authorization");
+    expect(wire).not.toContain(exe);
+    expect(wire).not.toContain(url);
+    expect(out).toEqual({
+      type: "mcpServers",
+      servers: [{
+        name: "linear",
+        displayName: "Linear",
+        enabled: true,
+        source: "local",
+        type: "stdio",
+        status: "unavailable",
+        toolCount: 1,
+      }],
+      warning: "This list is read-only.",
+    });
+    expect(transformHostMsgForRemote(out!, deps(null))).toEqual(out);
+  });
+
+  it("mirrors mcpConnectors without a key field or PAT", () => {
+    const planted = "ghp_TESTSECRET_do_not_store";
+    const msg: HostMsg = {
+      type: "mcpConnectors",
+      connectors: connectorViews(
+        { github: { endpoint: "https://api.githubcopilot.com/mcp/" } },
+        { keySet: new Set(["github"]) },
+      ),
+    };
+    const out = transformHostMsgForRemote(msg, deps(null));
+    expect(out).toBe(msg);
+    const json = JSON.stringify(out);
+    expect(json).not.toContain(planted);
+    expect(json).not.toMatch(/"key":|"token":|"authorization":/);
+    const github = msg.connectors.find((c) => c.id === "github");
+    expect(github).toMatchObject({ auth: "key", keySet: true, connected: true });
+    expect(github).not.toHaveProperty("key");
+    expect(github).not.toHaveProperty("token");
+
+    const missingKey: HostMsg = {
+      type: "mcpConnectors",
+      connectors: connectorViews(
+        { github: { endpoint: "https://api.githubcopilot.com/mcp/" } },
+        { keySet: new Set() },
+      ),
+    };
+    const missingOut = transformHostMsgForRemote(missingKey, deps(null));
+    expect(missingOut).toBe(missingKey);
+    const missingJson = JSON.stringify(missingOut);
+    expect(missingJson).not.toContain(planted);
+    expect(missingJson).not.toMatch(/"key":|"token":|"authorization":/);
+    const missingGithub = missingKey.connectors.find((c) => c.id === "github");
+    expect(missingGithub).toMatchObject({ auth: "key", keySet: false, connected: true });
+    expect(missingGithub).not.toHaveProperty("key");
+    expect(missingGithub).not.toHaveProperty("token");
+  });
+
+  it("leaves a safe MCP inventory row intact on the remote projection", () => {
+    const msg: HostMsg = {
+      type: "mcpServers",
+      servers: [{ name: "managed_gateway:canva", displayName: "Canva", enabled: true, status: "ready", managed: true, toolCount: 32 }],
+      warning: "This list is read-only.",
+    };
+    expect(transformHostMsgForRemote(msg, deps(null))).toEqual(msg);
+    expect(transformHostMsgForRemote(msg, deps(null))).not.toBe(msg);
+  });
+
   it("media is inlined via the injected reader", () => {
     const out = transformHostMsgForRemote(mediaMsg({ src: "x", path: "/img.webp" }), deps(new Uint8Array([7])));
     expect((out as { src?: string })?.src?.startsWith("data:image/webp;base64,")).toBe(true);
@@ -666,6 +973,13 @@ describe("transformHostMsgForRemote", () => {
     const missing = transformHostMsgForRemote({ type: "chips", chips: [chip] }, deps(null)) as Extract<HostMsg, { type: "chips" }>;
     expect(missing.chips[0]).toEqual(chip);
     expect(missing.chips[0].previewSrc).toBeUndefined();
+
+    const queued = transformHostMsgForRemote({
+      type: "queuedSends",
+      items: ["see this"],
+      queued: [{ text: "see this", chips: [chip] }],
+    }, deps(new Uint8Array([7]))) as Extract<HostMsg, { type: "queuedSends" }>;
+    expect(queued.queued?.[0].chips?.[0].previewSrc).toBe("data:image/png;base64,Bw==");
   });
 
   it("uses the thumbnail hook and keeps replayed image tags usable remotely", () => {

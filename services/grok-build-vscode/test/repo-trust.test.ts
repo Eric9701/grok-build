@@ -84,7 +84,7 @@ describe("who turned auto-approve on", () => {
 describe("consent gate wiring", () => {
   it("asks before the session starts, and declining starts nothing", () => {
     const src = sidebarSrc();
-    const start = src.indexOf("private async startSession(resumeId");
+    const start = src.indexOf("private async startSessionBody(");
     expect(start).toBeGreaterThan(0);
     // Wide enough to reach ++session.gen past startSession's early-return
     // blocks as they grow; the assertions below still pin the ordering, the
@@ -185,7 +185,7 @@ describe("desktop file roots are session-scoped", () => {
 describe("host confirmation on the messages that run something", () => {
   it("guards both execute-class handlers", () => {
     const src = sidebarSrc();
-    for (const handler of ['case "runInstallCmd"', 'case "updateAtlas"']) {
+    for (const handler of ['case "runInstallCmd"', 'case "updateGrok"']) {
       const start = src.indexOf(handler);
       expect(start).toBeGreaterThan(0);
       const body = src.slice(start, start + 700);

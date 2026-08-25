@@ -15,6 +15,19 @@ directories:
 extraMetadata:
   main: out/desktop/main.js
   name: grok-build-desktop
+  # NOTE: `grokExtensionName` is deliberately NOT set here. It is the telemetry
+  # identity, and `name` above becomes the asar package name, so
+  # `${publisher}.${name}` is PawelHuryn.grok-build-desktop and never matches
+  # OFFICIAL_EXTENSION_ID — which means a build made from this file alone
+  # reports nothing. That is the wanted default for a local build and for any
+  # fork.
+  #
+  # The official value is injected by .github/workflows/desktop-release.yml, and
+  # only when the workflow is running in THIS repository. Nothing that ships in
+  # the source tree can distinguish our build from a fork's: a fork copies every
+  # file, and a desktop-only fork has no reason to change `publisher`, which is
+  # a VS Code Marketplace concept. The repository it builds from is the one
+  # signal it cannot inherit by copying.
   # rcedit stamps `description` as the .exe FileDescription, which is the label
   # Windows shows in Task Manager and the UAC prompt. package.json's is the
   # marketplace blurb — a 300-character paragraph in a column meant for a name.
@@ -34,6 +47,16 @@ files:
   - node_modules/@agentclientprotocol/codex-acp/package.json
   - node_modules/@agentclientprotocol/codex-acp/dist/**/*
   - node_modules/@agentclientprotocol/codex-acp/LICENSE
+  - node_modules/@agentclientprotocol/claude-agent-acp/package.json
+  - node_modules/@agentclientprotocol/claude-agent-acp/dist/**/*
+  - node_modules/@agentclientprotocol/claude-agent-acp/LICENSE
+  - node_modules/@agentclientprotocol/sdk/package.json
+  - node_modules/@agentclientprotocol/sdk/dist/**/*
+  - node_modules/@agentclientprotocol/sdk/LICENSE-APACHE
+  - node_modules/@anthropic-ai/claude-agent-sdk/package.json
+  - node_modules/@anthropic-ai/claude-agent-sdk/*.mjs
+  - node_modules/@anthropic-ai/claude-agent-sdk/*.js
+  - node_modules/zod/**/*
   # LOAD-BEARING. The honest lockfile installs the adapter's declared tree,
   # and electron-builder packs the full hoisted production tree of every
   # direct dep — verified in the built asar, which carries zod, vscode-jsonrpc
@@ -43,7 +66,9 @@ files:
   # patterns reach the node_modules matcher, so a blocklist is the one tool
   # here; the small hoisted helpers that still ride along are harmless.
   - "!node_modules/@openai/**"
+  - "!node_modules/@anthropic-ai/claude-agent-sdk-*/**"
   - "!node_modules/@agentclientprotocol/codex-acp/node_modules/**"
+  - "!node_modules/@agentclientprotocol/claude-agent-acp/node_modules/**"
   - "!out/**/*.map"
   - "!**/*.{ts,tsx,md}"
 

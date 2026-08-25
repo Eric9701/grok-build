@@ -19,11 +19,9 @@ This is the official **course** companion to the raw research notes in [research
 **Plan mode is a CLI-owned planning phase with an extension-owned safety gate.**
 
 When you (or the agent) enter Plan mode:
-- Grok is allowed to **read** your workspace freely (`fs/read_text_file`, search tools, etc.).
-- Grok is **blocked** from mutating anything inside your workspace.
-  - Every `fs/write_text_file` whose target resolves inside the workspace cwd is refused.
-  - Every `terminal/create` whose command is not on a curated read-only allowlist is refused.
-- The only write that is deliberately allowed is grok writing its own plan through `fs/write_text_file` to `~/.grok/sessions/<...>/plan.md` (outside your workspace). The extension *snoops* that write so it can show you the plan text. A shell command that writes the same path is blocked and grok falls back to the filesystem callback.
+- Grok is allowed to **read** your workspace freely (search tools, and on 0.2.x `fs/read_text_file`).
+- Mutating shells are **blocked** by the extension: every `terminal/create` whose command is not on a curated read-only allowlist is refused. That hook is load-bearing on every supported grok.
+- Workspace **file** writes are not all extension-enforced. On a live-verified grok >= 1.0.4 the client withholds `readTextFile`, writes are not delegated, and Plan-mode file safety rests on grok's native edit refusal. On 0.2.x / unverified the delegated handshake still applies, so every `fs/write_text_file` whose target resolves inside the workspace cwd is refused by the extension. The only write that is deliberately allowed on that path is grok writing its own plan to `~/.grok/sessions/<...>/plan.md`; the extension *snoops* that write as a fallback. Plan review is fed by `req.plan` (`exit_plan_mode.planContent`) when the CLI sends it (1.0.4+); 0.2.117 still sends `null`.
 
 The CLI eventually emits `_x.ai/exit_plan_mode`. The extension answers with the
 CLI's typed native outcome while keeping its own gate as defense-in-depth.
@@ -69,12 +67,13 @@ old or unverifiable CLI where Plan is unavailable.
 The historical 0.2.3 bug explained why the extension first adopted B+. The
 reason the gate remains today is different: the CLI blocks its edit tool while
 planning but still permits delegated terminal execution. The extension therefore
-continues to gate the two mandatory client callbacks:
+continues to gate `terminal/create`. `fs/write_text_file` is still gated when
+writes are delegated (0.2.x); on grok 1.x they are not delegated and file
+safety rests on grok's native edit refusal.
 
-- `fs/write_text_file`
-- `terminal/create`
-
-This safety layer is called **Option B+** in the research notes. It is the mirror image of how Auto accept is implemented (Auto accept approves at the permission layer; Plan blocks at the mandatory fs/terminal layer).
+This safety layer is called **Option B+** in the research notes. Auto accept
+approves at the permission layer; Plan blocks at the hooks the agent still
+reaches.
 
 The cost is that the extension now owns a small but security-sensitive policy (the read-only command allowlist). The benefit is that the feature actually does what users expect, even when the agent initiates plan mode via natural language.
 
@@ -127,7 +126,7 @@ respondOk(id, terminal.create(...));
 
 `exit_plan_mode` handling (lines 416-426) simply emits the `exitPlanRequest` event with whatever plan text it received (usually empty — the real text comes from the snoop).
 
-The `planActive` boolean on `AcpClient` is the single source of truth that the two handlers consult on every request.
+The `planActive` boolean on `AcpClient` is the single source of truth that the two handlers consult on every request. A successful user Plan pick commits it in the `session/set_mode` response hook so the next ACP line in that stdout chunk already sees the gate; the host still raises session chrome after the await.
 
 ---
 
@@ -240,7 +239,9 @@ These give you high confidence that the policy and the card rendering match the 
 
 ## Lesson 8: Common Misconceptions & Debugging Tips
 
-- **"The CLI log says `default`, but the mode button still says Plan"** — expected after a descriptive non-plan update: the safety gate is not lowered by that notification alone, and the button derives from `planActive`.
+- **"The CLI log says `default`, but the mode button still says Plan"** — expected for grok after a descriptive non-plan update: the safety gate is not lowered by that notification alone, and the button derives from `planActive`. Claude/Codex do not use the client gate, so a writable agent mode must clear `planActive` (`applyAgentModeToHostPlan`).
+- **"Codex `collaboration_mode: default` means Agent"** — no. That is only the collaboration axis. The adapter always reports permission `mode` (`agent` / `agent-full-access`) on the same snapshot; `codexEffectiveModeId` keeps that permission mode so Auto accept is not shown as Agent.
+- **"I clicked Plan and the badge says Plan"** — only after `session/set_mode` succeeds. The client gate is committed in that response hook (before the next ACP line); the toolbar follows the host raise after the await. A rejected transition keeps the previous badge; the click is not authority.
 - **"Grok just wrote a file while I was in Plan mode"** — either the `fs/write_text_file` callback wrote its own `plan.md` (outside the workspace) or the gate was not actually up at that moment. Shell-based writes to that plan path are blocked too.
 - **"I rejected the plan but Grok still started implementing"** — this should no longer happen with the shipped B+ gate. If it does, you have found a bug in the containment or the allowlist.
 - **"Why did a second plan card appear after I clicked Reject?"** — native `cancelled` keeps the original turn in Plan, so grok revises and can call `exit_plan_mode` again without a synthetic prompt or extra user turn.

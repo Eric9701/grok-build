@@ -6,7 +6,7 @@ monorepo; crate versions are lockstep dev placeholders (`0.1.220-alpha.4` / `0.2
 tree can't be pinned to a shipped 0.2.x — but it contains the `exit_plan_mode` outcome semantics we
 first observed on **0.2.101**, so it is at least that new. **External contributions are not
 accepted** (CONTRIBUTING.md), so "implement" below means *client-side in grok-build-vscode*; the
-source access additionally lets [docs/ACP-feedback.md](../docs/ACP-feedback.md) cite exact
+source access additionally lets [docs/internal/ACP-feedback.md](../docs/internal/ACP-feedback.md) cite exact
 file:line, which makes each ask trivially actionable for xAI.
 
 **Every "implement now" item still needs a live probe against the shipped Windows stable build
@@ -242,6 +242,9 @@ It queues into the session's pending-interjection buffer, **drained at the next 
 emitted the interjected token, the turn still ended `end_turn`, and the model confirmed it saw the
 text verbatim. A `_x.ai/session/interjection` notification echoes back on the rail (for rendering).
 `content` carries images, and its Text block overrides `text` when non-empty.
+This host sends that shape from Steer: `text` is the authored display string;
+`content` is `buildPromptWithImages` blocks (rewritten text first, then images)
+and is omitted when there are no images so the legacy wire stays byte-identical.
 
 **Control, same probe:** a plain second `session/prompt` mid-turn returned `stop=end_turn` rather
 than erroring — it does **not** cleanly queue, and repo lore (`test/send-queue.dom.test.ts:13-15`)

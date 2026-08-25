@@ -27,6 +27,26 @@ node_modules/**
 !node_modules/@agentclientprotocol/codex-acp/package.json
 !node_modules/@agentclientprotocol/codex-acp/dist/**
 !node_modules/@agentclientprotocol/codex-acp/LICENSE
+# Claude adapter is unbundled ESM. Pack its JS tree, never the optional
+# native Anthropic platform binaries (~300MB) and never the SDK's .d.ts
+# (types-only; they do not execute).
+!node_modules/@agentclientprotocol/claude-agent-acp/package.json
+!node_modules/@agentclientprotocol/claude-agent-acp/dist/**
+!node_modules/@agentclientprotocol/claude-agent-acp/LICENSE
+!node_modules/@agentclientprotocol/sdk/package.json
+!node_modules/@agentclientprotocol/sdk/dist/**
+!node_modules/@agentclientprotocol/sdk/LICENSE-APACHE
+!node_modules/@anthropic-ai/claude-agent-sdk/package.json
+!node_modules/@anthropic-ai/claude-agent-sdk/*.mjs
+!node_modules/@anthropic-ai/claude-agent-sdk/*.js
+!node_modules/@anthropic-ai/claude-agent-sdk/LICENSE*
+!node_modules/zod/package.json
+!node_modules/zod/index.js
+!node_modules/zod/index.cjs
+!node_modules/zod/index.d.ts
+!node_modules/zod/index.d.cts
+!node_modules/zod/v3/**
+!node_modules/zod/v4/**
 .git/**
 **/*.map
 **/*.ts
@@ -52,6 +72,7 @@ out/desktop/**
 src/desktop/**
 vitest.desktop.config.ts
 scripts/run-desktop.cjs
+scripts/lifecycle-host.mjs
 electron-builder.yml
 dist-desktop/**
 # Marketplace description is README.marketplace.md via
@@ -72,6 +93,7 @@ docs/backlog.md
 docs/POST_NOTES.md
 docs/issue-37-diagrams.md
 docs/codex-style-analysis.md
+docs/internal/macos-code-signing.md
 
 # Runtime terminal artifacts (never ship)
 terminals/**

@@ -10,6 +10,7 @@ import type {
   BackendSpawnSpec,
   BackendUpdate,
 } from "./acp-backend";
+import { adapterContextOccupancy } from "./acp-dispatch";
 
 export const CODEX_ACP_ADAPTER_VERSION = packageManifest.dependencies["@agentclientprotocol/codex-acp"];
 
@@ -89,16 +90,19 @@ export function normalizeCodexPromptResult(result: any): any {
     outputTokens: finiteNumber(usage.outputTokens),
     totalTokens: finiteNumber(usage.totalTokens),
     cachedReadTokens: finiteNumber(usage.cachedReadTokens),
+    cachedWriteTokens: finiteNumber(usage.cachedWriteTokens),
     reasoningTokens: finiteNumber(usage.thoughtTokens),
   };
   return {
     ...result,
     _meta: {
       ...(result?._meta ?? {}),
-      totalTokens: finiteNumber(usage.totalTokens),
+      // Donut occupancy, not the billed sum the adapter puts in usage.totalTokens.
+      totalTokens: adapterContextOccupancy(normalizedUsage) ?? finiteNumber(usage.totalTokens),
       inputTokens: finiteNumber(usage.inputTokens),
       outputTokens: finiteNumber(usage.outputTokens),
       cachedReadTokens: finiteNumber(usage.cachedReadTokens),
+      cachedWriteTokens: finiteNumber(usage.cachedWriteTokens),
       reasoningTokens: finiteNumber(usage.thoughtTokens),
       usage: normalizedUsage,
     },
@@ -113,6 +117,27 @@ function normalizeDiffContent(content: unknown): unknown {
   });
 }
 
+// Codex MCP reuses the shell mapper (`kind: "execute"` + title
+// `mcp.<server>.<tool>`). Remap to Claude's `kind: "other"` so the
+// row shows that title instead of a bare "Run".
+export function isCodexMcpToolCall(update: any): boolean {
+  if (update?._meta?.is_mcp_tool_call === true) return true;
+  const raw = update?.rawInput;
+  return !!(raw && typeof raw === "object"
+    && typeof raw.server === "string" && raw.server
+    && typeof raw.tool === "string" && raw.tool
+    && typeof raw.command !== "string");
+}
+
+function codexMcpTitle(update: any): string | undefined {
+  const raw = update?.rawInput;
+  if (raw && typeof raw.server === "string" && raw.server
+      && typeof raw.tool === "string" && raw.tool) {
+    return `mcp.${raw.server}.${raw.tool}`;
+  }
+  return undefined;
+}
+
 export function normalizeCodexUpdate(update: any, meta?: any): BackendUpdate {
   if (!update || typeof update !== "object") return { update, meta };
   if (update.sessionUpdate === "session_info_update") {
@@ -125,8 +150,9 @@ export function normalizeCodexUpdate(update: any, meta?: any): BackendUpdate {
     const size = finiteNumber(update.size);
     return {
       update,
-      meta: used === undefined ? meta : { ...(meta ?? {}), totalTokens: used },
+      meta,
       contextWindow: size,
+      usageUpdateUsed: used,
     };
   }
   if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
@@ -134,11 +160,18 @@ export function normalizeCodexUpdate(update: any, meta?: any): BackendUpdate {
     const normalizedRawOutput = rawOutput && typeof rawOutput === "object" && typeof rawOutput.formatted_output === "string"
       ? { ...rawOutput, output: rawOutput.formatted_output }
       : rawOutput;
+    const mcp = isCodexMcpToolCall(update);
+    const title = typeof update.title === "string" && update.title.trim()
+      ? update.title
+      : mcp && update.sessionUpdate === "tool_call" ? codexMcpTitle(update) : undefined;
+    const kind = mcp && update.kind === "execute" ? "other" : update.kind;
     return {
       update: {
         ...update,
         ...(normalizedRawOutput === undefined ? {} : { rawOutput: normalizedRawOutput }),
         ...(update.content === undefined ? {} : { content: normalizeDiffContent(update.content) }),
+        ...(kind !== update.kind ? { kind } : {}),
+        ...(title !== undefined && title !== update.title ? { title } : {}),
       },
       meta,
     };
@@ -173,6 +206,23 @@ function optionValue(option: any): unknown {
   return option?.currentValue ?? option?.value;
 }
 
+/**
+ * Codex reports two axes at once: `collaboration_mode` (Plan vs Default) and
+ * permission `mode` (`agent` / `agent-full-access`). Plan wins; otherwise the
+ * permission mode is the host-facing id. Flattening collaboration `default` to
+ * `"default"` discarded full-access and the toolbar then claimed Agent.
+ */
+export function codexEffectiveModeId(
+  collaboration: unknown,
+  mode: unknown,
+  fallback?: string,
+): string | undefined {
+  if (collaboration === "plan") return "plan";
+  if (typeof mode === "string") return mode;
+  if (collaboration === "default") return "default";
+  return fallback;
+}
+
 export function configStateFromCodexOptions(response: any, fallback: BackendConfigState): BackendConfigState {
   const options = Array.isArray(response?.configOptions) ? response.configOptions : [];
   const byId = new Map<string, unknown>();
@@ -182,18 +232,10 @@ export function configStateFromCodexOptions(response: any, fallback: BackendConf
   }
   const model = byId.get("model");
   const effort = byId.get("reasoning_effort");
-  const collaboration = byId.get("collaboration_mode");
-  const mode = byId.get("mode");
   return {
     modelId: typeof model === "string" ? model : fallback.modelId,
     reasoningEffort: typeof effort === "string" ? effort : fallback.reasoningEffort,
-    modeId: collaboration === "plan"
-      ? "plan"
-      : collaboration === "default"
-        ? "default"
-        : typeof mode === "string"
-          ? mode
-          : fallback.modeId,
+    modeId: codexEffectiveModeId(byId.get("collaboration_mode"), byId.get("mode"), fallback.modeId),
   };
 }
 

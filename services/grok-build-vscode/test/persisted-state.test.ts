@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { PersistedState, DISK_KEYS, type StateFs, type MementoLike } from "../src/persisted-state";
+import { AUTO_NAME_MAX_CHARS, capAutoName } from "../src/sessions";
 
 const DIR = "/home/.grok/client-state";
 const metaFile = `${DIR}/${DISK_KEYS["atlas.sessionMeta"]}`;
@@ -204,6 +205,25 @@ describe("PersistedState", () => {
 
   it("maps grok.repoColors onto a client-state file like pins/archives", () => {
     expect(DISK_KEYS["atlas.repoColors"]).toBe("repo-colors.json");
+    expect(DISK_KEYS["atlas.mcpConnectors"]).toBe("mcp-connectors.json");
+  });
+
+  it("serializes grok.mcpConnectors as ids and endpoints, never a key", async () => {
+    const { connectConnector } = await import("../src/mcp-connectors");
+    const { state, fs, memento } = make();
+    const planted = "ghp_TESTSECRET_do_not_store";
+    const store = connectConnector({}, "github", "https://api.githubcopilot.com/mcp/", true);
+    expect(JSON.stringify(store)).not.toContain(planted);
+    await state.update("atlas.mcpConnectors", store);
+    const disk = fs.files.get(`${DIR}/${DISK_KEYS["atlas.mcpConnectors"]}`)!;
+    expect(disk).not.toContain(planted);
+    expect(disk).not.toMatch(/"token"|"key"|"authorization"|Bearer /);
+    expect(JSON.parse(disk)).toEqual({
+      github: { endpoint: "https://api.githubcopilot.com/mcp/", readOnly: true },
+    });
+    expect(memento.store.get("atlas.mcpConnectors")).toEqual({
+      github: { endpoint: "https://api.githubcopilot.com/mcp/", readOnly: true },
+    });
   });
 
   it("falls back to globalState when the file is corrupt, without throwing", () => {
@@ -267,5 +287,143 @@ describe("PersistedState", () => {
     void state.update("atlas.repoPins", { a: { cwd: "/a", pinnedAt: 2 } });
     await state.update("atlas.repoPins", { a: { cwd: "/a", pinnedAt: 3 } });
     expect(JSON.parse(fs.files.get(`${DIR}/${DISK_KEYS["atlas.repoPins"]}`)!).a.pinnedAt).toBe(3);
+  });
+});
+
+describe("PersistedState autoName load sweep", () => {
+  const fat = "please rewrite this module from first principles ".repeat(40).trim();
+  const short = "fix the flaky test";
+  const custom = "User title that must survive even when it is quite long ".repeat(4).trim();
+
+  it("caps a fat autoName on load, leaves a short one byte-identical, and writes once", async () => {
+    const seeded = {
+      fat: { autoName: fat, customName: custom, pinnedAt: 3 },
+      short: { autoName: short, unread: true },
+    };
+    const { state, fs, memento } = make((f) => f.setFile(metaFile, JSON.stringify(seeded)));
+    // Readable immediately — the sweep write must not gate the read, and a
+    // read must never return empty while that write is in flight.
+    const live = state.get<typeof seeded>("atlas.sessionMeta", {} as typeof seeded);
+    expect(live.fat.autoName).toBe(capAutoName(fat));
+    expect(live.fat.autoName.length).toBeLessThanOrEqual(AUTO_NAME_MAX_CHARS);
+    expect(live.fat.customName).toBe(custom);
+    expect(live.fat.pinnedAt).toBe(3);
+    expect(JSON.stringify(live.short)).toBe(JSON.stringify(seeded.short));
+    expect(Object.keys(live).sort()).toEqual(["fat", "short"]);
+
+    const writesBeforeFlush = fs.renames.length;
+    await state.flush();
+    expect(fs.renames.length).toBeGreaterThan(writesBeforeFlush);
+    const onDisk = JSON.parse(fs.files.get(metaFile)!);
+    expect(onDisk.fat.autoName).toBe(capAutoName(fat));
+    expect(onDisk.fat.customName).toBe(custom);
+    expect(JSON.stringify(onDisk.short)).toBe(JSON.stringify(seeded.short));
+    expect(memento.store.get("atlas.sessionMeta")).toEqual(onDisk);
+  });
+
+  it("writes only when something changed, and a second load is a no-op", async () => {
+    const alreadyCapped = {
+      short: { autoName: short },
+      capped: { autoName: capAutoName(fat) },
+    };
+    const first = make((f) => f.setFile(metaFile, JSON.stringify(alreadyCapped)));
+    await first.state.flush();
+    expect(first.fs.renames).toEqual([]);
+    expect(JSON.parse(first.fs.files.get(metaFile)!)).toEqual(alreadyCapped);
+
+    const second = new PersistedState(new FakeMemento(), DIR, first.fs);
+    await second.flush();
+    expect(first.fs.renames).toEqual([]);
+    expect(JSON.parse(first.fs.files.get(metaFile)!)).toEqual(alreadyCapped);
+    expect(second.get("atlas.sessionMeta")).toEqual(alreadyCapped);
+  });
+
+  it("never touches customName, even when it is longer than the autoName cap", async () => {
+    const longCustom = "Keep this rename exactly as typed ".repeat(10).trim();
+    expect(longCustom.length).toBeGreaterThan(AUTO_NAME_MAX_CHARS);
+    const { state, fs } = make((f) => f.setFile(metaFile, JSON.stringify({
+      s: { customName: longCustom, autoName: fat },
+    })));
+    const live = state.get<Record<string, { customName: string; autoName: string }>>("atlas.sessionMeta", {});
+    expect(live.s.customName).toBe(longCustom);
+    expect(live.s.autoName).toBe(capAutoName(fat));
+    await state.flush();
+    expect(JSON.parse(fs.files.get(metaFile)!).s.customName).toBe(longCustom);
+  });
+
+  it("preserves an entry another client added between load and the sweep write", async () => {
+    const seeded = {
+      fat: { autoName: fat, customName: "mine" },
+      short: { autoName: short },
+    };
+    const { state, fs } = make((f) => f.setFile(metaFile, JSON.stringify(seeded)));
+    expect(state.get<typeof seeded>("atlas.sessionMeta", {} as typeof seeded).fat.autoName).toBe(capAutoName(fat));
+
+    fs.setFile(metaFile, JSON.stringify({
+      fat: { autoName: fat, customName: "mine" },
+      short: { autoName: short },
+      theirs: { customName: "added elsewhere", autoName: "new session" },
+    }));
+
+    await state.flush();
+    const onDisk = JSON.parse(fs.files.get(metaFile)!);
+    expect(onDisk.theirs).toEqual({ customName: "added elsewhere", autoName: "new session" });
+    expect(onDisk.fat.autoName).toBe(capAutoName(fat));
+    expect(onDisk.fat.customName).toBe("mine");
+    expect(onDisk.short.autoName).toBe(short);
+  });
+});
+
+describe("PersistedState and routines", () => {
+  const routinesFile = `${DIR}/${DISK_KEYS["atlas.routines"]}`;
+  const routine = (id: string) => ({
+    id, title: id, prompt: "p", cwd: "C:/repo",
+    provider: "grok", model: "grok-4.6",
+    cadence: { every: 6, unit: "hours" }, createdAt: 1,
+  });
+
+  // Routines are stored as a RECORD MAP keyed by id, never an array. An array
+  // is not a valid value for any disk key, so it is rejected on load and on the
+  // globalState shadow read alike: every routine would silently vanish on the
+  // next restart, which is the whole feature failing quietly.
+  it("survives a restart", async () => {
+    const first = make();
+    await first.state.update("atlas.routines", { r1: routine("r1") });
+
+    const second = new PersistedState(new FakeMemento(), DIR, first.fs);
+    const back = second.get<Record<string, unknown>>("atlas.routines", {});
+    expect(Object.keys(back)).toEqual(["r1"]);
+  });
+
+  it("refuses an array, which is why the map shape is load-bearing", () => {
+    const { state } = make((fs) => fs.setFile(routinesFile, JSON.stringify([routine("r1")])));
+    // Not a crash, a silent empty — exactly what made this worth a test.
+    expect(state.get<Record<string, unknown>>("atlas.routines", {})).toEqual({});
+  });
+
+  // The write path is a three-way merge against the disk snapshot. A map gets
+  // that for free; an array would have clobbered, and only for people running
+  // two editors at once.
+  it("keeps a routine another client added while this one was editing", async () => {
+    const { state, fs } = make((f) =>
+      f.setFile(routinesFile, JSON.stringify({ mine: routine("mine") })),
+    );
+    expect(Object.keys(state.get<Record<string, unknown>>("atlas.routines", {}))).toEqual(["mine"]);
+
+    // Another editor writes its own routine before this one saves.
+    fs.setFile(routinesFile, JSON.stringify({ mine: routine("mine"), theirs: routine("theirs") }));
+    await state.update("atlas.routines", { mine: routine("mine"), fresh: routine("fresh") });
+
+    const merged = JSON.parse(fs.files.get(routinesFile)!);
+    expect(Object.keys(merged).sort()).toEqual(["fresh", "mine", "theirs"]);
+  });
+
+  it("still deletes", async () => {
+    const { state, fs } = make((f) =>
+      f.setFile(routinesFile, JSON.stringify({ a: routine("a"), b: routine("b") })),
+    );
+    expect(Object.keys(state.get<Record<string, unknown>>("atlas.routines", {})).sort()).toEqual(["a", "b"]);
+    await state.update("atlas.routines", { a: routine("a") });
+    expect(Object.keys(JSON.parse(fs.files.get(routinesFile)!))).toEqual(["a"]);
   });
 });
