@@ -244,12 +244,15 @@ func (h *Handler) tokenRefresh(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
 		return
 	}
-	_ = h.store.RevokeRefresh(refresh)
+	// Persist the successor before revoking the spent token. Revoking first
+	// leaves the CLI with a dead refresh_token if issueTokens fails (DB
+	// blip), which the client treats as invalid_grant and wipes auth.json.
 	tokens, err := h.issueTokensForUser(rec.UserID, rec.ClientID, rec.Scope)
 	if err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}
+	_ = h.store.RevokeRefresh(refresh)
 	writeJSON(w, http.StatusOK, tokens)
 }
 
@@ -334,14 +337,16 @@ func (h *Handler) issueTokens(userID, email, firstName, lastName, principalType,
 	if err != nil {
 		return nil, err
 	}
-	_ = h.store.SaveRefresh(store.RefreshRecord{
+	if err := h.store.SaveRefresh(store.RefreshRecord{
 		Token:     refresh,
 		UserID:    userID,
 		Email:     email,
 		ClientID:  clientID,
 		Scope:     scope,
 		ExpiresAt: now.Add(h.cfg.RefreshTTL),
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	return &tokenResponse{
 		AccessToken:  access,

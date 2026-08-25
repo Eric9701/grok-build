@@ -167,10 +167,10 @@ func (m *MemoryStore) GetRefresh(token string) (*RefreshRecord, error) {
 	defer m.mu.RUnlock()
 	r, ok := m.refresh[token]
 	if !ok {
-		return nil, fmt.Errorf("refresh token not found")
+		return nil, ErrRefreshNotFound
 	}
 	if time.Now().After(r.ExpiresAt) {
-		return nil, fmt.Errorf("refresh token expired")
+		return nil, ErrRefreshExpired
 	}
 	out := *r
 	return &out, nil

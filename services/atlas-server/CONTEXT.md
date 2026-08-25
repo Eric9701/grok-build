@@ -59,3 +59,11 @@ _Avoid_: JWT subject, Bearer user, x-userid
 **Client Version**:
 The compiled CLI version of the process that posted the Task Report (`GROK_VERSION` / `--version`).
 _Avoid_: Protocol version, agent version, model version
+
+**Seed Account**:
+Admin 用显示名 + 邮箱 + 机器码即可建户。UserId 取邮箱 `@` 前前缀；默认密码为约定种子 `atlas123`。
+_Avoid_: 手工指定 userId 作为必填；把「只有机器码」当成开户
+
+**OAuth Refresh Token**:
+CLI device login 签发的 refresh，落在 MySQL `refresh_tokens`。Device code 仍只在进程内存（15 分钟登录窗）。重启 atlas-server 不得丢掉已登录 CLI 的静默续期。
+_Avoid_: 把 refresh 当成 MemoryStore 即可；用「access 过期」解释 Task Report 变 `anonymous`（那是 refresh 失败后 CLI 清了 `auth.json`）

@@ -150,6 +150,9 @@ func (m *MySQLStore) Migrate() error {
 	if err := m.migrateTaskReportModelRouting(); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	if err := m.migrateRefreshTokens(); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
 	return nil
 }
 
@@ -182,19 +185,8 @@ func (m *MySQLStore) migrateTaskReportModelRouting() error {
 // (init-mysql.sql uses utf8mb4_unicode_ci; bare CREATE on MySQL 8 often gets
 // utf8mb4_0900_ai_ci — Error 1215).
 func (m *MySQLStore) migrateManagedModels() error {
-	collation := "utf8mb4_unicode_ci"
-	var detected sql.NullString
-	_ = m.db.QueryRow(`
-		SELECT COLLATION_NAME
-		FROM information_schema.COLUMNS
-		WHERE TABLE_SCHEMA = DATABASE()
-		  AND TABLE_NAME = 'users'
-		  AND COLUMN_NAME = 'user_id'
-	`).Scan(&detected)
-	if detected.Valid && detected.String != "" {
-		collation = detected.String
-	}
-	if err := validateMySQLCollation(collation); err != nil {
+	collation, err := m.usersCollation()
+	if err != nil {
 		return err
 	}
 
@@ -242,19 +234,8 @@ func (m *MySQLStore) migrateManagedModels() error {
 // migrateUserGroups creates user_groups / group_members / group_models with the
 // same collation as users.user_id (see migrateManagedModels).
 func (m *MySQLStore) migrateUserGroups() error {
-	collation := "utf8mb4_unicode_ci"
-	var detected sql.NullString
-	_ = m.db.QueryRow(`
-		SELECT COLLATION_NAME
-		FROM information_schema.COLUMNS
-		WHERE TABLE_SCHEMA = DATABASE()
-		  AND TABLE_NAME = 'users'
-		  AND COLUMN_NAME = 'user_id'
-	`).Scan(&detected)
-	if detected.Valid && detected.String != "" {
-		collation = detected.String
-	}
-	if err := validateMySQLCollation(collation); err != nil {
+	collation, err := m.usersCollation()
+	if err != nil {
 		return err
 	}
 

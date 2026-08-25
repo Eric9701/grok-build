@@ -652,6 +652,21 @@
       return `<span title="${esc(text)}">${esc(text)}</span>`;
     }
 
+    // 展示用：去掉上游 grok- 前缀。grok-build-plan → build-plan；explore 等保持原样。
+    function formatAgent(name) {
+      if (name == null || name === "") return "—";
+      const raw = String(name);
+      return raw.replace(/^grok-/i, "") || raw;
+    }
+
+    function agentMarkup(name) {
+      if (name == null || name === "") return `<span>—</span>`;
+      const raw = String(name);
+      const display = formatAgent(raw);
+      const title = display !== raw ? raw : display;
+      return `<span class="mono" title="${esc(title)}">${esc(display)}</span>`;
+    }
+
     function preBlock(value) {
       const text = value == null || value === "" ? "—" : String(value);
       return `<pre class="detail-pre">${esc(text)}</pre>`;
@@ -672,7 +687,7 @@
       if (!report) return;
       $("detailTitle").textContent = report.description || "任务详情";
       $("detailSubtitle").innerHTML =
-        `${statusBadge(report.status, report.success)} <span class="mono" style="margin-left:0.45rem">${esc(report.subagentType || "—")}</span>`;
+        `${statusBadge(report.status, report.success)} <span style="margin-left:0.45rem">${agentMarkup(report.subagentType)}</span>`;
       $("reportDetailBody").innerHTML = `
         <div class="detail-grid">
           <section class="detail-card">
@@ -683,7 +698,7 @@
                 <dt>用户</dt><dd>${field(report.email || report.userId)}</dd>
                 <dt>User ID</dt><dd class="mono">${field(report.userId)}</dd>
                 <dt>Team ID</dt><dd class="mono">${field(report.teamId)}</dd>
-                <dt>Agent</dt><dd class="mono">${field(report.subagentType)}</dd>
+                <dt>Agent</dt><dd>${agentMarkup(report.subagentType)}</dd>
                 <dt>Model</dt><dd class="mono">${field(report.model)}</dd>
                 <dt>Routing</dt><dd class="mono">${field(report.modelRouting)}</dd>
                 <dt>状态</dt><dd>${statusBadge(report.status, report.success)}</dd>
@@ -855,7 +870,7 @@
         return `
         <tr>
           <td>
-            <div class="mono">${esc(a.subagentType)}</div>
+            <div>${agentMarkup(a.subagentType)}</div>
             <div style="margin-top:0.35rem;height:4px;border-radius:99px;background:var(--line);overflow:hidden">
               <div style="width:${pct}%;height:100%;background:var(--accent);opacity:0.75"></div>
             </div>
@@ -915,7 +930,7 @@
         return `
         <tr class="clickable" data-report-idx="${i}">
           <td class="truncate" title="${esc(r.description || "")}">${esc(r.description || "—")}</td>
-          <td><span class="mono">${esc(r.subagentType)}</span></td>
+          <td>${agentMarkup(r.subagentType)}</td>
           <td class="truncate" title="${esc(model)}"><span class="mono">${esc(model)}</span></td>
           <td class="truncate" title="${esc(routing)}"><span class="mono">${esc(routing)}</span></td>
           <td>${statusBadge(r.status, r.success)}</td>

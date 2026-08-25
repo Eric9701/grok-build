@@ -53,4 +53,6 @@ node_modules/
 
 # Compat junction -> services/atlas-plugins/plugins/atlas-sdd (do not duplicate)
 /services/sdd/
+/services/jetbrains-cc-gui/
+/services/jetbrains*
 

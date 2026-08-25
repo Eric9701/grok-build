@@ -1,0 +1,18 @@
+---
+description: 项目记忆入口：术语、手册、易错约定的指针
+alwaysApply: true
+---
+
+# Atlas 项目记忆
+
+先读 [CONTEXT-MAP.md](../../CONTEXT-MAP.md)。会话沉淀的约定与易错点在 [docs/project-memory.md](../../docs/project-memory.md)，不要凭对话印象改家目录、遥测开关或 ENC 行为。
+
+| 主题 | 权威位置 |
+|---|---|
+| 研发流程 / SDD×skills | `CONTEXT.md`、`docs/adr/0001`–`0004` |
+| Atlas Home、Native/Plugin Skill、登录门控 | `docs/CONTEXT-runtime.md` |
+| 账号、Catalog ID、Task Report、OAuth refresh 落库 | `services/atlas-server/CONTEXT.md`、`docs/project-memory.md` |
+| 遥测门控、构建口令 | `atlas-telemetry-ops` 规则 |
+| 托管模型 ENC | `atlas-managed-models` 规则 |
+
+高频：用户级插件在 `~/.atlas/installed-plugins` 且须 `[plugins].enabled`；斜杠列表才是加载结果。项目级 `.atlas/plugins` / `.atlas/skills` 尚未扫描。Linux 老 glibc 用 musl，见编译手册。

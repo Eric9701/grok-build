@@ -62,6 +62,8 @@ var (
 	ErrSessionExpired    = errors.New("session expired")
 	ErrMachineCodeInUse  = errors.New("machine code already in use")
 	ErrMachineCodeNeeded = errors.New("machine code required")
+	ErrRefreshNotFound   = errors.New("refresh token not found")
+	ErrRefreshExpired    = errors.New("refresh token expired")
 )
 
 // UserStore persists accounts and web login sessions.

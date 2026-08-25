@@ -23,8 +23,10 @@ Remote settings：`download/probe_settings.json` → `GET /atlas/v1/settings`。
 ## Task Reports Admin
 
 - 页：`/atlas/admin/task-reports`
+- 字段：`model` = Catalog ID；`modelRouting` = 明文 Routing Name（可空）。排行按 Catalog ID。
 - 整体汇总含 `agents`、`models`、`users`、`summary.uniqueModels`
-- 个人 `aggregate=1` 返回 agents + models；明细表含 Model 列
+- 个人 `aggregate=1` 返回 agents + models；明细表含 Model / Routing；单笔可看详情
+- 该页只改 `services/atlas-server` 的 `web` 即可
 
 ## CLI 何时打 `/models`
 

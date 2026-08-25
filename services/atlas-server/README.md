@@ -92,6 +92,8 @@ atlas login --device-auth
 3. Open the device URL, enter CLI `user_code` and your account **machine code**, click **Approve**
 4. CLI polls `/atlas/oauth2/token` and writes `~/.atlas/auth.json`
 
+OAuth **refresh tokens are stored in MySQL** (`refresh_tokens`). Device codes stay in process memory for the 15-minute login window. Restarting atlas-server does not invalidate existing CLI sessions.
+
 ## Environment
 
 Env vars override the config file. Common overrides:

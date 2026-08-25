@@ -29,13 +29,13 @@ func main() {
 		log.Fatalf("bootstrap user: %v", err)
 	}
 
-	deviceStore := store.NewMemoryStore()
+	authStore := store.NewAuthStore(userStore)
 	pages, err := loadPages()
 	if err != nil {
 		log.Fatalf("parse web pages: %v", err)
 	}
 
-	handler := server.New(cfg, deviceStore, userStore, pages)
+	handler := server.New(cfg, authStore, userStore, pages)
 	log.Printf("atlas-server listening on %s (public base %s)", cfg.Addr, cfg.PublicBaseURL)
 	log.Printf("account login: %s/login", cfg.PublicBaseURL)
 	log.Printf("device login: %s/oauth2/device (requires web login + machine code)", cfg.PublicBaseURL)

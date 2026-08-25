@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Atlas 用户指南</title>
+<title>Atlas Runtime 用户指南</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
@@ -146,6 +146,8 @@ tr:nth-child(even) { background: rgba(255,255,255,.02); }
 <li><a href="#ch-23" data-label="23 agent dashboard">23. Agent Dashboard</a></li>
 <li><a href="#ch-24" data-label="24 外部 opentelemetry">24. 外部 OpenTelemetry</a></li>
 <li><a href="#ch-25" data-label="25 状态栏">25. 状态栏</a></li>
+<li class="tier">企业研发</li>
+<li><a href="#ch-26" data-label="26 ask-atlas 与 atlas-sdd">26. ask-atlas 与 atlas-sdd</a></li>
 </ul>
 </nav>
 <main id="main">
@@ -154,12 +156,13 @@ tr:nth-child(even) { background: rgba(255,255,255,.02); }
 <h2>Atlas 用户指南</h2>
 <section id="ch-00-intro">
 <h3>关于本指南</h3>
-<p>本指南基于仓库内英文用户文档 <code>crates/codegen/xai-grok-pager/docs/user-guide/</code>（README + 01–25）整理为中文精编。产品名统一为 <strong>Atlas</strong>，CLI 命令为 <code>atlas</code>，配置目录为 <code>~/.atlas/</code>（Windows：<code>%USERPROFILE%\.atlas</code>）。更细的原文细节可对照英文源文件。</p>
+<p>本指南基于仓库内英文用户文档 <code>crates/codegen/xai-grok-pager/docs/user-guide/</code>（README + 01–25）整理为中文精编，并补充企业插件用法（第 26 章）。产品名统一为 <strong>Atlas</strong>，CLI 命令为 <code>atlas</code>，配置目录为 <code>~/.atlas/</code>（Windows：<code>%USERPROFILE%\.atlas</code>）。</p>
 <h3>文档分层</h3>
 <table><thead><tr><th>层级</th><th>章节</th><th>内容</th></tr></thead><tbody>
 <tr><td><strong>Tier1 必备</strong></td><td>01–05</td><td>安装、认证、快捷键、斜杠命令、配置</td></tr>
 <tr><td><strong>Tier2 核心</strong></td><td>06–13</td><td>主题、MCP、Skills、Plugins、Hooks、模型、AGENTS.md、Memory</td></tr>
 <tr><td><strong>Tier3 进阶</strong></td><td>14–25</td><td>无头、ACP、子代理、会话、沙箱、Plan、后台、终端、权限、Dashboard、OTEL、状态栏</td></tr>
+<tr><td><strong>企业研发</strong></td><td>26</td><td><code>/ask-atlas</code> 主流程与 <code>atlas-sdd</code> 角色执行器</td></tr>
 </tbody></table>
 <h3>快速开始</h3>
 <pre><code># 安装（内网示例）
@@ -169,8 +172,10 @@ curl -fsSL http://10.218.220.237:22255/atlas/cli/install.sh | bash  # Unix
 # 登录
 atlas login --device-auth
 
-# 启动
-atlas</code></pre>
+# 启动后常用
+atlas
+/ask-atlas 修一下登录偶发 401</code></pre>
+<p>企业安装一般会带上 <code>atlas-skills</code>（含 <code>/ask-atlas</code>）与 <code>atlas-sdd</code>。用法见 <a href="#ch-26">第 26 章</a>。</p>
 </section>
 </article>
 <article class="chapter" id="ch-01">
@@ -384,7 +389,7 @@ RUST_LOG=debug atlas -p "hello" 2&gt; /tmp/atlas.log</code></pre>
 <table><thead><tr><th>状态</th><th>效果</th></tr></thead><tbody>
 <tr><td>运行中（默认模式）</td><td><code>Esc</code> 立即取消（保留草稿）</td></tr>
 <tr><td>运行中（fullscreen vim）</td><td><code>Esc</code> 无操作；用 <code>Ctrl+C</code></td></tr>
-<tr><td>空闲 + 非空 prompt</td><td>800ms 内双 <code>Esc</code> 清空</td></tr>
+<tr><td>空闲 + 非空 prompt</td><td>800ms 内双 <code>Esc</code> 清空并<strong>暂存</strong>草稿（<code>Ctrl+S</code> 可恢复，含图片）</td></tr>
 <tr><td>空闲 + 空 prompt + 有消息</td><td>双 <code>Esc</code> 打开 rewind</td></tr>
 </tbody></table>
 </section>
@@ -394,9 +399,12 @@ RUST_LOG=debug atlas -p "hello" 2&gt; /tmp/atlas.log</code></pre>
 <tr><td><code>Ctrl+P</code> / <code>?</code></td><td>命令面板</td></tr>
 <tr><td><code>Ctrl+M</code></td><td>模型选择（prompt 聚焦时切换多行）</td></tr>
 <tr><td><code>Ctrl+O</code></td><td>切换 always-approve</td></tr>
-<tr><td><code>Ctrl+S</code></td><td>会话选择器</td></tr>
+<tr><td><code>Ctrl+S</code> / <code>Alt+S</code></td><td>暂存 / 弹出输入草稿（空 composer 恢复最近一次；发送后自动还原）</td></tr>
+<tr><td><code>F3</code></td><td>会话选择器（欢迎页与会话内均可；等同 <code>/resume</code>）</td></tr>
+<tr><td><code>Ctrl+G</code></td><td>minimal 下用外部编辑器改<strong>现有</strong>草稿（全屏用命令面板或 <code>/edit-prompt</code>）</td></tr>
 <tr><td><code>Ctrl+B</code></td><td>前台命令转后台</td></tr>
-<tr><td><code>Shift+Tab</code></td><td>循环模式 Normal→Plan→Always-approve</td></tr>
+<tr><td><code>Shift+Tab</code></td><td>循环模式 Normal→Plan→Auto（功能开启时）→Always-approve</td></tr>
+<tr><td><code>↑</code>（空 prompt）</td><td>有排队则聚焦队列末行；否则浏览本会话 prompt 历史</td></tr>
 <tr><td><code>!</code></td><td>Shell 模式</td></tr>
 </tbody></table>
 <p>运行中发送：<code>Ctrl+Enter</code>（VS Code 族用 <code>Ctrl+L</code>）立即发送并取消当前 turn。</p>
@@ -427,6 +435,8 @@ RUST_LOG=debug atlas -p "hello" 2&gt; /tmp/atlas.log</code></pre>
 <tr><td>Enter</td><td>打开/回复/派发</td></tr>
 <tr><td>Ctrl+/</td><td>搜索过滤</td></tr>
 <tr><td>Ctrl+X</td><td>取消 turn；2s 内连按永久删除</td></tr>
+<tr><td>Esc</td><td>关闭 peek，不结束会话</td></tr>
+<tr><td>Shift+Tab</td><td>权限循环含 Auto（功能开启时）</td></tr>
 </tbody></table>
 </section>
 <section id="ch-03-paste">
@@ -452,7 +462,7 @@ RUST_LOG=debug atlas -p "hello" 2&gt; /tmp/atlas.log</code></pre>
 <tr><td><code>/session-info</code> (<code>/status</code>)</td><td>会话详情</td></tr>
 <tr><td><code>/fork</code></td><td>分支会话</td></tr>
 <tr><td><code>/rewind</code> (<code>/undo</code>)</td><td>回滚到早期 turn</td></tr>
-<tr><td><code>/copy [N] [path]</code></td><td>复制最近回复</td></tr>
+<tr><td><code>/copy [N] [path]</code></td><td>复制最近回复的<strong>源 markdown</strong>（非渲染文本）；数字取倒数第 N 条，路径则写入文件（SSH 下更有用）</td></tr>
 <tr><td><code>/export</code></td><td>导出对话</td></tr>
 <tr><td><code>/rename</code> / <code>/title</code></td><td>重命名会话</td></tr>
 <tr><td><code>/delete</code></td><td>删除当前会话</td></tr>
@@ -464,13 +474,17 @@ RUST_LOG=debug atlas -p "hello" 2&gt; /tmp/atlas.log</code></pre>
 <h3>模型与模式</h3>
 <table><thead><tr><th>命令</th><th>说明</th></tr></thead><tbody>
 <tr><td><code>/model &lt;name&gt;</code> (<code>/m</code>)</td><td>切换模型</td></tr>
-<tr><td><code>/effort &lt;level&gt;</code></td><td>推理强度 low/medium/high/xhigh</td></tr>
-<tr><td><code>/always-approve</code> / <code>/auto</code></td><td>权限模式切换</td></tr>
+<tr><td><code>/effort &lt;level&gt;</code></td><td>推理强度 low/medium/high/xhigh；<code>/new</code> / <code>/clear</code> 后仍保留上次选择</td></tr>
+<tr><td><code>/always-approve</code> / <code>/auto</code></td><td>权限模式切换；<code>/auto</code> 仅在 Auto 功能开启时出现</td></tr>
 <tr><td><code>/multiline</code> (<code>/ml</code>)</td><td>多行输入</td></tr>
+<tr><td><code>/history</code></td><td>模糊搜索本会话 prompt 历史，Enter/Tab 填回输入框</td></tr>
+<tr><td><code>/compact-mode</code></td><td>紧凑显示（少留白）</td></tr>
 <tr><td><code>/vim-mode</code></td><td>Vim scrollback 导航</td></tr>
-<tr><td><code>/minimal</code> / <code>/fullscreen</code></td><td>渲染模式切换</td></tr>
+<tr><td><code>/edit-prompt</code></td><td>用外部编辑器写草稿（<code>$VISUAL</code> → <code>$EDITOR</code> → <code>vi</code>）；斜杠本身会清空输入，改现有草稿请用命令面板或 minimal 下 <code>Ctrl+G</code></td></tr>
+<tr><td><code>/minimal</code> / <code>/fullscreen</code> (<code>/full</code>)</td><td><strong>进程内</strong>切换渲染模式，不重启；进行中回复、草稿、队列、权限模式会保留。默认用 <code>[ui] screen_mode</code>。异常终端可设 <code>GROK_SCREEN_MODE_SWITCH=exec</code> 恢复旧的重启行为</td></tr>
 <tr><td><code>/plan [desc]</code></td><td>进入 Plan 模式</td></tr>
 <tr><td><code>/view-plan</code></td><td>预览当前计划</td></tr>
+<tr><td><code>/timestamps</code></td><td>开关消息时间戳</td></tr>
 </tbody></table>
 </section>
 <section id="ch-04-memory-cmd">
@@ -485,25 +499,32 @@ RUST_LOG=debug atlas -p "hello" 2&gt; /tmp/atlas.log</code></pre>
 <section id="ch-04-ext">
 <h3>扩展与其他</h3>
 <table><thead><tr><th>命令</th><th>说明</th></tr></thead><tbody>
-<tr><td><code>/hooks</code> / <code>/plugins</code> / <code>/marketplace</code> / <code>/skills</code> / <code>/mcps</code></td><td>扩展模态框各标签</td></tr>
-<tr><td><code>/config-agents</code> (<code>/agents</code>)</td><td>代理定义（非 Dashboard）</td></tr>
+<tr><td><code>/hooks</code> / <code>/plugins</code> (<code>/plugin</code>) / <code>/marketplace</code> / <code>/skills</code> / <code>/mcps</code></td><td>扩展模态框各标签</td></tr>
+<tr><td><code>/config-agents</code> (<code>/agents</code>)</td><td>代理定义（含插件提供的 agent，非 Dashboard）</td></tr>
 <tr><td><code>/personas</code></td><td>人格管理</td></tr>
+<tr><td><code>/ask-atlas</code></td><td>企业主流程路由器（atlas-skills）；见 <a href="#ch-26">第 26 章</a></td></tr>
+<tr><td><code>/atlas-sdd</code> (<code>/sdd</code>)</td><td>企业 SDD 角色入口（atlas-sdd 插件）；见 <a href="#ch-26">第 26 章</a></td></tr>
 <tr><td><code>/goal</code></td><td>自主目标</td></tr>
-<tr><td><code>/deep-research &lt;query&gt;</code></td><td>后台深度研究</td></tr>
-<tr><td><code>/workflow</code> / <code>/workflows</code></td><td>工作流管理</td></tr>
+<tr><td><code>/deep-research &lt;query&gt;</code></td><td>后台深度研究；进度看 <code>/workflow runs</code></td></tr>
+<tr><td><code>/workflow [name]</code></td><td>启动已保存工作流或管理运行；空格后可补全名称及 <code>runs</code>/<code>pause</code>/<code>resume</code>/<code>stop</code>/<code>save</code>。支持 <code>--agent-budget N</code>、<code>--effort LEVEL</code></td></tr>
+<tr><td><code>/workflow runs</code></td><td>全屏打开运行看板（阶段、agent 花名册、进度）；minimal / 非 TUI 打印文本一览。详情里 <code>p</code> 暂停、<code>r</code> 恢复、<code>x</code> 停止、<code>s</code> 保存脚本</td></tr>
+<tr><td><code>/workflows</code></td><td>扩展模态框的工作流目录（内置 / 项目 <code>.atlas/workflows</code> / 用户 <code>~/.atlas/workflows</code>），只浏览不启动</td></tr>
 <tr><td><code>/loop [interval] &lt;prompt&gt;</code></td><td>定时循环任务</td></tr>
-<tr><td><code>/theme</code> (<code>/t</code>)</td><td>主题（fullscreen only）</td></tr>
+<tr><td><code>/theme</code> (<code>/t</code>)</td><td>主题（仅 fullscreen）</td></tr>
 <tr><td><code>/settings</code> (<code>/config</code>)</td><td>设置模态框</td></tr>
-<tr><td><code>/doctor</code></td><td>终端/剪贴板/沙箱诊断</td></tr>
+<tr><td><code>/doctor</code></td><td>终端/剪贴板/沙箱诊断；<code>/doctor fix</code> 列出可自动修复项</td></tr>
 <tr><td><code>/login</code> / <code>/logout</code></td><td>登录/登出</td></tr>
 <tr><td><code>/usage</code> (<code>/cost</code>)</td><td>用量/计费</td></tr>
 <tr><td><code>/privacy</code></td><td>编码数据保留与训练设置</td></tr>
 <tr><td><code>/docs</code> / <code>/tutorial</code></td><td>内置文档与教程</td></tr>
-<tr><td><code>/feedback</code></td><td>反馈</td></tr>
-<tr><td><code>/btw</code></td><td>旁路提问不中断当前任务</td></tr>
+<tr><td><code>/release-notes</code> (<code>/changelog</code>)</td><td>当前版本发行说明</td></tr>
+<tr><td><code>/import-claude</code></td><td>从 <code>~/.claude</code> 导入权限、环境变量、MCP、hooks、路径</td></tr>
+<tr><td><code>/feedback [message]</code></td><td>反馈（Enter 发送；可粘贴图片；团队账号可能不出现 trace 同意卡）</td></tr>
+<tr><td><code>/btw</code></td><td>旁路提问不中断当前任务；回复到达后仍会走完等待</td></tr>
 <tr><td><code>/imagine</code> / <code>/imagine-video</code></td><td>图像/视频生成</td></tr>
 </tbody></table>
-<p>启用且 <code>user-invocable: true</code> 的 Skill 亦显示为斜杠命令；与内置命令重名时用 <code>/plugin:name</code> 限定。</p>
+<p>启用且 <code>user-invocable: true</code> 的 Skill 亦显示为斜杠命令；与内置重名时内置占 <code>/name</code>，Skill 用 <code>/plugin:name</code> 或 <code>/local:name</code>。菜单按固定顺序排列，并带 builtin / skill / plugin 标记。</p>
+<p><strong>按渲染模式隐藏：</strong>仅 fullscreen — <code>/find</code>、<code>/jump</code>、<code>/timeline</code>、<code>/theme</code>、<code>/tutorial</code>、<code>/dashboard</code>；仅 minimal — <code>/expand</code>。<code>/workflow runs</code> 在 minimal 下降级为文本，不拒绝。</p>
 </section>
 </article>
 <article class="chapter" id="ch-05">
@@ -703,10 +724,12 @@ headers = { Authorization = "Bearer ${TOKEN}" }</code></pre>
 <pre><code>atlas mcp list
 atlas mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /path
 atlas mcp add --transport http sentry https://mcp.sentry.dev/mcp
+atlas mcp add remote https://mcp.example.com/api   # http(s) URL 自动推断 HTTP 传输
 atlas mcp remove github
 atlas mcp enable/disable github
 atlas mcp doctor</code></pre>
-<p>项目级：<code>.atlas/config.toml</code>，优先级 cwd &gt; repo-root &gt; user。</p>
+<p>项目级：<code>.atlas/config.toml</code>，优先级 cwd &gt; repo-root &gt; user。合并与发现按<strong>服务器名</strong>，不按 URL。stdio MCP 在后台启动，不堵住会话。</p>
+<p>远程 HTTP/SSE 默认带 <code>User-Agent: grok-cli/&lt;version&gt;</code>；<code>headers</code> 里写合法 <code>User-Agent</code> 可覆盖。MCP 可弹出 elicitation（等人确认）。</p>
 </section>
 <section id="ch-07-runtime">
 <h3>运行时</h3>
@@ -744,7 +767,7 @@ atlas plugin install deploy-tools --trust
 atlas plugin list
 atlas plugin update
 atlas plugin enable/disable &lt;name&gt;</code></pre>
-<p><code>/plugins</code> 打开五标签扩展模态框。插件默认关闭；<strong>信任（trust）</strong> 后才激活 hooks/MCP/LSP。</p>
+<p><code>/plugins</code>（别名 <code>/plugin</code>）打开扩展模态框。插件默认关闭；<strong>信任（trust）</strong> 后才激活 hooks/MCP/LSP。插件提供的 agent 会出现在 <code>/agents</code>。</p>
 <pre><code>[plugins]
 paths = ["~/my-plugins"]
 disabled = ["noisy-plugin"]</code></pre>
@@ -1023,7 +1046,7 @@ atlas doctor --json
 <tr><td>bypassPermissions (always-approve)</td><td>跳过普通提示</td><td>CI/ACP</td></tr>
 <tr><td>acceptEdits</td><td>编辑免 prompt</td><td>本地编码</td></tr>
 </tbody></table>
-<p>设置：<code>Shift+Tab</code>、<code>Ctrl+O</code>、<code>/always-approve</code>、<code>--yolo</code>、<code>[ui] permission_mode</code>、<code>.claude/settings.json</code> defaultMode。</p>
+<p>设置：<code>Shift+Tab</code>（含 Auto）、<code>Ctrl+O</code>、<code>/always-approve</code>、<code>--yolo</code>、<code>[ui] permission_mode</code>、<code>.claude/settings.json</code> defaultMode。交互 TUI 默认偏 Auto（功能开启时）。</p>
 </section>
 <section id="ch-22-rules">
 <h3>规则</h3>
@@ -1047,6 +1070,7 @@ pattern = "src/**"</code></pre>
 <tr><td><code>MCPTool(...)</code></td><td>MCP 工具调用</td></tr>
 </tbody></table>
 <p>CLI：<code>--allow 'Bash(npm test*)'</code>、<code>--deny 'Edit(**/.env)'</code>。Claude 兼容：<code>.claude/settings.json</code> 中 permissions。</p>
+<p>项目 <code>.atlas/config.toml</code> / <code>.claude/settings.json</code> 的权限规则受 <strong>folder trust</strong> 门控：未信任的仓库会跳过这些规则并弹出信任询问。已记住的交互授权在 Atlas Home <code>sessions/&lt;编码后的项目根&gt;/permission.toml</code>；删文件即重置该项目授权。</p>
 <p>沙箱（<a href="#ch-18">第 18 章</a>）提供 OS 级 FS/网络隔离，与 permission 模式互补。</p>
 </section>
 </article>
@@ -1064,7 +1088,7 @@ pattern = "src/**"</code></pre>
 <tr><td>Ctrl+T</td><td>固定/取消固定</td></tr>
 <tr><td>Ctrl+X</td><td>取消 turn / 连按删除</td></tr>
 <tr><td>Ctrl+G</td><td>按状态/目录分组</td></tr>
-<tr><td>Esc</td><td>逐级返回</td></tr>
+<tr><td>Esc</td><td>关闭 peek / 模态，不结束会话</td></tr>
 </tbody></table>
 <p>非 <code>/config-agents</code>（代理定义）亦非 <code>/resume</code>（磁盘历史）。minimal 下隐藏。</p>
 </section>
@@ -1109,6 +1133,143 @@ items = ["cwd", "model", "context"]
 <tr><td>session-name</td><td>会话名</td></tr>
 </tbody></table>
 <p><code>type=command</code> 时 stdin 接收 JSON（cwd、session_id、model、context_window、workspace.branch 等）。仅全屏 pager 显示；minimal 用终端标题。</p>
+</section>
+</article>
+
+<article class="chapter" id="ch-26">
+<span class="tier-badge">企业研发</span>
+<h2>ask-atlas 与 atlas-sdd</h2>
+<p>企业侧把研发技能拆成两个 marketplace 插件（Light Coupling，互不合并包体）：</p>
+<table><thead><tr><th>插件</th><th>职责</th><th>入口</th></tr></thead><tbody>
+<tr><td><code>atlas-skills</code></td><td><strong>Main Flow</strong>：想法 → 交付的主干技能包</td><td><code>/ask-atlas</code></td></tr>
+<tr><td><code>atlas-sdd</code></td><td><strong>Role Executor</strong>：按阶段执行企业规范（<code>spec/</code>）</td><td><code>/atlas-sdd</code>、<code>/1-requirement-analyst</code> 等</td></tr>
+</tbody></table>
+<p><code>/ask-atlas</code> 是唯一主流程路由器；SDD 角色<strong>不是</strong>第二条主干。阶段交接走仓库内 <strong>Documents Contract</strong>（<code>documents/…</code>）。</p>
+
+<section id="ch-26-install">
+<h3>安装与确认</h3>
+<p>企业安装脚本一般已 best-effort 安装两插件。手工补装或更新：</p>
+<pre><code>atlas plugin marketplace add https://gitlab.imyai.cn/zhangyufeng/atlas-plugins.git
+atlas plugin install atlas-sdd --trust
+atlas plugin install atlas-skills --trust
+
+atlas plugin marketplace update
+atlas plugin update atlas-sdd
+atlas plugin update atlas-skills
+atlas plugin list</code></pre>
+<ul>
+<li>装好后须<strong>新开一个 CLI / 编辑器会话</strong>，斜杠列表才会带上新技能。</li>
+<li>斜杠出现 <code>/ask-atlas</code> ⇒ <code>atlas-skills</code> 已加载；出现需求分析等角色命令 ⇒ <code>atlas-sdd</code> 已加载。</li>
+<li>只升其中一个时，看 <code>~/.atlas/installed-plugins/registry.json</code> 的版本，不要只看源码 <code>plugin.json</code>。</li>
+<li>跳过安装：环境变量 <code>GROK_SKIP_ATLAS_SDD=1</code> / <code>GROK_SKIP_ATLAS_SKILLS=1</code>。</li>
+</ul>
+</section>
+
+<section id="ch-26-ask-atlas">
+<h3>/ask-atlas（Main Flow）</h3>
+<p>在项目根目录启动 <code>atlas</code>（或 VS Code / Cursor 侧边栏），输入 <code>/ask-atlas</code> 并描述意图。它会按情况选技能或企业阶段，而不是立刻写代码。</p>
+<h4>主流程：想法 → 交付</h4>
+<ol>
+<li><strong><code>/grill-with-docs</code></strong> — 在工作目录里拷问，沉淀 <code>CONTEXT.md</code> / ADR（无工作目录时用 <code>/grill-me</code>）。</li>
+<li><strong>能否在对话里说清？</strong> 需要可运行答案时，经 <code>/handoff</code> 进 <code>/prototype</code>，再 handoff 回来。</li>
+<li><strong>是否跨多会话？</strong>
+  <ul>
+  <li>是 → <code>/to-spec</code> → <code>/to-tickets</code> → 每个票据单独 <code>/implement</code>（票据间 <code>/clear</code>）</li>
+  <li>否 → 同会话直接 <code>/implement</code></li>
+  </ul>
+</li>
+</ol>
+<p><code>/implement</code> 内部按 <code>/tdd</code> 红绿切片，收尾跑 <code>/code-review</code>（Standards + Spec 双轴）。单独用 <code>/tdd</code> / <code>/code-review</code> 也可。</p>
+<p>拷问 → 出票尽量保持<strong>同一上下文窗口</strong>，不要过早 <code>/compact</code>；每个 <code>/implement</code> 再开干净上下文。</p>
+<h4>汇入主流程的入口</h4>
+<table><thead><tr><th>场景</th><th>技能</th></tr></thead><tbody>
+<tr><td>堆积的缺陷 / 外来需求</td><td><code>/triage</code>（不要 triage <code>/to-tickets</code> 已产出的票）</td></tr>
+<tr><td>难复现 / 间歇 / 回归</td><td><code>/diagnosing-bugs</code>（先有变红的复现命令再改）</td></tr>
+<tr><td>超大、方向不清的工程</td><td><code>/wayfinder</code>（出决策图，再并入 <code>/to-spec</code>，不要直接 implement）</td></tr>
+<tr><td>空闲时改善可维护性</td><td><code>/improve-codebase-architecture</code></td></tr>
+</tbody></table>
+<h4>常用斜杠一览</h4>
+<table><thead><tr><th>命令</th><th>用途</th></tr></thead><tbody>
+<tr><td><code>/ask-atlas</code></td><td>路由器：按意图选技能或企业阶段</td></tr>
+<tr><td><code>/grill-with-docs</code></td><td>拷问并留下 CONTEXT / ADR</td></tr>
+<tr><td><code>/tdd</code></td><td>先红后绿实现一个行为</td></tr>
+<tr><td><code>/implement</code></td><td>按说明/票据实现（内走 tdd，收尾 code-review）</td></tr>
+<tr><td><code>/diagnosing-bugs</code></td><td>硬缺陷诊断</td></tr>
+<tr><td><code>/code-review</code></td><td>相对基点做 Standards + Spec 评审</td></tr>
+<tr><td><code>/to-spec</code> / <code>/to-tickets</code></td><td>多会话大功能：规格 → 票据</td></tr>
+</tbody></table>
+</section>
+
+<section id="ch-26-sdd">
+<h3>atlas-sdd（Role Executor）</h3>
+<p>按企业 SDD <strong>阶段</strong>执行，遵循插件内 <code>spec/</code>（Enterprise Spec Baseline）；项目可用 <code>.atlas/</code> / <code>documents/</code> 做 Project Override。</p>
+<table><thead><tr><th>角色</th><th>斜杠（阶段）</th><th>产物目录</th><th>默认链？</th></tr></thead><tbody>
+<tr><td>Role 1 需求分析</td><td><code>/1-requirement-analyst</code></td><td><code>documents/requirements-analyst/</code></td><td>是</td></tr>
+<tr><td>Role 2 架构设计</td><td><code>/2-architect-design</code></td><td><code>documents/architecture-design/</code></td><td><strong>否</strong>（Side Ramp）</td></tr>
+<tr><td>Role 3 详细设计</td><td><code>/3-program-design</code></td><td><code>documents/detailed-design/</code></td><td>是</td></tr>
+<tr><td>Role 4 实现</td><td><code>/4-software-engineer</code></td><td>代码（红绿切片）</td><td>是</td></tr>
+<tr><td>Role 6 测试</td><td><code>/6-qa-engineer</code></td><td><code>documents/test-cases/</code></td><td>enterprise-strict 收尾必有</td></tr>
+<tr><td>Role 7 运维</td><td>（ops 相关）</td><td>运维文档目录</td><td>Side Ramp</td></tr>
+<tr><td>Role 8 数据</td><td>（data/ETL 相关）</td><td>数据文档目录</td><td>Side Ramp</td></tr>
+</tbody></table>
+<p>亦可用 <code>/atlas-sdd</code>（别名 <code>/sdd</code>）选择角色。阶段命令只映射阶段；<strong>未拷问时不要用它们跳过</strong> <code>/grill-with-docs</code>。</p>
+<h4>默认门禁顺序</h4>
+<pre><code>Grill（父会话 /grill-with-docs）
+  → Role 1 需求
+  →（可选）Role 2 架构 —— 仅当你明确说「架构 / 架构设计」
+  → Role 3 详细设计
+  → Role 4 实现（内部 /tdd，不要整包 /implement）
+  → Close：父会话 /code-review
+       + enterprise-strict 时 Role 6 写测试用例</code></pre>
+<p><strong>合规模式</strong>（业务仓配置）：</p>
+<ul>
+<li><code>standard</code>（默认）— 已有等价详细设计时可不必强制整条角色链</li>
+<li><code>enterprise-strict</code> — 拷问后强制 <strong>1→3→4→6</strong>；Role 2 仍可选</li>
+</ul>
+</section>
+
+<section id="ch-26-nouns">
+<h3>用户话术怎么映射阶段</h3>
+<p><code>/ask-atlas</code> 里的名词表示<strong>当前阶段</strong>，不是「直接召唤会写那种文件的单个角色」：</p>
+<table><thead><tr><th>你说</th><th>打开的阶段</th></tr></thead><tbody>
+<tr><td>需求文档</td><td>Role 1</td></tr>
+<tr><td>设计文档 / 详细设计</td><td>Role 3（不是 Role 2）</td></tr>
+<tr><td>架构 / 架构设计</td><td>可选 Role 2</td></tr>
+<tr><td>实现代码</td><td>Role 4（须已有详细设计）</td></tr>
+</tbody></table>
+<p>Role 1 <strong>不再做第二轮拷问</strong>；缺口回到父会话继续 grill。Role 3 前若无架构文档，会问你指定路径或确认跳过，<strong>不会</strong>因此自动拉起 Role 2。</p>
+</section>
+
+<section id="ch-26-recipes">
+<h3>三种典型用法</h3>
+<h4>1. 修 bug</h4>
+<pre><code>/ask-atlas 登录后偶发 401
+→ /diagnosing-bugs（或直接 /tdd）
+→ /code-review</code></pre>
+<p>不跑需求分析 / 架构角色。</p>
+<h4>2. 小功能（一个会话能说清）</h4>
+<pre><code>必要时 /grill-with-docs
+→ /implement 或 /tdd
+→ /code-review</code></pre>
+<h4>3. 要企业需求/设计文档再实现</h4>
+<pre><code>/ask-atlas …出需求文档
+→ 按提示先 /grill-with-docs（父会话多轮）
+→ Role 1 → documents/requirements-analyst/
+→ 「设计文档」→ Role 3（可引用已有架构；无则跳过 Role 2）
+→ 「实现代码」→ Role 4（红绿）
+→ 父会话 /code-review
+→（strict）Role 6 → documents/test-cases/</code></pre>
+</section>
+
+<section id="ch-26-troubleshoot">
+<h3>排错</h3>
+<table><thead><tr><th>现象</th><th>处理</th></tr></thead><tbody>
+<tr><td><code>/ask-atlas</code> 没有或像旧版</td><td><code>atlas plugin list</code> 是否有 <code>atlas-skills</code>；<code>plugin update</code> 后<strong>新开会话</strong></td></tr>
+<tr><td>没有企业角色命令</td><td>安装并 <code>--trust</code> <code>atlas-sdd</code></td></tr>
+<tr><td>多源 marketplace 装不上</td><td>显式 <code>atlas-sdd@&lt;qualifier&gt;</code>，或保证 marketplace 源可扫</td></tr>
+<tr><td>插件有了但斜杠仍旧</td><td>新开终端 / 编辑器会话；确认 <code>[plugins].enabled</code> 未关</td></tr>
+</tbody></table>
+<p>更细的安装步骤见仓库 <code>docs/atlas-runtime-安装手册.md</code>；流程语义见 <code>CONTEXT.md</code> 与 ADR 0001–0004。</p>
 </section>
 </article>
 </main>

@@ -51,6 +51,27 @@ CREATE TABLE IF NOT EXISTS sessions (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
+-- refresh_tokens: CLI OAuth refresh tokens (must survive atlas-server restart)
+-- Device codes stay in-process; only refresh is durable.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    token       VARCHAR(128) NOT NULL COMMENT 'Opaque refresh token issued at /oauth2/token',
+    user_id     VARCHAR(64)  NOT NULL,
+    email       VARCHAR(255) NOT NULL DEFAULT '',
+    client_id   VARCHAR(255) NOT NULL DEFAULT '',
+    scope       VARCHAR(512) NOT NULL DEFAULT '',
+    expires_at  TIMESTAMP    NOT NULL,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (token),
+    KEY idx_refresh_tokens_user (user_id),
+    KEY idx_refresh_tokens_expires (expires_at),
+    CONSTRAINT fk_refresh_tokens_user
+        FOREIGN KEY (user_id) REFERENCES users (user_id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
 -- telemetry_traces: OTLP batches from CLI, attributed per user
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS telemetry_traces (
