@@ -321,7 +321,7 @@ export async function resolvePlanModeAvailability(opts: {
 }
 
 /**
- * Decision for "Update Grok Build CLI" (manual and extension-upgrade updates),
+ * Decision for "Update Atlas CLI" (manual and extension-upgrade updates),
  * given the installed version + platform.
  *
  * The #22 Windows update pause is **lifted** now that 0.2.71 fixes the regression —

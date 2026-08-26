@@ -7,6 +7,7 @@ describe("brandUserFacingText", () => {
     expect(brandUserFacingText("You've reached your free Grok Build usage limit")).toBe(
       "You've reached your free Atlas usage limit",
     );
+    expect(brandUserFacingText("Grok is still working")).toBe("Atlas is still working");
     expect(brandUserFacingText("Get SuperGrok for higher limits")).toBe("Get SuperGrok for higher limits");
   });
 });

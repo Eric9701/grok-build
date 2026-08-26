@@ -280,7 +280,7 @@ describe("provider UI pure policy", () => {
       { claude: { models: [], seenAt: 1 } },
     );
     expect(models.map((model) => `${model.provider}:${model.name}`)).toEqual([
-      "grok:Grok default",
+      "grok:Atlas default",
       "codex:Codex default",
       "claude:Claude default",
     ]);

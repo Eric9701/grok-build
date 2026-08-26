@@ -320,7 +320,7 @@ export function resolveExtensionRootFrom(
  * Downloads), so creating it does not raise a consent dialog, and it is
  * findable in Finder for a knowledge-work user.
  */
-export const DEFAULT_PROJECT_DIRNAME = "Grok Build";
+export const DEFAULT_PROJECT_DIRNAME = "Atlas";
 
 /**
  * The user's home directory the way the desktop app should create folders in
@@ -337,7 +337,7 @@ export function desktopUserHomeDir(
   return trimmed || homedir();
 }
 
-/** Preferred first-run project: `<home>/Grok Build`. */
+/** Preferred first-run project: `<home>/Atlas`. */
 export function preferredDefaultProjectPath(homeDir: string): string {
   return path.join(homeDir, DEFAULT_PROJECT_DIRNAME);
 }
@@ -372,7 +372,7 @@ function isUsableDirectory(p: string, io: DefaultProjectFs): boolean {
 }
 
 /**
- * Create the first-run default project folder. Prefer `~/Grok Build`. Any
+ * Create the first-run default project folder. Prefer `~/Atlas`. Any
  * failure — permissions, sandbox, the name already exists as a file —
  * silently uses `userData` instead. Never throws: a first-run error dialog
  * would be worse than landing in the profile directory.

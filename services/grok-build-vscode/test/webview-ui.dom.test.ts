@@ -868,7 +868,7 @@ describe("mode picker (the plan-gate entry path)", () => {
 
   it("disables only Plan with the host's version reason, then re-enables it", () => {
     const { window, posted, doc } = bootWebview();
-    const reason = "Plan mode requires Grok CLI 0.2.117 or newer; installed version is 0.2.100.";
+    const reason = "Plan mode requires Atlas CLI 0.2.117 or newer; installed version is 0.2.100.";
     dispatch(window, { type: "planModeAvailability", available: false, reason });
 
     const modeBtn = $(doc, "mode-btn") as HTMLButtonElement;
@@ -898,7 +898,7 @@ describe("mode picker (the plan-gate entry path)", () => {
   it("keeps Plan clickable when the host marks an unverified probe recheckable (#105)", () => {
     const { window, posted, doc } = bootWebview();
     const reason =
-      "Could not verify the installed Grok CLI version, so Plan mode is unavailable. " +
+      "Could not verify the installed Atlas CLI version, so Plan mode is unavailable. " +
       "The version check failed or timed out — a first run after install can be slow. " +
       "Pick Plan again or reload the window to retry. " +
       "Once verified, Plan requires 0.2.117 or newer.";
@@ -1130,6 +1130,7 @@ describe("gear settings lock (model + effort disabled while busy / priming)", ()
     expect(text).toContain("GPT-5.6 Sol");
     expect(text).toContain("GPT-5.6 Terra");
     expect(text).not.toContain("Grok Build");
+    expect(text).not.toContain("Atlas");
     expect(h.doc.querySelectorAll(".model-provider-heading")).toHaveLength(0);
   });
 
@@ -1272,7 +1273,7 @@ describe("provider onboarding", () => {
 
     const tiles = [...doc.querySelectorAll(".onb-agent-tile")] as HTMLButtonElement[];
     expect(tiles).toHaveLength(3);
-    expect(tiles[0].textContent).toContain("Grok");
+    expect(tiles[0].textContent).toContain("Atlas");
     expect(tiles[0].classList.contains("primary")).toBe(true);
     expect(tiles[1].textContent).toContain("Codex");
     expect(tiles[2].textContent).toContain("Claude");
@@ -1939,7 +1940,7 @@ describe("welcome version line (session-start lifecycle)", () => {
     const { window, doc } = bootWebview();
 
     dispatch(window, { type: "cliUpdating" });
-    expect(ver(doc)).toBe("Updating Grok Build CLI");
+    expect(ver(doc)).toBe("Updating Atlas CLI");
     expect(animating(doc)).toBe(true);
 
     dispatch(window, { type: "initialized", info: { version: "0.2.40" } });
@@ -2056,7 +2057,7 @@ describe("gear menu — Other group + About / Settings", () => {
     const text = overlay.textContent || "";
     expect(text).toContain("This extension");
     expect(text).toContain("v1.4.0");
-    expect(text).toContain("Grok Build CLI");
+    expect(text).toContain("Atlas CLI");
     expect(text).toContain("v0.2.33");
     expect(types(h.posted)).toContain("checkGrokUpdate");
   });
@@ -2073,7 +2074,7 @@ describe("gear menu — Other group + About / Settings", () => {
     const overlay = openAbout(h);
 
     const text = overlay.textContent || "";
-    expect(text).toContain("Grok Build CLI");
+    expect(text).toContain("Atlas CLI");
     expect(text).toContain("v0.2.117");
     expect(text).toContain("Codex CLI");
     expect(text).toContain("v0.146.0");
@@ -2177,7 +2178,7 @@ describe("gear menu — Other group + About / Settings", () => {
       });
       const overlay = aboutSurface(h);
       const text = overlay.textContent || "";
-      expect(text).toContain("Grok Build CLI");
+      expect(text).toContain("Atlas CLI");
       expect(text).toContain("Codex CLI");
       expect(text).not.toContain("Codex ACP adapter");
       expect(text).not.toContain("Codex update available");
@@ -2226,7 +2227,7 @@ describe("gear menu — Other group + About / Settings", () => {
     dispatch(h.window, { type: "grokUpdateStatus", current: "0.2.3", latest: "0.2.3", updateAvailable: false });
 
     const text = overlay.textContent || "";
-    expect(text).toContain("Grok Build CLI");
+    expect(text).toContain("Atlas CLI");
     expect(text).toContain("v0.2.3");
     expect(overlay.querySelector('[data-id="aboutGrokCli"]')!.textContent).not.toContain("—");
   });
@@ -2263,8 +2264,8 @@ describe("gear menu — Other group + About / Settings", () => {
       servers: [{ name: "managed_gateway:canva", displayName: "Canva", managed: true, enabled: true, status: "ready", toolCount: 32 }],
       warning: "This list is read-only. Connector enable/disable is machine-global and is not controlled here.",
     });
-    expect(h.doc.querySelector("#settings-overlay")?.textContent).toContain("Grok.com connectors");
-    expect(h.doc.querySelector("#settings-overlay")?.textContent).toContain("Local Grok connectors");
+    expect(h.doc.querySelector("#settings-overlay")?.textContent).toContain("Atlas connectors");
+    expect(h.doc.querySelector("#settings-overlay")?.textContent).toContain("Local Atlas connectors");
     expect(h.doc.querySelector("#settings-overlay")?.textContent).not.toContain("atlas.com managed");
     expect(h.doc.querySelector("#settings-overlay .settings-switch")).toBeNull();
   });
@@ -2508,7 +2509,7 @@ describe("thinking traces toggle (#26)", () => {
 
     expect(spoken).toEqual([
       "Which database should I use?",
-      "Grok is waiting for your permission. Review the request and choose an option.",
+      "Atlas is waiting for your permission. Review the request and choose an option.",
     ]);
     expect(spoken.join(" ")).not.toContain("private-file.txt");
   });

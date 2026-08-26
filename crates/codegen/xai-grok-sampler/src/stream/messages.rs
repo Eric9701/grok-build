@@ -12,7 +12,7 @@ use futures_util::stream::{BoxStream, Stream};
 use xai_grok_sampling_types::messages::{self, MessageStreamEvent};
 use xai_grok_sampling_types::{
     AssistantItem, ConversationItem, ConversationResponse, ResponseModelMetadata, SamplingError,
-    StopReason, TokenUsage, ToolCall, rs,
+    StopReason, TokenUsage, ToolCall, rs, uniquify_tool_calls,
 };
 
 use crate::events::{SamplingChannel, SamplingErrorInfo, SamplingEvent};
@@ -545,6 +545,7 @@ pub fn stream_messages<'a>(
             None
         };
 
+        uniquify_tool_calls(&mut assistant_tool_calls);
         let stop_reason = if !assistant_tool_calls.is_empty() {
             // Completed tool_use blocks win even over Refusal: the calls are
             // real model output the agent loop must resolve.

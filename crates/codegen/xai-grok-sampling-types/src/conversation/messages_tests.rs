@@ -509,3 +509,43 @@ fn upgrade_legacy_reasoning_singular_anthropic_no_id() {
     assert_eq!(r.id, "");
     assert_eq!(r.encrypted_content.as_deref(), Some("signature-bytes-here"));
 }
+
+#[test]
+fn build_messages_request_uniquifies_glm_colon_index_ids() {
+    let req = ConversationRequest::from_items(vec![
+        ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: ":1".into(),
+            name: "read_file".to_string(),
+            arguments: "{}".into(),
+        }]),
+        ConversationItem::tool_result(":1", "first"),
+        ConversationItem::user("again"),
+        ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: ":1".into(),
+            name: "read_file".to_string(),
+            arguments: "{}".into(),
+        }]),
+        ConversationItem::tool_result(":1", "second"),
+    ]);
+    let messages_req = build_messages_request(&req);
+    let mut tool_use_ids = Vec::new();
+    let mut tool_result_ids = Vec::new();
+    for msg in &messages_req.messages {
+        let crate::messages::MessageContent::Blocks(blocks) = &msg.content else {
+            continue;
+        };
+        for block in blocks {
+            match block {
+                crate::messages::ContentBlock::ToolUse { id, .. } => {
+                    tool_use_ids.push(id.as_str());
+                }
+                crate::messages::ContentBlock::ToolResult { tool_use_id, .. } => {
+                    tool_result_ids.push(tool_use_id.as_str());
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(tool_use_ids, ["_1", "call_dup1__1"]);
+    assert_eq!(tool_result_ids, ["_1", "call_dup1__1"]);
+}

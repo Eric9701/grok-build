@@ -411,16 +411,16 @@ describe("voice control: API-key setup hint", () => {
     h.posted.length = 0;
 
     const mic = $(h.doc, "mic-btn");
-    expect(mic.title).toContain("Voice needs Grok");
+    expect(mic.title).toContain("Voice needs Atlas");
     click(h.window, mic);
 
     expect(types(h.posted)).not.toContain("voiceStart");
     const confirm = h.doc.querySelector(".confirm-overlay") as HTMLElement;
     expect(confirm).toBeTruthy();
-    expect(confirm.textContent).toContain("Voice needs Grok");
-    expect(confirm.textContent).toContain("Connect Grok");
+    expect(confirm.textContent).toContain("Voice needs Atlas");
+    expect(confirm.textContent).toContain("Connect Atlas");
 
-    const go = [...confirm.querySelectorAll("button")].find((el) => el.textContent === "Connect Grok");
+    const go = [...confirm.querySelectorAll("button")].find((el) => el.textContent === "Connect Atlas");
     click(h.window, go!);
     await Promise.resolve();
     expect(h.doc.getElementById("settings-overlay")).toBeTruthy();
@@ -429,14 +429,14 @@ describe("voice control: API-key setup hint", () => {
   });
 
   it("host guidance for a missing Grok account is an information prompt, not an error", () => {
-    expect(sidebarSrc).toContain("Voice needs Grok connected. It uses the same xAI account for speech-to-text.");
-    expect(sidebarSrc).toMatch(/showInformationMessage\(\s*"Voice needs Grok connected/);
+    expect(sidebarSrc).toContain("Voice needs Atlas connected. It uses the same xAI account for speech-to-text.");
+    expect(sidebarSrc).toMatch(/showInformationMessage\(\s*"Voice needs Atlas connected/);
     const setup = sidebarSrc.slice(
       sidebarSrc.indexOf("private async promptVoiceKeySetup"),
       sidebarSrc.indexOf("private rejectVoiceStart"),
     );
     expect(setup).toContain('showInformationMessage');
-    expect(setup).not.toMatch(/showErrorMessage\(\s*"Voice needs Grok/);
+    expect(setup).not.toMatch(/showErrorMessage\(\s*"Voice needs Atlas/);
   });
 
   it("still starts when a dedicated key is configured even if Grok is disconnected", () => {

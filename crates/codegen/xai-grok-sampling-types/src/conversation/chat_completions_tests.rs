@@ -258,6 +258,86 @@ fn conversation_to_chat_messages_rewrites_duplicate_kimi_ids() {
 }
 
 #[test]
+fn conversation_to_chat_messages_rewrites_duplicate_colon_index_ids() {
+    let items = vec![
+        ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: ":1".into(),
+            name: "run_terminal_command".to_string(),
+            arguments: "{}".into(),
+        }]),
+        ConversationItem::tool_result(":1", "first"),
+        ConversationItem::user("hello"),
+        ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: ":1".into(),
+            name: "run_terminal_command".to_string(),
+            arguments: "{}".into(),
+        }]),
+        ConversationItem::tool_result(":1", "second"),
+    ];
+    let messages = conversation_to_chat_messages(items);
+    let assistant_ids: Vec<Option<String>> = messages
+        .iter()
+        .filter(|m| !m.tool_calls.is_empty())
+        .map(|m| m.tool_calls[0].id.clone())
+        .collect();
+    let tool_ids: Vec<Option<String>> = messages
+        .iter()
+        .filter_map(|m| m.tool_call_id.clone())
+        .map(Some)
+        .collect();
+    assert_eq!(
+        assistant_ids,
+        vec![Some(":1".to_string()), Some("call_dup1__1".to_string()),]
+    );
+    assert_eq!(
+        tool_ids,
+        vec![Some(":1".to_string()), Some("call_dup1__1".to_string()),]
+    );
+}
+
+#[test]
+fn conversation_to_chat_messages_fills_empty_tool_call_ids() {
+    let items = vec![
+        ConversationItem::assistant_tool_calls(vec![
+            ToolCall {
+                id: "".into(),
+                name: "read_file".to_string(),
+                arguments: "{}".into(),
+            },
+            ToolCall {
+                id: "".into(),
+                name: "grep".to_string(),
+                arguments: "{}".into(),
+            },
+        ]),
+        ConversationItem::tool_result("", "file"),
+        ConversationItem::tool_result("", "hits"),
+    ];
+    let messages = conversation_to_chat_messages(items);
+    let assistant = messages
+        .iter()
+        .find(|m| !m.tool_calls.is_empty())
+        .expect("assistant with tool calls");
+    let ids: Vec<String> = assistant
+        .tool_calls
+        .iter()
+        .map(|tc| tc.id.clone().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["call_anon1".to_string(), "call_anon2".to_string()]
+    );
+    let tool_ids: Vec<String> = messages
+        .iter()
+        .filter_map(|m| m.tool_call_id.clone())
+        .collect();
+    assert_eq!(
+        tool_ids,
+        vec!["call_anon1".to_string(), "call_anon2".to_string()]
+    );
+}
+
+#[test]
 fn test_assistant_with_content_and_tool_calls() {
     // Assistant can have both text content and tool calls
     let assistant = AssistantItem {

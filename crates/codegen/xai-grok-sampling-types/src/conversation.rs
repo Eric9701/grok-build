@@ -2204,14 +2204,17 @@ fn synthetic_dangling_result_text(name: &str, reason: DanglingToolCallReason) ->
 
 /// Make every assistant `tool_calls[].id` unique across the conversation.
 ///
-/// Kimi / GLM / Moonshot emit native ids such as `run_terminal_command:128`.
-/// Those ids are often unique only inside one model response, and two parallel
-/// calls of the same tool can share one id. The next Chat Completions request
-/// then 400s with `invalid_request_error: tool call id X is duplicated`.
+/// Kimi / GLM / Moonshot emit native ids such as `run_terminal_command:128`
+/// or a bare `:1`. Those ids are often unique only inside one model response,
+/// and two parallel calls of the same tool can share one id. Streaming
+/// providers also omit `id` entirely; the next Chat Completions request then
+/// 400s with `invalid_request_error: tool call id :1 is duplicated` because
+/// the upstream maps every blank id to `:1`.
 ///
-/// The first occurrence of an id is kept so the model's own counter can
-/// continue. Later occurrences become `call_dup{n}_{sanitized}` and matching
-/// [`ToolResult`]s are remapped in encounter order.
+/// Blank ids are filled with `call_anon{n}`. The first non-blank occurrence
+/// of an id is kept so the model's own counter can continue. Later
+/// occurrences become `call_dup{n}_{sanitized}` and matching [`ToolResult`]s
+/// are remapped in encounter order.
 ///
 /// Must run **before** [`dedup_duplicate_tool_results`]: two results that
 /// share a native id belong to two distinct calls after this rewrite.
@@ -2225,23 +2228,11 @@ pub fn rewrite_duplicate_tool_call_ids(conversation: &mut [ConversationItem]) ->
             ConversationItem::Assistant(a) => {
                 for tc in &mut a.tool_calls {
                     let original = tc.id.as_ref().to_string();
-                    if original.is_empty() {
-                        continue;
-                    }
-                    let assigned = if used.insert(original.clone()) {
-                        original.clone()
-                    } else {
+                    let assigned = assign_unique_tool_call_id(&original, &mut used);
+                    if assigned != original {
                         rewritten += 1;
-                        let mut n = 1u32;
-                        loop {
-                            let candidate = rewritten_tool_call_id(&original, n);
-                            if used.insert(candidate.clone()) {
-                                tc.id = Arc::<str>::from(candidate.as_str());
-                                break candidate;
-                            }
-                            n = n.saturating_add(1);
-                        }
-                    };
+                        tc.id = Arc::<str>::from(assigned.as_str());
+                    }
                     pending.entry(original).or_default().push_back(assigned);
                 }
             }
@@ -2263,29 +2254,43 @@ pub fn rewrite_duplicate_tool_call_ids(conversation: &mut [ConversationItem]) ->
 ///
 /// Use this on ingest (stream complete / non-streaming response) so two
 /// parallel calls of the same tool do not share an id while still in flight.
+/// Blank ids are filled the same way as [`rewrite_duplicate_tool_call_ids`].
 pub fn uniquify_tool_calls(tool_calls: &mut [ToolCall]) -> usize {
     let mut used: HashSet<String> = HashSet::new();
     let mut rewritten = 0;
     for tc in tool_calls.iter_mut() {
         let original = tc.id.as_ref().to_string();
-        if original.is_empty() {
-            continue;
+        let assigned = assign_unique_tool_call_id(&original, &mut used);
+        if assigned != original {
+            rewritten += 1;
+            tc.id = Arc::<str>::from(assigned.as_str());
         }
-        if used.insert(original.clone()) {
-            continue;
-        }
-        rewritten += 1;
+    }
+    rewritten
+}
+
+fn assign_unique_tool_call_id(original: &str, used: &mut HashSet<String>) -> String {
+    if original.trim().is_empty() {
         let mut n = 1u32;
         loop {
-            let candidate = rewritten_tool_call_id(&original, n);
+            let candidate = format!("call_anon{n}");
             if used.insert(candidate.clone()) {
-                tc.id = Arc::<str>::from(candidate.as_str());
-                break;
+                return candidate;
             }
             n = n.saturating_add(1);
         }
     }
-    rewritten
+    if used.insert(original.to_string()) {
+        return original.to_string();
+    }
+    let mut n = 1u32;
+    loop {
+        let candidate = rewritten_tool_call_id(original, n);
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        n = n.saturating_add(1);
+    }
 }
 
 fn rewritten_tool_call_id(original: &str, occurrence: u32) -> String {
@@ -4684,6 +4689,95 @@ mod tests {
         assert_eq!(uniquify_tool_calls(&mut calls), 1);
         assert_eq!(calls[0].id.as_ref(), "run_terminal_command:128");
         assert_eq!(calls[1].id.as_ref(), "call_dup1_run_terminal_command_128");
+        assert_eq!(uniquify_tool_calls(&mut calls), 0);
+    }
+
+    #[test]
+    fn rewrite_glm_colon_index_id_reused_across_turns() {
+        // GLM/Kimi stream often mints `:1` (empty name + index) every turn.
+        let mut conv = vec![
+            assistant_with_calls(&[(":1", "run_terminal_command")]),
+            ConversationItem::tool_result(":1", "first"),
+            ConversationItem::user("again"),
+            assistant_with_calls(&[(":1", "run_terminal_command")]),
+            ConversationItem::tool_result(":1", "second"),
+        ];
+        assert_eq!(rewrite_duplicate_tool_call_ids(&mut conv), 1);
+        assert_matches!(&conv[0], ConversationItem::Assistant(a) => {
+            assert_eq!(a.tool_calls[0].id.as_ref(), ":1");
+        });
+        assert_matches!(&conv[1], ConversationItem::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, ":1");
+        });
+        assert_matches!(&conv[3], ConversationItem::Assistant(a) => {
+            assert_eq!(a.tool_calls[0].id.as_ref(), "call_dup1__1");
+        });
+        assert_matches!(&conv[4], ConversationItem::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, "call_dup1__1");
+            assert_eq!(tr.content.as_ref(), "second");
+        });
+        assert_eq!(rewrite_duplicate_tool_call_ids(&mut conv), 0);
+    }
+
+    #[test]
+    fn rewrite_empty_tool_call_ids_are_filled_and_unique() {
+        // Providers that omit `tool_calls[].id` (GLM/Kimi streaming) leave
+        // empty strings; the API then treats every blank as `:1` and 400s.
+        let mut conv = vec![
+            assistant_with_calls(&[("", "read_file"), ("", "grep")]),
+            ConversationItem::tool_result("", "file"),
+            ConversationItem::tool_result("", "hits"),
+            ConversationItem::user("next"),
+            assistant_with_calls(&[("", "read_file")]),
+            ConversationItem::tool_result("", "file-2"),
+        ];
+        assert_eq!(rewrite_duplicate_tool_call_ids(&mut conv), 3);
+        let mut seen = std::collections::HashSet::new();
+        assert_matches!(&conv[0], ConversationItem::Assistant(a) => {
+            assert_eq!(a.tool_calls[0].id.as_ref(), "call_anon1");
+            assert_eq!(a.tool_calls[1].id.as_ref(), "call_anon2");
+            assert!(seen.insert(a.tool_calls[0].id.as_ref().to_string()));
+            assert!(seen.insert(a.tool_calls[1].id.as_ref().to_string()));
+        });
+        assert_matches!(&conv[1], ConversationItem::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, "call_anon1");
+        });
+        assert_matches!(&conv[2], ConversationItem::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, "call_anon2");
+        });
+        assert_matches!(&conv[4], ConversationItem::Assistant(a) => {
+            assert_eq!(a.tool_calls[0].id.as_ref(), "call_anon3");
+            assert!(seen.insert(a.tool_calls[0].id.as_ref().to_string()));
+        });
+        assert_matches!(&conv[5], ConversationItem::ToolResult(tr) => {
+            assert_eq!(tr.tool_call_id, "call_anon3");
+        });
+        assert_eq!(rewrite_duplicate_tool_call_ids(&mut conv), 0);
+    }
+
+    #[test]
+    fn uniquify_tool_calls_fills_blank_ids() {
+        let mut calls = vec![
+            ToolCall {
+                id: "".into(),
+                name: "read_file".into(),
+                arguments: "{}".into(),
+            },
+            ToolCall {
+                id: "   ".into(),
+                name: "grep".into(),
+                arguments: "{}".into(),
+            },
+            ToolCall {
+                id: ":1".into(),
+                name: "bash".into(),
+                arguments: "{}".into(),
+            },
+        ];
+        assert_eq!(uniquify_tool_calls(&mut calls), 2);
+        assert_eq!(calls[0].id.as_ref(), "call_anon1");
+        assert_eq!(calls[1].id.as_ref(), "call_anon2");
+        assert_eq!(calls[2].id.as_ref(), ":1");
         assert_eq!(uniquify_tool_calls(&mut calls), 0);
     }
 

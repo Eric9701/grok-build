@@ -182,12 +182,12 @@ describe("settings catalog", () => {
     expect(rows.find((row) => row.id === "mcpCatalog")?.category).toBe("connectors");
     expect(api.GROK_CONNECTORS_URL).toBe("https://grok.com/connectors");
     expect(api.CONNECTOR_SECTION_HERE).toBe("On this computer");
-    expect(api.CONNECTOR_SECTION_GROK).toBe("Grok.com connectors");
-    expect(api.CONNECTOR_SECTION_LOCAL).toBe("Local Grok connectors");
-    expect(api.CONNECTOR_BLURB_HERE).toMatch(/Grok, Codex, and Claude/);
-    expect(api.CONNECTOR_BLURB_GROK).toMatch(/follow your Grok account/);
-    expect(api.CONNECTOR_BLURB_LOCAL).toMatch(/Grok config files/);
-    expect(api.CONNECTOR_BLURB_GROK).not.toMatch(/Grok, Codex, and Claude/);
+    expect(api.CONNECTOR_SECTION_GROK).toBe("Atlas connectors");
+    expect(api.CONNECTOR_SECTION_LOCAL).toBe("Local Atlas connectors");
+    expect(api.CONNECTOR_BLURB_HERE).toMatch(/Atlas, Codex, and Claude/);
+    expect(api.CONNECTOR_BLURB_GROK).toMatch(/follow your Atlas account/);
+    expect(api.CONNECTOR_BLURB_LOCAL).toMatch(/Atlas config files/);
+    expect(api.CONNECTOR_BLURB_GROK).not.toMatch(/Atlas, Codex, and Claude/);
     const mcpCopy = api.ROWS.find((row) => row.id === "mcpCatalog") as { description?: string };
     expect(mcpCopy.description).toBe(api.CONNECTOR_BLURB_GROK);
   });
@@ -229,7 +229,7 @@ describe("settings catalog", () => {
     expect(api.filterRows("linear", snapshot, env).map((row) => row.id)).toContain("connectorsCatalog");
     expect(api.filterRows("grok.com", snapshot, env).map((row) => row.id)).toContain("mcpCatalog");
     expect(api.filterRows("canva", snapshot, env).map((row) => row.id)).toContain("mcpCatalog");
-    expect(api.filterRows("grok connectors", snapshot, env).map((row) => row.id))
+    expect(api.filterRows("atlas connectors", snapshot, env).map((row) => row.id))
       .toEqual(expect.arrayContaining(["mcpCatalog"]));
   });
 
@@ -462,7 +462,7 @@ describe("settings overlay (chat.js)", () => {
     const projects = [...overlay.querySelectorAll('[data-field="cwd"] option')].map((o) => o.textContent);
     expect(projects).toEqual(["workspace"]);
     const models = [...overlay.querySelectorAll('[data-field="model"] option')].map((o) => o.textContent);
-    expect(models).toEqual(["Grok default", "Claude Opus 5"]);
+    expect(models).toEqual(["Atlas default", "Claude Opus 5"]);
     // A provider with no cached model list still offers its default, so an
     // empty picker can only mean no provider at all — never "no model".
     expect(overlay.textContent).not.toContain("No model is connected");
@@ -545,18 +545,18 @@ describe("settings overlay (chat.js)", () => {
     });
     const overlay = h.doc.getElementById("settings-overlay")!;
     expect(overlay.textContent).toContain("On this computer");
-    expect(overlay.textContent).toContain("Grok.com connectors");
-    expect(overlay.textContent).toContain("Local Grok connectors");
+    expect(overlay.textContent).toContain("Atlas connectors");
+    expect(overlay.textContent).toContain("Local Atlas connectors");
     expect(overlay.textContent).toContain("Canva");
-    expect(overlay.textContent).toContain("Grok CLI");
+    expect(overlay.textContent).toContain("Atlas CLI");
     expect(overlay.textContent).not.toContain("atlas.com managed");
     expect(overlay.textContent).toContain("32 tools");
     expect(overlay.textContent).toContain("Disabled · ready · 0 tools");
     const lists = overlay.querySelectorAll('[data-id="mcpCatalog"] .settings-mcp-list');
     const localStatus = lists[1]?.querySelector(".settings-mcp-status");
     expect(localStatus?.classList.contains("is-ready")).toBe(false);
-    expect(overlay.textContent).toMatch(/follow your Grok account/);
-    expect(overlay.textContent).toMatch(/Grok config files/);
+    expect(overlay.textContent).toMatch(/follow your Atlas account/);
+    expect(overlay.textContent).toMatch(/Atlas config files/);
     expect(overlay.querySelector(".settings-switch")).toBeNull();
     expect(h.posted).not.toContainEqual(expect.objectContaining({ type: "setMcpServerEnabled" }));
     const grokLink = overlay.querySelector(".settings-mcp-web") as HTMLButtonElement;
@@ -611,10 +611,10 @@ describe("settings overlay (chat.js)", () => {
       warning: "This list is read-only.",
     });
     const overlay = h.doc.getElementById("settings-overlay")!;
-    expect(overlay.textContent).toContain("Local Grok connectors");
-    expect(overlay.textContent).toContain("No local Grok connectors reported.");
+    expect(overlay.textContent).toContain("Local Atlas connectors");
+    expect(overlay.textContent).toContain("No local Atlas connectors reported.");
     const localHeads = [...overlay.querySelectorAll(".settings-group-row")]
-      .filter((row) => (row.textContent || "").includes("Local Grok connectors"));
+      .filter((row) => (row.textContent || "").includes("Local Atlas connectors"));
     expect(localHeads).toHaveLength(1);
     const fileOpen = localHeads[0]!.querySelector(".settings-mcp-open") as HTMLButtonElement;
     expect(fileOpen).toBeTruthy();
@@ -641,7 +641,7 @@ describe("settings overlay (chat.js)", () => {
     expect(overlay.textContent).not.toContain("User on: Mac (macOS)");
     expect(overlay.textContent).not.toMatch(/\btag\b/i);
     expect(overlay.querySelector(".settings-mcp-badge")).toBeNull();
-    expect(overlay.textContent).toContain("Grok CLI");
+    expect(overlay.textContent).toContain("Atlas CLI");
     expect(overlay.textContent).toContain("Notes");
     expect(overlay.textContent).toContain("Linear");
     expect(overlay.textContent).not.toMatch(/Project:/);
@@ -649,7 +649,7 @@ describe("settings overlay (chat.js)", () => {
     const lists = [...overlay.querySelectorAll(".settings-mcp-list")];
     expect(lists).toHaveLength(2);
     expect(lists[0]!.textContent).toContain("Linear");
-    expect(lists[0]!.textContent).toContain("Grok CLI");
+    expect(lists[0]!.textContent).toContain("Atlas CLI");
     expect(lists[0]!.textContent).not.toContain("Notes");
     expect(lists[1]!.textContent).toContain("Notes");
     expect(lists[1]!.textContent).not.toContain("Linear");
@@ -922,8 +922,8 @@ describe("settings overlay (chat.js)", () => {
     expect(overlay.querySelector(".settings-connector-action")).toBeNull();
     expect(overlay.textContent).toContain("Connected");
     expect(overlay.textContent).toContain("On this computer");
-    expect(overlay.textContent).toContain("Grok.com connectors");
-    expect(overlay.textContent).toContain("Local Grok connectors");
+    expect(overlay.textContent).toContain("Atlas connectors");
+    expect(overlay.textContent).toContain("Local Atlas connectors");
     expect(overlay.textContent).toMatch(/managed on the desk machine only/);
     expect(overlay.querySelector(".settings-mcp-open")).toBeNull();
     expect(overlay.querySelector('[data-id="mcpCatalog"]')).toBeTruthy();
@@ -970,7 +970,7 @@ describe("settings overlay (chat.js)", () => {
     clickSettingsNav(h, "Connectors");
     const overlay = h.doc.getElementById("settings-overlay")!;
     const localHeads = [...overlay.querySelectorAll(".settings-group-row")]
-      .filter((row) => (row.textContent || "").includes("Local Grok connectors"));
+      .filter((row) => (row.textContent || "").includes("Local Atlas connectors"));
     const localOpen = localHeads[0]!.querySelector(".settings-mcp-open") as HTMLButtonElement;
     expect(localOpen.querySelector("img")).toBeNull();
     expect(localOpen.innerHTML).toContain("M12.22 2h-.44");
@@ -1096,7 +1096,7 @@ describe("settings overlay (chat.js)", () => {
     const overlay = h.doc.getElementById("settings-overlay")!;
     expect(overlay.querySelector('[data-id="connector-linear"] .settings-connector-logo')).toBeTruthy();
     const lists = [...overlay.querySelectorAll(".settings-mcp-list")];
-    const grokList = lists.find((list) => list.textContent?.includes("Grok CLI"));
+    const grokList = lists.find((list) => list.textContent?.includes("Atlas CLI"));
     const localList = lists.find((list) => list.textContent?.includes("Notes"));
     expect(grokList!.querySelector(".settings-connector-logo")).toBeNull();
     expect(localList!.querySelector(".settings-connector-logo")).toBeNull();

@@ -429,7 +429,7 @@ const REPO_COLORS_KEY = "atlas.repoColors";
  * **It does grant reach, and that is the point.** An earlier version of this
  * comment claimed otherwise on the grounds that `localTrustedSessionCwds`
  * already trusts the whole discovered catalog — true, but the folder this
- * feature adds is precisely the one Grok has NEVER run in, so it was not in
+ * feature adds is precisely the one Atlas has NEVER run in, so it was not in
  * that catalog and is now. It becomes selectable, and through the phone,
  * browsable and editable like any other project. That is what the user asked
  * for by picking it. What it must therefore also be is REVOCABLE — see
@@ -448,7 +448,7 @@ const EXTRA_PROJECT_FOLDERS_KEY = "atlas.extraProjectFolders";
  * Folders the user has explicitly REMOVED from the rail, which stay removed.
  *
  * Dropping the added-folder record was not enough to make "Hide project" mean
- * anything. VS Code's catalog is discovered from Grok's own session history, so
+ * anything. VS Code's catalog is discovered from Atlas's own session history, so
  * the moment anything ran in that folder the row came back on its own — and a
  * phone selecting the project is enough to create that history, because
  * `selectRemoteRepo` opens or starts a session there. So a remote could make its
@@ -659,7 +659,7 @@ export class GrokSidebar {
    * (it's just a read cache, never a source of truth).
    */
   private sessionCache = new Map<string, { mtimeMs: number; entry: SessionListEntry }>();
-  /** Adapter catalogs come from ACP session/list rather than Grok's disk index. */
+  /** Adapter catalogs come from ACP session/list rather than Atlas's disk index. */
   private codexSessionCache = new Map<string, SessionListEntry[]>();
   private codexSessionCacheAt = new Map<string, number>();
   private codexSessionRefresh = new Map<string, Promise<void>>();
@@ -757,7 +757,7 @@ export class GrokSidebar {
     wait: Promise<void>;
   };
   /**
-   * Test-only latch. When set, Grok discovery stops after an explicit cached
+   * Test-only latch. When set, Atlas discovery stops after an explicit cached
    * path (provisionFakeGrok). Config and PATH are not searched, so a developer
    * box cannot silently pick up a real CLI. Production never sets this.
    */
@@ -875,7 +875,7 @@ export class GrokSidebar {
    *  the page's own open-refresh landing on top of a click) must not start a
    *  second round of CLI probes. */
   private providerRefreshInFlight = false;
-  /** Complete Grok inventory from the last `_x.ai/mcp/list`. Unfiltered — `hostMcpServers` dedup still needs project servers. */
+  /** Complete Atlas inventory from the last `_x.ai/mcp/list`. Unfiltered — `hostMcpServers` dedup still needs project servers. */
   private mcpServers: McpServerView[] = [];
   /**
    * Workspace the current `mcpServers` was read from. Classification uses this
@@ -894,7 +894,7 @@ export class GrokSidebar {
   /** In-memory PAT cache for key-auth connectors. Never written to PersistedState. */
   private readonly mcpConnectorKeys = new Map<string, string>();
   private readonly mcpConnectorKeysReady: Promise<void>;
-  /** Overlapping Connectors reads share one lazy Grok start. */
+  /** Overlapping Connectors reads share one lazy Atlas start. */
   private grokSessionForMcpListInFlight: Promise<Session | undefined> | undefined;
   private grokVersionProbe?: Promise<string>;
   private codexVersionProbe?: Promise<string>;
@@ -1440,7 +1440,7 @@ export class GrokSidebar {
    * sign-in action the connect flow uses.
    *
    * Only the provider's credential classifier may raise it: adapter probes use
-   * that backend's `isCredentialError`, while Grok uses `isCredentialError`.
+   * that backend's `isCredentialError`, while Atlas uses `isCredentialError`.
    * The billing/entitlement family must never route to a login screen (#58).
    */
   private setProviderNeedsLogin(provider: AcpProvider, needsLogin: boolean): void {
@@ -1672,8 +1672,8 @@ export class GrokSidebar {
    * Signing in happens outside this extension — a browser OAuth approval, a
    * `grok login` in any terminal — and the desk has no way to hear about it.
    * Probing only the already-connected set made the button useless in exactly
-   * the case people press it: approve Grok in the browser, press Refresh, and
-   * it skipped Grok because the stale flag said "not connected" (owner, and it
+   * the case people press it: approve Atlas in the browser, press Refresh, and
+   * it skipped Atlas because the stale flag said "not connected" (owner, and it
    * meant opening the chat and pressing Check instead).
    *
    * A provider whose CLI is not installed is still skipped — there is nothing
@@ -1730,9 +1730,9 @@ export class GrokSidebar {
 
   // USABLE, not merely connected. A provider whose credentials have lapsed is
   // still connected and still located, so it used to win connected[0] and
-  // capture every new session — the owner had Grok and Claude unconnected and
+  // capture every new session — the owner had Atlas and Claude unconnected and
   // Codex connected-but-expired, and a fresh session dropped him into "Complete
-  // codex login" rather than letting him pick. Grok stays the fallback when
+  // codex login" rather than letting him pick. Atlas stays the fallback when
   // nothing can answer, which is what the empty case already did.
   private defaultProviderForProject(cwd: string): AcpProvider {
     const usable = this.usableProviders();
@@ -1857,7 +1857,7 @@ export class GrokSidebar {
       void this.onMessage(m, "local").catch((e) => {
         const msg = (e as Error)?.message ?? String(e);
         this.host.appendLine(`[webview] ${m.type} failed: ${msg}`);
-        void this.host.showErrorMessage(`Grok: ${m.type} failed — ${msg}`);
+        void this.host.showErrorMessage(`Atlas: ${m.type} failed — ${msg}`);
       });
     });
     this.restorePersistedDraft(this.focused);
@@ -1992,7 +1992,7 @@ export class GrokSidebar {
       void this.onProjectsRailMessage(m).catch((e) => {
         const msg = (e as Error)?.message ?? String(e);
         this.host.appendLine(`[projects-rail] ${m.type} failed: ${msg}`);
-        void this.host.showErrorMessage(`Grok Projects: ${m.type} failed — ${msg}`);
+        void this.host.showErrorMessage(`Atlas Projects: ${m.type} failed — ${msg}`);
       });
     });
   }
@@ -2076,7 +2076,7 @@ export class GrokSidebar {
         void this.trackAttach(this.pickFileFromComputer());
       } else {
         void this.host.showInformationMessage(
-          "Grok: open a file in the editor first, then run this command.",
+          "Atlas: open a file in the editor first, then run this command.",
         );
       }
       return;
@@ -2084,7 +2084,7 @@ export class GrokSidebar {
     // Same fence as the implicit chip, and for the same reason: the attachment
     // has to belong to the CONVERSATION, not to the window. Once the rail could
     // put a project-B conversation on screen inside a window opened on A, "Add
-    // Selection to Grok" on an A file handed A's source to B — and with a
+    // Selection to Atlas" on an A file handed A's source to B — and with a
     // selection the prompt builder reads that absolute path and embeds the text
     // under an innocuous A-relative name like `src/foo.ts`.
     //
@@ -2408,7 +2408,7 @@ Only continue if you trust this code.`,
     this.alwaysApproveNoticeShown = true;
     const OPEN = "Open config.toml";
     void this.host.showInformationMessage(
-      'Grok: "always-approve" is set in your grok config.toml, so tool actions are auto-approved for every session (CLI and extension). The mode shows "Auto accept" to reflect this — the extension can\'t override a global config setting per-session.',
+      'Atlas: "always-approve" is set in your grok config.toml, so tool actions are auto-approved for every session (CLI and extension). The mode shows "Auto accept" to reflect this — the extension can\'t override a global config setting per-session.',
       OPEN,
     ).then((pick) => {
       if (pick !== OPEN) return;
@@ -2971,7 +2971,7 @@ Only continue if you trust this code.`,
   /**
    * Decide a live `session/request_permission`. The Plan bit comes from
    * `effectivePlanActive` so a same-chunk request cannot still see Auto
-   * accept after a successful Plan RPC. Grok also refuses mutating tools
+   * accept after a successful Plan RPC. Atlas also refuses mutating tools
    * through the client gate; Codex/Claude do not — their Plan is
    * adapter-enforced, but the permission card still has to reach a human.
    */
@@ -3265,7 +3265,7 @@ Only continue if you trust this code.`,
       this.reportRequester(
         requester,
         "warning",
-        "This Grok CLI cannot steer attachments mid-turn — your message was queued instead. It will send when the turn finishes.",
+        "This Atlas CLI cannot steer attachments mid-turn — your message was queued instead. It will send when the turn finishes.",
       );
       return;
     }
@@ -3318,7 +3318,7 @@ Only continue if you trust this code.`,
         this.reportRequester(
           requester,
           "warning",
-          "Steering needs a newer Grok Build CLI — your message was queued instead. Update via Settings → About.",
+          "Steering needs a newer Atlas CLI — your message was queued instead. Update via Settings → About.",
         );
         return;
       }
@@ -3403,7 +3403,7 @@ Only continue if you trust this code.`,
     const client = session.client;
     if (!client?.sessionId) {
       revert();
-      this.reportRequester(requester, "warning", "Start a Grok session before rating a turn.");
+      this.reportRequester(requester, "warning", "Start a Atlas session before rating a turn.");
       return;
     }
     try {
@@ -3418,7 +3418,7 @@ Only continue if you trust this code.`,
         this.reportRequester(
           requester,
           "warning",
-          "Turn ratings need a Grok Build CLI that accepts feedback.",
+          "Turn ratings need a Atlas CLI that accepts feedback.",
         );
         return;
       }
@@ -3465,7 +3465,7 @@ Only continue if you trust this code.`,
         this.reportRequester(
           requester,
           "warning",
-          "Forking needs a newer Grok Build CLI. Update via Settings → About.",
+          "Forking needs a newer Atlas CLI. Update via Settings → About.",
         );
         return;
       }
@@ -3563,7 +3563,7 @@ Only continue if you trust this code.`,
       const points = await session.client.listRewindPoints();
       if (points === "unsupported") {
         return void this.host.showWarningMessage(
-          "Editing a sent message needs a newer Grok Build CLI. Update via Settings → About.",
+          "Editing a sent message needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
       // If the wire's user-facing list no longer matches what the user sees, the
@@ -3574,14 +3574,14 @@ Only continue if you trust this code.`,
           `[rewind] map mismatch: ${userFacingRewindPoints(points).length} wire points vs ${totalUserBubbles} visible messages`,
         );
         return void this.host.showWarningMessage(
-          "Grok's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
+          "Atlas's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
         );
       }
       const target = resolveEditRewindTarget(points, userBubbleIndex);
       if (!target) {
         const copy = "Copy text to composer";
         const pick = await this.host.showInformationMessage(
-          "Grok has no restore point for this message, so it can't be rolled back. You can still copy the text and send it again.",
+          "Atlas has no restore point for this message, so it can't be rolled back. You can still copy the text and send it again.",
           copy,
         );
         if (pick === copy) this.emit(session, { type: "restoreComposer", text });
@@ -3608,7 +3608,7 @@ Only continue if you trust this code.`,
       });
       if (result === "unsupported") {
         return void this.host.showWarningMessage(
-          "Editing a sent message needs a newer Grok Build CLI. Update via Settings → About.",
+          "Editing a sent message needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
       if (!result.success) {
@@ -3652,7 +3652,7 @@ Only continue if you trust this code.`,
       const points = await session.client.listRewindPoints();
       if (points === "unsupported") {
         return void this.host.showWarningMessage(
-          "Rewind needs a newer Grok Build CLI. Update via Settings → About.",
+          "Rewind needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
 
@@ -3664,7 +3664,7 @@ Only continue if you trust this code.`,
           `[rewind] map mismatch: ${userFacingRewindPoints(points).length} wire points vs ${totalUserBubbles} visible messages`,
         );
         return void this.host.showWarningMessage(
-          "Grok's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
+          "Atlas's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
         );
       }
       let target: ReturnType<typeof resolveUserBubbleRewind> = null;
@@ -3731,7 +3731,7 @@ Only continue if you trust this code.`,
       });
       if (result === "unsupported") {
         return void this.host.showWarningMessage(
-          "Rewind needs a newer Grok Build CLI. Update via Settings → About.",
+          "Rewind needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
       if (!result.success) {
@@ -3951,7 +3951,7 @@ Only continue if you trust this code.`,
           // otherwise spin a short-lived ACP client just for the create RPC.
           const creator = await this.clientForWorktreeCreate(sourcePath);
           if (!creator) {
-            return void this.host.showErrorMessage("Could not start Grok to create a worktree.");
+            return void this.host.showErrorMessage("Could not start Atlas to create a worktree.");
           }
           const { client, disposeAfter } = creator;
           // Disposed after the LAST validation query, not here and not at the
@@ -4002,7 +4002,7 @@ Only continue if you trust this code.`,
             if (created === "unsupported") {
               watch.cancel();
               return void this.host.showWarningMessage(
-                "Worktrees need a newer Grok Build CLI. Update via Settings → About.",
+                "Worktrees need a newer Atlas CLI. Update via Settings → About.",
               );
             }
             const wtPath = created.worktreePath;
@@ -4024,7 +4024,7 @@ Only continue if you trust this code.`,
             const outcome = await watch.settled(wtPath);
             if (outcome === "failed") {
               return void this.host.showErrorMessage(
-                `Worktree "${wtLabel}" was not created: the Grok CLI reported it failed.`,
+                `Worktree "${wtLabel}" was not created: the Atlas CLI reported it failed.`,
               );
             }
             if (outcome === "stalled") {
@@ -4436,7 +4436,7 @@ Only continue if you trust this code.`,
     const wt = session.worktree;
     if (!wt) {
       return void this.host.showInformationMessage(
-        "This session is not in a worktree. Start one with Grok: New Worktree Session.",
+        "This session is not in a worktree. Start one with Atlas: New Worktree Session.",
       );
     }
     if (!session.client?.sessionId) {
@@ -4454,7 +4454,7 @@ Only continue if you trust this code.`,
       const r = await session.client.applyWorktree(wt.path);
       if (r === "unsupported") {
         return void this.host.showWarningMessage(
-          "Apply worktree needs a newer Grok Build CLI. Update via Settings → About.",
+          "Apply worktree needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
       const n = r.files?.length ?? 0;
@@ -4506,7 +4506,7 @@ Only continue if you trust this code.`,
       if (!client) {
         const tmp = await this.clientForWorktreeCreate(this.workspaceRoot());
         if (!tmp) {
-          return void this.host.showErrorMessage("Could not start Grok to remove the worktree.");
+          return void this.host.showErrorMessage("Could not start Atlas to remove the worktree.");
         }
         client = tmp.client;
         disposeAfter = tmp.disposeAfter;
@@ -4550,7 +4550,7 @@ Only continue if you trust this code.`,
       }
       if (r === "unsupported") {
         return void this.host.showWarningMessage(
-          "Remove worktree needs a newer Grok Build CLI. Update via Settings → About.",
+          "Remove worktree needs a newer Atlas CLI. Update via Settings → About.",
         );
       }
       // WHO OWNED IT — captured before the records that answer that are erased.
@@ -4747,14 +4747,14 @@ Only continue if you trust this code.`,
   ): boolean {
     // LOCATION FIRST, and it is not optional. A marker is a file, and a file is
     // something whoever proposed the path can write — so on its own it proves
-    // only that the proposer touched that directory, not that we made it. Grok
+    // only that the proposer touched that directory, not that we made it. Atlas
     // creates clone-mode worktrees under its own root and nowhere else, so
     // anything outside that root is not one of ours whatever it contains.
     // Canonical, because a symlink planted inside the root and pointing
     // somewhere else entirely would satisfy a textual prefix check.
     //
     // The DELETE path already demanded this. Authorization is the more
-    // dangerous of the two: it ends with a Grok process running in that
+    // dangerous of the two: it ends with a Atlas process running in that
     // directory, the path persisted on the session, and the path in the
     // trusted-cwd set a linked remote is allowed to target.
     const root = path.join(resolveGrokHome(), "worktrees");
@@ -4857,7 +4857,7 @@ Only continue if you trust this code.`,
       // field presence is the client capability probe.
       colors: this.state.get<RepoColors>(REPO_COLORS_KEY, {}),
       tmpDir: os.tmpdir(),
-      // Open folders remain selectable before Grok creates a catalog row (and
+      // Open folders remain selectable before Atlas creates a catalog row (and
       // bypass managed-worktree exclusion when the user opened a worktree).
       // Hand-added folders join them: on VS Code that is the only thing keeping
       // a never-used project in the rail, since it has no session history to be
@@ -4898,7 +4898,7 @@ Only continue if you trust this code.`,
     if (!this.host.canSwitchWorkspaceFolder) {
       // Hand-added rows are marked so the rail can offer to take them back out.
       // A folder added by hand is the one kind of catalog row the user cannot
-      // otherwise revoke: everything else is here because Grok has run there,
+      // otherwise revoke: everything else is here because Atlas has run there,
       // and stops being listed when that stops being true.
       const added = new Set(this.extraProjectFolders().map((c) => normalizeRepoPath(c)));
       entries = added.size
@@ -4922,7 +4922,7 @@ Only continue if you trust this code.`,
           }
           // Trusted open folder with no catalog row yet — still show it.
           // Colour still comes from the shared store so a painted project
-          // keeps its tint when Grok has not created a sessions catalog yet.
+          // keeps its tint when Atlas has not created a sessions catalog yet.
           const colors = this.state.get<RepoColors>(REPO_COLORS_KEY, {});
           const colorChoice = colors[key]?.color;
           entries.push({
@@ -5454,7 +5454,7 @@ Only continue if you trust this code.`,
   }
 
   /**
-   * Grok home + on-disk session directory + project session catalogs for desktop
+   * Atlas home + on-disk session directory + project session catalogs for desktop
    * openFile authorization of trusted session-generated media
    * (`images|videos` under `~/.grok/sessions/<cwd>/…`). Absolute opens are scoped
    * to the project catalogs (sibling sessions OK for fork replay; cross-repo not).
@@ -5563,7 +5563,7 @@ Only continue if you trust this code.`,
       return;
     }
     const key = normalizeRepoPath(resolved);
-    // Already here on its own — the open workspace folder, or a project Grok has
+    // Already here on its own — the open workspace folder, or a project Atlas has
     // run in. Recording it as hand-added would be a lie with consequences: the
     // row would gain a Remove action, and removing it tombstones a project that
     // has other reasons to exist. Worst of all for the OPEN folder, whose access
@@ -5591,7 +5591,7 @@ Only continue if you trust this code.`,
     if (!stored.some((c) => normalizeRepoPath(c) === key)) {
       await this.state.update(EXTRA_PROJECT_FOLDERS_KEY, [...stored, resolved]);
     }
-    // Already in the catalog by other means (open folder, or Grok has run there)
+    // Already in the catalog by other means (open folder, or Atlas has run there)
     // is not a failure — the user still gets taken to it.
     await this.selectRepo(resolved);
   }
@@ -5601,7 +5601,7 @@ Only continue if you trust this code.`,
    *
    * Deliberately NOT the desktop's revocation: nothing is disposed and no
    * process is killed, because adding the folder started nothing. It removes
-   * the one reason this folder was listed. If Grok has since run there the row
+   * the one reason this folder was listed. If Atlas has since run there the row
    * survives on its own history — same as every other project, and the
    * conversations are still yours; archive is the way to hide those.
    */
@@ -5659,7 +5659,7 @@ Only continue if you trust this code.`,
       await this.state.update(REPO_PINS_KEY, nextPins);
     }
     // …and a tombstone, or the folder simply comes back. VS Code's catalog is
-    // discovered from Grok's own session history, so anything that has run there
+    // discovered from Atlas's own session history, so anything that has run there
     // re-adds the row — and a phone can manufacture exactly that by selecting
     // the project, which starts a session in it. Removal has to outrank
     // discovery or it is not removal.
@@ -5694,7 +5694,7 @@ Only continue if you trust this code.`,
   async removeProjectFolder(cwd?: string): Promise<void> {
     if (!this.host.canSwitchWorkspaceFolder) {
       // VS Code: the only thing there is to remove is a folder the user ADDED
-      // by hand. Everything else in the catalog is there because Grok has run
+      // by hand. Everything else in the catalog is there because Atlas has run
       // in it, and no button here would change that. Without this the added
       // folder was permanent — a mistaken or sensitive directory stayed
       // selectable, and remotely browsable and editable, for ever.
@@ -6281,7 +6281,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * Forward generated media (grok's `/imagine` image or `/imagine-video` video)
    * to the webview. Remote URLs pass through as a link. File paths — how grok
    * writes media into its session dir — are served via `asWebviewUri` when they
-   * are **trusted** generated media under the Grok home (canonical containment
+   * are **trusted** generated media under the Atlas home (canonical containment
    * + sessions/…/images|videos/ shape), so big videos stream from disk.
    *
    * Paths outside that provenance still render via a size-capped base64 data:
@@ -6344,7 +6344,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /**
-   * True when `p` is trusted generated media under the Grok home: realpath
+   * True when `p` is trusted generated media under the Atlas home: realpath
    * stays inside `~/.grok` and the path matches sessions/…/images|videos/.
    * Lexical-only checks would let a symlink escape and still pass.
    */
@@ -6434,7 +6434,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /**
-   * Sign out of the Grok CLI (`grok logout` — clears `~/.grok/auth.json`). The
+   * Sign out of the Atlas CLI (`atlas logout` — clears `~/.grok/auth.json`). The
    * CLI owns auth, so we shell out to it, tear down the live session, and drop
    * the webview back to the auth-required onboarding state. Resolves issue #13.
    */
@@ -6476,14 +6476,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       return;
     }
     const choice = await this.host.showWarningMessage(
-      "Sign out of Grok? This clears the CLI's cached credentials.",
+      "Sign out of Atlas? This clears the CLI's cached credentials.",
       { modal: true },
       "Sign Out",
     );
     if (choice !== "Sign Out") return;
     // shellPath/shellArgs, not sendText — a quoted path typed into PowerShell
     // is parsed as a string literal rather than an invocation.
-    this.host.createTerminal({ name: "Grok Logout", shellPath: cliPath, shellArgs: ["logout"] });
+    this.host.createTerminal({ name: "Atlas Logout", shellPath: cliPath, shellArgs: ["logout"] });
     await this.finishProviderLogout("grok");
   }
 
@@ -6884,7 +6884,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       }
       const args = policy.target ? ["update", "--version", policy.target] : ["update"];
       this.host.appendLine(
-        `Extension upgraded ${lastSeen} → ${current}; updating grok CLI (silent: ${args.join(" ")}).`,
+        `Extension upgraded ${lastSeen} → ${current}; updating Atlas CLI (silent: ${args.join(" ")}).`,
       );
       this.post({ type: "cliUpdating" });
       try {
@@ -6956,7 +6956,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     }
     if (decision.verified) {
       const message =
-        `grok CLI ${decision.installed} is below required version ${GROK_REQUIRED_VERSION}; ` +
+        `Atlas CLI ${decision.installed} is below required version ${GROK_REQUIRED_VERSION}; ` +
         "Plan mode is unavailable.";
       this.host.appendLine(message);
       if (notify) void this.host.showWarningMessage(message);
@@ -7011,7 +7011,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const gen = session.gen;
     const cliPath = this.locateProvider("grok");
     if (!cliPath) return false;
-    this.host.appendLine("Re-checking Grok CLI version for Plan mode…");
+    this.host.appendLine("Re-checking Atlas CLI version for Plan mode…");
     // Silent: the initial session-start probe already notified; a second toast
     // on every pick would turn a transient into noise.
     const compatibility = await this.planModeCompatibility(cliPath, { notify: false });
@@ -7045,7 +7045,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     reason: "proactive" | "reactive",
   ): Promise<boolean> {
     this.host.appendLine(
-      `grok CLI ${fromVersion} has the stdio regression (issue #22, ${reason}); ` +
+      `Atlas CLI ${fromVersion} has the stdio regression (issue #22, ${reason}); ` +
         `pinning to ${GROK_STDIO_DOWNGRADE_TARGET}.`,
     );
     this.post({ type: "cliUpdating" });
@@ -7058,8 +7058,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       if (stdout?.trim()) this.host.appendLine(stdout.trim());
       if (stderr?.trim()) this.host.appendLine(stderr.trim());
       const detail = reason === "proactive"
-        ? `Grok CLI ${fromVersion} has a known Windows startup issue (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET}.`
-        : `Grok CLI ${fromVersion} failed to start a session (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET} and retrying.`;
+        ? `Atlas CLI ${fromVersion} has a known Windows startup issue (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET}.`
+        : `Atlas CLI ${fromVersion} failed to start a session (issue #22). Switched to the supported version ${GROK_STDIO_DOWNGRADE_TARGET} and retrying.`;
       void this.host.showInformationMessage(detail);
       return true;
     } catch (e) {
@@ -7079,7 +7079,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (!connected.includes("grok")) return;
     const cliPath = this.locateProvider("grok");
     if (!cliPath) {
-      this.postGrokUpdateStatus({ type: "grokUpdateStatus", error: "grok CLI not found" });
+      this.postGrokUpdateStatus({ type: "grokUpdateStatus", error: "Atlas CLI not found" });
       return;
     }
     // Compute the update policy from the installed version (issue #22) so the menu
@@ -7107,7 +7107,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /**
-   * On-demand "Update Grok Build" from the About panel. grok holds its binary
+   * On-demand "Update Atlas" from the About panel. grok holds its binary
    * open while running (a hard lock on Windows), so we tear the session down,
    * run `grok update`, then resume the *same* session on the fresh binary —
    * preserving the conversation. The welcome lifecycle (Updating… → Starting… →
@@ -7125,7 +7125,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const policy = grokUpdatePolicy(await this.readGrokVersion(cliPath), process.platform);
     if (!policy.allow) {
       void this.host.showInformationMessage(
-        policy.note ?? "Grok CLI updates are paused for compatibility.",
+        policy.note ?? "Atlas CLI updates are paused for compatibility.",
       );
       return;
     }
@@ -7140,7 +7140,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     ).length;
     if (busy > 0) {
       const choice = await this.host.showWarningMessage(
-        `Updating the Grok Build CLI will stop ${busy} session${busy === 1 ? "" : "s"} currently in progress. Continue?`,
+        `Updating the Atlas CLI will stop ${busy} session${busy === 1 ? "" : "s"} currently in progress. Continue?`,
         { modal: true },
         "Update Anyway",
       );
@@ -7191,7 +7191,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         }
         this.host.appendLine(`grok update failed: ${msg}`);
         if (notifyFailure) {
-          void this.host.showWarningMessage(`Grok Build update failed: ${msg}`);
+          void this.host.showWarningMessage(`Atlas update failed: ${msg}`);
         }
         return false;
       }
@@ -7369,14 +7369,14 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // An EMPTY conversation pinned to a provider that cannot answer just moves
     // to one that can, silently. There is nothing to preserve — no history, no
     // model choice worth defending — and the alternative is what the owner hit:
-    // Grok connected and chosen in the picker, while the turn insisted on
+    // Atlas connected and chosen in the picker, while the turn insisted on
     // finishing a codex login because the session object still said "codex".
     // A conversation WITH history is never retargeted; that would silently
     // change who is answering someone mid-thread.
     //
     // `resumeId` is the other half of "has history": openSession mints a fresh
     // Session (hasHistory still false) and then loads an existing conversation
-    // into it. Treating that as empty handed a Grok rail click to Codex, then
+    // into it. Treating that as empty handed a Atlas rail click to Codex, then
     // blamed Codex for the spawn that followed.
     if (!resumeId && !target.hasHistory && !this.usableProviders().includes(target.provider)) {
       const fallback = this.defaultProviderForProject(this.sessionCwd(target));
@@ -7735,7 +7735,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       } else if (!client.usesClientPlanGate) {
         // Claude ExitPlanMode / Codex plan approval switch to a writable mode
         // and then edit. Follow that mode so the button and permission filter
-        // stop saying Plan. Grok's descriptive update must not do this.
+        // stop saying Plan. Atlas's descriptive update must not do this.
         const next = applyAgentModeToHostPlan(id, false);
         if (next) {
           session.autoApprove = next.autoApprove;
@@ -7866,7 +7866,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       const exit = snap.exit_code ?? snap.exitCode ?? snap.status?.exitCode;
       const ok = exit == null || exit === 0;
       const label = summarizeBackgroundCommand(cmd);
-      const text = `Grok background task ${ok ? "completed" : `exited (code ${exit})`}${label ? `: ${label}` : ""}`;
+      const text = `Atlas background task ${ok ? "completed" : `exited (code ${exit})`}${label ? `: ${label}` : ""}`;
       this.host.appendLine(`[task] ${text}`);
       void this.host.showInformationMessage(text, "Show Logs").then((choice) => {
         if (choice === "Show Logs") this.host.showOutput();
@@ -8068,7 +8068,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     client.on("commandDone", (info: { command: string; output: string; exitCode: number | null; truncated: boolean }) => {
       if (gen !== session.gen) return;
       // Defensive display cap on top of the terminal's own byte limit — a huge
-      // buffer must not stall postMessage/DOM (#41). Grok saw the same capped
+      // buffer must not stall postMessage/DOM (#41). Atlas saw the same capped
       // buffer, so the cut is honest either way. Shared with session/load restore.
       // Null exit here is a real kill; `cancelled` is always stated so a later
       // historyReplay rebuild still paints [Cancelled], and so absence can only
@@ -8185,7 +8185,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
           this.emit(session, { type: "planHistoryQueue", plans: await this.withPlanReviewPaths(saved!, resumeId) });
           session.lastPlanText = saved![saved!.length - 1].text;
         } else if (client.usesClientPlanGate && planSource === "disk") {
-            // Legacy Grok session (no per-plan persistence): fall back to the
+            // Legacy Atlas session (no per-plan persistence): fall back to the
             // on-disk latest plan, which we'll render at the bottom after replay.
             const sessDir = sessionDirFor(resolveGrokHome(process.env), cwd, resumeId, { fs: defaultFs });
             const planPath = sessDir ? path.join(sessDir, "plan.md") : "";
@@ -8225,7 +8225,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
             // session, or vice-versa) can't be applied with a live set_model — it
             // errors MODEL_SWITCH_INCOMPATIBLE_AGENT. The session itself already
             // loaded and replayed; just keep its own model instead of letting the
-            // whole resume crash with "Grok exited (code null)".
+            // whole resume crash with "Atlas exited (code null)".
             if (!isIncompatibleAgentError(e)) throw e;
             this.host.appendLine(
               `[resume] kept the session's own model; default '${defaultModel}' needs a different agent`,
@@ -8398,7 +8398,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.emit(session, {
           type: "error",
           text:
-            `Failed to start Grok: ${msg}. This matches the Grok CLI 0.2.61–0.2.70 stdio ` +
+            `Failed to start Atlas: ${msg}. This matches the Atlas CLI 0.2.61–0.2.70 stdio ` +
             `regression (issue #22, fixed after 0.2.70). Workaround: run ` +
             `\`grok update --version ${GROK_STDIO_DOWNGRADE_TARGET}\` in a terminal, then start a new session.`,
         });
@@ -8459,7 +8459,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       case "ready": {
         // Decide BEFORE postInitialState runs: its cold-start branch calls
         // startSession(), which can create this.focused.client before this
-        // handler resumes (synchronously for Codex; Grok assigns behind
+        // handler resumes (synchronously for Codex; Atlas assigns behind
         // consent/version awaits — the pre-evaluation is right either way).
         // Re-evaluating afterwards read that self-inflicted "live client" as
         // "a reload rehydrate will post the catalog" and skips it, so a cold
@@ -9193,15 +9193,15 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // dispatcher authorizes on "the message came from the main frame", not
         // on a user gesture, and this is cheap where a general fix is not.
         if (!(await this.confirmHostExecute(
-          "Install the Grok Build CLI?",
+          "Install the Atlas CLI?",
           "This runs the official installer from x.ai in a terminal.",
           "Install",
         ))) break;
-        const term = this.host.createTerminal("Install Grok");
+        const term = this.host.createTerminal("Install Atlas");
         term.show();
         // Windows ships a native CLI installed via PowerShell; the default VS Code
         // terminal there is PowerShell, so use its syntax. Everything else is POSIX.
-        const done = "Done. Click 'Re-check connection' in the Grok sidebar.";
+        const done = "Done. Click 'Re-check connection' in the Atlas sidebar.";
         term.sendText(
           process.platform === "win32"
             ? `irm https://x.ai/cli/install.ps1 | iex; Write-Host "\`n${done}"`
@@ -9238,7 +9238,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // Connecting an agent is about the NEXT conversation, not the one on
         // screen. Showing its sign-in panel over a session with history covered
         // that transcript, and the confirmation afterwards had nowhere sensible
-        // to land — the owner connected Claude from an open Grok conversation
+        // to land — the owner connected Claude from an open Atlas conversation
         // and got the panel there, then no confirmation at all. So start a fresh
         // session first and run the whole flow in it.
         // Not without a project: on desktop with nothing open, workspaceRoot()
@@ -9291,9 +9291,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // An empty conversation bound to a provider that cannot answer has
         // nothing worth preserving, so hand it to the one just connected. This
         // used to require `firstConnection`, computed from CONNECTED providers,
-        // so a lapsed Codex made connecting Grok look like a second account and
+        // so a lapsed Codex made connecting Atlas look like a second account and
         // the empty session stayed on Codex — asking for a codex login while
-        // the picker read Grok 4.6. What matters is whether the session's own
+        // the picker read Atlas 4.6. What matters is whether the session's own
         // provider can answer, not how many others are linked.
         // Both halves matter: the session is stranded on something that cannot
         // answer, AND the provider just re-checked can. A FAILED re-check leaves
@@ -9378,7 +9378,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         break;
       case "updateGrok":
         if (!(await this.confirmHostExecute(
-          "Update the Grok Build CLI?",
+          "Update the Atlas CLI?",
           "This runs the CLI's own updater.",
           "Update",
         ))) break;
@@ -9786,11 +9786,11 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     nameLayer: Map<string, "project" | "user">;
     nameFile: Map<string, string>;
   } {
-    // `this.mcpServers` is Grok's inventory (`refreshMcpServers` only reads
-    // it through a Grok session). Classify against Grok's config files even
+    // `this.mcpServers` is Atlas's inventory (`refreshMcpServers` only reads
+    // it through a Atlas session). Classify against Atlas's config files even
     // when the focused conversation is Codex or Claude — otherwise project
     // `.mcp.json` / `.grok/config.toml` are skipped and those rows fall
-    // through as user-level and appear on a page that is grok.com + user
+    // through as user-level and appear on a page that is Atlas + user
     // config only. The cwd is the catalog's source workspace, never the
     // receiving/focused session's.
     const opts = {
@@ -10031,8 +10031,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /**
-   * Live Grok ACP session to read `_x.ai/mcp/list` through. Prefers any pooled
-   * Grok conversation that already has a client — the focused session may be
+   * Live Atlas ACP session to read `_x.ai/mcp/list` through. Prefers any pooled
+   * Atlas conversation that already has a client — the focused session may be
    * Codex or Claude. Does not mint a session.
    */
   private findLiveGrokSession(): Session | undefined {
@@ -10046,8 +10046,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /**
-   * Session for the Connectors inventory. Reuses a live Grok client when one
-   * exists; otherwise, if Grok is connected, starts an empty Grok session
+   * Session for the Connectors inventory. Reuses a live Atlas client when one
+   * exists; otherwise, if Atlas is connected, starts an empty Atlas session
    * (Connectors page only — never on boot). Overlapping callers await the same
    * in-flight start — a newly created session is not in `pool` until startup
    * completes. Empty-session recycling owns the rest: we do not dispose it here.
@@ -10089,7 +10089,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     return pending;
   }
 
-  /** Read MCP inventory through a Grok ACP session, not necessarily the focused one. */
+  /** Read MCP inventory through a Atlas ACP session, not necessarily the focused one. */
   private async refreshMcpServers(session: Session): Promise<void> {
     this.postMcpServers({
       type: "mcpServers",
@@ -10109,8 +10109,8 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         type: "mcpServers",
         servers: [],
         error: grokConnected
-          ? "Could not load MCP servers from Grok."
-          : "Connect Grok to inspect MCP servers.",
+          ? "Could not load MCP servers from Atlas."
+          : "Connect Atlas to inspect MCP servers.",
         warning: MCP_GLOBAL_SCOPE_WARNING,
       });
       return;
@@ -10146,7 +10146,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       this.postMcpServers({
         type: "mcpServers",
         servers: [],
-        error: detail || "Could not load MCP servers from Grok.",
+        error: detail || "Could not load MCP servers from Atlas.",
         warning: MCP_GLOBAL_SCOPE_WARNING,
       });
     }
@@ -10175,7 +10175,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
    * This used to be the open workspace folder unconditionally
    * (`repoScopeFor`'s local branch), and the reason was sound at the time: VS
    * Code hid the repo switcher, so a selection the local user could not see
-   * must not decide where Grok writes files. A phone that switched repos hours
+   * must not decide where Atlas writes files. A phone that switched repos hours
    * ago would otherwise have been aiming the desk's New Session at another
    * checkout.
    *
@@ -10258,7 +10258,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const providers = this.connectedProviders();
     const adapterProviders = providers.filter(isAdapterProvider);
     for (const provider of adapterProviders) this.scheduleAdapterHistoryRefresh(provider, cwd);
-    // Grok rows are files under GROK_HOME/sessions (plus live-pool synthesis) —
+    // Atlas rows are files under GROK_HOME/sessions (plus live-pool synthesis) —
     // listing is disk/buffer-truth and must not wait for a located grok binary.
     // Adapter rows come from session/list, so they legitimately require that CLI.
     if (!adapterProviders.length) {
@@ -11196,7 +11196,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // to prevent, so not waiting made it a no-op on the first clear.
     if (exiting.length) await Promise.allSettled(exiting);
     // Adapter history is provider-owned, so make the cache authoritative before
-    // a destructive combined-history action. Grok-only installs skip this.
+    // a destructive combined-history action. Atlas-only installs skip this.
     // A failed refresh must not fall through to the stale cache — that is how
     // "were not cleared" became a delete. Only providers that checked succeed.
     const adapterHistoryChecked = new Set<AcpProvider>();
@@ -11384,7 +11384,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       } catch (e) {
         // Per-file: one unreadable pick must not abort the rest of a multi-select.
         this.host.appendLine(`[image] could not attach ${filePath}: ${(e as Error).message}`);
-        void this.host.showErrorMessage(`Grok: could not attach ${path.basename(filePath)} — ${(e as Error).message}`);
+        void this.host.showErrorMessage(`Atlas: could not attach ${path.basename(filePath)} — ${(e as Error).message}`);
       }
     }
     this.revealAndFocusComposer();
@@ -11729,10 +11729,10 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   private async promptVoiceKeySetup(): Promise<void> {
     if (!this.connectedProviders().includes("grok")) {
       const pick = await this.host.showInformationMessage(
-        "Voice needs Grok connected. It uses the same xAI account for speech-to-text.",
-        "Connect Grok",
+        "Voice needs Atlas connected. It uses the same xAI account for speech-to-text.",
+        "Connect Atlas",
       );
-      if (pick === "Connect Grok") {
+      if (pick === "Connect Atlas") {
         if (this.host.canOpenSettingsEditor) await this.openSettingsEditor("providers");
       }
       return;
@@ -12211,7 +12211,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         type: "error",
         text: this.connectedProviders().includes("grok")
           ? "Voice control needs an xAI Speech-to-Text key on the host."
-          : "Voice needs Grok connected. It uses the same xAI account for speech-to-text.",
+          : "Voice needs Atlas connected. It uses the same xAI account for speech-to-text.",
       });
       return;
     }
@@ -12393,7 +12393,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // immediately clickable. `selection` opens a whole-file diff on the edit
     // instead of at line 1 (#66) — harmless at 0 when expansion fell back.
     const at = sides.firstChangedLine;
-    await this.host.openDiff(left, right, `Grok proposed: ${base}`, {
+    await this.host.openDiff(left, right, `Atlas proposed: ${base}`, {
       preview: true,
       preserveFocus: true,
       selection: {
@@ -12809,20 +12809,20 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   ): Promise<void> {
     try {
       if (!isVisionMime(mimeType)) {
-        this.reportRequester(requester, "error", `Grok: unsupported image type ${mimeType} — use PNG, JPEG, GIF, or WebP.`);
+        this.reportRequester(requester, "error", `Atlas: unsupported image type ${mimeType} — use PNG, JPEG, GIF, or WebP.`);
         return;
       }
       const bytes = Buffer.from(base64, "base64");
       if (bytes.length === 0) return;
       if (bytes.length > MAX_VISION_IMAGE_BYTES) {
-        this.reportRequester(requester, "error", "Grok: pasted image exceeds the 20 MiB vision limit.");
+        this.reportRequester(requester, "error", "Atlas: pasted image exceeds the 20 MiB vision limit.");
         return;
       }
       const session = await this.stageImageAttachment(bytes, mimeType, undefined, owner, previewId);
       if (session === this.focused) this.revealAndFocusComposer();
     } catch (e) {
       this.host.appendLine(`[image] paste failed: ${(e as Error).message}`);
-      this.reportRequester(requester, "error", `Grok: could not attach the pasted image — ${(e as Error).message}`);
+      this.reportRequester(requester, "error", `Atlas: could not attach the pasted image — ${(e as Error).message}`);
     }
   }
 
@@ -12996,7 +12996,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (bare) {
       this.emit(session, {
         type: "error",
-        text: "Grok is mid-turn — that command was not run. Try again when the turn finishes.",
+        text: "Atlas is mid-turn — that command was not run. Try again when the turn finishes.",
       });
       return;
     }
@@ -13141,7 +13141,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ? buildQueuedPromptWithImages(contributions, implicitChips, promptDeps, slashCommand != null)
       : buildPromptWithImages(text, chips, images, promptDeps, slashCommand != null);
 
-    // Unlike images, document bytes are read lazily by Grok from the path in
+    // Unlike images, document bytes are read lazily by Atlas from the path in
     // the prompt. Persist ownership before consuming the chip or sending.
     await this.retainUploadedFilesForSession(session, chips);
     if (gen !== session.gen) return;
@@ -13250,7 +13250,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         // not persisted: grok's own history has no such message, so re-focus keeps
         // it but a disk restore won't.
         if (!session.sawCompactFailed) this.emit(session, { type: "messageChunk", text: "Compacted." });
-        // The live compact rail is exact and wins. Older Grok CLIs fall through
+        // The live compact rail is exact and wins. Older Atlas CLIs fall through
         // to the control-plane meter; only an explicit -32601 may use the hidden
         // legacy prompt fallback.
         if (session.provider === "grok" && !session.sawCompactNotification) {
@@ -13996,16 +13996,16 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 
     hasLiveSession(id: string): boolean;
     /**
-     * Latch Grok discovery to the missing-CLI path. `locateProvider("grok")`
+     * Latch Atlas discovery to the missing-CLI path. `locateProvider("grok")`
      * will not search config or PATH; an explicit `provisionFakeGrok` path
      * still wins because it is cached first. In-memory only — does not
      * rewrite persisted account state.
      */
     isolateFromInstalledGrok(): void;
-    /** Current Grok resolution after the isolate / provision latches. */
+    /** Current Atlas resolution after the isolate / provision latches. */
     locatedGrokCli(): string | undefined;
     /**
-     * Point this host at a test-only ACP CLI and mark Grok connected so
+     * Point this host at a test-only ACP CLI and mark Atlas connected so
      * startSession/loadSession spawn it instead of taking the missing-CLI
      * onboarding path. Does not start a session. The returned restore
      * function puts the previous CLI path and connection flag back.
@@ -15009,7 +15009,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /** Adapter catalogs own their persistence, so abandoning an empty conversation
-   *  must use the advertised ACP delete rather than touching Grok's store. */
+   *  must use the advertised ACP delete rather than touching Atlas's store. */
   private async discardAdapterEmptySession(
     provider: AcpProvider,
     id: string | undefined,
@@ -15153,7 +15153,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /**
    * Remember adapter occupancy and push it to the donut. Prompt size is the
    * conversation; a later smaller prompt is not, unless a compact just armed
-   * a reset. Grok never enters here.
+   * a reset. Atlas never enters here.
    */
   private rememberAdapterContext(
     session: Session,
@@ -15179,7 +15179,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /** Push the context size to the webview — chiefly the cold-restore source
-   *  before any turn has run. Grok reads signals.json; Claude/Codex read the
+   *  before any turn has run. Atlas reads signals.json; Claude/Codex read the
    *  remembered prompt occupancy. Best-effort: no readable count, no message. */
   private emitContextUsage(session: Session): void {
     const id = session.activeSessionId;
@@ -15220,9 +15220,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   }
 
   /**
-   * Read Grok's structured context meter. This is intentionally separate from
+   * Read Atlas's structured context meter. This is intentionally separate from
    * the adapter usageLog/contextUsageFromLog seam: those entries reconstruct
-   * Claude/Codex occupancy and never describe Grok's live categories.
+   * Claude/Codex occupancy and never describe Atlas's live categories.
    */
   private async refreshContextFromSessionInfo(
     session: Session,
@@ -15302,7 +15302,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
   /** Start a brand-new session, keeping the current one alive in the background. */
   private async newFocusedSession(origin: MsgOrigin, requestedCwd?: string): Promise<void> {
     // Repo selection only changes history scope; New Session is the deliberate
-    // second action that starts Grok in the selected cwd — deliberate only for
+    // second action that starts Atlas in the selected cwd — deliberate only for
     // the client that can SEE the selection. That used to exclude VS Code,
     // whose switcher was hidden; the projects rail is that switcher, so it no
     // longer does. The phone half of the old worry is handled where it always
@@ -15318,7 +15318,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     if (requestedCwd && !named) {
       // A specific project was asked for and it is not there any more — the rail
       // was drawn before the folder was unmounted or deleted. Falling through to
-      // the scope would start Grok in whatever happens to be selected while the
+      // the scope would start Atlas in whatever happens to be selected while the
       // click plainly named another project, and the agent would then write
       // there. Refuse, and refresh so the dead row goes away.
       void this.host.showWarningMessage(`That project is no longer available:\n${requestedCwd}`);
@@ -15820,7 +15820,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     // A remote tab may still hold this conversation as a CLIENTLESS object
     // (its CLI crashed, or it was LRU-reaped — the mapping deliberately
     // survives so the tab reloads on its next send). Cold-loading a NEW
-    // object here would hand the same Grok session directory to two live
+    // object here would hand the same Atlas session directory to two live
     // processes the moment both views touch it — adopt the held object
     // instead, so this restart lands in BOTH views.
     const held = this.remoteClients.clients()
@@ -16071,7 +16071,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     this.oauthShadowWarningShown = true;
     void this.state.update(OAUTH_SHADOW_WARNING_KEY, true);
     void this.host.showWarningMessage(
-      "Grok is using its cached OAuth session, so XAI_API_KEY is currently ignored. To use the API key, run `grok logout`, then start a new session.",
+      "Atlas is using its cached OAuth session, so XAI_API_KEY is currently ignored. To use the API key, run `atlas logout`, then start a new session.",
     );
   }
 
@@ -16079,7 +16079,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
     const dotEnv = this.readDotEnv(cwd);
     const env: NodeJS.ProcessEnv = { ...process.env, ...dotEnv };
 
-    // XAI_API_KEY is the generic xAI key name; grok CLI needs GROK_CODE_XAI_API_KEY.
+    // XAI_API_KEY is the generic xAI key name; Atlas CLI needs GROK_CODE_XAI_API_KEY.
     // Map from either source (workspace .env or the user's shell environment).
     if (env["XAI_API_KEY"] && !env["GROK_CODE_XAI_API_KEY"]) {
       env["GROK_CODE_XAI_API_KEY"] = env["XAI_API_KEY"];
@@ -16311,7 +16311,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
         this.host.appendLine(`[remote] ${m.type} failed: ${detail}`);
         this.sendRemoteRequester(requester, {
           type: "error",
-          text: `Grok: ${m.type} failed — ${detail}`,
+          text: `Atlas: ${m.type} failed — ${detail}`,
         });
       });
     } catch (e) {
@@ -17057,7 +17057,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';" />
 <link rel="stylesheet" href="${mediaUri("settings.css")}" />
-<title>Grok Settings</title>
+<title>Atlas Settings</title>
 </head>
 <body class="settings-page">
   <div id="settings-root"></div>
@@ -17134,9 +17134,9 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
       ? `
   <aside id="projects-rail" class="projects-rail" aria-label="Projects">
     <div class="rail-top">
-      <span class="rail-brand" title="Grok Build Desktop">
+      <span class="rail-brand" title="Atlas Desktop">
         <span class="mark" style="--rail-mark:url('${railMark}')" aria-hidden="true"></span>
-        <span class="wordmark"><b>Grok</b> <span class="dim">Build</span></span>
+        <span class="wordmark"><b>Atlas</b></span>
       </span>
       <button id="desk-rail-toggle" class="rail-icon-btn" type="button" title="Hide projects" aria-label="Hide projects" aria-expanded="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
@@ -17237,8 +17237,8 @@ ${openMain}
 ${fileShellOpen}
   <main id="messages" class="messages">
     <div class="welcome" id="welcome">
-      <span class="welcome-mark" role="img" aria-label="Grok" style="--welcome-mark:url('${resourceUri("grok-icon.svg")}')"></span>
-      <h2>Grok Build (Community)</h2>
+      <span class="welcome-mark" role="img" aria-label="Atlas" style="--welcome-mark:url('${resourceUri("grok-icon.svg")}')"></span>
+      <h2>Atlas (Community)</h2>
       <p class="welcome-byline muted">by Paweł Huryn (<a href="https://www.productcompass.pm/" class="muted-link">The Product Compass</a>)</p>
       <p id="welcome-version" class="muted welcome-status-busy"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span>Starting</span></p>
       <div id="welcome-onboarding"></div>
@@ -17251,7 +17251,7 @@ ${fileShellOpen}
       <div id="attachments" class="attachments"></div>
       <div class="composer-input-wrap">
         <div id="input-highlight" class="input-highlight" aria-hidden="true" dir="auto"></div>
-        <textarea id="input" placeholder="Ask Grok..." rows="2" dir="auto"></textarea>
+        <textarea id="input" placeholder="Ask Atlas…" rows="2" dir="auto"></textarea>
         <button id="mic-btn" class="mic-btn" title="Voice control"></button>
       </div>
       <div class="composer-toolbar">

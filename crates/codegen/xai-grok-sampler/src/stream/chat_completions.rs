@@ -585,6 +585,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_tool_call_ids_are_filled_before_complete() {
+        let chunk = make_chunk(vec![ChatChunkDelta {
+            role: None,
+            content: None,
+            reasoning_content: None,
+            tool_calls: vec![
+                ChunkToolCallDelta {
+                    index: 0,
+                    id: None,
+                    kind: Some("function".into()),
+                    function: Some(ToolCallFunctionDelta {
+                        name: Some("read_file".into()),
+                        arguments: Some("{}".into()),
+                    }),
+                },
+                ChunkToolCallDelta {
+                    index: 1,
+                    id: Some("".into()),
+                    kind: Some("function".into()),
+                    function: Some(ToolCallFunctionDelta {
+                        name: Some("grep".into()),
+                        arguments: Some("{}".into()),
+                    }),
+                },
+            ],
+            tool_call_id: None,
+        }]);
+        let raw = stream::iter::<Vec<Result<ChatCompletionChunk, SamplingError>>>(vec![Ok(chunk)])
+            .boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                let calls = response.tool_calls();
+                assert_eq!(calls.len(), 2);
+                assert_eq!(calls[0].id.as_ref(), "call_anon1");
+                assert_eq!(calls[1].id.as_ref(), "call_anon2");
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn mid_stream_error_yields_failed_no_completed() {
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
             Ok(text_chunk("hi")),

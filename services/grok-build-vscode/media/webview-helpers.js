@@ -336,10 +336,15 @@
 
   function brandUserFacingText(text) {
     return String(text)
+      .replace(/SuperGrok/g, "\0SUPERGROK\0")
       .replace(/\bGrok Build Desktop\b/gi, "Atlas Desktop")
       .replace(/\bGrok Build CLI\b/gi, "Atlas CLI")
       .replace(/\bGrok Build\b/gi, "Atlas")
-      .replace(/\bGrok CLI\b/gi, "Atlas CLI");
+      .replace(/\bGrok CLI\b/gi, "Atlas CLI")
+      .replace(/\bGrok\.com\b/gi, "Atlas")
+      .replace(/\bGrok\b/g, "Atlas")
+      .replace(/`grok logout`/g, "`atlas logout`")
+      .replace(/\0SUPERGROK\0/g, "SuperGrok");
   }
 
   function brandModelDisplayName(name, modelId) {

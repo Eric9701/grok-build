@@ -364,7 +364,7 @@
     remotePreferencesSupported: false,
     ttsTurnText: "",
     // Render MIRROR of the focused session's host-owned send queue (#37) —
-    // messages typed/dictated while Grok was busy. Entries are `{text, chips}`.
+    // messages typed/dictated while Atlas was busy. Entries are `{text, chips}`.
     // All mutations route through the host (queueSend/dequeueSend/clearQueuedSends)
     // and come back as a queuedSends snapshot, so the queue survives focus
     // switches and the HOST flushes it (one combined prompt) when the session's
@@ -385,7 +385,7 @@
     // whether it works — we offer it and let the host latch this off the first
     // time the CLI answers -32601 (the text falls back to the queue, never lost).
     steerSupported: true,
-    // Grok thumbs (#114). Off until the host advertises feedbackAvailability.
+    // Atlas thumbs (#114). Off until the host advertises feedbackAvailability.
     // Only the live-process turn that just finished is rateable (not session/load).
     feedbackAvailable: false,
     turnRating: 0,
@@ -555,7 +555,7 @@
     // consumed, not entries shown; hidden subagent sessions occupy slots).
     sessionNextOffset: null,
     sessionLastAutoPageKey: "",
-    // Combined history keeps Grok's consumed-slot cursor opaque and remembers
+    // Combined history keeps Atlas's consumed-slot cursor opaque and remembers
     // the last emitted Codex (timestamp,id) tuple. The scalar offset remains the
     // append/legacy contract.
     sessionProviderCursor: null,
@@ -617,7 +617,7 @@
     // shows a stop icon that the user can click to cancel grok mid-stream.
     // Starts true so the very first paint is the disabled spinner (see `busy`).
     busyLocked: true,
-    // grok CLI version from the ACP `initialized` handshake, plus a flag marking
+    // Atlas CLI version from the ACP `initialized` handshake, plus a flag marking
     // the session-start window: while startingPhase is true the welcome line
     // shows "starting…"; it flips to "connected · v<cliVersion>" only when the
     // priming spinner clears (setBusy:false). See the initialized/setBusy cases.
@@ -690,7 +690,7 @@
     // False = today's behavior (queue, with an on-demand Steer button).
     steerByDefault: false,
     // grok.soundNotifications (persisted, global): when true a short synth tone
-    // plays on turn completion / error, but only when the Grok panel isn't
+    // plays on turn completion / error, but only when the Atlas panel isn't
     // focused (#59). Off by default. Host posts the value on init + config change.
     soundNotifications: false,
     // grok.processingSound: a quiet repeating cue while a live turn is still
@@ -799,17 +799,17 @@
     agent: {
       icon: ICON.bot,
       label: "Agent mode",
-      desc: "Grok acts directly, asking approval only for changes it judges sensitive",
+      desc: "Atlas acts directly, asking approval only for changes it judges sensitive",
     },
     plan: {
       icon: ICON.listTree,
       label: "Plan mode",
-      desc: "Grok explores and proposes a plan; file writes and commands are blocked until you approve it",
+      desc: "Atlas explores and proposes a plan; file writes and commands are blocked until you approve it",
     },
     yolo: {
       icon: ICON.zap,
       label: "Auto accept",
-      desc: "Grok automatically approves all permission requests (YOLO)",
+      desc: "Atlas automatically approves all permission requests (YOLO)",
     },
   };
 
@@ -932,7 +932,7 @@
       suspendAudioCtx(ctx);
     }, Math.ceil(lastStop * 1000) + 20);
   }
-  // Play only when the user isn't looking at the Grok panel — the "notify me when
+  // Play only when the user isn't looking at the Atlas panel — the "notify me when
   // I've stepped away" case (#59). A focused, visible panel means they'll see the
   // result without a beep. hasFocus() is false when the editor/another app has
   // focus; visibilityState covers a fully collapsed panel.
@@ -1052,7 +1052,7 @@
 
   // ---------- markdown ----------
 
-  const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, appendHighlightedText, commandProgramLabel, commandTextPreview, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards } = globalThis.GrokWebviewHelpers;
+  const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDisplayName, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, appendHighlightedText, commandProgramLabel, commandTextPreview, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -1149,7 +1149,7 @@
   }
 
   // ---------- mermaid diagrams ----------
-  // Grok emits ```mermaid fenced blocks. renderMarkdown turns each into a
+  // Atlas emits ```mermaid fenced blocks. renderMarkdown turns each into a
   // .mermaid-block placeholder (showing the source as a fallback code block);
   // this pass renders it to SVG with the vendored mermaid lib. mermaid.render is
   // async and needs the live DOM (it measures text), so unlike the synchronous
@@ -1814,7 +1814,7 @@
       (parent || contextPopover).appendChild(el);
     };
     const tok = (n) => Number(n).toLocaleString();
-    // Grok's fixed-point billing unit is 10^10 ticks per USD (xAI's published
+    // Atlas's fixed-point billing unit is 10^10 ticks per USD (xAI's published
     // UsageTotals contract). Keep the divisor explicit; it is not cents/micros.
     const usdTicks = (ticks) => {
       const usd = Number(ticks) / 10_000_000_000;
@@ -3006,7 +3006,7 @@
     // reads as a working selection when nothing can run at all.
     const modelName = !anyUsableProvider
       ? "Models unavailable"
-      : (modelLoaded ? (modelDisplayName(state.currentModelId, ownModels) || "Grok Build") : "Loading…");
+      : (modelLoaded ? (modelDisplayName(state.currentModelId, ownModels) || "Atlas") : "Loading…");
     nameBtn.innerHTML = `<span class="btn-label">${escapeHtml(truncate(modelName, 18))}</span>`;
     nameBtn.disabled = settingsLocked || !modelLoaded;
     nameBtn.title = !anyUsableProvider
@@ -3327,7 +3327,7 @@
       addProviderHeading(modelProvider);
       const el = document.createElement("div");
       const active = m.modelId === state.currentModelId && (!m.provider || m.provider === state.activeProvider);
-      const label = modelPickerLabel(m) || m.modelId;
+      const label = brandModelDisplayName(modelPickerLabel(m) || m.modelId, m.modelId);
       const glyphId = providerLogoId(modelProvider);
       el.className = "toolbar-popover-item model-picker-row";
       if (active) el.classList.add("active");
@@ -3595,7 +3595,7 @@
   // breakpoint that decides drawer-vs-docked, and that is the only place that
   // knows. One definition of "is this a phone", not two.
   // Width cap for the rail-anchored gear popover. Menu items and the About
-  // panel's version lines both live in here, so it has to fit "Grok Build for
+  // panel's version lines both live in here, so it has to fit "Atlas for
   // VS Code (Community)" wrapped without becoming a full-width sheet.
   const GEAR_POPOVER_WIDTH = 240;
 
@@ -3823,7 +3823,7 @@
     if (!modePopover.hidden) { closePopovers(); return; }
     modePopover.innerHTML = "";
     for (const [id, meta] of Object.entries(MODE_META)) {
-      // Plan is Grok's extension-owned plan gate. Codex owns its own plan
+      // Plan is Atlas's extension-owned plan gate. Codex owns its own plan
       // review permission flow, so showing this item there is both inert and
       // misleading.
       if (id === "plan" && state.activeProvider === "codex") continue;
@@ -3908,7 +3908,7 @@
   const PROVIDER_LOGO_PATHS = {
     grok: "M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815",
     codex: "M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z",
-    // Four-point sparkle — distinct from the Grok/Codex marks, currentColor.
+    // Four-point sparkle — distinct from the Atlas/Codex marks, currentColor.
     claude: "M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z",
   };
 
@@ -3921,7 +3921,7 @@
    * therefore schedule instead, and neither is offered a button that describes
    * something its agent cannot do.
    *
-   * An absent provider means an older host that only ever ran Grok.
+   * An absent provider means an older host that only ever ran Atlas.
    */
   function steerableProvider() {
     return state.activeProvider !== "claude" && state.activeProvider !== "codex";
@@ -4121,7 +4121,7 @@
     if (!state.repos.length) {
       const empty = document.createElement("div");
       empty.className = "history-empty";
-      empty.textContent = "No repositories with Grok sessions.";
+      empty.textContent = "No repositories with Atlas sessions.";
       repoPopover.appendChild(empty);
       return;
     }
@@ -4494,7 +4494,7 @@
 
   // ---------- projects rail ----------
   //
-  // A persistent left rail: every open project (or every repo with Grok history
+  // A persistent left rail: every open project (or every repo with Atlas history
   // on remote), each showing its newest few sessions.
   //
   // Gate (capability, not IS_REMOTE / not a host flag):
@@ -6688,7 +6688,7 @@
       if (state.repoPreviewsUnsupported) {
         const note = railNote("Update Atlas to preview");
         note.title =
-          "Grok Build on your computer — the extension or the desktop app — is older " +
+          "Atlas on your computer — the extension or the desktop app — is older " +
           "than this page, so it can't list another project's sessions without " +
           "switching to it. Click the project name to open it, or update it.";
         body.appendChild(note);
@@ -7021,7 +7021,7 @@
    *  to it, and says the extra part out loud when a turn is still running. */
   function deleteSessionWarning(active) {
     if (!active) return "This cannot be undone.";
-    const stopping = state.busy ? " Grok is still working; that stops." : "";
+    const stopping = state.busy ? " Atlas is still working; that stops." : "";
     return "This is the conversation you have open. It will close and a new one will start in the same project."
       + stopping + " This cannot be undone.";
   }
@@ -7917,7 +7917,7 @@
    * launched terminal left the button looking untouched.
    *
    * Recorded per provider rather than per button, because the same launch is
-   * spelled `runLogin` on Grok's panel and `connectProvider` on the adapters'.
+   * spelled `runLogin` on Atlas's panel and `connectProvider` on the adapters'.
    */
   function markOnboardingLaunchedByHost(provider) {
     if (state.onboardingRanMode !== state.onboardingMode) {
@@ -7943,7 +7943,7 @@
     const ran = state.onboardingRan || [];
     const launched = state.onboardingLaunched || [];
     if (!ran.length && !launched.length) return;
-    // The panel's own provider, for Grok's `runLogin` button which carries none.
+    // The panel's own provider, for Atlas's `runLogin` button which carries none.
     const panelProvider = (state.onboardingInfo && state.onboardingInfo.provider)
       || (state.onboardingMode === "codex-login" ? "codex"
         : state.onboardingMode === "claude-login" ? "claude"
@@ -7990,7 +7990,7 @@
     if (!onb) return;
     if (IS_REMOTE && (mode === "connect-agent" || mode === "codex-login" || mode === "claude-login" || mode === "auth-required")) {
       if (ver) setWelcomeStatus("Sign in at the desk", false);
-      const providerName = mode === "codex-login" ? "Codex" : mode === "claude-login" ? "Claude" : mode === "auth-required" ? "Grok" : "an agent";
+      const providerName = mode === "codex-login" ? "Codex" : mode === "claude-login" ? "Claude" : mode === "auth-required" ? "Atlas" : "an agent";
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">Sign in at the desk</p>` +
@@ -8054,7 +8054,7 @@
             // thing IS, so the row a newcomer reads first was the only one not
             // saying what it would put on their machine.
             `<button class="onb-agent-tile primary onb-action" type="button" data-act="connectProvider" data-provider="grok">` +
-              `<span class="onb-agent-mark">${providerLogoMarkup("grok")}</span><span><strong>Grok Build (Recommended)</strong><small>Grok Build CLI</small></span>` +
+              `<span class="onb-agent-mark">${providerLogoMarkup("grok")}</span><span><strong>Atlas (Recommended)</strong><small>Atlas CLI</small></span>` +
             `</button>` +
             `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="codex">` +
               `<span class="onb-agent-mark">${providerLogoMarkup("codex")}</span><span><strong>Codex</strong><small>OpenAI Codex CLI</small></span>` +
@@ -8067,7 +8067,7 @@
     } else if (mode === "missing-cli") {
       if (ver) setWelcomeStatus("CLI not installed", false);
       if (IS_REMOTE) {
-        onb.innerHTML = `<div class="onb"><p class="onb-heading">Grok CLI is missing at the desk</p>` +
+        onb.innerHTML = `<div class="onb"><p class="onb-heading">Atlas CLI is missing at the desk</p>` +
           `<p class="onb-desc">Install it on the computer running this workspace, then refresh this remote view.</p></div>`;
         return;
       }
@@ -8076,7 +8076,7 @@
         : "curl -fsSL https://x.ai/cli/install.sh | bash";
       onb.innerHTML =
         `<div class="onb">` +
-          `<p class="onb-heading">Install the Grok CLI</p>` +
+          `<p class="onb-heading">Install the Atlas CLI</p>` +
           `<div class="onb-cmd">` +
             `<code>${installCmd}</code>` +
             `<button class="onb-copy" type="button" title="Copy" data-cmd="${installCmd}">${ICON.copy}</button>` +
@@ -8153,7 +8153,7 @@
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">Sign in to continue</p>` +
-          `<p class="onb-desc"><strong>SuperGrok or X Premium+ subscription</strong> &mdash; either unlocks the <em>Grok Build</em> entitlement.</p>` +
+          `<p class="onb-desc"><strong>SuperGrok or X Premium+ subscription</strong> &mdash; either unlocks the <em>Atlas</em> entitlement.</p>` +
           `<button class="onb-action" type="button" data-act="runLogin">Open terminal &amp; run <code>grok login</code></button>` +
           `<p class="onb-or">or</p>` +
           `<p class="onb-desc"><strong>API key</strong> &mdash; pay per token. Get a key at <a href="https://console.x.ai" class="onb-link">console.x.ai</a>, then add to your shell or a workspace <code>.env</code>:</p>` +
@@ -8161,7 +8161,7 @@
             `<code>XAI_API_KEY=your-key-here</code>` +
             `<button class="onb-copy" type="button" title="Copy" data-cmd="XAI_API_KEY=">${ICON.copy}</button>` +
           `</div>` +
-          `<p class="onb-desc">A cached sign-in takes precedence over the API key &mdash; run <code>grok logout</code> first to use the key. If signing in succeeds but prompts still fail, check the error in the chat: your account may lack the Grok Build entitlement.</p>` +
+          `<p class="onb-desc">A cached sign-in takes precedence over the API key &mdash; run <code>atlas logout</code> first to use the key. If signing in succeeds but prompts still fail, check the error in the chat: your account may lack the Atlas entitlement.</p>` +
           `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="grok">Re-check connection</button>` +
         `</div>`;
     } else {
@@ -9120,7 +9120,7 @@
     }
   }
 
-  // Command Palette: Grok: Expand/Collapse All Tool Details (This Session). Sets
+  // Command Palette: Atlas: Expand/Collapse All Tool Details (This Session). Sets
   // the per-session latch, then re-applies it everywhere — so it (a) opens the
   // batch that's still executing and (b) keeps applying to tool calls that
   // arrive later this session, until you collapse-all or change the gear setting
@@ -9327,7 +9327,7 @@
   /**
    * Fold a `tool_call_update` back into its row's label and detail.
    *
-   * Grok puts the arguments on the FIRST `tool_call`, so its rows read correctly
+   * Atlas puts the arguments on the FIRST `tool_call`, so its rows read correctly
    * the moment they appear. Claude does not: the first call is a generic
    * `{title:"Read File", rawInput:{}}` and the real `{title:"Read package.json",
    * rawInput:{file_path:…}}` arrives on an update — which nothing was applying,
@@ -9335,8 +9335,8 @@
    * with no argument, input or output.
    *
    * Applies to every provider, not just Claude — it is simply a no-op where the
-   * first call was already complete, which is the Grok case. That is also why
-   * the merge is field by field and skips null: Grok's updates frequently carry
+   * first call was already complete, which is the Atlas case. That is also why
+   * the merge is field by field and skips null: Atlas's updates frequently carry
    * `title: null`, and a wholesale replace would blank a good label. Claude also
    * sends an update carrying ONLY a toolCallId and `_meta` (the tool response),
    * which would erase everything gathered so far.
@@ -9373,7 +9373,7 @@
       merged.detailInput = update.detailInput;
     }
     item._call = merged;
-    // Flatten / summarize read `_calls`, not `item._call`. Grok's first
+    // Flatten / summarize read `_calls`, not `item._call`. Atlas's first
     // use_tool row is titled "use_tool" until this update; leave the
     // group's copy stale and the flat label stays the wrapper name.
     const groupCalls = item.closest(".tool-group");
@@ -10965,7 +10965,7 @@
       }
       // Background-task notices the CLI injects as <system-reminder> user turns
       // are agent plumbing, not user content — never bubble them on restore.
-      // Grok's reply to them still renders. (Live ones are already dropped by
+      // Atlas's reply to them still renders. (Live ones are already dropped by
       // the !replaying guard above; this covers the replayed copy.)
       if (verdict.hide === "reminder") {
         state.skipUserBubble = true;
@@ -11239,7 +11239,7 @@
   function activityAriaLabel() {
     if (state.activeProvider === "codex") return "OpenAI is working";
     if (state.activeProvider === "claude") return "Claude is working";
-    return "Grok is working";
+    return "Atlas is working";
   }
 
   function syncProviderVoice() {
@@ -11264,7 +11264,7 @@
     const el = document.createElement("div");
     el.className = "thinking-indicator";
     el.innerHTML = `<span class="thinking-indicator-icon">${ICON.brain}</span><span class="thinking-indicator-label">Thinking</span>${BLINK_DOTS}`;
-    el.setAttribute("aria-label", "Grok is thinking");
+    el.setAttribute("aria-label", "Atlas is thinking");
     appendTranscriptChild(el);
     state.thinkingIndicatorEl = el;
     scrollToBottom();
@@ -11780,7 +11780,7 @@
 
   // ---------- question card (ask_user_question) ----------
 
-  // A "Grok is asking" label + the question text, prominent. Shared by the live
+  // A "Atlas is asking" label + the question text, prominent. Shared by the live
   // and restored cards so they look identical.
   function buildQuestionHead(el, headingText) {
     const title = document.createElement("div");
@@ -11823,7 +11823,7 @@
     const el = document.createElement("div");
     el.className = "card question";
 
-    const title = buildQuestionHead(el, "Grok is asking");
+    const title = buildQuestionHead(el, "Atlas is asking");
 
     // selections[i] = array of chosen labels for question i.
     const selections = questions.map(() => []);
@@ -12208,7 +12208,7 @@
     feedback.className = "plan-feedback";
     feedback.rows = 2;
     feedback.setAttribute("dir", "auto");
-    feedback.placeholder = "Optional comment — Grok decides what to do with it";
+    feedback.placeholder = "Optional comment — Atlas decides what to do with it";
     el.appendChild(feedback);
 
     const actions = document.createElement("div");
@@ -12422,7 +12422,7 @@
         : "";
       const label = range ? `${fileName}:${range}` : fileName;
       // Explicit attachments — files, images, AND selections sent via the "Add
-      // Selection to Grok" command — get their own removable row at the top,
+      // Selection to Atlas" command — get their own removable row at the top,
       // like any other attached file. Only the ambient active-editor chip
       // (implicit — whole file, or its live selection) stays in the bottom
       // toolbar with the hide/eye toggle.
@@ -12664,7 +12664,7 @@
       sendBtn.disabled = true;
     } else if (composerHasSendIntent(input.value, state.chips)) {
       sendBtn.innerHTML = ICON.arrowUp;
-      sendBtn.title = "Queue — sends when Grok finishes";
+      sendBtn.title = "Queue — sends when Atlas finishes";
       sendBtn.disabled = false;
     } else {
       sendBtn.innerHTML = ICON.square;
@@ -12686,7 +12686,7 @@
     // Everything or nothing: an older host would ignore extra chips and queue
     // the text alone. Refuse rather than silently drop attachments.
     if (chips.length && !(state.hostCaps && state.hostCaps.queueSendChips)) {
-      addError("This host cannot queue attachments. Wait until Grok finishes, then send.");
+      addError("This host cannot queue attachments. Wait until Atlas finishes, then send.");
       return true;
     }
     stopVoiceForManualSend();
@@ -12853,7 +12853,7 @@
       micBtn.title = state.voiceConfigured
         ? "Voice control"
         : voiceNeedsGrokAccount()
-          ? "Voice needs Grok connected"
+          ? "Voice needs Atlas connected"
           : "Voice control — click to set up (needs an xAI API key)";
       micBtn.disabled = false;
     }
@@ -12868,9 +12868,9 @@
 
   function explainVoiceNeedsGrok() {
     return uiConfirm({
-      title: "Voice needs Grok",
-      body: "Voice uses your Grok account for speech-to-text. Connect Grok to use it.",
-      confirmLabel: "Connect Grok",
+      title: "Voice needs Atlas",
+      body: "Voice uses your Atlas account for speech-to-text. Connect Atlas to use it.",
+      confirmLabel: "Connect Atlas",
     }).then((ok) => {
       if (ok) openSettingsCategory("providers");
     });
@@ -13264,7 +13264,7 @@
   }
 
   // ---------- queued sends (#37) ----------
-  // Messages composed while Grok is busy are HOST-owned per session (like
+  // Messages composed while Atlas is busy are HOST-owned per session (like
   // chips): the webview posts queueSend and re-renders from the queuedSends
   // snapshot, so the queue survives focus switches and the HOST flushes it as
   // ONE combined prompt when the session's turn ends — even while backgrounded.
@@ -13349,7 +13349,7 @@
     tag.innerHTML = `${ICON.clock}<span>${state.queuedSubmissionRejected || rejected ? "Not sent" : "Queued"}</span>`;
     tag.title = state.queuedSubmissionRejected || rejected
       ? "The relay rejected this prompt. Edit it to retry, or remove it."
-      : "Sends when Grok finishes";
+      : "Sends when Atlas finishes";
     const actions = document.createElement("span");
     actions.className = "queued-actions";
     const editBtn = document.createElement("button");
@@ -13397,7 +13397,7 @@
     if (state.steerSupported && steerableProvider()) {
       const steerBtn = document.createElement("button");
       steerBtn.className = "queued-action queued-steer";
-      steerBtn.title = "Steer — submit now without interrupting Grok";
+      steerBtn.title = "Steer — submit now without interrupting Atlas";
       steerBtn.innerHTML = `${ICON.cornerDownRight}<span>Steer</span>`;
       // pointerdown, NOT click: the queued block is pinned to the end of the
       // chat and every streamed chunk runs scrollToBottom, so while the agent is
@@ -14681,7 +14681,7 @@
         // One-time hint while the silent `grok update` runs before the session
         // spawns; overwritten by Starting once grok connects, then Connected
         // once session startup finishes.
-        if (!welcomeHoldActive()) setWelcomeStatus("Updating Grok Build CLI", true);
+        if (!welcomeHoldActive()) setWelcomeStatus("Updating Atlas CLI", true);
         break;
       }
       case "localModels":
@@ -15259,7 +15259,7 @@
         if (!state.replaying) {
           // Tool titles can expose commands or file operations. The accessibility
           // cue says what the user must do without reading tool details aloud.
-          speakWaitingPrompt("Grok is waiting for your permission. Review the request and choose an option.");
+          speakWaitingPrompt("Atlas is waiting for your permission. Review the request and choose an option.");
         }
         break;
       case "permissionOptions":
@@ -15300,7 +15300,7 @@
             .map((question) => questionText(question))
             .filter(Boolean)
             .join(" ");
-          speakWaitingPrompt(questions || "Grok is waiting for your answer.");
+          speakWaitingPrompt(questions || "Atlas is waiting for your answer.");
         }
         break;
       case "planHistory":
@@ -15360,7 +15360,7 @@
         applyExpandCommandOutputs();
         break;
       case "setAllToolDetails":
-        // Command Palette: Grok: Expand/Collapse All Tool Details — one-shot,
+        // Command Palette: Atlas: Expand/Collapse All Tool Details — one-shot,
         // current session only, doesn't touch the persisted expandCommandOutputs.
         setAllToolDetails(!!msg.open);
         break;
@@ -15475,7 +15475,7 @@
           addError(`Atlas exited (code ${msg.code}). Send a message to restart this session, or start a new one.`);
         }
         // A process that dies takes the host's send queue with it: that text
-        // never reached Grok, and the host empties the queue in the very next
+        // never reached Atlas, and the host empties the queue in the very next
         // breath after this message — so this is the last moment it exists
         // anywhere. Hand it back as the "Not sent" recovery block, which is
         // exactly what it is.
@@ -16654,7 +16654,7 @@
     if (sendKey) {
       e.preventDefault();
       if (state.busy) {
-        // Enter while Grok is working must never act as a hidden Stop (#37) —
+        // Enter while Atlas is working must never act as a hidden Stop (#37) —
         // it silently cancelled in-flight tools ("Tool execution was cancelled
         // by the user"). Queue the typed message (empty composer: no-op); it
         // flushes when the turn ends. Cancelling is only the explicit click on
@@ -16697,7 +16697,7 @@
     if (!repoPopover.hidden) positionRepoPopover();
   });
 
-  // A resize can also happen while Grok is hidden (another panel tab / extension focused),
+  // A resize can also happen while Atlas is hidden (another panel tab / extension focused),
   // where the webview gets no resize event and so can't re-measure. Close any open popover
   // when the view is hidden, so the history dropdown never reappears stale on refocus —
   // reopening it re-measures against the current panel width.

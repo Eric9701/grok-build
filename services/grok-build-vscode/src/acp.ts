@@ -671,7 +671,7 @@ export class AcpClient extends EventEmitter {
       // The host still raises session chrome after this await. readline can
       // deliver a later ACP line in this same turn, so the Plan-accepted bit
       // has to land here — after a successful reply, before the next onLine.
-      // Grok needs the fs/terminal gate up; Codex/Claude need the same bit so
+      // Atlas needs the fs/terminal gate up; Codex/Claude need the same bit so
       // Auto accept cannot grant a same-chunk request_permission (plan review
       // is one). usesClientPlanGate still decides whether writes/terminals
       // are blocked.
@@ -720,7 +720,7 @@ export class AcpClient extends EventEmitter {
     };
   }
 
-  /** Read Grok's MCP inventory from the same ACP session as the conversation. */
+  /** Read Atlas's MCP inventory from the same ACP session as the conversation. */
   async listMcpServers(): Promise<unknown[] | { servers?: unknown[]; result?: unknown } | "unsupported"> {
     if (this.provider !== "grok") return "unsupported";
     if (!this.sessionId) throw new Error("no session");
@@ -794,7 +794,7 @@ export class AcpClient extends EventEmitter {
    * Spontaneous thumbs rating (#114). Logical method `x.ai/feedback`; wire
    * name `_x.ai/feedback` (ACP `_` extension prefix — a bare `x.ai/feedback`
    * is -32601 at decode). `"unsupported"` on -32601, a disabled-feedback
-   * internal_error, or a non-Grok backend so the caller can hide the buttons.
+   * internal_error, or a non-Atlas backend so the caller can hide the buttons.
    */
   async submitFeedback(opts: {
     ratingValue: ThumbsRating;
@@ -1169,7 +1169,7 @@ export class AcpClient extends EventEmitter {
       this.pending.set(id, entry);
       if (!this.writeLine(makeRequest(id, method, params))) {
         this.pending.delete(id);
-        reject(new Error(`Grok process is not running (${method})`));
+        reject(new Error(`Atlas process is not running (${method})`));
         return;
       }
       // Tracked on the pending entry so the response/exit paths can clear it.

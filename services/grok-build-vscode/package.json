@@ -18,7 +18,8 @@
     "url": "https://github.com/phuryn/grok-build-vscode"
   },
   "engines": {
-    "vscode": "^1.106.0"
+    "vscode": "^1.106.0",
+    "node": ">=20"
   },
   "categories": [
     "AI",
@@ -487,7 +488,7 @@
     "telemetry:probe": "tsc -p . && node scripts/telemetry-probe.cjs",
     "check:relay": "node scripts/check-production-relay.mjs",
     "check:vsix": "npm run compile && node scripts/check-vsix-requires.mjs",
-    "prepackage": "node -e \"const fs=require('fs'); for (const f of fs.readdirSync('.')) if (f.endsWith('.vsix')) fs.unlinkSync(f); fs.rmSync('out',{recursive:true,force:true})\" && npm run check:relay && npm run check:vsix",
+    "prepackage": "node -e \"const m=+process.versions.node.split('.')[0]; if (m<20) { console.error('npm run package needs Node >=20 (vsce 3.9). Current: '+process.version); process.exit(1) }\" && node -e \"const fs=require('fs'); for (const f of fs.readdirSync('.')) if (f.endsWith('.vsix')) fs.unlinkSync(f); fs.rmSync('out',{recursive:true,force:true})\" && npm run check:relay && npm run check:vsix",
     "package": "vsce package --readme-path README.marketplace.md",
     "publish": "vsce publish --readme-path README.marketplace.md",
     "publish:ovsx": "node scripts/publish-ovsx.mjs",

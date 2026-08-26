@@ -148,6 +148,8 @@ tr:nth-child(even) { background: rgba(255,255,255,.02); }
 <li><a href="#ch-25" data-label="25 状态栏">25. 状态栏</a></li>
 <li class="tier">企业研发</li>
 <li><a href="#ch-26" data-label="26 ask-atlas 与 atlas-sdd">26. ask-atlas 与 atlas-sdd</a></li>
+<li><a href="#ch-27" data-label="27 企业运行时">27. 企业运行时</a></li>
+<li><a href="#ch-28" data-label="28 配置参考摘要">28. 配置参考摘要</a></li>
 </ul>
 </nav>
 <main id="main">
@@ -156,13 +158,13 @@ tr:nth-child(even) { background: rgba(255,255,255,.02); }
 <h2>Atlas 用户指南</h2>
 <section id="ch-00-intro">
 <h3>关于本指南</h3>
-<p>本指南基于仓库内英文用户文档 <code>crates/codegen/xai-grok-pager/docs/user-guide/</code>（README + 01–25）整理为中文精编，并补充企业插件用法（第 26 章）。产品名统一为 <strong>Atlas</strong>，CLI 命令为 <code>atlas</code>，配置目录为 <code>~/.atlas/</code>（Windows：<code>%USERPROFILE%\.atlas</code>）。</p>
+<p>本指南基于仓库内英文用户文档 <code>crates/codegen/xai-grok-pager/docs/user-guide/</code>（README + 01–26）整理为中文精编，并补充企业插件与运行时（第 26–28 章）。产品名统一为 <strong>Atlas</strong>，CLI 命令为 <code>atlas</code>，配置目录为 <strong>Atlas Home</strong> <code>~/.atlas/</code>（Windows：<code>%USERPROFILE%\.atlas</code>）。</p>
 <h3>文档分层</h3>
 <table><thead><tr><th>层级</th><th>章节</th><th>内容</th></tr></thead><tbody>
 <tr><td><strong>Tier1 必备</strong></td><td>01–05</td><td>安装、认证、快捷键、斜杠命令、配置</td></tr>
 <tr><td><strong>Tier2 核心</strong></td><td>06–13</td><td>主题、MCP、Skills、Plugins、Hooks、模型、AGENTS.md、Memory</td></tr>
 <tr><td><strong>Tier3 进阶</strong></td><td>14–25</td><td>无头、ACP、子代理、会话、沙箱、Plan、后台、终端、权限、Dashboard、OTEL、状态栏</td></tr>
-<tr><td><strong>企业研发</strong></td><td>26</td><td><code>/ask-atlas</code> 主流程与 <code>atlas-sdd</code> 角色执行器</td></tr>
+<tr><td><strong>企业研发</strong></td><td>26–28</td><td><code>/ask-atlas</code> / SDD、企业运行时（登录/模型/遥测/扩展）、配置分层摘要</td></tr>
 </tbody></table>
 <h3>快速开始</h3>
 <pre><code># 安装（内网示例）
@@ -285,13 +287,28 @@ atlas -p "Explain this codebase"  # 无头模式</code></pre>
 <h2>身份验证</h2>
 <section id="ch-02-browser">
 <h3>浏览器登录（默认）</h3>
-<p>凭据存于 <code>~/.atlas/auth.json</code>，Unix 上权限 <code>0600</code>。MCP OAuth 令牌在 <code>~/.atlas/mcp_credentials.json</code>。</p>
+<p>凭据存于 Atlas Home 的 <code>auth.json</code>（默认 <code>~/.atlas/auth.json</code>），Unix 上权限 <code>0600</code>。MCP OAuth 令牌在 <code>mcp_credentials.json</code>。</p>
 <p>安全建议：全盘加密、勿将 auth 文件复制到共享目录、多用户主机保持 <code>$HOME</code> 私有。</p>
 <p>重新登录：<code>atlas login</code>；登出：<code>atlas logout</code>。</p>
 <table><thead><tr><th>标志</th><th>说明</th></tr></thead><tbody>
-<tr><td><code>--oauth</code></td><td>SpaceXAI OAuth（默认）</td></tr>
-<tr><td><code>--device-auth</code></td><td>设备码流程（无头/远程）</td></tr>
+<tr><td><code>--oauth</code></td><td>OAuth（公网默认走 auth.x.ai；企业部署通常改指向 atlas-server）</td></tr>
+<tr><td><code>--device-auth</code>（别名 <code>--device-code</code>）</td><td>设备码流程（无头/远程/<strong>企业推荐</strong>）</td></tr>
 </tbody></table>
+</section>
+<section id="ch-02-enterprise">
+<h3>企业设备码登录</h3>
+<pre><code>atlas login --device-auth</code></pre>
+<ol>
+<li>终端打印 URL 与 <code>user_code</code></li>
+<li>浏览器先登录企业 atlas-server，再填入设备码与账号<strong>机器码</strong></li>
+<li>CLI 轮询至批准；refresh 落服务端 MySQL，重启 atlas-server 一般不丢会话</li>
+</ol>
+<ul>
+<li>VS Code / Cursor 未登录引导也走 <code>atlas login --device-auth</code>，不要用裸 <code>atlas login</code>。</li>
+<li>机器码登录要求该用户已在 Admin <strong>开户</strong>（显示名 + 邮箱 + 机器码；UserId = 邮箱 <code>@</code> 前前缀；默认种子密码 <code>atlas123</code>）。</li>
+<li><strong>Startup Session Gate</strong>（默认开）：登出或凭证被清后，<strong>下一次新进程</strong>才要求再登录，不打断已在跑的任务。可在配置里关 <code>require_session_at_startup</code>。</li>
+<li>仅有本地 <code>[model.*]</code> / 托管模型缓存也能对话，<strong>不表示</strong>已走企业登录。</li>
+</ul>
 </section>
 <section id="ch-02-api-key">
 <h3>API Key</h3>
@@ -347,7 +364,8 @@ auth_token_ttl = 3600</code></pre>
 <pre><code>GROK_LOG_FILE=/tmp/atlas.log RUST_LOG=debug atlas
 RUST_LOG=debug atlas -p "hello" 2&gt; /tmp/atlas.log</code></pre>
 <ul>
-<li><strong>Authentication failed</strong> — <code>atlas logout</code> 后 <code>atlas login</code></li>
+<li><strong>Authentication failed</strong> — <code>atlas logout</code> 后企业环境用 <code>atlas login --device-auth</code></li>
+<li><strong>设备码批准失败</strong> — 先浏览器登录 atlas-server；<code>user_code</code> 与机器码都要填对；确认 Admin 已开户</li>
 <li><strong>OIDC 重定向失败</strong> — 确认 IdP 允许 loopback URI</li>
 <li><strong>外部 provider 未找到</strong> — 检查路径与可执行权限</li>
 </ul>
@@ -632,12 +650,14 @@ respect_manual_folds = false  # true 时手动折叠在流式更新中保持</co
 <section id="ch-05-paths">
 <h3>文件位置</h3>
 <table><thead><tr><th>路径</th><th>说明</th></tr></thead><tbody>
-<tr><td><code>~/.atlas/config.toml</code></td><td>主配置</td></tr>
+<tr><td><code>~/.atlas/config.toml</code></td><td>主配置（Atlas Home）</td></tr>
 <tr><td><code>~/.atlas/pager.toml</code></td><td>外观</td></tr>
 <tr><td><code>~/.atlas/auth.json</code></td><td>认证凭据</td></tr>
 <tr><td><code>~/.atlas/sessions/</code></td><td>会话持久化</td></tr>
 <tr><td><code>~/.atlas/memory/</code></td><td>跨会话记忆</td></tr>
-<tr><td><code>.atlas/config.toml</code></td><td>项目 MCP/插件/权限</td></tr>
+<tr><td><code>~/.atlas/installed-plugins/</code></td><td>用户级插件快照</td></tr>
+<tr><td><code>.atlas/config.toml</code></td><td>项目 MCP / 插件 / 权限（贡献面有限）</td></tr>
+<tr><td><code>managed_config.toml</code> / <code>requirements.toml</code></td><td>舰队默认与管理员 pin；见 <a href="#ch-28">第 28 章</a></td></tr>
 </tbody></table>
 </section>
 <section id="ch-05-ui-detail">
@@ -743,7 +763,15 @@ atlas mcp doctor</code></pre>
 <h2>Skills</h2>
 <section id="ch-08-basics">
 <h3>基础</h3>
-<p>Skill 为含 <code>SKILL.md</code> 的可复用指令包。发现路径（高→低）：<code>./.atlas/skills/</code> → repo → <code>~/.atlas/skills/</code>；亦扫描 Claude/Cursor 兼容目录。</p>
+<p>Skill 为含 <code>SKILL.md</code> 的可复用指令包。发现路径（高→低，同名去重）：</p>
+<table><thead><tr><th>位置</th><th>范围</th></tr></thead><tbody>
+<tr><td><code>./.atlas/skills/</code>、<code>./.atlas/commands/</code></td><td>当前目录（最高）</td></tr>
+<tr><td><code>&lt;repo&gt;/.atlas/skills/</code></td><td>仓库</td></tr>
+<tr><td><code>~/.atlas/skills/</code></td><td>用户 Native Skill</td></tr>
+<tr><td><code>~/.claude/skills/</code> 等兼容目录</td><td>默认扫描（可关）</td></tr>
+</tbody></table>
+<p><strong>Plugin Skill</strong>（marketplace 插件包内 <code>skills/</code>）只在插件 <strong>enabled</strong> 时进入斜杠，落在 <code>~/.atlas/installed-plugins/</code>，<strong>不会</strong>复制进 <code>~/.atlas/skills</code>。因此「磁盘只看到 Claude 用户目录」不代表插件技能未加载——看斜杠是否有 <code>/ask-atlas</code>。</p>
+<p>企业侧注意：部分版本项目级 <code>.atlas/plugins</code> / <code>.atlas/skills</code> 尚未完全对齐扫描；以会话内 <code>/</code> 列表为准。VS Code / Desktop <strong>自己不扫</strong> skills，斜杠来自 ACP <code>availableCommands</code>。</p>
 <pre><code>---
 name: commit
 description: 按 conventional commits 创建提交。用户要 commit 时使用。
@@ -753,8 +781,12 @@ user-invocable: true
 1. git diff --staged
 2. 撰写 message
 3. git commit</code></pre>
-<p>运行：<code>/commit fix typo</code>；重名时用 <code>/local:commit</code>。</p>
+<p>运行：<code>/commit fix typo</code>；重名时用 <code>/local:commit</code> 或 <code>/插件名:commit</code>。</p>
 <p><code>/create-skill</code> 交互式创建；<code>atlas inspect</code> 查看已加载 skills。</p>
+<pre><code>[skills]
+paths = ["~/my-team-skills"]
+ignore = ["~/my-team-skills/wip"]
+disabled = ["wip-skill"]</code></pre>
 </section>
 </article>
 <article class="chapter" id="ch-09">
@@ -762,15 +794,25 @@ user-invocable: true
 <h2>Plugins</h2>
 <section id="ch-09-marketplace">
 <h3>市场与安装</h3>
-<pre><code>atlas plugin marketplace add my-org/team-plugins
-atlas plugin install deploy-tools --trust
+<p>插件打包 skills、斜杠命令、agents、hooks、MCP。两步：先 <strong>add marketplace</strong>（只浏览），再 <strong>install</strong> 并信任。</p>
+<pre><code># 企业 marketplace 示例
+atlas plugin marketplace add https://gitlab.imyai.cn/zhangyufeng/atlas-plugins.git
+atlas plugin install atlas-sdd --trust
+atlas plugin install atlas-skills --trust
+
+atlas plugin marketplace list
+atlas plugin marketplace update
 atlas plugin list
-atlas plugin update
+atlas plugin update atlas-skills
 atlas plugin enable/disable &lt;name&gt;</code></pre>
-<p><code>/plugins</code>（别名 <code>/plugin</code>）打开扩展模态框。插件默认关闭；<strong>信任（trust）</strong> 后才激活 hooks/MCP/LSP。插件提供的 agent 会出现在 <code>/agents</code>。</p>
+<p>用户级安装落在 <strong>Installed Plugin Snapshot</strong>：<code>~/.atlas/installed-plugins/</code>（由 <code>registry.json</code> 登记），不是 <code>~/.atlas/plugins/</code>。</p>
+<p>插件默认关闭；须写入 <code>[plugins].enabled</code>（或 install --trust）后才进斜杠。hooks/MCP/LSP 需信任后才激活。</p>
 <pre><code>[plugins]
+enabled = ["atlas-skills", "atlas-sdd"]
 paths = ["~/my-plugins"]
 disabled = ["noisy-plugin"]</code></pre>
+<p><code>/plugins</code>（别名 <code>/plugin</code>）打开扩展模态框；按 <code>r</code> 重载。插件 agent 出现在 <code>/agents</code>。新装后<strong>新开会话</strong>或重载才看到完整技能正文。</p>
+<p>多源 marketplace 未扫全时安装可能拒绝解析：显式 <code>atlas-sdd@&lt;qualifier&gt;</code>，或保证源可扫。</p>
 </section>
 </article>
 <article class="chapter" id="ch-10">
@@ -825,7 +867,22 @@ api_key = "sk-..."
 api_backend = "chat_completions"  # 或 responses | messages
 context_window = 128000
 env_key = ["ANTHROPIC_AUTH_TOKEN"]</code></pre>
-<p>凭据优先级：api_key → env_key → 会话令牌 → XAI_API_KEY。托管模型由 Atlas Server 分配时 id/model 为 ENC(...) 加密下发。</p>
+<p>凭据优先级：api_key → env_key → 会话令牌 → XAI_API_KEY。</p>
+</section>
+<section id="ch-11-managed">
+<h3>企业托管模型（Atlas Server）</h3>
+<p>Admin 为账号做 <strong>Direct Assignment</strong> 和/或加入条线分组的 <strong>Group Assignment</strong>；有效集合非空时进入 <strong>Managed Catalog Mode</strong>，<code>GET /atlas/v1/models</code> 只返回托管条目。</p>
+<table><thead><tr><th>概念</th><th>含义</th></tr></thead><tbody>
+<tr><td><strong>Catalog ID</strong></td><td>选择器 / <code>[model.&lt;id&gt;]</code> 的键；Task Report 字段 <code>model</code></td></tr>
+<tr><td><strong>Routing Name</strong></td><td>上游采样名 <code>model.model</code>；Task Report <code>modelRouting</code>（明文）</td></tr>
+</tbody></table>
+<ul>
+<li>下发时 <code>id</code> / <code>model</code> / <code>api_key</code> 均为 <code>ENC(...)</code>；客户端落盘：Catalog ID 明文，Routing Name 与 <code>api_key</code> 保持 At-Rest ENC，<code>managed = true</code>。</li>
+<li>无 <code>managed</code> 的用户手写 <code>[model.*]</code> <strong>不被同步覆盖</strong>；取消分配后删除托管段。</li>
+<li>合并优先级：本地 <code>[model.*]</code>（含托管落盘）&gt; prefetch &gt; builtin。</li>
+<li><code>/model</code> 选择器通常只读内存 catalog，不因此打网；会请求 <code>/models</code> 的时机：启动预取缓存未命中、鉴权变化、ETag 变化、Online 刷新。</li>
+<li>改 Admin 分配后不会立刻推送；最多等缓存窗口，或重登 / Online 刷新。</li>
+</ul>
 </section>
 </article>
 <article class="chapter" id="ch-12">
@@ -1269,7 +1326,126 @@ atlas plugin list</code></pre>
 <tr><td>多源 marketplace 装不上</td><td>显式 <code>atlas-sdd@&lt;qualifier&gt;</code>，或保证 marketplace 源可扫</td></tr>
 <tr><td>插件有了但斜杠仍旧</td><td>新开终端 / 编辑器会话；确认 <code>[plugins].enabled</code> 未关</td></tr>
 </tbody></table>
-<p>更细的安装步骤见仓库 <code>docs/atlas-runtime-安装手册.md</code>；流程语义见 <code>CONTEXT.md</code> 与 ADR 0001–0004。</p>
+<p>更细的安装步骤见仓库 <code>docs/atlas-runtime-安装手册.md</code>；流程语义见 <code>CONTEXT.md</code> 与 ADR 0001–0004。企业登录 / 模型 / 遥测见 <a href="#ch-27">第 27 章</a>。</p>
+</section>
+</article>
+
+<article class="chapter" id="ch-27">
+<span class="tier-badge">企业研发</span>
+<h2>企业运行时</h2>
+<p>本章汇总企业部署日常会碰到的家目录、登录门控、编辑器、遥测与 FAQ。术语权威：<code>docs/CONTEXT-runtime.md</code>、<code>services/atlas-server/CONTEXT.md</code>。</p>
+
+<section id="ch-27-home">
+<h3>Atlas Home</h3>
+<p>用户态根目录由 <code>GROK_HOME</code> 解析，默认 <code>~/.atlas</code>（Windows：<code>%USERPROFILE%\.atlas</code>）。配置、会话、安装登记都落在这里——不要再把 <code>~/.grok</code> 当当前家目录。</p>
+<table><thead><tr><th>路径</th><th>用途</th></tr></thead><tbody>
+<tr><td><code>config.toml</code></td><td>主配置；<code>/settings</code> 写入此处</td></tr>
+<tr><td><code>auth.json</code></td><td>登录凭据</td></tr>
+<tr><td><code>sessions/</code></td><td>会话持久化</td></tr>
+<tr><td><code>installed-plugins/</code></td><td>用户级插件快照 + <code>registry.json</code></td></tr>
+<tr><td><code>skills/</code></td><td>Native Skill（插件技能不在这里）</td></tr>
+<tr><td><code>bin/</code></td><td>安装器放入的 <code>atlas</code> / <code>atlas.exe</code></td></tr>
+</tbody></table>
+</section>
+
+<section id="ch-27-vscode">
+<h3>VS Code / Cursor 扩展</h3>
+<p>扩展是 CLI 的图形前端，必须先装好 <code>atlas</code> 并能登录。企业 VSIX 示例：</p>
+<pre><code>Invoke-WebRequest -Uri http://10.218.220.237:8888/atlas/atlas-vscode-3.1.0.vsix -OutFile atlas-vscode-3.1.0.vsix
+code --install-extension .\atlas-vscode-3.1.0.vsix --force
+cursor --install-extension .\atlas-vscode-3.1.0.vsix --force</code></pre>
+<ul>
+<li>扩展通过 ACP spawn <code>atlas agent stdio</code>，自己不扫 plugins/skills。</li>
+<li>侧边栏 UI：<code>+</code> 新会话、底部 Agent / Plan / Auto accept（不是斜杠）。</li>
+<li>起不来或一直要登录：终端先跑通 <code>atlas login --device-auth</code>；检查设置里的 <code>atlas.cliPath</code>。</li>
+<li>Desktop 更新与 CLI 同一企业通道（如 <code>22255/atlas</code>），不是独立 8888。</li>
+</ul>
+</section>
+
+<section id="ch-27-telemetry">
+<h3>遥测与 Task Report</h3>
+<table><thead><tr><th>开关</th><th>作用</th></tr></thead><tbody>
+<tr><td><code>telemetry_enabled</code> / <code>GROK_TELEMETRY_ENABLED</code></td><td>signals / events 等产品遥测</td></tr>
+<tr><td><code>trace_upload_enabled</code> / <code>GROK_TELEMETRY_TRACE_UPLOAD</code></td><td><strong>只</strong>关会话 trace 产物上传（GCS/S3/proxy），不是总开关</td></tr>
+<tr><td><code>GROK_DISABLE_TASK_REPORT=1</code></td><td>关闭 Task Report（默认开；主会话 / plan / 子 agent 都会报）</td></tr>
+<tr><td><code>GROK_EXTERNAL_OTEL</code></td><td>客户侧 OTEL 导出（见 <a href="#ch-24">第 24 章</a>）</td></tr>
+</tbody></table>
+<p>尽量全停：<code>telemetry_enabled=false</code> + <code>trace_upload_enabled=false</code> + <code>GROK_DISABLE_TASK_REPORT=1</code>。</p>
+<p>Admin 页：<code>/atlas/admin/task-reports</code>。排行按 Catalog ID；明细含 Model / Routing。</p>
+</section>
+
+<section id="ch-27-update">
+<h3>更新</h3>
+<pre><code># CLI：指向企业 /atlas/cli 时启动会检查通道；也可重跑安装脚本
+atlas update
+
+# 插件
+atlas plugin marketplace update
+atlas plugin update atlas-sdd
+atlas plugin update atlas-skills
+
+# 扩展：装新 VSIX --force，或内网市场发版</code></pre>
+</section>
+
+<section id="ch-27-faq">
+<h3>常见问题</h3>
+<table><thead><tr><th>现象</th><th>处理</th></tr></thead><tbody>
+<tr><td><code>atlas</code> 不是命令</td><td>新开终端；确认 <code>~/.atlas/bin</code> 在 PATH，或设 <code>atlas.cliPath</code></td></tr>
+<tr><td>安装提示该平台尚不可用</td><td>atlas-server 尚未发布对应 <code>grok-{ver}-{os}-{arch}</code></td></tr>
+<tr><td>扩展侧边栏起不来 / 一直要登录</td><td>终端 <code>atlas login --device-auth</code>；检查 <code>atlas.cliPath</code></td></tr>
+<tr><td><code>/ask-atlas</code> 没有或像旧版</td><td><code>plugin list</code> 有 <code>atlas-skills</code>；update 后<strong>新开会话</strong></td></tr>
+<tr><td>没有企业角色命令</td><td>安装并 trust <code>atlas-sdd</code></td></tr>
+<tr><td>模型列表不对 / 无托管模型</td><td>Admin 分配；等缓存或重登 / Online 刷新</td></tr>
+<tr><td>设备码批准失败</td><td>先浏览器登录；user_code 与机器码正确；已开户</td></tr>
+<tr><td>MCP 内存暴涨</td><td>避免多份 <code>command = "npx"</code> 写进用户全局；工程级 MCP 写项目配置</td></tr>
+<tr><td>Linux 老 glibc 跑不起来</td><td>官方 x86_64 应用 musl 包；见 <code>docs/atlas-编译手册.md</code></td></tr>
+</tbody></table>
+</section>
+</article>
+
+<article class="chapter" id="ch-28">
+<span class="tier-badge">企业研发</span>
+<h2>配置参考摘要</h2>
+<p>对应上游 <code>26-config-reference.md</code>（CLI 启动也会解压到 Atlas Home 文档树）。概念说明仍见 <a href="#ch-05">第 5 章</a>；完整字段表以英文源或本机解压副本为准。下文路径统一写 Atlas Home（默认 <code>~/.atlas</code>）。</p>
+
+<section id="ch-28-layers">
+<h3>配置分层（后者覆盖前者，pin 除外）</h3>
+<ol>
+<li>编译默认值</li>
+<li><code>/etc/atlas/managed_config.toml</code> 或 <code>$GROK_HOME/managed_config.toml</code>（舰队默认；用户文件可覆盖标为 user 的项）</li>
+<li><code>$GROK_HOME/config.toml</code>（个人；<code>/settings</code> 写这里）</li>
+<li>项目 <code>.atlas/config.toml</code>：通常只贡献 <code>[mcp_servers]</code>、<code>[plugins]</code>、<code>[permission]</code>、<code>[mcp] max_output_bytes</code></li>
+<li><code>GROK_CONFIG</code>（内联 JSON）或 <code>GROK_CONFIG_PATH</code>（白名单键）</li>
+<li><code>requirements.toml</code>（管理员层；标 <code>pin</code> 的键不可被用户/环境/CLI 覆盖）</li>
+<li><code>GROK_*</code> 环境变量</li>
+<li>CLI 标志（如 <code>--model</code>、<code>--sandbox</code>、<code>--yolo</code>）</li>
+</ol>
+<p>排查生效值：<code>atlas inspect</code> 或 <code>atlas inspect --json</code>。</p>
+</section>
+
+<section id="ch-28-files">
+<h3>三类文件谁写</h3>
+<table><thead><tr><th>文件</th><th>谁写</th><th>用途</th></tr></thead><tbody>
+<tr><td><code>config.toml</code></td><td>开发者</td><td>个人默认，可随时改</td></tr>
+<tr><td><code>managed_config.toml</code></td><td>部署/控制台</td><td>舰队起点，用户可覆盖</td></tr>
+<tr><td><code>requirements.toml</code></td><td>管理员（可签名）</td><td>强制策略；<code>pin</code> 键锁死</td></tr>
+</tbody></table>
+</section>
+
+<section id="ch-28-hot">
+<h3>常用键速查</h3>
+<table><thead><tr><th>键 / 段</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>[ui] vim_mode</code> / <code>screen_mode</code> / <code>permission_mode</code></td><td>Vim、默认全屏/minimal、权限模式</td></tr>
+<tr><td><code>[model.&lt;id&gt;]</code></td><td>自定义或托管落盘模型</td></tr>
+<tr><td><code>[mcp_servers.*]</code></td><td>MCP</td></tr>
+<tr><td><code>[plugins] enabled</code></td><td>启用的用户级插件名</td></tr>
+<tr><td><code>[memory] enabled</code></td><td>跨会话记忆</td></tr>
+<tr><td><code>[features] telemetry</code> / <code>[telemetry] trace_upload</code></td><td>遥测门控</td></tr>
+<tr><td><code>[cli] channel</code> / <code>auto_update</code></td><td>更新通道（企业常配合 atlas-server <code>/cli</code>）</td></tr>
+<tr><td><code>auth.disable_api_key_auth</code>（可 pin）</td><td>禁止 API Key，只走部署 IdP</td></tr>
+<tr><td><code>require_session_at_startup</code></td><td>启动登录门控（默认开）</td></tr>
+</tbody></table>
+<p>外观细节在 <code>pager.toml</code>（见 <a href="#ch-06">主题</a>）。完整字段列表见源文档 <code>crates/.../user-guide/26-config-reference.md</code>。</p>
 </section>
 </article>
 </main>

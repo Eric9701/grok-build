@@ -31,7 +31,7 @@ import * as nodePath from "node:path";
 /** JSON-RPC error code we use when refusing a mutating call during plan mode. */
 export const PLAN_BLOCKED_CODE = -32010;
 export const PLAN_BLOCKED_WRITE_MSG =
-  "Blocked by Plan mode: only Grok's session plan.md may be written before you approve the plan.";
+  "Blocked by Plan mode: only Atlas's session plan.md may be written before you approve the plan.";
 export const PLAN_BLOCKED_TERMINAL_MSG =
   "Blocked by Plan mode: approve the plan before running commands that may change the workspace.";
 
@@ -69,7 +69,7 @@ function canonicalTarget(target: string, root: string): { norm: string; windows:
 /**
  * True if `target` resolves to `root` itself or somewhere beneath it. Used to
  * decide whether a write lands in the user's workspace (block) or outside it
- * (allow). Grok's own `~/.grok/.../plan.md` is handled separately because a
+ * (allow). Atlas's own `~/.grok/.../plan.md` is handled separately because a
  * user may open their home directory as the workspace root.
  */
 export function isInsideWorkspace(target: string, root: string): boolean {
@@ -746,7 +746,7 @@ export interface PlanGateContext {
   shellDialect?: ShellDialect;
 }
 
-/** True only for the canonical Grok-owned `sessions/<cwd>/<id>/plan.md` path. */
+/** True only for the canonical Atlas-owned `sessions/<cwd>/<id>/plan.md` path. */
 export function isGrokOwnedPlanFile(path: string, grokHome: string | undefined): boolean {
   if (!path || !grokHome) return false;
   const target = canonicalTarget(path, grokHome).norm;
@@ -808,7 +808,7 @@ const ADAPTER_AUTO_ACCEPT_MODES = new Set([
 /**
  * Map an agent-reported mode onto the host's Plan / Auto-accept flags.
  *
- * Grok's `current_mode_update` is descriptive: only a Plan *entry* raises the
+ * Atlas's `current_mode_update` is descriptive: only a Plan *entry* raises the
  * client gate; a writable mode does not lower it (the verdict / `setMode` own
  * that). Adapters with `usesClientPlanGate === false` are the opposite — the
  * agent's mode is authority, because they switch to a writable mode and then
@@ -831,7 +831,7 @@ export function applyAgentModeToHostPlan(
 /**
  * Live Plan bit for a permission decision.
  *
- * Grok commits the client gate in the `session/set_mode` response hook, before
+ * Atlas commits the client gate in the `session/set_mode` response hook, before
  * the next ACP line in that stdout chunk. Session chrome (`session.planActive`)
  * and `autoApprove` still wait on the host await, so reading those here would
  * auto-grant a same-chunk `request_permission`.

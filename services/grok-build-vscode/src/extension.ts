@@ -53,7 +53,7 @@ import {
  * container and ignore where it declared it lives — Cursor renders the panel one
  * in the primary side bar. Reaching a dock the host draws for itself needs a
  * LOCATION, and only the host's own picker takes one, which is what
- * `Grok: Move Chat View` and the gear's `Move view…` open.
+ * `Atlas: Move Chat View` and the gear's `Move view…` open.
  *
  * Failure is swallowed: a host that rejects the move must not take activation
  * down with it, and `atlas.open` resolves its command independently.
@@ -161,7 +161,7 @@ export function activate(context: vscode.ExtensionContext): GrokExtensionApi {
   // view, nobody chose it — that is the entire licence the placement correction
   // has to move it, and it evaporates the moment any other subsystem writes.
   const firstEverRun = isFirstEverRun(context.globalState.keys());
-  const output = vscode.window.createOutputChannel("Grok");
+  const output = vscode.window.createOutputChannel("Atlas");
   const host = createVsCodeHost(output, context);
   const hostContext = createVsCodeHostContext(context);
   const sidebar = new GrokSidebar(hostContext, host);

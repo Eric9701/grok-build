@@ -759,7 +759,7 @@ describe("MCP inventory while a non-Grok session is focused", () => {
     expect(listMcpServers).toHaveBeenCalled();
     expect(startSession).not.toHaveBeenCalled();
     expect(instance.mcpServersCwd).toBe("/proj");
-    expect(posted.some((msg) => msg.error === "Connect Grok to inspect MCP servers.")).toBe(false);
+    expect(posted.some((msg) => msg.error === "Connect Atlas to inspect MCP servers.")).toBe(false);
     expect(posted.some((msg) => msg.loading === true)).toBe(true);
   });
 
@@ -774,11 +774,11 @@ describe("MCP inventory while a non-Grok session is focused", () => {
     });
     await proto.refreshMcpServers.call(instance, focused);
     expect(startSession).toHaveBeenCalled();
-    expect(posted.some((msg) => msg.error === "Connect Grok to inspect MCP servers.")).toBe(false);
+    expect(posted.some((msg) => msg.error === "Connect Atlas to inspect MCP servers.")).toBe(false);
     expect(instance.mcpServersCwd).toBe("/proj");
   });
 
-  it("says Connect Grok only when the Grok provider is not connected", async () => {
+  it("says Connect Atlas only when the Grok provider is not connected", async () => {
     const focused = new Session();
     focused.provider = "codex";
     focused.cwd = "/proj";
@@ -789,7 +789,7 @@ describe("MCP inventory while a non-Grok session is focused", () => {
     });
     await proto.refreshMcpServers.call(instance, focused);
     expect(startSession).not.toHaveBeenCalled();
-    expect(posted.some((msg) => msg.error === "Connect Grok to inspect MCP servers.")).toBe(true);
+    expect(posted.some((msg) => msg.error === "Connect Atlas to inspect MCP servers.")).toBe(true);
   });
 
   it("overlapping inventory reads share one Grok start", async () => {

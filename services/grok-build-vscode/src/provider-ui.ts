@@ -9,7 +9,7 @@ export const PROVIDER_ORDER: readonly AcpProvider[] = ["grok", "codex", "claude"
 export function providerDisplayName(provider: AcpProvider): string {
   if (provider === "codex") return "Codex";
   if (provider === "claude") return "Claude";
-  return "Grok";
+  return "Atlas";
 }
 
 export interface ProviderConnections {

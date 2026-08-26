@@ -587,7 +587,7 @@ describe("the model picker", () => {
     });
     click(root.querySelector(".settings-routine-new"));
     const groups = [...root.querySelectorAll('[data-field="model"] optgroup')];
-    expect(groups.map((g) => g.getAttribute("label"))).toEqual(["Grok", "Claude"]);
+    expect(groups.map((g) => g.getAttribute("label"))).toEqual(["Atlas", "Claude"]);
     expect(groups[0].querySelectorAll("option")).toHaveLength(2);
   });
 

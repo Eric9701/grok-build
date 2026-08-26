@@ -36,7 +36,7 @@
   const RECENT_CAP = 10;
   const RAIL_RECENT_KEY = "__recent__";
   // The same age rule the desktop/browser rail applies (media/chat.js). Without
-  // it VS Code showed every project Grok has ever run in, forever — which for
+  // it VS Code showed every project Atlas has ever run in, forever — which for
   // anyone with a few years of history is a mess rather than a list.
   const RAIL_ARCHIVE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
   // A floor, and a requirement rather than a rounding error: however quiet
@@ -309,7 +309,7 @@
   }
 
   function partitionRepos() {
-    // No fallback needed when the open folder has no Grok history yet: the host
+    // No fallback needed when the open folder has no Atlas history yet: the host
     // passes it to discoverRepos as a trusted cwd, which adds a catalog row for
     // it (updatedAt 0). The current project is therefore always present here.
     const current = state.repos.find((r) => sameCwd(r.cwd, state.workspaceCwd));
@@ -341,7 +341,7 @@
     const id = provider === "codex" || provider === "claude" ? provider : "grok";
     const glyph = document.createElement("span");
     glyph.className = "provider-glyph provider-" + id;
-    glyph.title = id === "codex" ? "Codex" : id === "claude" ? "Claude" : "Grok";
+    glyph.title = id === "codex" ? "Codex" : id === "claude" ? "Claude" : "Atlas";
     glyph.setAttribute("aria-label", glyph.title);
     glyph.innerHTML = `<svg class="provider-logo" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="${PROVIDER_LOGO_PATHS[id]}"></path></svg>`;
     const badge = document.createElement("span");
@@ -1083,7 +1083,7 @@
       //
       // Only on rows that exist because the user added the folder. `added` is
       // set by the host and absent everywhere else, so this is capability by
-      // field presence like the rest; every other row is listed because Grok has
+      // field presence like the rest; every other row is listed because Atlas has
       // run there, and archive is how those are put away.
       if (repo.added) {
         items.push({

@@ -38,7 +38,7 @@ describe("model picker provider marks and manage-providers", () => {
     const rows = [...h.doc.querySelectorAll("#gear-popover .model-picker-row")];
     expect(rows).toHaveLength(1);
     expect(rows[0].querySelector(".provider-glyph.provider-grok")).toBeTruthy();
-    expect(rows[0].textContent).toContain("Grok Build");
+    expect(rows[0].textContent).toContain("Atlas");
     expect(h.doc.querySelectorAll(".model-provider-heading")).toHaveLength(0);
   });
 

@@ -20,7 +20,7 @@
     // "Remote control" rather than "Account": the page is about driving this
     // desk from a phone or browser — linking, the device list, the AFK Pilot
     // sign-in that enables it. "Account" invited confusion with the agent
-    // accounts (Grok / Codex / Claude), which live under Providers.
+    // accounts (Atlas / Codex / Claude), which live under Providers.
     { id: "account", title: "Remote control", restore: false },
     { id: "advanced", title: "Advanced", restore: false },
     { id: "about", title: "About", restore: false },
@@ -56,7 +56,7 @@
   const PROVIDER_LOGO_PATHS = {
     grok: "M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815",
     codex: "M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z",
-    // Four-point sparkle — distinct from the Grok/Codex marks, currentColor.
+    // Four-point sparkle — distinct from the Atlas/Codex marks, currentColor.
     claude: "M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z",
   };
 
@@ -86,18 +86,30 @@
   const GITHUB_REPO_URL = "https://github.com/phuryn/grok-build-vscode";
   const GROK_CONNECTORS_URL = "https://grok.com/connectors";
   const CONNECTOR_SECTION_HERE = "On this computer";
-  const CONNECTOR_SECTION_GROK = "Grok.com connectors";
-  const CONNECTOR_SECTION_LOCAL = "Local Grok connectors";
+  const CONNECTOR_SECTION_GROK = "Atlas connectors";
+  const CONNECTOR_SECTION_LOCAL = "Local Atlas connectors";
   const CONNECTOR_BLURB_HERE =
-    "These apps are available to Grok, Codex, and Claude. Most open a browser to sign in; GitHub uses a personal access token you paste here. Tokens stay on this machine.";
+    "These apps are available to Atlas, Codex, and Claude. Most open a browser to sign in; GitHub uses a personal access token you paste here. Tokens stay on this machine.";
   const CONNECTOR_BLURB_HERE_REMOTE =
     "These apps are connected on the desk machine. Sign-in happens there — a phone cannot change which tools an agent has.";
   const CONNECTOR_BLURB_GROK =
-    "These follow your Grok account, so they are shared across every Grok session on every machine.";
+    "These follow your Atlas account, so they are shared across every Atlas session on every machine.";
   const CONNECTOR_BLURB_LOCAL =
-    "Declared in this machine's Grok config files. Grok only.";
+    "Declared in this machine's Atlas config files. Atlas only.";
   const CONNECTOR_BLURB_LOCAL_REMOTE =
-    "Declared in this machine's Grok config files. Grok only. These are managed on the desk machine only.";
+    "Declared in this machine's Atlas config files. Atlas only. These are managed on the desk machine only.";
+  function brandCopy(text) {
+    const helpers = (typeof globalThis !== "undefined" && globalThis.GrokWebviewHelpers) || {};
+    if (typeof helpers.brandUserFacingText === "function") return helpers.brandUserFacingText(String(text ?? ""));
+    return String(text ?? "")
+      .replace(/SuperGrok/g, "\0SUPERGROK\0")
+      .replace(/\bGrok Build Desktop\b/gi, "Atlas Desktop")
+      .replace(/\bGrok Build CLI\b/gi, "Atlas CLI")
+      .replace(/\bGrok Build\b/gi, "Atlas")
+      .replace(/\bGrok CLI\b/gi, "Atlas CLI")
+      .replace(/\bGrok\b/g, "Atlas")
+      .replace(/\0SUPERGROK\0/g, "SuperGrok");
+  }
   const ICON_EXTERNAL_LINK =
     '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
   // lucide `settings` — same path as chat.js ICON.gear. Local Open is config,
@@ -122,14 +134,14 @@
   const SUPPORT_MAILTO = "mailto:support@productcompass.pm";
   const ABOUT_DISCLAIMER =
     "Unofficial · community-built · MIT | " +
-    "A VS Code UI for SpaceXAI’s Grok Build CLI - not affiliated with or endorsed by SpaceXAI (formerly xAI). " +
-    "Grok, Grok Build, and xAI are trademarks of xAI; this project uses those names only to describe what it’s compatible with.";
+    "A VS Code UI for Atlas CLI - not affiliated with or endorsed by SpaceXAI (formerly xAI). " +
+    "Atlas and xAI are trademarks of xAI; this project uses those names only to describe what it’s compatible with.";
 
   const TELEMETRY_COPY =
     "Anonymous usage stats only: a single session-start event with an anonymous install id — never prompts, code, file paths or names, and no identity. The IP address is discarded, never stored.";
 
   const THUMBS_COPY =
-    "Show thumbs on a finished Grok turn so you can send a rating to SpaceXAI. Off by default. On, thumbs appear only when this Grok session supports feedback — never on Codex or Claude.";
+    "Show thumbs on a finished Atlas turn so you can send a rating to SpaceXAI. Off by default. On, thumbs appear only when this Atlas session supports feedback — never on Codex or Claude.";
 
   function escapeHtml(s) {
     return String(s ?? "")
@@ -282,7 +294,7 @@
       id: "showThinking",
       category: "general",
       title: "Show thinking traces",
-      description: "Show Grok's reasoning traces in chat, including on already-loaded sessions.",
+      description: "Show Atlas's reasoning traces in chat, including on already-loaded sessions.",
       kind: "toggle",
       defaultValue: false,
       visible: (s) => purposeOf(s) === "coding",
@@ -400,7 +412,7 @@
       actionLabel: "Open voice settings",
       describe: (s) => (s && s.voiceConfigured)
         ? "Voice is ready on this machine."
-        : "Voice needs a key or a signed-in Grok account before the mic can start.",
+        : "Voice needs a key or a signed-in Atlas account before the mic can start.",
       visible: (s, env) => !!(env && !env.isRemote && !env.isDesktop),
       message: () => ({ type: "openSettings", section: "atlas.voiceApiKey" }),
     },
@@ -452,7 +464,7 @@
       id: "soundNotifications",
       category: "notifications",
       title: "Sound notifications",
-      description: "Play a short sound when a turn finishes or errors, only when the Grok panel is not focused.",
+      description: "Play a short sound when a turn finishes or errors, only when the Atlas panel is not focused.",
       kind: "toggle",
       defaultValue: false,
       get: (s) => !!(s && s.soundNotifications),
@@ -472,7 +484,7 @@
       id: "providerGrok",
       category: "providers",
       logo: "grok",
-      title: "Grok",
+      title: "Atlas",
       description: "",
       kind: "action",
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
@@ -523,7 +535,7 @@
       id: "providerGrokStatus",
       category: "providers",
       logo: "grok",
-      title: "Grok",
+      title: "Atlas",
       description: "",
       kind: "status",
       visible: (s, env) => !!(env && env.isRemote && env.providersKnown),
@@ -621,7 +633,7 @@
       id: "openGlobalConfig",
       category: "advanced",
       title: "Open global config",
-      description: "Open the user-level Grok config file on this machine.",
+      description: "Open the user-level Atlas config file on this machine.",
       kind: "action",
       actionLabel: "Open",
       hostLocal: true,
@@ -631,7 +643,7 @@
       id: "openProjectConfig",
       category: "advanced",
       title: "Open project config",
-      description: "Open this project's Grok config file.",
+      description: "Open this project's Atlas config file.",
       kind: "action",
       actionLabel: "Open",
       hostLocal: true,
@@ -655,7 +667,7 @@
     {
       id: "mcpCatalog",
       category: "connectors",
-      title: "Grok connectors",
+      title: "Atlas connectors",
       description: CONNECTOR_BLURB_GROK,
       kind: "mcp",
       visible: (s, env) => mcpSettingsEnabled(env),
@@ -664,7 +676,7 @@
       id: "showLogs",
       category: "advanced",
       title: "Show logs",
-      description: "Open the host log for this Grok client.",
+      description: "Open the host log for this Atlas client.",
       kind: "action",
       actionLabel: (s, env) => logsLabel(env),
       hostLocal: true,
@@ -685,7 +697,7 @@
       id: "openVsCodeSettings",
       category: "advanced",
       title: "Open VS Code settings",
-      description: "Open the host Settings editor focused on Grok.",
+      description: "Open the host Settings editor focused on Atlas.",
       kind: "action",
       actionLabel: "Open",
       hostLocal: true,
@@ -696,7 +708,7 @@
       id: "moveView",
       category: "advanced",
       title: "Move view",
-      description: "Open the editor's own picker so you can move the Grok chat to another dock.",
+      description: "Open the editor's own picker so you can move the Atlas chat to another dock.",
       kind: "action",
       actionLabel: "Move view…",
       hostLocal: true,
@@ -738,7 +750,7 @@
     {
       id: "aboutHostProduct",
       category: "about",
-      title: (s) => (s && s.hostKind === "desktop") ? "Grok Build Desktop" : "Grok Build extension",
+      title: (s) => (s && s.hostKind === "desktop") ? "Atlas Desktop" : "Atlas extension",
       kind: "value",
       visible: (s, env) => remoteAbout(s, env),
       get: (s) => versionLabel(s && s.extVersion),
@@ -754,7 +766,7 @@
     {
       id: "aboutGrokCli",
       category: "about",
-      title: "Grok Build CLI",
+      title: "Atlas CLI",
       kind: "value",
       visible: (s, env) => {
         if (remoteAbout(s, env) && hasReportedProviderVersions(s)) return !!grokProvider(s);
@@ -794,12 +806,12 @@
     // updates are managed at its install source" was true only when the user
     // installed Codex themselves; when they let us install it the source is
     // us, pinned at CODEX_MANAGED_TAG, and there is nowhere for them to go.
-    // One sentence, two meanings. Grok is the only CLI this extension
+    // One sentence, two meanings. Atlas is the only CLI this extension
     // actually updates, so it is the only one with an update row.
     {
       id: "aboutGrokUpdateStatus",
       category: "about",
-      title: "Grok Build CLI updates",
+      title: "Atlas CLI updates",
       kind: "status",
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env),
       describe: (s) => grokUpdateStatusText(s),
@@ -818,20 +830,20 @@
     {
       id: "aboutUpdateGrok",
       category: "about",
-      title: "Update Grok Build CLI",
-      description: "Download and install the latest Grok Build CLI on this machine.",
+      title: "Update Atlas CLI",
+      description: "Download and install the latest Atlas CLI on this machine.",
       kind: "action",
-      actionLabel: "Update Grok Build CLI",
+      actionLabel: "Update Atlas CLI",
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env) && canUpdateGrok(s),
       message: () => ({ type: "updateGrok" }),
     },
     {
       id: "aboutUpdateGrokBlocked",
       category: "about",
-      title: "Update Grok Build CLI",
+      title: "Update Atlas CLI",
       description: "Updates are paused for compatibility.",
       kind: "action",
-      actionLabel: "Update Grok Build CLI",
+      actionLabel: "Update Atlas CLI",
       visible: (s, env) => showGrokAbout(s, env) && !remoteAbout(s, env) && grokUpdateBlocked(s),
       enabled: () => false,
       message: () => ({ type: "updateGrok" }),
@@ -1391,7 +1403,7 @@
       if (opts.managed && server.scopeName) {
         const scope = document.createElement("span");
         scope.className = "settings-mcp-scope";
-        scope.textContent = server.scopeName;
+        scope.textContent = brandCopy(server.scopeName);
         name.appendChild(scope);
       }
       const detail = document.createElement("div");
@@ -1445,11 +1457,11 @@
     grokBlurb.textContent = CONNECTOR_BLURB_GROK;
     el.appendChild(grokBlurb);
     if (loading) {
-      el.appendChild(renderMcpSectionState("Loading Grok connectors…"));
+      el.appendChild(renderMcpSectionState("Loading Atlas connectors…"));
     } else if (error) {
       el.appendChild(renderMcpSectionState(error, true));
     } else if (!managed.length) {
-      el.appendChild(renderMcpSectionState("No grok.com connectors reported."));
+      el.appendChild(renderMcpSectionState("No Atlas connectors reported."));
     } else {
       const grokList = document.createElement("div");
       grokList.className = "settings-mcp-list";
@@ -1482,11 +1494,11 @@
     localBlurb.textContent = env && env.isRemote ? CONNECTOR_BLURB_LOCAL_REMOTE : CONNECTOR_BLURB_LOCAL;
     el.appendChild(localBlurb);
     if (loading) {
-      el.appendChild(renderMcpSectionState("Loading Grok connectors…"));
+      el.appendChild(renderMcpSectionState("Loading Atlas connectors…"));
     } else if (error) {
       el.appendChild(renderMcpSectionState(error, true));
     } else if (!local.length) {
-      el.appendChild(renderMcpSectionState("No local Grok connectors reported."));
+      el.appendChild(renderMcpSectionState("No local Atlas connectors reported."));
     } else {
       const localList = document.createElement("div");
       localList.className = "settings-mcp-list";
@@ -1693,7 +1705,7 @@
   const ROUTINE_UI = { open: "", draft: null, confirmRemove: "", pendingSave: false };
   const NEW_ROUTINE = "__new__";
 
-  const PROVIDER_LABELS = { grok: "Grok", codex: "Codex", claude: "Claude" };
+  const PROVIDER_LABELS = { grok: "Atlas", codex: "Codex", claude: "Claude" };
   function providerLabel(provider) {
     return PROVIDER_LABELS[provider] || provider;
   }
@@ -1904,7 +1916,7 @@
       }
       const opt = document.createElement("option");
       opt.value = m.provider + " " + m.model;
-      opt.textContent = m.label;
+      opt.textContent = brandCopy(m.label);
       if (m.provider === draft.provider && m.model === draft.model) opt.selected = true;
       (group || model).appendChild(opt);
     }
@@ -3133,7 +3145,7 @@
     // losing focus. But `navMenuOpen` is true whenever that select merely HAS
     // focus, and picking a category leaves it focused — so on a phone every
     // frame that arrived afterwards was deferred and nothing flushed it. The
-    // page sat on "Loading routines…" (and "Loading Grok connectors…" before
+    // page sat on "Loading routines…" (and "Loading Atlas connectors…" before
     // that) until the reader touched the screen for an unrelated reason.
     //
     // So: flush on `change` as well, which fires when the dropdown closes with

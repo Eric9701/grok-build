@@ -77,6 +77,9 @@ pub fn build_messages_request(req: &ConversationRequest) -> crate::messages::Mes
         OutputConfig, SystemParam, TextBlock, ToolChoiceParam, ToolParam, ToolResultContent,
     };
 
+    let mut items = req.items.clone();
+    rewrite_duplicate_tool_call_ids(&mut items);
+
     let mut system_blocks: Vec<TextBlock> = Vec::new();
     let mut messages: Vec<Message> = Vec::new();
     let mut pending_assistant: Vec<ContentBlock> = Vec::new();
@@ -163,7 +166,7 @@ pub fn build_messages_request(req: &ConversationRequest) -> crate::messages::Mes
         }
     };
 
-    for item in &req.items {
+    for item in &items {
         match item {
             ConversationItem::System(s) => {
                 flush_assistant(&mut pending_assistant, &mut messages);
@@ -387,6 +390,7 @@ impl From<crate::messages::MessagesResponse> for ConversationItem {
                 _ => {} // Image, ToolResult not expected in assistant responses
             }
         }
+        uniquify_tool_calls(&mut tool_calls);
 
         ConversationItem::Assistant(AssistantItem {
             content: Arc::<str>::from(content),
