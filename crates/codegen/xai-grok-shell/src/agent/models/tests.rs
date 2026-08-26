@@ -300,6 +300,115 @@ async fn slow_fetch_within_timeout_still_applies() {
     assert!(mgr.models().contains_key("grok-4"));
 }
 
+#[tokio::test]
+async fn force_refresh_fetches_even_when_disk_cache_is_fresh() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingCatalogEndpoint {
+        calls: Arc<AtomicUsize>,
+        catalog: IndexMap<String, ModelEntry>,
+    }
+    impl ModelsEndpoint for CountingCatalogEndpoint {
+        fn fetch_models(
+            &self,
+            _endpoints: config::EndpointsConfig,
+            _auth: Option<GrokAuth>,
+            _fetch_auth: ModelFetchAuth,
+        ) -> ModelsFetchFuture {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let catalog = self.catalog.clone();
+            Box::pin(async move { Some(catalog) })
+        }
+    }
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let tmp = tempfile::TempDir::new().unwrap();
+    let auth_manager = Arc::new(AuthManager::new(tmp.path(), GrokComConfig::default()));
+    let mgr = ModelsManagerBuilder::new(
+        None,
+        IndexMap::new(),
+        acp::ModelId::new("default"),
+        auth_manager,
+        config::Config::default(),
+    )
+    .endpoint(Arc::new(CountingCatalogEndpoint {
+        calls: calls.clone(),
+        catalog: make_prefetched(&["grok-new"]),
+    }))
+    .cache(test_cache_manager(tmp.path()))
+    .build();
+
+    let seeder = test_cache_manager(tmp.path());
+    let auth_method = mgr.inner.fetch_auth.read().cache_auth_method();
+    seeder.persist(
+        &make_prefetched(&["grok-old"]),
+        Some("etag-fresh"),
+        auth_method,
+        &mgr.cache_origin(),
+    );
+    mgr.reload_from_disk_cache();
+    assert!(
+        mgr.models().contains_key("grok-old"),
+        "setup: fresh disk cache must load"
+    );
+    assert!(
+        !mgr.models().contains_key("grok-new"),
+        "setup: remote catalog must not be applied yet"
+    );
+
+    let count = mgr
+        .force_refresh_inner(/*remote_fetch_enabled*/ true)
+        .await
+        .expect("force_refresh must hit the network despite a fresh cache");
+    assert!(count >= 1);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(mgr.models().contains_key("grok-new"));
+    assert!(
+        !mgr.models().contains_key("grok-old"),
+        "force_refresh must replace the cached catalog, not merge"
+    );
+}
+
+#[tokio::test]
+async fn force_refresh_failure_leaves_existing_catalog() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let auth_manager = Arc::new(AuthManager::new(tmp.path(), GrokComConfig::default()));
+    let mgr = ModelsManagerBuilder::new(
+        None,
+        IndexMap::new(),
+        acp::ModelId::new("default"),
+        auth_manager,
+        config::Config::default(),
+    )
+    .endpoint(Arc::new(FailingEndpoint))
+    .cache(test_cache_manager(tmp.path()))
+    .build();
+
+    let cfg = config::Config::default();
+    assert!(mgr.apply_refresh_result(&cfg, Some(make_prefetched(&["grok-keep"])), None));
+    assert!(mgr.models().contains_key("grok-keep"));
+
+    let err = mgr
+        .force_refresh_inner(/*remote_fetch_enabled*/ true)
+        .await
+        .expect_err("a failed fetch must not report success");
+    assert_eq!(err, ForceRefreshError::FetchFailed);
+    assert!(
+        mgr.models().contains_key("grok-keep"),
+        "failed force_refresh must leave the existing catalog"
+    );
+}
+
+#[tokio::test]
+async fn force_refresh_reports_remote_fetch_disabled() {
+    let mgr = cold_manager(config::Config::default(), Arc::new(FailingEndpoint));
+    let err = mgr
+        .force_refresh_inner(/*remote_fetch_enabled*/ false)
+        .await
+        .expect_err("disabled remote_fetch must not fetch");
+    assert_eq!(err, ForceRefreshError::RemoteFetchDisabled);
+}
+
 #[tokio::test(start_paused = true)]
 async fn etag_refresh_is_bounded_and_single_flighted() {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -472,7 +581,7 @@ async fn first_catalog_wait_observes_inline_fetch() {
         }),
     );
     // Fetch first in the join, so its attempt registers on first poll.
-    let ((), ready) = tokio::join!(
+    let (_, ready) = tokio::join!(
         mgr.fetch_and_apply_inner(/*remote_fetch_enabled*/ true),
         mgr.wait_for_first_catalog_inner(/*remote_fetch_enabled*/ true),
     );

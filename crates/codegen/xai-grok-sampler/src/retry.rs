@@ -610,6 +610,18 @@ mod tests {
     }
 
     #[test]
+    fn classify_glm_content_type_400_strips_images() {
+        let err = api_err(
+            StatusCode::BAD_REQUEST,
+            "Bad request (400): messages.content.type 参数非法，取值范围 ['text']",
+        );
+        assert!(matches!(
+            classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithImageStrip
+        ));
+    }
+
+    #[test]
     fn classify_image_processing_error_500_wrapped_strips_images() {
         let err = api_err(
             StatusCode::INTERNAL_SERVER_ERROR,

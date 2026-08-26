@@ -1566,5 +1566,18 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             app.show_toast(&format!("\u{2717} Could not save {key}: {scrubbed}"));
             vec![]
         }
+        TaskResult::ModelsRefreshed { result } => {
+            match result {
+                Ok(n) => {
+                    let noun = if n == 1 { "model" } else { "models" };
+                    app.show_toast(&format!("Refreshed {n} {noun} from remote."));
+                }
+                Err(error) => {
+                    let scrubbed = scrub_error_for_toast(&error);
+                    app.show_toast(&format!("\u{2717} Could not refresh models: {scrubbed}"));
+                }
+            }
+            vec![]
+        }
     }
 }

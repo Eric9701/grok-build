@@ -1,0 +1,86 @@
+startedAt hour CST {1: 3, 7: 1, 8: 3, 9: 30, 10: 22, 11: 21, 12: 5, 13: 10, 14: 14, 15: 11, 16: 15, 17: 3, 18: 4, 19: 1, 20: 7, 21: 3, 22: 26, 23: 48}
+createdAt hour CST (may be TZ-shifted) {0: 15, 1: 4, 2: 4, 3: 1, 4: 6, 5: 2, 6: 24, 7: 50, 8: 1, 9: 3, 10: 1, 17: 30, 18: 23, 19: 23, 20: 5, 21: 11, 22: 9, 23: 15}
+startedAt weekday {'Wednesday': 25, 'Tuesday': 81, 'Monday': 37, 'Sunday': 19, 'Saturday': 18, 'Friday': 17, 'Thursday': 30}
+startedAt day {'2026-08-13': 8, '2026-08-14': 4, '2026-08-15': 6, '2026-08-16': 4, '2026-08-17': 17, '2026-08-18': 24, '2026-08-19': 12, '2026-08-20': 22, '2026-08-21': 13, '2026-08-22': 12, '2026-08-23': 15, '2026-08-24': 20, '2026-08-25': 57, '2026-08-26': 13}
+--- real descriptions ---
+2	详细设计：入参必填与样例
+1	双轴评审 FR-045 看板增量
+1	FR-044 修复复审
+1	FR-044 增量双轴评审
+1	双轴评审解密 mask 增量
+1	Spec 轴评审模型管理 diff
+1	Standards 轴评审模型管理 diff
+1	Role 4 实现模型管理功能
+1	Role 3 生成详细设计
+1	Role 1 生成需求文档
+1	调查 atlas-server 模型管理实现
+1	Spec 评审 atlas-admin
+1	Standards 评审 atlas-admin
+1	实施编码：atlas-admin M0-M6
+1	详细设计：atlas-admin 管理系统
+1	需求分析：atlas-admin 管理系统
+1	评审：Spec轴
+1	评审：Standards轴
+1	实现：入参必填与样例
+1	架构设计：入参必填与样例
+1	需求分析：入参必填与样例
+1	探查api-service入参处理
+1	修复审查发现的问题
+1	Spec 轴代码审查
+1	Standards 轴代码审查
+1	登录模块代码实现
+1	回填详细设计 DQ 决议
+1	回填架构文档 AQ 决议
+1	登录模块详细设计文档
+1	登录模块架构设计文档
+1	登录模块需求分析文档
+1	审计API密钥流转与泄露面
+1	审计CI脚本与通知链路
+1	审计后端出站HTTP端点
+1	审计前端与桌面端外发
+1	实现登录模块后端代码
+1	生成登录模块详细设计文档
+1	生成登录模块需求文档
+--- fail real ---
+双轴评审 FR-045 看板增量
+--- cwd full ---
+60	e:\work\mygit\architechure\atlas-admin
+29	e:\work\mygit\architechure\knowledge-base
+27	E:\work\mygit\architechure\grok-build
+17	e:\work\mygit\architechure\ai工具评测
+15	E:\work\mygit\architechure\ai工具评测
+14	e:\work\yumcgit\store-platform\DataApiService
+13	e:\work\yumcgit\qsmart\trainning-data-tool
+12	e:\work\mygit\dataontology
+10	E:\work\mygit\architechure\knowledge-base
+8	E:\work\mygit\architechure\atlas-admin
+6	E:\GitHub\daily_stock_analysis
+5	e:\atlas-test
+4	E:\work\yumcgit\store-platform\DataApiService\datacenter-web-service
+2	C:\Users\zyfg9\.atlas\bin
+2	e:\work\mygit\architechure\tools\ai-devops
+1	E:\work\yumcgit\store-platform\DataAnalysisEngine\data-analysis-service
+1	E:\work\mygit\architechure\tools\ai-devops
+1	C:\Users\zyfg9\Downloads
+--- artifact ext --- {'java': 75, 'go': 70, 'md': 61, 'json': 23, 'py': 22, 'html': 16, 'js': 11, 'ttl': 6, 'mod': 4, 'css': 4, 'toml': 3, 'yaml': 2, 'gitignore': 2, 'xml': 2, 'vue': 1, 'yml': 1, 'sql': 1}
+--- routing by model ---
+cms-wjj2-kimi-for-coding {'kimi-for-coding': 26, '(empty)': 33}
+arch-glm-5.2 {'glm-5.2': 51, '(empty)': 22}
+arch-qwen3.8-max {'qwen3.8-max': 8, '(empty)': 8}
+ali-glm-5 {'ali-glm-5': 2}
+glm-5.2 {'(empty)': 35}
+kimi-for-coding {'(empty)': 27}
+qwen3.8-max {'(empty)': 12}
+arch-kimi-for-coding {'(empty)': 3}
+--- agent duration avg min ---
+grok-build-plan n 188 avg_min 4.38 max_min 82.8
+explore n 12 avg_min 5.31 max_min 15.9
+atlas-sdd:4-software-engineer-agent n 6 avg_min 47.64 max_min 99.2
+atlas-sdd:3-program-design-agent n 7 avg_min 12.96 max_min 20.9
+atlas-sdd:1-requirement-analyst-agent n 5 avg_min 5.51 max_min 7.4
+general-purpose n 6 avg_min 5.11 max_min 15.2
+atlas-sdd:2-architect-design-agent n 3 avg_min 9.01 max_min 11.7
+weekend tasks 37 of 227
+grok-build-plan errors clustered? sample other fields
+artifact density 1.3392070484581498
+org share tasks 0.14431023521932612 tokens 0.15250533679035438

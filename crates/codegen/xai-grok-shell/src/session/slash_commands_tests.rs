@@ -226,6 +226,26 @@ fn resolve_builtin(name: &str, args: &str) -> Option<BuiltinAction> {
 }
 
 #[test]
+fn refresh_model_parses_as_builtin() {
+    assert!(matches!(
+        resolve_builtin("refresh-model", ""),
+        Some(BuiltinAction::RefreshModels)
+    ));
+    let outcome = resolve(
+        vec![text_block("/refresh-models")],
+        &[],
+        CommandAvailability::default(),
+        SkillSlashRewrite::default(),
+        &[],
+    )
+    .unwrap_err();
+    assert!(matches!(
+        outcome,
+        SlashCommandOutcome::Builtin(BuiltinAction::RefreshModels)
+    ));
+}
+
+#[test]
 fn compact_parses_optional_context() {
     assert!(matches!(
         resolve_builtin("compact", ""),
@@ -801,7 +821,13 @@ fn pre_session_builtin_commands_excludes_gated_entries() {
         );
     }
     // Always-on commands are still present.
-    for required in ["compact", "always-approve", "context", "session-info"] {
+    for required in [
+        "compact",
+        "always-approve",
+        "context",
+        "session-info",
+        "refresh-model",
+    ] {
         assert!(
             names.iter().any(|n| n == required),
             "{required} should be present, got: {names:?}",

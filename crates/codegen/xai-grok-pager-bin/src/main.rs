@@ -62,7 +62,7 @@ fn process_identity(command: Option<&Command>, is_interactive: bool) -> Option<P
             | Command::Mcp(_)
             | Command::Plugin(_)
             | Command::Memory(_)
-            | Command::Models
+            | Command::Models(_)
             | Command::Sessions(_)
             | Command::Setup { .. }
             | Command::Share(_)
@@ -2102,12 +2102,12 @@ async fn async_main(args: PagerArgs) -> Result<()> {
                 let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
                 return xai_grok_pager::plugin_cmd::run(plugin_args).await;
             }
-            Command::Models => {
+            Command::Models(models_args) => {
                 init_tracing_simple("cli");
                 let _otel_guard = xai_grok_telemetry::otel_layer::otel_guard();
                 let agent_config = xai_grok_shell::config::load_agent_config_disk_only()
                     .map_err(|e| anyhow::anyhow!("Failed to create agent config: {e}"))?;
-                return xai_grok_pager::models::list_available_models(&agent_config).await;
+                return xai_grok_pager::models::run(models_args, &agent_config).await;
             }
             Command::Leader(leader_args) => {
                 init_tracing_simple("cli");

@@ -50,8 +50,8 @@ pub enum Command {
     Plugin(crate::plugin_cmd::PluginArgs),
     /// Manage cross-session memory
     Memory(crate::memory_cmd::MemoryArgs),
-    /// List available models and exit
-    Models,
+    /// List or refresh the model catalog
+    Models(crate::models::ModelsArgs),
     /// List, search, or restore sessions
     Sessions(crate::sessions_cmd::SessionsArgs),
     /// Fetch and install managed configuration
@@ -1089,6 +1089,30 @@ mod tests {
             assert!(args.version, "{flag} must set the early version intent");
             assert!(args.command.is_none());
         }
+    }
+    #[test]
+    fn models_subcommand_parses_list_and_refresh() {
+        let bare = PagerArgs::try_parse_from(["grok", "models"]).expect("bare models parses");
+        assert!(matches!(
+            bare.command,
+            Some(Command::Models(crate::models::ModelsArgs { command: None }))
+        ));
+        let list =
+            PagerArgs::try_parse_from(["grok", "models", "list"]).expect("models list parses");
+        assert!(matches!(
+            list.command,
+            Some(Command::Models(crate::models::ModelsArgs {
+                command: Some(crate::models::ModelsCommand::List),
+            }))
+        ));
+        let refresh = PagerArgs::try_parse_from(["grok", "models", "refresh"])
+            .expect("models refresh parses");
+        assert!(matches!(
+            refresh.command,
+            Some(Command::Models(crate::models::ModelsArgs {
+                command: Some(crate::models::ModelsCommand::Refresh),
+            }))
+        ));
     }
     #[test]
     fn ordinary_and_doctor_parsing_do_not_set_version_intent() {

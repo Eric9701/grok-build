@@ -98,6 +98,37 @@ pub struct ModelsManager {
     inner: Arc<Inner>,
 }
 
+/// User-triggered catalog refresh (`atlas models refresh` / `/refresh-model`) failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForceRefreshError {
+    /// `[features].remote_fetch` is off; the catalog is local-only.
+    RemoteFetchDisabled,
+    /// The remote `/v1/models` fetch timed out or returned nothing; the
+    /// in-memory catalog is unchanged.
+    FetchFailed,
+}
+
+impl std::fmt::Display for ForceRefreshError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RemoteFetchDisabled => {
+                write!(
+                    f,
+                    "model catalog refresh skipped: remote_fetch is disabled"
+                )
+            }
+            Self::FetchFailed => {
+                write!(
+                    f,
+                    "failed to fetch the model catalog from the remote server"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ForceRefreshError {}
+
 /// Progress of the first real-catalog load.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CatalogProgress {
@@ -1143,16 +1174,44 @@ impl ModelsManager {
     }
 
     async fn fetch_and_apply(&self) {
-        self.fetch_and_apply_inner(crate::util::config::resolve_remote_fetch_enabled())
+        let _ = self
+            .fetch_and_apply_inner(crate::util::config::resolve_remote_fetch_enabled())
+            .await;
+    }
+
+    /// Invalidate the disk cache and fetch the remote catalog now.
+    ///
+    /// Used by `atlas models refresh` and `/refresh-model`. On success the
+    /// in-memory catalog is replaced, managed models are synced to
+    /// `config.toml` (via the fetch path), and clients are notified with
+    /// `x.ai/models/update`.
+    pub async fn force_refresh(&self) -> Result<usize, ForceRefreshError> {
+        self.force_refresh_inner(crate::util::config::resolve_remote_fetch_enabled())
             .await
     }
 
-    async fn fetch_and_apply_inner(&self, remote_fetch_enabled: bool) {
+    pub(crate) async fn force_refresh_inner(
+        &self,
+        remote_fetch_enabled: bool,
+    ) -> Result<usize, ForceRefreshError> {
         if !remote_fetch_enabled {
             tracing::info!("model catalog refresh skipped: remote_fetch disabled");
-            return;
+            return Err(ForceRefreshError::RemoteFetchDisabled);
         }
-        // Force network so managed catalog syncs on `/model` Online refresh.
+        if !self.fetch_and_apply_inner(true).await {
+            return Err(ForceRefreshError::FetchFailed);
+        }
+        self.notify_models_updated();
+        Ok(self.available().len())
+    }
+
+    async fn fetch_and_apply_inner(&self, remote_fetch_enabled: bool) -> bool {
+        if !remote_fetch_enabled {
+            tracing::info!("model catalog refresh skipped: remote_fetch disabled");
+            return false;
+        }
+        // Force network so managed-model sync can run (user refresh, auth
+        // change, `/model` Online).
         self.inner.cache.invalidate();
         let attempt = FetchAttemptGuard::begin(&self.inner);
         let generation = attempt.generation;
@@ -1194,6 +1253,7 @@ impl ModelsManager {
                 })),
             );
         }
+        success
     }
 
     /// Publish a resolved catalog under one atomic write, then reselect the model (default on first real catalog, else keep current if present).

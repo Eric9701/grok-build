@@ -685,6 +685,52 @@ fn test_tool_result_with_images_to_chat_completions() {
 }
 
 #[test]
+fn glm_text_model_chat_request_strips_image_url_blocks() {
+    let mut user = ConversationItem::user("see this");
+    user.add_image("data:image/png;base64,abc".to_string());
+    let req = ConversationRequest::from_items(vec![user])
+        .with_model("glm-5")
+        .with_temperature(0.0);
+    let chat: ChatCompletionRequest = req.into();
+    let json = serde_json::to_value(&chat).unwrap();
+    let content = json
+        .pointer("/messages/0/content")
+        .expect("user message content");
+    match content {
+        serde_json::Value::String(text) => {
+            assert!(text.contains("see this"));
+            assert!(text.contains("image removed"));
+        }
+        serde_json::Value::Array(blocks) => {
+            for block in blocks {
+                assert_ne!(
+                    block.get("type").and_then(|t| t.as_str()),
+                    Some("image_url"),
+                    "glm-5 must not send image_url; got {block}"
+                );
+            }
+        }
+        other => panic!("unexpected content shape: {other}"),
+    }
+}
+
+#[test]
+fn glm_vision_model_chat_request_keeps_image_url_blocks() {
+    let mut user = ConversationItem::user("see this");
+    user.add_image("data:image/png;base64,abc".to_string());
+    let req = ConversationRequest::from_items(vec![user]).with_model("glm-5v-turbo");
+    let chat: ChatCompletionRequest = req.into();
+    let json = serde_json::to_value(&chat).unwrap();
+    let found_image = json
+        .pointer("/messages/0/content")
+        .and_then(|c| c.as_array())
+        .into_iter()
+        .flatten()
+        .any(|block| block.get("type").and_then(|t| t.as_str()) == Some("image_url"));
+    assert!(found_image, "glm-5v must keep image_url");
+}
+
+#[test]
 fn conversation_to_chat_messages_drops_reasoning_when_user_intervenes() {
     // Reasoning only folds onto the *immediately* following assistant. A
     // non-assistant item in between (here a User) clears pending reasoning,

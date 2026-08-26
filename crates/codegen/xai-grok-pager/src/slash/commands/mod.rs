@@ -49,6 +49,7 @@ pub mod plugin;
 pub mod privacy;
 pub mod queue;
 pub mod recap;
+pub mod refresh_model;
 pub mod release_notes;
 pub mod remember;
 pub mod rename;
@@ -91,6 +92,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         // Per turn.
         Arc::new(effort::EffortCommand),
         Arc::new(model::ModelCommand),
+        Arc::new(refresh_model::RefreshModelCommand),
         Arc::new(context::ContextCommand),
         Arc::new(compact::CompactCommand),
         Arc::new(fork::ForkCommand),
@@ -222,6 +224,7 @@ mod tests {
         assert!(reg.get("new").is_some());
         assert!(reg.get("compact").is_some());
         assert!(reg.get("model").is_some());
+        assert!(reg.get("refresh-model").is_some());
         assert!(reg.get("home").is_some());
         assert!(reg.get("view-plan").is_some());
         reg.set_available_tools(std::collections::HashSet::from([

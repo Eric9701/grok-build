@@ -255,6 +255,18 @@ impl<'de> Deserialize<'de> for ApiErrorCode {
     }
 }
 
+/// Zhipu GLM-5 Chat Completions: `image_url` is not in
+/// `messages.content.type` 取值范围 `['text']`.
+fn message_rejects_non_text_content_type(message: &str) -> bool {
+    message.contains("messages.content.type")
+        && (message.contains("取值范围")
+            || message.contains("['text']")
+            || message.contains("[\"text\"]")
+            || message.contains("非法")
+            || message.contains("illegal")
+            || message.contains("invalid"))
+}
+
 impl SamplingError {
     /// Auth error of unknown wire provenance — for paths that never sent a
     /// request (config validation, cancellation, actor teardown) or that
@@ -375,6 +387,7 @@ impl SamplingError {
             } if matches!(status.as_u16(), 400 | 500) => {
                 *error_code == Some(ApiErrorCode::InvalidImage)
                     || message.contains("Could not process image")
+                    || message_rejects_non_text_content_type(message)
             }
             SamplingError::StreamError { code, .. } => *code == Some(ApiErrorCode::InvalidImage),
             // Explicit like `is_retryable`: a new variant must state its
@@ -1449,6 +1462,19 @@ mod tests {
             error_code: None,
         };
         assert!(!err.is_image_processing_error());
+    }
+
+    #[test]
+    fn image_processing_error_glm_text_only_content_type_detected() {
+        let err = SamplingError::Api {
+            status: StatusCode::BAD_REQUEST,
+            message: "messages.content.type 参数非法，取值范围 ['text']".into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: None,
+            error_code: None,
+        };
+        assert!(err.is_image_processing_error());
     }
 
     #[test]

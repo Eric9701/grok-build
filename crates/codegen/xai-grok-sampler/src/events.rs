@@ -32,6 +32,10 @@ pub enum StripReason {
     /// non-deterministic rejection (proxy-wrapped 500, legacy phrase match,
     /// mid-stream error): may be transient, blames no particular image.
     PayloadHeuristic,
+    /// Provider rejects every `image_url` content type (GLM-5 Chat Completions
+    /// `messages.content.type` 取值范围 `['text']`). All stripped URLs may
+    /// be persisted — none of them can succeed on retry.
+    UnsupportedContentType,
 }
 
 impl StripReason {
@@ -40,6 +44,7 @@ impl StripReason {
         match self {
             StripReason::ServerRejected => "server_rejected",
             StripReason::PayloadHeuristic => "payload_heuristic",
+            StripReason::UnsupportedContentType => "unsupported_content_type",
         }
     }
 }

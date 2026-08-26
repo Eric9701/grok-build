@@ -2257,7 +2257,8 @@ mod tests {
 
         // Pager-global commands stay, plus session-scoped opt-ins
         // (`offered_when_session_less`): `/model`/`/plan` stage the next
-        // spawn; `/multiline` toggles compose on the dashboard inputs.
+        // spawn; `/multiline` toggles compose on the dashboard inputs;
+        // `/refresh-model` re-fetches the remote catalog.
         for keep in [
             "/quit",
             "/new",
@@ -2268,6 +2269,7 @@ mod tests {
             "/model",
             "/plan",
             "/multiline",
+            "/refresh-model",
         ] {
             assert!(
                 names.contains(&keep),
@@ -2404,8 +2406,9 @@ mod tests {
         );
     }
 
-    /// `/model`, `/plan`, and `/multiline` opt in via `offered_when_session_less`,
-    /// so they stay recognized on the dashboard even though they're session-scoped.
+    /// `/model`, `/plan`, `/multiline`, and `/refresh-model` opt in via
+    /// `offered_when_session_less`, so they stay recognized on the dashboard
+    /// even though `/model`/`/plan` are session-scoped.
     #[test]
     fn session_less_opt_in_commands_recognized_on_dashboard() {
         let mut ctrl = SlashController::with_builtins(std::path::PathBuf::from("."));
@@ -2429,6 +2432,12 @@ mod tests {
         assert!(
             state.snapshot().command_recognized,
             "/multiline must be recognized on the dashboard"
+        );
+
+        ctrl.refresh(&state, "/refresh-model", 14, &models);
+        assert!(
+            state.snapshot().command_recognized,
+            "/refresh-model must be recognized on the dashboard"
         );
     }
 

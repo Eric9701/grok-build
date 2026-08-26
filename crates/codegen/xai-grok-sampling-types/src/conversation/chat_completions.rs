@@ -254,7 +254,8 @@ impl From<ChatResponseMessage> for ConversationItem {
 }
 
 impl From<ConversationRequest> for ChatCompletionRequest {
-    fn from(req: ConversationRequest) -> Self {
+    fn from(mut req: ConversationRequest) -> Self {
+        req.strip_images_for_text_only_chat_completions();
         let messages: Vec<ChatRequestMessage> = conversation_to_chat_messages(req.items);
 
         let tools_is_empty = req.tools.is_empty();

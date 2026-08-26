@@ -437,7 +437,7 @@ pub(crate) async fn generate_session_compact(
             "Applied image budget to compaction request"
         );
     }
-    let chat_history = prepared_history.items;
+    let mut chat_history = prepared_history.items;
     let num_messages = chat_history.len();
     let wire_tool_choice = match tool_choice {
         crate::util::config::CompactionToolChoice::Auto => ToolChoice::auto(),
@@ -451,6 +451,13 @@ pub(crate) async fn generate_session_compact(
     let output = match sampling_config.api_backend {
         ApiBackend::ChatCompletions => {
             // Fold `Reasoning` siblings into the following assistant via `conversation_to_chat_messages`.
+            if crate::sampling::chat_completions_rejects_image_url(Some(
+                sampling_config.model.as_str(),
+            )) {
+                let mut tmp = ConversationRequest::from_items(chat_history);
+                tmp.strip_images();
+                chat_history = tmp.items;
+            }
             let chat_messages: Vec<ChatRequestMessage> =
                 conversation_to_chat_messages(chat_history);
             let mut message =

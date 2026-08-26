@@ -27,3 +27,7 @@ _Avoid_: 每个 turn 验登录并中止现会话
 **Device Auth Login**:
 企业登录命令：`atlas login --device-auth`。VS Code 未登录引导也走这条。机器码登录要求该用户已在 atlas-server 开户。
 _Avoid_: 裸 `atlas login` / `grok login` 作为企业引导；未开户仅凭机器码进入
+
+**Remote Fetch**:
+`[features] remote_fetch`（默认 true）。为 false 时跳过启动时远程 settings（`/settings`）与模型目录拉取。断网 / 代理不可达时必须关掉，否则 bootstrap 约 40s 超时（*loading your account settings*）。无环境变量；`GROK_CONFIG` 覆盖无效。
+_Avoid_: 只关 `require_session_at_startup` 却仍卡在 settings；以为 `GROK_REMOTE_FETCH=0` 有效

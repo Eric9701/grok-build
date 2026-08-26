@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>工作画像 · zhangyufeng</title>
+  <style>
+    :root {
+      --bg: #f3f1ec;
+      --bg-elev: #fffcf7;
+      --ink: #1c1b19;
+      --muted: #6b6860;
+      --line: #ddd8ce;
+      --accent: #0f766e;
+      --accent-soft: #d8ebe8;
+      --ok: #1f7a4c;
+      --ok-bg: #e6f4ec;
+      --err: #b42318;
+      --err-bg: #fceceb;
+      --warn: #9a6700;
+      --warn-bg: #fef4e0;
+      --font: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "Cascadia Mono", "IBM Plex Mono", ui-monospace, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      font-family: var(--font);
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.5;
+    }
+    .shell { max-width: 56rem; margin: 0 auto; padding: 2rem 1.25rem 3.5rem; }
+    .brand {
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    h1 { margin: 0.35rem 0 0; font-size: 1.85rem; letter-spacing: -0.03em; }
+    h2 { margin: 2rem 0 0.7rem; font-size: 1.15rem; }
+    .sub { color: var(--muted); margin: 0.4rem 0 0; font-size: 0.92rem; }
+    .meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; margin-top: 0.85rem; color: var(--muted); font-size: 0.85rem; }
+    .meta code, code {
+      font-family: var(--mono);
+      font-size: 0.84em;
+      background: var(--accent-soft);
+      padding: 0.05rem 0.3rem;
+      border-radius: 4px;
+    }
+    .persona {
+      margin-top: 1.25rem;
+      padding: 1rem 1.1rem;
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      font-size: 1.02rem;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      margin-top: 1.1rem;
+    }
+    .stat {
+      background: var(--bg-elev);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0.85rem 1rem;
+    }
+    .stat b { display: block; font-size: 1.45rem; letter-spacing: -0.03em; }
+    .stat span { color: var(--muted); font-size: 0.8rem; }
+    .ok { color: var(--ok); }
+    .callout {
+      margin-top: 1rem;
+      padding: 0.85rem 1rem;
+      background: var(--warn-bg);
+      border-left: 3px solid var(--warn);
+      border-radius: 0 10px 10px 0;
+      font-size: 0.92rem;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 600; font-size: 0.78rem; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .mono { font-family: var(--mono); font-size: 0.82rem; }
+    ul { padding-left: 1.15rem; }
+    li { margin: 0.35rem 0; }
+    .bar-row { display: grid; grid-template-columns: 11rem 1fr 2.6rem; gap: 0.55rem; align-items: center; margin: 0.38rem 0; font-size: 0.86rem; }
+    .bar-track { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--accent); border-radius: 99px; }
+    .bars { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; padding: 0.9rem 1rem; }
+    .day {
+      display: flex;
+      align-items: flex-end;
+      gap: 0.35rem;
+      height: 9.5rem;
+      padding-top: 0.4rem;
+    }
+    .day-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; gap: 0.25rem; }
+    .day-col i {
+      display: block;
+      width: 100%;
+      background: var(--accent);
+      border-radius: 4px 4px 0 0;
+      min-height: 2px;
+    }
+    .day-col span { font-size: 0.68rem; color: var(--muted); }
+    .hour {
+      display: flex;
+      align-items: flex-end;
+      gap: 0.22rem;
+      height: 8.2rem;
+    }
+    .hour-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; gap: 0.2rem; }
+    .hour-col i { display: block; width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; opacity: 0.9; }
+    .hour-col span { font-size: 0.62rem; color: var(--muted); }
+    .caption { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.78rem; }
+    .card { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; padding: 0.2rem 0.4rem 0.4rem; overflow: auto; }
+    ol { padding-left: 1.2rem; }
+    @media (max-width: 720px) {
+      .stats { grid-template-columns: 1fr 1fr; }
+      .bar-row { grid-template-columns: 7.5rem 1fr 2.4rem; }
+    }
+    @media print {
+      body { background: #fff; }
+      .shell { max-width: none; padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="brand">Atlas Task Report · 单人工作画像</div>
+    <h1>zhangyufeng</h1>
+    <p class="sub">高产的 Atlas / 管理后台建设者：主路径几乎全走 <code>grok-build-plan</code>，在 atlas-admin、评测与 grok-build 上用 SDD 角色链做需求–设计–实现，模型在 GLM 与 Kimi 两档间切换，上午与深夜双高峰。</p>
+    <div class="meta">
+      <span>区间 2026-08-13 ~ 2026-08-26</span>
+      <span>Report User <code>zhangyufeng</code> / zhangyufeng@myai.tech</span>
+      <span>明细 227 条全量</span>
+      <span>一行一条子代理任务，身份来自报文体</span>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b>227</b><span>子代理任务</span></div>
+      <div class="stat"><b class="ok">77.1%</b><span>成功率 175 / 227</span></div>
+      <div class="stat"><b>1.28 亿</b><span>Tokens</span></div>
+      <div class="stat"><b>304</b><span>产物 · code 229 / doc 61</span></div>
+    </div>
+
+    <div class="callout">
+      51 次失败里 50 次是 <code>grok-build-plan</code>，description 为占位符 <code>&lt;user_query&gt;</code>。有标题的失败只有 1 条。更像上报/中断口径，不宜读成「做砸了 50 个任务」。区间内全站 18 人、1573 任务，此人任务数第 1（14.4%），整体成功率约 63%——用量对照，不是绩效结论。
+    </div>
+
+    <h2>每日任务量</h2>
+    <div class="bars">
+      <div class="day" aria-label="每日任务数柱状图">
+        <div class="day-col"><i style="height:14%"></i><span>13</span></div>
+        <div class="day-col"><i style="height:7%"></i><span>14</span></div>
+        <div class="day-col"><i style="height:11%"></i><span>15</span></div>
+        <div class="day-col"><i style="height:7%"></i><span>16</span></div>
+        <div class="day-col"><i style="height:30%"></i><span>17</span></div>
+        <div class="day-col"><i style="height:42%"></i><span>18</span></div>
+        <div class="day-col"><i style="height:21%"></i><span>19</span></div>
+        <div class="day-col"><i style="height:39%"></i><span>20</span></div>
+        <div class="day-col"><i style="height:23%"></i><span>21</span></div>
+        <div class="day-col"><i style="height:21%"></i><span>22</span></div>
+        <div class="day-col"><i style="height:26%"></i><span>23</span></div>
+        <div class="day-col"><i style="height:35%"></i><span>24</span></div>
+        <div class="day-col"><i style="height:100%"></i><span>25</span></div>
+        <div class="day-col"><i style="height:23%"></i><span>26</span></div>
+      </div>
+      <p class="caption">横轴：8 月日期 · 纵轴：任务条数（峰值 8/25 = 57）· startedAt UTC+8 · 周末 37 / 227</p>
+    </div>
+
+    <h2>活跃与成效</h2>
+    <ul>
+      <li><code>status</code>：completed 175、error 51、cancelled 1。</li>
+      <li>耗时：中位约 2.1 分钟，p90 约 15 分钟，最长约 99 分钟（Role 4「登录模块代码实现」）。</li>
+      <li>客户端从 <code>0.2.126</code> 升到 <code>0.2.131</code>，主用 <code>0.2.130</code>（98）与 <code>0.2.131</code>（87）。</li>
+    </ul>
+
+    <h2>工作方式</h2>
+    <div class="card">
+      <table>
+        <thead>
+          <tr><th>Agent</th><th class="num">任务</th><th class="num">产物</th><th class="num">Tokens</th><th class="num">均耗时</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">grok-build-plan</td><td class="num">188</td><td class="num">223</td><td class="num">1.25 亿</td><td class="num">4.4 分钟</td></tr>
+          <tr><td class="mono">explore</td><td class="num">12</td><td class="num">0</td><td class="num">72 万</td><td class="num">5.3 分钟</td></tr>
+          <tr><td class="mono">atlas-sdd:3-program-design-agent</td><td class="num">7</td><td class="num">1</td><td class="num">66 万</td><td class="num">13.0 分钟</td></tr>
+          <tr><td class="mono">atlas-sdd:4-software-engineer-agent</td><td class="num">6</td><td class="num">79</td><td class="num">55 万</td><td class="num">47.6 分钟</td></tr>
+          <tr><td class="mono">general-purpose</td><td class="num">6</td><td class="num">0</td><td class="num">46 万</td><td class="num">5.1 分钟</td></tr>
+          <tr><td class="mono">atlas-sdd:1-requirement-analyst-agent</td><td class="num">5</td><td class="num">1</td><td class="num">20 万</td><td class="num">5.5 分钟</td></tr>
+          <tr><td class="mono">atlas-sdd:2-architect-design-agent</td><td class="num">3</td><td class="num">0</td><td class="num">23 万</td><td class="num">9.0 分钟</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>82.8% 任务落在 <code>grok-build-plan</code>。</li>
+      <li>SDD 角色链用过：Role 1 → 2 → 3 → 4。Role 4 任务少但产物极密（6 任务 79 产物）。</li>
+      <li><code>explore</code> / <code>general-purpose</code> 零产物，符合只读探查。</li>
+      <li>31 个父会话、70 个子会话：会拆子代理，主量仍在 plan。</li>
+    </ul>
+
+    <h2>模型（Catalog ID）</h2>
+    <div class="bars">
+      <div class="bar-row"><span class="mono">arch-glm-5.2</span><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><span>73</span></div>
+      <div class="bar-row"><span class="mono">cms-wjj2-kimi…</span><div class="bar-track"><div class="bar-fill" style="width:81%"></div></div><span>59</span></div>
+      <div class="bar-row"><span class="mono">glm-5.2</span><div class="bar-track"><div class="bar-fill" style="width:48%"></div></div><span>35</span></div>
+      <div class="bar-row"><span class="mono">kimi-for-coding</span><div class="bar-track"><div class="bar-fill" style="width:37%"></div></div><span>27</span></div>
+      <div class="bar-row"><span class="mono">arch-qwen3.8-max</span><div class="bar-track"><div class="bar-fill" style="width:22%"></div></div><span>16</span></div>
+      <div class="bar-row"><span class="mono">qwen3.8-max</span><div class="bar-track"><div class="bar-fill" style="width:16%"></div></div><span>12</span></div>
+      <div class="bar-row"><span class="mono">arch-kimi-for-coding</span><div class="bar-track"><div class="bar-fill" style="width:4%"></div></div><span>3</span></div>
+      <div class="bar-row"><span class="mono">ali-glm-5</span><div class="bar-track"><div class="bar-fill" style="width:3%"></div></div><span>2</span></div>
+      <p class="caption">任务数 · 满分 73（arch-glm-5.2）· 排行按 Catalog ID，Routing Name 仅作注解</p>
+    </div>
+    <div class="card" style="margin-top:0.8rem">
+      <table>
+        <thead>
+          <tr><th>Catalog ID</th><th class="num">任务</th><th class="num">产物</th><th class="num">Tokens</th><th>Routing Name</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">arch-glm-5.2</td><td class="num">73</td><td class="num">109</td><td class="num">4695 万</td><td>glm-5.2（51 条）</td></tr>
+          <tr><td class="mono">cms-wjj2-kimi-for-coding</td><td class="num">59</td><td class="num">42</td><td class="num">2740 万</td><td>kimi-for-coding（26 条）</td></tr>
+          <tr><td class="mono">glm-5.2</td><td class="num">35</td><td class="num">26</td><td class="num">2230 万</td><td>（空）</td></tr>
+          <tr><td class="mono">kimi-for-coding</td><td class="num">27</td><td class="num">10</td><td class="num">983 万</td><td>（空）</td></tr>
+          <tr><td class="mono">arch-qwen3.8-max</td><td class="num">16</td><td class="num">20</td><td class="num">861 万</td><td>qwen3.8-max（8 条）</td></tr>
+          <tr><td class="mono">qwen3.8-max</td><td class="num">12</td><td class="num">16</td><td class="num">1264 万</td><td>（空）</td></tr>
+          <tr><td class="mono">arch-kimi-for-coding</td><td class="num">3</td><td class="num">81</td><td class="num">14 万</td><td>（空）</td></tr>
+          <tr><td class="mono">ali-glm-5</td><td class="num">2</td><td class="num">0</td><td class="num">0</td><td>ali-glm-5</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <ul>
+      <li>主轴 GLM 档 108 任务（<code>arch-glm-5.2</code> + <code>glm-5.2</code>），Kimi 档 89，Qwen 28。</li>
+      <li><code>arch-kimi-for-coding</code> 仅 3 任务却 81 产物，和 Role 4 实现波次重合。</li>
+    </ul>
+
+    <h2>项目簇</h2>
+    <div class="bars">
+      <div class="bar-row"><span>atlas-admin</span><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><span>68</span></div>
+      <div class="bar-row"><span>knowledge-base</span><div class="bar-track"><div class="bar-fill" style="width:57%"></div></div><span>39</span></div>
+      <div class="bar-row"><span>ai工具评测</span><div class="bar-track"><div class="bar-fill" style="width:47%"></div></div><span>32</span></div>
+      <div class="bar-row"><span>grok-build</span><div class="bar-track"><div class="bar-fill" style="width:40%"></div></div><span>27</span></div>
+      <div class="bar-row"><span>DataApiService</span><div class="bar-track"><div class="bar-fill" style="width:26%"></div></div><span>18</span></div>
+      <div class="bar-row"><span>trainning-data-tool</span><div class="bar-track"><div class="bar-fill" style="width:19%"></div></div><span>13</span></div>
+      <div class="bar-row"><span>dataontology</span><div class="bar-track"><div class="bar-fill" style="width:18%"></div></div><span>12</span></div>
+      <div class="bar-row"><span>daily_stock_analysis</span><div class="bar-track"><div class="bar-fill" style="width:9%"></div></div><span>6</span></div>
+      <div class="bar-row"><span>atlas-test</span><div class="bar-track"><div class="bar-fill" style="width:7%"></div></div><span>5</span></div>
+      <div class="bar-row"><span>其他</span><div class="bar-track"><div class="bar-fill" style="width:10%"></div></div><span>7</span></div>
+      <p class="caption">cwd 末段，大小写已合并 · 产物密度 1.34 / 任务 · 扩展名 java 75 · go 70 · md 61</p>
+    </div>
+
+    <h2>工作时段（UTC+8）</h2>
+    <div class="bars">
+      <div class="hour" aria-label="小时任务数">
+        <div class="hour-col"><i style="height:6%"></i><span>01</span></div>
+        <div class="hour-col"><i style="height:2%"></i><span>07</span></div>
+        <div class="hour-col"><i style="height:6%"></i><span>08</span></div>
+        <div class="hour-col"><i style="height:63%"></i><span>09</span></div>
+        <div class="hour-col"><i style="height:46%"></i><span>10</span></div>
+        <div class="hour-col"><i style="height:44%"></i><span>11</span></div>
+        <div class="hour-col"><i style="height:10%"></i><span>12</span></div>
+        <div class="hour-col"><i style="height:21%"></i><span>13</span></div>
+        <div class="hour-col"><i style="height:29%"></i><span>14</span></div>
+        <div class="hour-col"><i style="height:23%"></i><span>15</span></div>
+        <div class="hour-col"><i style="height:31%"></i><span>16</span></div>
+        <div class="hour-col"><i style="height:6%"></i><span>17</span></div>
+        <div class="hour-col"><i style="height:8%"></i><span>18</span></div>
+        <div class="hour-col"><i style="height:2%"></i><span>19</span></div>
+        <div class="hour-col"><i style="height:15%"></i><span>20</span></div>
+        <div class="hour-col"><i style="height:6%"></i><span>21</span></div>
+        <div class="hour-col"><i style="height:54%"></i><span>22</span></div>
+        <div class="hour-col"><i style="height:100%"></i><span>23</span></div>
+      </div>
+      <p class="caption">横轴：小时 · 纵轴：任务条数 · 仅含有任务的小时 · 峰值 23:00（48 条）与 09:00（30 条）</p>
+    </div>
+
+    <h2>任务主题</h2>
+    <p class="sub">227 条里 186 条 description 仅为 <code>&lt;user_query&gt;</code>，下表只来自其余 41 条有标题任务，不是全量主题。</p>
+    <div class="card" style="margin-top:0.7rem">
+      <table>
+        <thead><tr><th>主题</th><th class="num">条数</th></tr></thead>
+        <tbody>
+          <tr><td>atlas-admin 管理系统 / 模型管理 / M0–M6</td><td class="num">~10</td></tr>
+          <tr><td>双轴评审（Standards / Spec，含 FR-044 / FR-045）</td><td class="num">~9</td></tr>
+          <tr><td>登录模块（需求 / 架构 / 详细设计 / 实现）</td><td class="num">~8</td></tr>
+          <tr><td>入参必填与样例（需求–架构–设计–实现）</td><td class="num">~5</td></tr>
+          <tr><td>安全审计（密钥、CI、出站 HTTP、前端桌面外发）</td><td class="num">4</td></tr>
+          <tr><td>api-service 入参探查</td><td class="num">1</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>建议</h2>
+    <ol>
+      <li><strong>先查 <code>grok-build-plan</code> 的 error + <code>&lt;user_query&gt;</code> 上报。</strong> 50/51 失败集中在这里，和有标题的 SDD 任务几乎无关。</li>
+      <li><strong>模型可收束到两档。</strong> 用量已集中在 <code>arch-glm-5.2</code> 与 <code>cms-wjj2-kimi-for-coding</code>。</li>
+      <li><strong>实现继续留给 Role 4。</strong> Role 4 产物密度远高于 plan；explore 保持零产物是健康的。</li>
+    </ol>
+    <p class="caption">数据源：GET http://10.218.220.237:22255/atlas/admin/api/task-reports · 单人支路 · 无 worktree_path 记录</p>
+  </main>
+</body>
+</html>

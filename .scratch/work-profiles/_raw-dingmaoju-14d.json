@@ -1,0 +1,1929 @@
+{
+  "base": "http://10.218.220.237:22255/atlas",
+  "from": "2026-08-13",
+  "to": "2026-08-26",
+  "overall": {
+    "agents": [
+      {
+        "subagentType": "grok-build-plan",
+        "count": 1479,
+        "artifactCount": 1130,
+        "tokensUsed": 833538216
+      },
+      {
+        "subagentType": "general-purpose",
+        "count": 35,
+        "artifactCount": 0,
+        "tokensUsed": 1622385
+      },
+      {
+        "subagentType": "atlas-sdd:4-software-engineer-agent",
+        "count": 24,
+        "artifactCount": 79,
+        "tokensUsed": 922665
+      },
+      {
+        "subagentType": "explore",
+        "count": 18,
+        "artifactCount": 0,
+        "tokensUsed": 1171671
+      },
+      {
+        "subagentType": "atlas-sdd:3-program-design-agent",
+        "count": 15,
+        "artifactCount": 1,
+        "tokensUsed": 1275673
+      },
+      {
+        "subagentType": "atlas-sdd:1-requirement-analyst-agent",
+        "count": 9,
+        "artifactCount": 1,
+        "tokensUsed": 284882
+      },
+      {
+        "subagentType": "atlas-sdd:2-architect-design-agent",
+        "count": 3,
+        "artifactCount": 0,
+        "tokensUsed": 227648
+      },
+      {
+        "subagentType": "4-software-engineer-agent",
+        "count": 2,
+        "artifactCount": 0,
+        "tokensUsed": 0
+      }
+    ],
+    "from": "2026-08-13",
+    "models": [
+      {
+        "model": "cms-yyy1-kimi-for-coding",
+        "count": 256,
+        "artifactCount": 152,
+        "tokensUsed": 27666217
+      },
+      {
+        "model": "cms-wjj2-kimi-for-coding",
+        "count": 241,
+        "artifactCount": 158,
+        "tokensUsed": 92810272
+      },
+      {
+        "model": "ims-xx-my",
+        "count": 174,
+        "artifactCount": 120,
+        "tokensUsed": 107005341
+      },
+      {
+        "model": "back",
+        "count": 118,
+        "artifactCount": 71,
+        "tokensUsed": 71914916
+      },
+      {
+        "model": "cms-yyy2-kimi-for-coding",
+        "count": 109,
+        "artifactCount": 70,
+        "tokensUsed": 32540710
+      },
+      {
+        "model": "arch-glm-5.2",
+        "count": 84,
+        "artifactCount": 126,
+        "tokensUsed": 66415310
+      },
+      {
+        "model": "arch-kimi-for-coding",
+        "count": 83,
+        "artifactCount": 177,
+        "tokensUsed": 138404822
+      },
+      {
+        "model": "ims-czp-kimi-for-coding",
+        "count": 81,
+        "artifactCount": 53,
+        "tokensUsed": 63345862
+      },
+      {
+        "model": "cms-wjj1-kimi-for-coding",
+        "count": 79,
+        "artifactCount": 30,
+        "tokensUsed": 22561975
+      },
+      {
+        "model": "kimi-for-coding",
+        "count": 76,
+        "artifactCount": 72,
+        "tokensUsed": 56872005
+      },
+      {
+        "model": "glm-5.2",
+        "count": 59,
+        "artifactCount": 69,
+        "tokensUsed": 65043446
+      },
+      {
+        "model": "ims-xx-kimi-for-coding",
+        "count": 38,
+        "artifactCount": 19,
+        "tokensUsed": 31621609
+      },
+      {
+        "model": "xixiapi-gpt-5.6-terra",
+        "count": 26,
+        "artifactCount": 0,
+        "tokensUsed": 32494
+      },
+      {
+        "model": "kimi-2",
+        "count": 23,
+        "artifactCount": 1,
+        "tokensUsed": 9119514
+      },
+      {
+        "model": "arch-qwen3.8-max",
+        "count": 20,
+        "artifactCount": 21,
+        "tokensUsed": 10775322
+      },
+      {
+        "model": "qwen3.8-max",
+        "count": 16,
+        "artifactCount": 16,
+        "tokensUsed": 12852988
+      },
+      {
+        "model": "yundou-gpt-5.6-sol",
+        "count": 14,
+        "artifactCount": 0,
+        "tokensUsed": 63882
+      },
+      {
+        "model": "opencode-ox-alpha-free",
+        "count": 14,
+        "artifactCount": 0,
+        "tokensUsed": 0
+      },
+      {
+        "model": "kimi-1",
+        "count": 14,
+        "artifactCount": 0,
+        "tokensUsed": 567723
+      },
+      {
+        "model": "agens",
+        "count": 9,
+        "artifactCount": 48,
+        "tokensUsed": 16757072
+      },
+      {
+        "model": "x-preview-f-free",
+        "count": 9,
+        "artifactCount": 8,
+        "tokensUsed": 9779076
+      },
+      {
+        "model": "gpt-5-6-luna",
+        "count": 8,
+        "artifactCount": 0,
+        "tokensUsed": 369012
+      },
+      {
+        "model": "deepseek-v4-flash",
+        "count": 7,
+        "artifactCount": 0,
+        "tokensUsed": 592599
+      },
+      {
+        "model": "ims-gzj-kimi-for-coding",
+        "count": 7,
+        "artifactCount": 0,
+        "tokensUsed": 253805
+      },
+      {
+        "model": "ali-glm-5",
+        "count": 6,
+        "artifactCount": 0,
+        "tokensUsed": 0
+      },
+      {
+        "model": "gpt-5-6-sol",
+        "count": 5,
+        "artifactCount": 0,
+        "tokensUsed": 62380
+      },
+      {
+        "model": "ali-deepseek-flash",
+        "count": 3,
+        "artifactCount": 0,
+        "tokensUsed": 1430761
+      },
+      {
+        "model": "my",
+        "count": 2,
+        "artifactCount": 0,
+        "tokensUsed": 72471
+      },
+      {
+        "model": "main",
+        "count": 2,
+        "artifactCount": 0,
+        "tokensUsed": 111556
+      },
+      {
+        "model": "gpt-5-6-luna-responses",
+        "count": 1,
+        "artifactCount": 0,
+        "tokensUsed": 0
+      },
+      {
+        "model": "ims-wq-kimi-for-coding",
+        "count": 1,
+        "artifactCount": 0,
+        "tokensUsed": 0
+      }
+    ],
+    "summary": {
+      "totalTasks": 1585,
+      "successCount": 1001,
+      "failedCount": 578,
+      "cancelledCount": 6,
+      "totalArtifacts": 1211,
+      "totalTokens": 839043140,
+      "uniqueUsers": 18,
+      "uniqueModels": 31
+    },
+    "to": "2026-08-26",
+    "users": [
+      {
+        "userId": "zhangyufeng",
+        "email": "zhangyufeng@myai.tech",
+        "count": 227,
+        "successCount": 175,
+        "artifactCount": 304,
+        "tokensUsed": 127868189
+      },
+      {
+        "userId": "shao_suisui",
+        "email": "shao_suisui@myai.tech",
+        "count": 224,
+        "successCount": 66,
+        "artifactCount": 145,
+        "tokensUsed": 49244812
+      },
+      {
+        "userId": "jia_shuai",
+        "email": "jia_shuai@myai.tech",
+        "count": 159,
+        "successCount": 81,
+        "artifactCount": 129,
+        "tokensUsed": 54358074
+      },
+      {
+        "userId": "anonymous",
+        "email": "",
+        "count": 148,
+        "successCount": 111,
+        "artifactCount": 120,
+        "tokensUsed": 108095939
+      },
+      {
+        "userId": "taoyongkang",
+        "email": "taoyongkang@mininglamp.com",
+        "count": 145,
+        "successCount": 50,
+        "artifactCount": 16,
+        "tokensUsed": 27220059
+      },
+      {
+        "userId": "hu_jingli",
+        "email": "hu_jingli@myai.tech",
+        "count": 136,
+        "successCount": 125,
+        "artifactCount": 77,
+        "tokensUsed": 77964556
+      },
+      {
+        "userId": "xu_xu",
+        "email": "xu_xu@myai.tech",
+        "count": 121,
+        "successCount": 115,
+        "artifactCount": 83,
+        "tokensUsed": 103969113
+      },
+      {
+        "userId": "chenzhipeng.a",
+        "email": "chenzhipeng.a@myai.tech",
+        "count": 87,
+        "successCount": 72,
+        "artifactCount": 99,
+        "tokensUsed": 78231321
+      },
+      {
+        "userId": "xiechentao",
+        "email": "xiechentao@myai.tech",
+        "count": 74,
+        "successCount": 72,
+        "artifactCount": 86,
+        "tokensUsed": 120096677
+      },
+      {
+        "userId": "wu_yong",
+        "email": "wu_yong@myai.tech",
+        "count": 57,
+        "successCount": 8,
+        "artifactCount": 53,
+        "tokensUsed": 8361065
+      },
+      {
+        "userId": "tang_xiang",
+        "email": "tang_xiang@myai.tech",
+        "count": 51,
+        "successCount": 5,
+        "artifactCount": 14,
+        "tokensUsed": 834580
+      },
+      {
+        "userId": "dingmaoju",
+        "email": "dingmaoju@myai.tech",
+        "count": 48,
+        "successCount": 41,
+        "artifactCount": 66,
+        "tokensUsed": 45501987
+      },
+      {
+        "userId": "wangqing.a",
+        "email": "wangqing.a@myai.tech",
+        "count": 37,
+        "successCount": 28,
+        "artifactCount": 1,
+        "tokensUsed": 9660473
+      },
+      {
+        "userId": "ci_li",
+        "email": "ci_li@myai.tech",
+        "count": 31,
+        "successCount": 24,
+        "artifactCount": 8,
+        "tokensUsed": 11076886
+      },
+      {
+        "userId": "zou_guangqian_1",
+        "email": "zou_guangqian_1@myai.tech",
+        "count": 26,
+        "successCount": 15,
+        "artifactCount": 5,
+        "tokensUsed": 11443836
+      },
+      {
+        "userId": "gaozijian",
+        "email": "gaozijian@myai.tech",
+        "count": 7,
+        "successCount": 7,
+        "artifactCount": 0,
+        "tokensUsed": 253805
+      },
+      {
+        "userId": "yan_yong",
+        "email": "yan_yong@myai.tech",
+        "count": 4,
+        "successCount": 3,
+        "artifactCount": 5,
+        "tokensUsed": 4800353
+      },
+      {
+        "userId": "yuyayong",
+        "email": "yuyayong@myai.tech",
+        "count": 3,
+        "successCount": 3,
+        "artifactCount": 0,
+        "tokensUsed": 61415
+      }
+    ]
+  },
+  "users": [
+    {
+      "userId": "dingmaoju",
+      "from": "2026-08-13",
+      "to": "2026-08-26",
+      "agents": [
+        {
+          "subagentType": "grok-build-plan",
+          "count": 48,
+          "artifactCount": 66,
+          "tokensUsed": 45501987
+        }
+      ],
+      "models": [
+        {
+          "model": "kimi-for-coding",
+          "count": 31,
+          "artifactCount": 60,
+          "tokensUsed": 42712697
+        },
+        {
+          "model": "glm-5.2",
+          "count": 8,
+          "artifactCount": 6,
+          "tokensUsed": 2131737
+        },
+        {
+          "model": "deepseek-v4-flash",
+          "count": 7,
+          "artifactCount": 0,
+          "tokensUsed": 592599
+        },
+        {
+          "model": "qwen3.8-max",
+          "count": 2,
+          "artifactCount": 0,
+          "tokensUsed": 64954
+        }
+      ],
+      "count": 48,
+      "reports": [
+        {
+          "id": 1339,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-fdc69d20-72d4-46bc-8168-16244565b02a",
+          "parentSessionId": "01a036d5-1c6f-7503-8db5-4cc6d85f8728",
+          "childSessionId": "01a036d5-1c6f-7503-8db5-4cc6d85f8728",
+          "subagentType": "grok-build-plan",
+          "model": "glm-5.2",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 928647,
+          "toolCalls": 17,
+          "turns": 1,
+          "tokensUsed": 508679,
+          "artifacts": [
+            {
+              "path": "SKILL.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\AI安全\\.grok\\skills\\qa-security-scan",
+          "startedAt": "2026-08-25T02:52:19.884966800+00:00",
+          "completedAt": "2026-08-25T03:07:49.040531100+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-25T11:07:49Z"
+        },
+        {
+          "id": 1065,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-9-133f55d3-7f59-439e-96ab-93a04b25b398",
+          "parentSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "childSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "subagentType": "grok-build-plan",
+          "model": "glm-5.2",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 20924,
+          "toolCalls": 4,
+          "turns": 1,
+          "tokensUsed": 341720,
+          "artifacts": [
+            {
+              "path": ".grok\\skills\\qa-security-scan\\SKILL.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\AI安全",
+          "startedAt": "2026-08-24T06:20:41.543099100+00:00",
+          "completedAt": "2026-08-24T06:21:02.925342200+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-24T14:21:02Z"
+        },
+        {
+          "id": 1057,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-8-1aa48b16-29d1-4a99-9327-f4a33ef7940d",
+          "parentSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "childSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "subagentType": "grok-build-plan",
+          "model": "glm-5.2",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 55817,
+          "toolCalls": 5,
+          "turns": 1,
+          "tokensUsed": 328179,
+          "artifacts": [
+            {
+              "path": ".grok\\skills\\qa-security-scan\\SKILL.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\AI安全",
+          "startedAt": "2026-08-24T06:12:12.973105500+00:00",
+          "completedAt": "2026-08-24T06:13:09.121442800+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-24T14:13:09Z"
+        },
+        {
+          "id": 1053,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-7-92e4f885-0c28-4a37-bfed-19c5f5c9a61d",
+          "parentSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "childSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "subagentType": "grok-build-plan",
+          "model": "glm-5.2",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 65437,
+          "toolCalls": 7,
+          "turns": 1,
+          "tokensUsed": 385354,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\AI安全",
+          "startedAt": "2026-08-24T06:04:43.692487700+00:00",
+          "completedAt": "2026-08-24T06:05:49.441160700+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-24T14:05:49Z"
+        },
+        {
+          "id": 1035,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-5-e5433d2e-9af0-4615-bd40-44d688c9c237",
+          "parentSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "childSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "error",
+          "success": false,
+          "durationMs": 408,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 0,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\AI安全",
+          "startedAt": "2026-08-24T05:28:11.068760+00:00",
+          "completedAt": "2026-08-24T05:28:11.773745+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-24T13:28:11Z"
+        },
+        {
+          "id": 1033,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-4-17f0f556-1108-4cbd-93d3-c120cf3f0552",
+          "parentSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "childSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 26284,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 85490,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\AI安全",
+          "startedAt": "2026-08-24T05:26:44.507051300+00:00",
+          "completedAt": "2026-08-24T05:27:12.333352200+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-24T13:27:12Z"
+        },
+        {
+          "id": 1032,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-3-b760f73e-daf1-4bae-bbb8-8a3f37442dca",
+          "parentSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "childSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 31196,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 84046,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\AI安全",
+          "startedAt": "2026-08-24T05:24:10.499745900+00:00",
+          "completedAt": "2026-08-24T05:24:45.462703700+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-24T13:24:46Z"
+        },
+        {
+          "id": 1014,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-2-bee40a2a-86e7-4ed9-aa4b-63e929f5172a",
+          "parentSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "childSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 50971,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 82626,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\AI安全",
+          "startedAt": "2026-08-24T03:59:04.106373300+00:00",
+          "completedAt": "2026-08-24T03:59:55.378081600+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-24T11:59:55Z"
+        },
+        {
+          "id": 1008,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-1-f1722b84-4504-4153-9c2c-e16157a9d4e9",
+          "parentSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "childSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 37325,
+          "toolCalls": 3,
+          "turns": 1,
+          "tokensUsed": 94247,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\AI安全",
+          "startedAt": "2026-08-24T03:56:54.956208900+00:00",
+          "completedAt": "2026-08-24T03:57:32.548469+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-24T11:57:32Z"
+        },
+        {
+          "id": 1007,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-705d0d22-bb44-44ca-90e3-58880b6d0850",
+          "parentSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "childSessionId": "01a031e4-9ed8-7280-b133-c5751a2deb3f",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 103602,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 43692,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\AI安全",
+          "startedAt": "2026-08-24T03:52:46.478918900+00:00",
+          "completedAt": "2026-08-24T03:54:30.488270+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-24T11:54:30Z"
+        },
+        {
+          "id": 543,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-fd69e988-e7ba-4df4-8cbb-489391e4df5d",
+          "parentSessionId": "01a01e92-ba5e-75b2-a60c-d89b543a3c0b",
+          "childSessionId": "01a01e92-ba5e-75b2-a60c-d89b543a3c0b",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 4640,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 17387,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-20T09:48:50.234789500+00:00",
+          "completedAt": "2026-08-20T09:48:55.359131300+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T17:48:55Z"
+        },
+        {
+          "id": 529,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-10-a33189d7-97de-40b9-9e13-4a64e9c80209",
+          "parentSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "childSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 12488585,
+          "toolCalls": 201,
+          "turns": 1,
+          "tokensUsed": 23175270,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\dingmaoju\\alarm_flow_diag.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\capture_network.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\capture_network_full.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\check_metric.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\check_storage.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\dump_excel.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\execute_with_db.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\fetch_apps.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\fetch_apps_requests.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\find_dashboard_link.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\inspect_alert_ui.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\inspect_excel.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\inspect_login_form.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\inspect_login_html.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\list_results.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\open_dashboard_app.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\portal_diag.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\portal_menu.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\read_report.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\save_apps_response.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\save_apps_response2.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\save_apps_response3.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\save_web_config.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\seed_alert_test_data.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\state_click_test.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\test_alert_after_login.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\test_alert_event_insert.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\test_login.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\test_login2.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\test_login_fill.py",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 30,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-20T05:49:24.890507300+00:00",
+          "completedAt": "2026-08-20T09:17:34.096811300+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T17:17:34Z"
+        },
+        {
+          "id": 471,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-8-a90e1b0f-7b80-44ae-91eb-5bae601e1a32",
+          "parentSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "childSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 631365,
+          "toolCalls": 17,
+          "turns": 1,
+          "tokensUsed": 865305,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\dingmaoju\\analyze_data_needs.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\inspect_db.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\剩余用例数据需求清单.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 3,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-20T05:22:36.726689200+00:00",
+          "completedAt": "2026-08-20T05:33:08.321940400+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T13:33:08Z"
+        },
+        {
+          "id": 454,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-6-1cb13c8d-6092-4110-b236-7813d9683db3",
+          "parentSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "childSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 1145726,
+          "toolCalls": 29,
+          "turns": 1,
+          "tokensUsed": 4550006,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\dingmaoju\\cleanup_sr.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\cleanup_test_data.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\execute_with_db.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\find_dashboard_url.py",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 4,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-20T03:58:37.284393900+00:00",
+          "completedAt": "2026-08-20T04:17:43.282984800+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T12:17:43Z"
+        },
+        {
+          "id": 448,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-5-be0bd45d-2ffa-425d-af4c-f6c4313a8c25",
+          "parentSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "childSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 271778,
+          "toolCalls": 6,
+          "turns": 1,
+          "tokensUsed": 989562,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\dingmaoju\\execute_alarm_tests_v2.py",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-20T03:45:27.296407500+00:00",
+          "completedAt": "2026-08-20T03:49:59.366136100+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T11:49:59Z"
+        },
+        {
+          "id": 441,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-3-fc112c02-c58b-44a4-b9f9-0c346acb56a8",
+          "parentSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "childSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 548938,
+          "toolCalls": 13,
+          "turns": 1,
+          "tokensUsed": 1802465,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\dingmaoju\\inspect_topnav.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\search_alarm_topright.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\try_routes.py",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 3,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-20T03:35:30.658606600+00:00",
+          "completedAt": "2026-08-20T03:44:40.071989900+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T11:44:40Z"
+        },
+        {
+          "id": 429,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-1-cb0bcb52-eb9a-4035-a8a5-09b9e78f1f7a",
+          "parentSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "childSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 1699466,
+          "toolCalls": 68,
+          "turns": 1,
+          "tokensUsed": 6362184,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\dingmaoju\\app_grid_explore.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\click_grid_item.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\debug_alarm_menu.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\execute_alarm_tests.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\explore_alarm.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\find_dashboard_app.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\find_kfkb.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\generate_test_report.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\inspect_apps.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\inspect_as.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\js_click_kfkb.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\read_test_cases.py",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 12,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-20T03:01:38.227391800+00:00",
+          "completedAt": "2026-08-20T03:29:57.999208800+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T11:29:58Z"
+        },
+        {
+          "id": 423,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-0c4e6d0c-549a-45af-afe6-f41c489c7460",
+          "parentSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "childSessionId": "01a01d12-f30d-72f0-aeaa-9b9c3f4ca98e",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 690301,
+          "toolCalls": 32,
+          "turns": 1,
+          "tokensUsed": 1166823,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\dingmaoju\\inspect_login.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\tmagicbox_login.py",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 2,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-20T02:49:44.876486200+00:00",
+          "completedAt": "2026-08-20T03:01:15.601962800+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T11:01:15Z"
+        },
+        {
+          "id": 401,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-2-c39add20-49f8-42de-b325-204cf20bfe08",
+          "parentSessionId": "01a01cdf-5a4f-7491-8cab-f6ef9487179e",
+          "childSessionId": "01a01cdf-5a4f-7491-8cab-f6ef9487179e",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 55843,
+          "toolCalls": 3,
+          "turns": 1,
+          "tokensUsed": 146554,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\dingmaoju\\keep_open.py",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-20T02:04:00.664865700+00:00",
+          "completedAt": "2026-08-20T02:04:56.810493300+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T10:04:56Z"
+        },
+        {
+          "id": 400,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-1-cf1191f1-357f-46fc-8073-335acd4062c9",
+          "parentSessionId": "01a01cdf-5a4f-7491-8cab-f6ef9487179e",
+          "childSessionId": "01a01cdf-5a4f-7491-8cab-f6ef9487179e",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 356976,
+          "toolCalls": 22,
+          "turns": 1,
+          "tokensUsed": 606487,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\dingmaoju\\check_role.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\check_role_dropdown.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\Users\\dingmaoju\\open_site.py",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 3,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-20T01:58:03.245497300+00:00",
+          "completedAt": "2026-08-20T02:04:00.564730100+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T10:04:00Z"
+        },
+        {
+          "id": 395,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-05526210-a13c-499d-97b9-5b0405f626d3",
+          "parentSessionId": "01a01cdf-5a4f-7491-8cab-f6ef9487179e",
+          "childSessionId": "01a01cdf-5a4f-7491-8cab-f6ef9487179e",
+          "subagentType": "grok-build-plan",
+          "model": "qwen3.8-max",
+          "description": "<user_query>",
+          "status": "error",
+          "success": false,
+          "durationMs": 8820,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 0,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-20T01:53:17.350547600+00:00",
+          "completedAt": "2026-08-20T01:53:26.446322+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T09:53:26Z"
+        },
+        {
+          "id": 343,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-c167ea90-ca21-47db-9cfd-02138ef2c69e",
+          "parentSessionId": "01a012b1-e2f7-7451-9c99-56eb8c4e5cfe",
+          "childSessionId": "01a012b1-e2f7-7451-9c99-56eb8c4e5cfe",
+          "subagentType": "grok-build-plan",
+          "model": "qwen3.8-max",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 20119,
+          "toolCalls": 2,
+          "turns": 1,
+          "tokensUsed": 64954,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-18T02:27:33.068490300+00:00",
+          "completedAt": "2026-08-18T02:27:53.553316900+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.129",
+          "createdAt": "2026-08-18T10:27:53Z"
+        },
+        {
+          "id": 320,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-2-463d8c51-6760-49bb-ad43-906dca7bb878",
+          "parentSessionId": "01a00e6a-b1eb-7f52-bd9a-da619e780bb4",
+          "childSessionId": "01a00e6a-b1eb-7f52-bd9a-da619e780bb4",
+          "subagentType": "grok-build-plan",
+          "model": "glm-5.2",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 611787,
+          "toolCalls": 13,
+          "turns": 1,
+          "tokensUsed": 338282,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\dingmaoju\\AppData\\Local\\Temp\\dbconn-test\\verify-mcp.js",
+              "kind": "code"
+            },
+            {
+              "path": "E:\\gitProject\\Dashboard\\.atlas\\config.toml",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 2,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-17T06:35:06.209756500+00:00",
+          "completedAt": "2026-08-17T06:45:18.324167500+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.129",
+          "createdAt": "2026-08-17T14:45:18Z"
+        },
+        {
+          "id": 319,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-09c2b9e4-e1c4-4c9e-b395-1cf0cc9f9798",
+          "parentSessionId": "01a00e6d-8830-7403-8536-fac237abcb52",
+          "childSessionId": "01a00e6d-8830-7403-8536-fac237abcb52",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "error",
+          "success": false,
+          "durationMs": 401,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 0,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-17T06:34:24.739718100+00:00",
+          "completedAt": "2026-08-17T06:34:25.393609800+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.129",
+          "createdAt": "2026-08-17T14:34:25Z"
+        },
+        {
+          "id": 318,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-1-4faa1873-4bd8-4f6a-8158-2d1bb6d5bfe3",
+          "parentSessionId": "01a00e6a-b1eb-7f52-bd9a-da619e780bb4",
+          "childSessionId": "01a00e6a-b1eb-7f52-bd9a-da619e780bb4",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "error",
+          "success": false,
+          "durationMs": 458,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 0,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-17T06:33:48.994914600+00:00",
+          "completedAt": "2026-08-17T06:33:50.180181800+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.129",
+          "createdAt": "2026-08-17T14:33:50Z"
+        },
+        {
+          "id": 317,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-6ab6afc5-e308-4239-9758-b66591e31bc6",
+          "parentSessionId": "01a00e6a-b1eb-7f52-bd9a-da619e780bb4",
+          "childSessionId": "01a00e6a-b1eb-7f52-bd9a-da619e780bb4",
+          "subagentType": "grok-build-plan",
+          "model": "glm-5.2",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 19486,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 17774,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-17T06:31:25.731575300+00:00",
+          "completedAt": "2026-08-17T06:31:45.813364600+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.129",
+          "createdAt": "2026-08-17T14:31:45Z"
+        },
+        {
+          "id": 308,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-fffb2486-b88e-468f-b39a-7b7e1f037cb9",
+          "parentSessionId": "01a00d88-53c0-7671-8403-9fb3e76dbf8e",
+          "childSessionId": "01a00d88-53c0-7671-8403-9fb3e76dbf8e",
+          "subagentType": "grok-build-plan",
+          "model": "glm-5.2",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 6248,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 17036,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-17T02:23:55.221280400+00:00",
+          "completedAt": "2026-08-17T02:24:01.476765800+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-17T10:24:01Z"
+        },
+        {
+          "id": 305,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-1-9be9779b-beaf-41f5-a554-293e6494d864",
+          "parentSessionId": "01a00d68-ab7b-7000-9ce9-01c55d2621c6",
+          "childSessionId": "01a00d68-ab7b-7000-9ce9-01c55d2621c6",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "error",
+          "success": false,
+          "durationMs": 9885,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 0,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-17T02:00:08.838607100+00:00",
+          "completedAt": "2026-08-17T02:00:18.731736+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-17T10:00:18Z"
+        },
+        {
+          "id": 304,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-d8b422cc-6ade-44d1-8ee6-8b0340bb192b",
+          "parentSessionId": "01a00d68-ab7b-7000-9ce9-01c55d2621c6",
+          "childSessionId": "01a00d68-ab7b-7000-9ce9-01c55d2621c6",
+          "subagentType": "grok-build-plan",
+          "model": "glm-5.2",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 125456,
+          "toolCalls": 10,
+          "turns": 1,
+          "tokensUsed": 194713,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\dingmaoju\\.mcp-db-test\\test-db.js",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-17T01:49:39.050874100+00:00",
+          "completedAt": "2026-08-17T01:51:44.521189800+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-17T09:51:44Z"
+        },
+        {
+          "id": 303,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-1-de7ca87c-71c5-4402-ba3a-e706a6d464c2",
+          "parentSessionId": "01a00d62-f52d-7bc1-af69-140eaea14956",
+          "childSessionId": "01a00d62-f52d-7bc1-af69-140eaea14956",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "error",
+          "success": false,
+          "durationMs": 677,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 0,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-17T01:46:11.950060400+00:00",
+          "completedAt": "2026-08-17T01:46:12.646957500+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-17T09:46:12Z"
+        },
+        {
+          "id": 302,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-61f18297-74d3-490c-aa31-f1e79783a11e",
+          "parentSessionId": "01a00d62-f52d-7bc1-af69-140eaea14956",
+          "childSessionId": "01a00d62-f52d-7bc1-af69-140eaea14956",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "error",
+          "success": false,
+          "durationMs": 657,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 0,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "C:\\Users\\dingmaoju",
+          "startedAt": "2026-08-17T01:44:00.485413100+00:00",
+          "completedAt": "2026-08-17T01:44:01.158976200+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-17T09:44:01Z"
+        },
+        {
+          "id": 289,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-79f0b034-c63a-4522-ab16-6c26675a703e",
+          "parentSessionId": "019fffd6-ffe4-7673-adbc-c50631dc9a59",
+          "childSessionId": "019fffd6-ffe4-7673-adbc-c50631dc9a59",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 1060515,
+          "toolCalls": 68,
+          "turns": 1,
+          "tokensUsed": 2419762,
+          "artifacts": [
+            {
+              "path": "E:\\gitProject\\Dashboard\\.grok\\config.toml",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T10:50:15.161057600+00:00",
+          "completedAt": "2026-08-14T11:07:55.691946200+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-14T19:07:55Z"
+        },
+        {
+          "id": 288,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-4-ca846bf5-46fb-489d-bc22-f4f9c9fdd0f4",
+          "parentSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "childSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 49861,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 18668,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T10:15:04.398728200+00:00",
+          "completedAt": "2026-08-14T10:15:54.268519600+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-14T18:15:54Z"
+        },
+        {
+          "id": 287,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-3-6099b707-8f3c-41b6-97cf-00d685c88f20",
+          "parentSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "childSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 6623,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 16973,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T10:09:45.869806600+00:00",
+          "completedAt": "2026-08-14T10:09:52.500121800+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-14T18:09:52Z"
+        },
+        {
+          "id": 286,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-2-1c0069e1-f3a1-4137-a017-6479c638cd25",
+          "parentSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "childSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 9205,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 16906,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T09:41:23.164405+00:00",
+          "completedAt": "2026-08-14T09:41:32.376477800+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-14T17:41:32Z"
+        },
+        {
+          "id": 285,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-1-0bd7ed9f-3190-48fe-8731-cbd3185ececf",
+          "parentSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "childSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 16531,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 16911,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T09:05:07.098012300+00:00",
+          "completedAt": "2026-08-14T09:05:23.640756200+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-14T17:05:23Z"
+        },
+        {
+          "id": 284,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-1-e0ce0e31-b4cf-4538-9407-ded1f5e9ca4a",
+          "parentSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "childSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 9861,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 16921,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T09:03:46.135958+00:00",
+          "completedAt": "2026-08-14T09:03:56.015958900+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-14T17:03:56Z"
+        },
+        {
+          "id": 283,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-9eff75d7-7254-45d6-b7e1-98fb650d54e2",
+          "parentSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "childSessionId": "019fff81-a21b-7870-a5e1-745c2e5b4110",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 7779,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 16641,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T09:01:57.058972400+00:00",
+          "completedAt": "2026-08-14T09:02:04.943704500+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.127",
+          "createdAt": "2026-08-14T17:02:05Z"
+        },
+        {
+          "id": 282,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-1-27b16935-0493-4c54-8f64-d7ceaab5d89c",
+          "parentSessionId": "019ffe27-0d7a-7db1-9117-51051e9b81bb",
+          "childSessionId": "019ffe27-0d7a-7db1-9117-51051e9b81bb",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 8534,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 25243,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T08:46:46.647462900+00:00",
+          "completedAt": "2026-08-14T08:46:55.188159200+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.126",
+          "createdAt": "2026-08-14T16:46:55Z"
+        },
+        {
+          "id": 272,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-473b511e-e6dd-4dfd-885c-e873fa254028",
+          "parentSessionId": "019ffe28-9ba4-76e1-a7a4-6e92d20b0a7b",
+          "childSessionId": "019ffe28-9ba4-76e1-a7a4-6e92d20b0a7b",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 5022,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 16627,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "C:\\",
+          "startedAt": "2026-08-14T02:45:04.466286100+00:00",
+          "completedAt": "2026-08-14T02:45:09.662520600+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.126",
+          "createdAt": "2026-08-14T10:45:09Z"
+        },
+        {
+          "id": 271,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-94a9e9ca-798d-4dba-8e61-af2aeb7c6ec5",
+          "parentSessionId": "019ffe27-0d7a-7db1-9117-51051e9b81bb",
+          "childSessionId": "019ffe27-0d7a-7db1-9117-51051e9b81bb",
+          "subagentType": "grok-build-plan",
+          "model": "kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 28537,
+          "toolCalls": 5,
+          "turns": 1,
+          "tokensUsed": 75901,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T02:43:54.708275300+00:00",
+          "completedAt": "2026-08-14T02:44:23.262522700+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.126",
+          "createdAt": "2026-08-14T10:44:23Z"
+        },
+        {
+          "id": 270,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-b8e712dd-b9d9-4d79-ba4d-3ceb93b9ba4e",
+          "parentSessionId": "019ffe26-6db0-7411-9fe8-e8727170c504",
+          "childSessionId": "019ffe26-6db0-7411-9fe8-e8727170c504",
+          "subagentType": "grok-build-plan",
+          "model": "deepseek-v4-flash",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 33012,
+          "toolCalls": 7,
+          "turns": 1,
+          "tokensUsed": 149732,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T02:42:41.940022700+00:00",
+          "completedAt": "2026-08-14T02:43:14.969471700+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.126",
+          "createdAt": "2026-08-14T10:43:15Z"
+        },
+        {
+          "id": 269,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-5-b8d24b77-0fb2-4a20-8938-af77a6b0e3ed",
+          "parentSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "childSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "subagentType": "grok-build-plan",
+          "model": "deepseek-v4-flash",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 13588,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 52989,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T02:41:16.725850200+00:00",
+          "completedAt": "2026-08-14T02:41:30.326548100+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.126",
+          "createdAt": "2026-08-14T10:41:30Z"
+        },
+        {
+          "id": 268,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-4-2184b046-fd2c-424c-827e-ce171a5bae2d",
+          "parentSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "childSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "subagentType": "grok-build-plan",
+          "model": "deepseek-v4-flash",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 18208,
+          "toolCalls": 3,
+          "turns": 1,
+          "tokensUsed": 96993,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T02:40:03.766093300+00:00",
+          "completedAt": "2026-08-14T02:40:21.987677200+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.126",
+          "createdAt": "2026-08-14T10:40:22Z"
+        },
+        {
+          "id": 267,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-3-e1ec144a-6db6-43d1-811d-e8b8251c0dbe",
+          "parentSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "childSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "subagentType": "grok-build-plan",
+          "model": "deepseek-v4-flash",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 29284,
+          "toolCalls": 11,
+          "turns": 1,
+          "tokensUsed": 238705,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T02:39:34.403058100+00:00",
+          "completedAt": "2026-08-14T02:40:03.701024300+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.126",
+          "createdAt": "2026-08-14T10:40:03Z"
+        },
+        {
+          "id": 266,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-2-19ee31b9-7eb0-4867-9f74-bb1fc5c3db91",
+          "parentSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "childSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "subagentType": "grok-build-plan",
+          "model": "deepseek-v4-flash",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 1147,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 18227,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T02:39:15.800185700+00:00",
+          "completedAt": "2026-08-14T02:39:16.963843500+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.126",
+          "createdAt": "2026-08-14T10:39:17Z"
+        },
+        {
+          "id": 265,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-1-6c3d21cc-0243-4f6a-b34b-091df2b4de2c",
+          "parentSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "childSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "subagentType": "grok-build-plan",
+          "model": "deepseek-v4-flash",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 4536,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 18164,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T02:38:44.530496600+00:00",
+          "completedAt": "2026-08-14T02:38:49.085093+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.126",
+          "createdAt": "2026-08-14T10:38:49Z"
+        },
+        {
+          "id": 264,
+          "userId": "dingmaoju",
+          "email": "dingmaoju@myai.tech",
+          "subagentId": "main-turn-0-cd7d564c-f68c-4602-bec9-d5edce21a0c8",
+          "parentSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "childSessionId": "019ffe20-a184-7b62-bb60-5f5a2016de6f",
+          "subagentType": "grok-build-plan",
+          "model": "deepseek-v4-flash",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 3119,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 17789,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "e:\\gitProject",
+          "startedAt": "2026-08-14T02:36:40.023578600+00:00",
+          "completedAt": "2026-08-14T02:36:43.158437500+00:00",
+          "clientIp": "192.168.75.232",
+          "clientVersion": "0.2.126",
+          "createdAt": "2026-08-14T10:36:43Z"
+        }
+      ]
+    }
+  ],
+  "unresolvedEmails": [
+    "dingmaoju"
+  ]
+}

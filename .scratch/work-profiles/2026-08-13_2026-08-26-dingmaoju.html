@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>工作画像 · dingmaoju</title>
+  <style>
+    :root {
+      --bg: #f3f1ec; --bg-elev: #fffcf7; --ink: #1c1b19; --muted: #6b6860;
+      --line: #ddd8ce; --accent: #0f766e; --accent-soft: #d8ebe8; --ok: #1f7a4c;
+      --warn: #9a6700; --warn-bg: #fef4e0;
+      --font: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "Cascadia Mono", "IBM Plex Mono", ui-monospace, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body { font-family: var(--font); color: var(--ink); background: var(--bg); line-height: 1.5; }
+    .shell { max-width: 56rem; margin: 0 auto; padding: 2rem 1.25rem 3.5rem; }
+    .brand { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+    h1 { margin: 0.35rem 0 0; font-size: 1.85rem; letter-spacing: -0.03em; }
+    h2 { margin: 2rem 0 0.7rem; font-size: 1.15rem; }
+    .sub { color: var(--muted); margin: 0.4rem 0 0; font-size: 0.92rem; }
+    .meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1.1rem; margin-top: 0.85rem; color: var(--muted); font-size: 0.85rem; }
+    .meta code, code { font-family: var(--mono); font-size: 0.84em; background: var(--accent-soft); padding: 0.05rem 0.3rem; border-radius: 4px; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.75rem; margin-top: 1.1rem; }
+    .stat { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; padding: 0.85rem 1rem; }
+    .stat b { display: block; font-size: 1.45rem; letter-spacing: -0.03em; }
+    .stat span { color: var(--muted); font-size: 0.8rem; }
+    .ok { color: var(--ok); }
+    .callout { margin-top: 1rem; padding: 0.85rem 1rem; background: var(--warn-bg); border-left: 3px solid var(--warn); border-radius: 0 10px 10px 0; font-size: 0.92rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 600; font-size: 0.78rem; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .mono { font-family: var(--mono); font-size: 0.82rem; }
+    ul { padding-left: 1.15rem; }
+    li { margin: 0.35rem 0; }
+    .bar-row { display: grid; grid-template-columns: 10rem 1fr 2.6rem; gap: 0.55rem; align-items: center; margin: 0.38rem 0; font-size: 0.86rem; }
+    .bar-track { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--accent); border-radius: 99px; }
+    .bars { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; padding: 0.9rem 1rem; }
+    .day { display: flex; align-items: flex-end; gap: 0.45rem; height: 9.5rem; padding-top: 0.4rem; }
+    .day-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; gap: 0.25rem; }
+    .day-col i { display: block; width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; }
+    .day-col span { font-size: 0.68rem; color: var(--muted); }
+    .hour { display: flex; align-items: flex-end; gap: 0.35rem; height: 8.2rem; }
+    .hour-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; gap: 0.2rem; }
+    .hour-col i { display: block; width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 2px; }
+    .hour-col span { font-size: 0.68rem; color: var(--muted); }
+    .caption { margin: 0.45rem 0 0; color: var(--muted); font-size: 0.78rem; }
+    .card { background: var(--bg-elev); border: 1px solid var(--line); border-radius: 12px; padding: 0.2rem 0.4rem 0.4rem; overflow: auto; }
+    ol { padding-left: 1.2rem; }
+    @media (max-width: 720px) { .stats { grid-template-columns: 1fr 1fr; } .bar-row { grid-template-columns: 7.2rem 1fr 2.4rem; } }
+    @media print { body { background: #fff; } .shell { max-width: none; padding: 0; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="brand">Atlas Task Report · 单人工作画像</div>
+    <h1>dingmaoju</h1>
+    <p class="sub">工作日白天、只走 <code>grok-build-plan</code> 的 Python 实现者：模型以 <code>kimi-for-coding</code> 为主，cwd 在 gitProject、用户主目录和「AI安全」之间切换，产物几乎全是 code。</p>
+    <div class="meta">
+      <span>区间 2026-08-13 ~ 2026-08-26</span>
+      <span>Report User <code>dingmaoju</code> / dingmaoju@myai.tech</span>
+      <span>明细 48 条全量</span>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b>48</b><span>子代理任务</span></div>
+      <div class="stat"><b class="ok">85.4%</b><span>成功率 41 / 48 · 取消 0</span></div>
+      <div class="stat"><b>4550 万</b><span>Tokens</span></div>
+      <div class="stat"><b>66</b><span>产物 · code 62 / doc 4</span></div>
+    </div>
+
+    <div class="callout">
+      48 / 48 条 description 均为占位符 <code>&lt;user_query&gt;</code>，主题无法从标题还原。7 次失败同样没有有意义标题。Agent 100% 为 <code>grok-build-plan</code>。
+    </div>
+
+    <h2>有任务的日期</h2>
+    <div class="bars">
+      <div class="day">
+        <div class="day-col"><i style="height:100%"></i><span>14</span></div>
+        <div class="day-col"><i style="height:53%"></i><span>17</span></div>
+        <div class="day-col"><i style="height:6%"></i><span>18</span></div>
+        <div class="day-col"><i style="height:65%"></i><span>20</span></div>
+        <div class="day-col"><i style="height:53%"></i><span>24</span></div>
+        <div class="day-col"><i style="height:6%"></i><span>25</span></div>
+      </div>
+      <p class="caption">横轴：8 月日期 · 纵轴：任务条数（峰值 8/14 = 17）· 周末 0 · startedAt UTC+8</p>
+    </div>
+
+    <h2>活跃与成效</h2>
+    <ul>
+      <li><code>status</code>：completed 41、error 7、取消 0。</li>
+      <li>耗时：中位约 0.4 分钟，p90 约 15 分钟，最长约 208 分钟（一条 plan completed）。</li>
+      <li>客户端从 <code>0.2.126</code> 升到 <code>0.2.130</code>（130：21，127：12，126：10，129：5）。</li>
+      <li>17 个父会话、17 个子会话（一对一）。</li>
+    </ul>
+
+    <h2>工作方式</h2>
+    <p class="sub">Agent 只有 <code>grok-build-plan</code>（48 任务 / 66 产物 / 4550 万 tokens / 均耗时 7.4 分钟）。未见 explore、general-purpose、SDD 角色。</p>
+
+    <h2>模型（Catalog ID）</h2>
+    <div class="bars">
+      <div class="bar-row"><span class="mono">kimi-for-coding</span><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><span>31</span></div>
+      <div class="bar-row"><span class="mono">glm-5.2</span><div class="bar-track"><div class="bar-fill" style="width:26%"></div></div><span>8</span></div>
+      <div class="bar-row"><span class="mono">deepseek-v4-flash</span><div class="bar-track"><div class="bar-fill" style="width:23%"></div></div><span>7</span></div>
+      <div class="bar-row"><span class="mono">qwen3.8-max</span><div class="bar-track"><div class="bar-fill" style="width:6%"></div></div><span>2</span></div>
+      <p class="caption">任务数 · kimi 占 65% 任务、91% 产物 · DeepSeek / Qwen 0 产物 · Routing 全空</p>
+    </div>
+    <div class="card" style="margin-top:0.8rem">
+      <table>
+        <thead><tr><th>Catalog ID</th><th class="num">任务</th><th class="num">产物</th><th class="num">Tokens</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">kimi-for-coding</td><td class="num">31</td><td class="num">60</td><td class="num">4271 万</td></tr>
+          <tr><td class="mono">glm-5.2</td><td class="num">8</td><td class="num">6</td><td class="num">213 万</td></tr>
+          <tr><td class="mono">deepseek-v4-flash</td><td class="num">7</td><td class="num">0</td><td class="num">59 万</td></tr>
+          <tr><td class="mono">qwen3.8-max</td><td class="num">2</td><td class="num">0</td><td class="num">6 万</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>项目簇</h2>
+    <div class="bars">
+      <div class="bar-row"><span>gitProject</span><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><span>19</span></div>
+      <div class="bar-row"><span>Users/dingmaoju</span><div class="bar-track"><div class="bar-fill" style="width:95%"></div></div><span>18</span></div>
+      <div class="bar-row"><span>AI安全</span><div class="bar-track"><div class="bar-fill" style="width:47%"></div></div><span>9</span></div>
+      <div class="bar-row"><span>其他</span><div class="bar-track"><div class="bar-fill" style="width:11%"></div></div><span>2</span></div>
+      <p class="caption">cwd 末段 · 产物密度 1.38 · 扩展名 py 58 · md 4 · 无 worktree_path</p>
+    </div>
+
+    <h2>工作时段（UTC+8）</h2>
+    <div class="bars">
+      <div class="hour">
+        <div class="hour-col"><i style="height:33%"></i><span>09</span></div>
+        <div class="hour-col"><i style="height:100%"></i><span>10</span></div>
+        <div class="hour-col"><i style="height:47%"></i><span>11</span></div>
+        <div class="hour-col"><i style="height:33%"></i><span>13</span></div>
+        <div class="hour-col"><i style="height:47%"></i><span>14</span></div>
+        <div class="hour-col"><i style="height:7%"></i><span>16</span></div>
+        <div class="hour-col"><i style="height:33%"></i><span>17</span></div>
+        <div class="hour-col"><i style="height:20%"></i><span>18</span></div>
+      </div>
+      <p class="caption">横轴：小时 · 纵轴：任务条数 · 峰值 10:00（15 条）· 无深夜</p>
+    </div>
+
+    <h2>任务主题</h2>
+    <p class="sub">数据不足：48 / 48 条 description 均为 <code>&lt;user_query&gt;</code>，没有可聚类的任务标题。</p>
+
+    <h2>建议</h2>
+    <ol>
+      <li><strong>先把工作目录落到项目仓。</strong> 近四成任务 cwd 是 <code>C:\Users\dingmaoju</code>，项目信号会被家目录稀释。</li>
+      <li><strong>description 占位比别人更彻底。</strong> 全是 <code>&lt;user_query&gt;</code>，主题无法还原。</li>
+      <li><strong>实现路径只有 plan。</strong> DeepSeek 7 任务 0 产物，更像试模型而不是交付波次。</li>
+    </ol>
+    <p class="caption">数据源：GET http://10.218.220.237:22255/atlas/admin/api/task-reports · 单人支路</p>
+  </main>
+</body>
+</html>

@@ -1387,6 +1387,26 @@ atlas plugin update atlas-skills
 # 扩展：装新 VSIX --force，或内网市场发版</code></pre>
 </section>
 
+<section id="ch-27-offline">
+<h3>连不上 atlas-server 时启动</h3>
+<p>代理不可达时，设备码登录、托管模型、远程 settings、自动更新都会失败。本地对话须<strong>同时</strong>关掉两道门，并配置本地/BYOK 模型。权威步骤见 <code>docs/atlas-runtime-安装手册.md</code> §9。</p>
+<pre><code># ~/.atlas/config.toml
+[auth]
+require_session_at_startup = false   # 也可 GROK_REQUIRE_SESSION_AT_STARTUP=0
+
+[features]
+remote_fetch = false                 # 无环境变量；跳过 /settings 与远程 /models
+# 否则 bootstrap 卡 ~40s：Couldn't start … loading your account settings</code></pre>
+<pre><code>[model.local]
+model = "qwen2.5-coder"
+base_url = "http://127.0.0.1:11434/v1"
+api_key = "ollama"
+api_backend = "chat_completions"
+
+# atlas -m local</code></pre>
+<p>恢复内网后：改回 <code>remote_fetch</code>（默认 true）→ <code>atlas login --device-auth</code> → <code>/refresh-model</code>。</p>
+</section>
+
 <section id="ch-27-faq">
 <h3>常见问题</h3>
 <table><thead><tr><th>现象</th><th>处理</th></tr></thead><tbody>
@@ -1395,8 +1415,10 @@ atlas plugin update atlas-skills
 <tr><td>扩展侧边栏起不来 / 一直要登录</td><td>终端 <code>atlas login --device-auth</code>；检查 <code>atlas.cliPath</code></td></tr>
 <tr><td><code>/ask-atlas</code> 没有或像旧版</td><td><code>plugin list</code> 有 <code>atlas-skills</code>；update 后<strong>新开会话</strong></td></tr>
 <tr><td>没有企业角色命令</td><td>安装并 trust <code>atlas-sdd</code></td></tr>
-<tr><td>模型列表不对 / 无托管模型</td><td>Admin 分配；等缓存或重登 / Online 刷新</td></tr>
+<tr><td>模型列表不对 / 无托管模型</td><td>Admin 分配；等缓存或重登 / <code>/refresh-model</code></td></tr>
 <tr><td>设备码批准失败</td><td>先浏览器登录；user_code 与机器码正确；已开户</td></tr>
+<tr><td><code>startup timed out</code> / loading account settings</td><td>设 <code>[features] remote_fetch = false</code> + 本地模型；见上文「连不上」</td></tr>
+<tr><td>只关了 session 门控仍卡 ~40s</td><td>还须 <code>remote_fetch = false</code>（无 env 可替代）</td></tr>
 <tr><td>MCP 内存暴涨</td><td>避免多份 <code>command = "npx"</code> 写进用户全局；工程级 MCP 写项目配置</td></tr>
 <tr><td>Linux 老 glibc 跑不起来</td><td>官方 x86_64 应用 musl 包；见 <code>docs/atlas-编译手册.md</code></td></tr>
 </tbody></table>
@@ -1441,9 +1463,10 @@ atlas plugin update atlas-skills
 <tr><td><code>[plugins] enabled</code></td><td>启用的用户级插件名</td></tr>
 <tr><td><code>[memory] enabled</code></td><td>跨会话记忆</td></tr>
 <tr><td><code>[features] telemetry</code> / <code>[telemetry] trace_upload</code></td><td>遥测门控</td></tr>
+<tr><td><code>[features] remote_fetch</code></td><td>是否拉远程 settings /models（断网须 <code>false</code>；无 env）</td></tr>
 <tr><td><code>[cli] channel</code> / <code>auto_update</code></td><td>更新通道（企业常配合 atlas-server <code>/cli</code>）</td></tr>
 <tr><td><code>auth.disable_api_key_auth</code>（可 pin）</td><td>禁止 API Key，只走部署 IdP</td></tr>
-<tr><td><code>require_session_at_startup</code></td><td>启动登录门控（默认开）</td></tr>
+<tr><td><code>[auth] require_session_at_startup</code></td><td>启动登录门控（默认开；断网可 <code>false</code>）</td></tr>
 </tbody></table>
 <p>外观细节在 <code>pager.toml</code>（见 <a href="#ch-06">主题</a>）。完整字段列表见源文档 <code>crates/.../user-guide/26-config-reference.md</code>。</p>
 </section>

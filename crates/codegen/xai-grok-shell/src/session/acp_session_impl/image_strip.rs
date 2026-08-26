@@ -33,7 +33,11 @@ impl SessionActor {
         let mut unique = stripped_urls;
         unique.sort();
         unique.dedup();
-        let persist_deferred = reason == StripReason::ServerRejected && unique.len() == 1;
+        let persist_deferred = match reason {
+            StripReason::ServerRejected => unique.len() == 1,
+            StripReason::UnsupportedContentType => !unique.is_empty(),
+            StripReason::PayloadHeuristic => false,
+        };
         if persist_deferred {
             *self.pending_image_strip.lock() = Some((request_id.clone(), unique));
         }

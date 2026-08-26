@@ -9,7 +9,8 @@
 | 账号、托管模型、Task Report 名词 | [services/atlas-server/CONTEXT.md](../services/atlas-server/CONTEXT.md) |
 | 遥测开关、构建口令 | [.cursor/rules/atlas-telemetry-ops.mdc](../.cursor/rules/atlas-telemetry-ops.mdc) |
 | ENC / ListModels / 落盘 | [.cursor/rules/atlas-managed-models.mdc](../.cursor/rules/atlas-managed-models.mdc) |
-| 安装与基础命令 | [atlas-runtime-安装手册.md](./atlas-runtime-安装手册.md) |
+| 安装与基础命令 | [atlas-runtime-安装手册.md](./atlas-runtime-安装手册.md)（§9：断网启动） |
+| 中文用户指南 HTML | [atlas-用户指南.html](./atlas-用户指南.html) |
 | 跨平台编译 | [atlas-编译手册.md](./atlas-编译手册.md) |
 | Settings 字段 | [services/atlas-server/docs/settings.md](../services/atlas-server/docs/settings.md) |
 | 决策记录 | [docs/adr](./adr/)、[atlas-server/docs/adr](../services/atlas-server/docs/adr/) |
@@ -46,8 +47,9 @@
 - 用户手写、无 `managed` 的 `[model.*]` **不被同步覆盖**。取消分配后删除托管段。
 - 合并优先级：本地 `[model.*]`（含托管落盘）> prefetch > builtin。
 - `/model` 选择器通常只读内存 catalog，**不**因此打 `/models`。会打网的时机见遥测规则。
+- 立刻拉网：终端 `atlas models refresh`，会话内 `/refresh-model`（别名 `/refresh-models`）。二者作废 `models_cache.json`、GET `/atlas/v1/models`、同步托管段到 `config.toml`，并广播 `x.ai/models/update`。
 - `model_family` 管上下文压缩族；**不配不等于关闭压缩**，只是走默认族逻辑。
-- 改用户模型分配后，客户端不会立刻推送；下次预取 / 鉴权变化 / ETag / Online 刷新才更新。
+- 改用户模型分配后，客户端不会自动推送；跑 `atlas models refresh` / `/refresh-model`，或等下次预取 / 鉴权变化 / ETag / 缓存过期。
 
 ---
 

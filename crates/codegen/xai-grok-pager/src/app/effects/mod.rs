@@ -2295,6 +2295,52 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::RefreshModels => {
+            let tx = acp_tx.clone();
+            tasks
+                .spawn(async move {
+                    let params = serde_json::value::to_raw_value(&serde_json::json!({}))
+                        .expect("serialize models/refresh params");
+                    let req = acp::ExtRequest::new(
+                        "x.ai/models/refresh",
+                        params.into(),
+                    );
+                    match acp_send(req, &tx).await {
+                        Ok(resp) => {
+                            match serde_json::from_str::<
+                                xai_grok_shell::session::ExtMethodResult<
+                                    acp::SessionModelState,
+                                >,
+                            >(resp.0.get())
+                            {
+                                Ok(parsed) => {
+                                    if let Some(err) = parsed.error {
+                                        let msg = err
+                                            .as_str()
+                                            .map(str::to_string)
+                                            .unwrap_or_else(|| err.to_string());
+                                        TaskResult::ModelsRefreshed { result: Err(msg) }
+                                    } else {
+                                        let count = parsed
+                                            .result
+                                            .map(|s| s.available_models.len())
+                                            .unwrap_or(0);
+                                        TaskResult::ModelsRefreshed {
+                                            result: Ok(count),
+                                        }
+                                    }
+                                }
+                                Err(e) => TaskResult::ModelsRefreshed {
+                                    result: Err(format!("couldn't parse models/refresh: {e}")),
+                                },
+                            }
+                        }
+                        Err(e) => TaskResult::ModelsRefreshed {
+                            result: Err(sanitize_user_error(&e.to_string())),
+                        },
+                    }
+                });
+        }
         Effect::McpAuthTrigger { agent_id, session_id, server_name } => {
             let tx = acp_tx.clone();
             tasks

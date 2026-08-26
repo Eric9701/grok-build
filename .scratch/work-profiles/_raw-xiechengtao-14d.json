@@ -1,0 +1,2687 @@
+{
+  "base": "http://10.218.220.237:22255/atlas",
+  "from": "2026-08-13",
+  "to": "2026-08-26",
+  "overall": {
+    "agents": [
+      {
+        "subagentType": "grok-build-plan",
+        "count": 1471,
+        "artifactCount": 1129,
+        "tokensUsed": 833163065
+      },
+      {
+        "subagentType": "general-purpose",
+        "count": 35,
+        "artifactCount": 0,
+        "tokensUsed": 1622385
+      },
+      {
+        "subagentType": "atlas-sdd:4-software-engineer-agent",
+        "count": 24,
+        "artifactCount": 79,
+        "tokensUsed": 922665
+      },
+      {
+        "subagentType": "explore",
+        "count": 18,
+        "artifactCount": 0,
+        "tokensUsed": 1171671
+      },
+      {
+        "subagentType": "atlas-sdd:3-program-design-agent",
+        "count": 15,
+        "artifactCount": 1,
+        "tokensUsed": 1275673
+      },
+      {
+        "subagentType": "atlas-sdd:1-requirement-analyst-agent",
+        "count": 9,
+        "artifactCount": 1,
+        "tokensUsed": 284882
+      },
+      {
+        "subagentType": "atlas-sdd:2-architect-design-agent",
+        "count": 3,
+        "artifactCount": 0,
+        "tokensUsed": 227648
+      },
+      {
+        "subagentType": "4-software-engineer-agent",
+        "count": 2,
+        "artifactCount": 0,
+        "tokensUsed": 0
+      }
+    ],
+    "from": "2026-08-13",
+    "models": [
+      {
+        "model": "cms-yyy1-kimi-for-coding",
+        "count": 253,
+        "artifactCount": 151,
+        "tokensUsed": 27666217
+      },
+      {
+        "model": "cms-wjj2-kimi-for-coding",
+        "count": 241,
+        "artifactCount": 158,
+        "tokensUsed": 92810272
+      },
+      {
+        "model": "ims-xx-my",
+        "count": 169,
+        "artifactCount": 120,
+        "tokensUsed": 106630190
+      },
+      {
+        "model": "back",
+        "count": 118,
+        "artifactCount": 71,
+        "tokensUsed": 71914916
+      },
+      {
+        "model": "cms-yyy2-kimi-for-coding",
+        "count": 109,
+        "artifactCount": 70,
+        "tokensUsed": 32540710
+      },
+      {
+        "model": "arch-glm-5.2",
+        "count": 84,
+        "artifactCount": 126,
+        "tokensUsed": 66415310
+      },
+      {
+        "model": "arch-kimi-for-coding",
+        "count": 83,
+        "artifactCount": 177,
+        "tokensUsed": 138404822
+      },
+      {
+        "model": "ims-czp-kimi-for-coding",
+        "count": 81,
+        "artifactCount": 53,
+        "tokensUsed": 63345862
+      },
+      {
+        "model": "cms-wjj1-kimi-for-coding",
+        "count": 79,
+        "artifactCount": 30,
+        "tokensUsed": 22561975
+      },
+      {
+        "model": "kimi-for-coding",
+        "count": 76,
+        "artifactCount": 72,
+        "tokensUsed": 56872005
+      },
+      {
+        "model": "glm-5.2",
+        "count": 59,
+        "artifactCount": 69,
+        "tokensUsed": 65043446
+      },
+      {
+        "model": "ims-xx-kimi-for-coding",
+        "count": 38,
+        "artifactCount": 19,
+        "tokensUsed": 31621609
+      },
+      {
+        "model": "xixiapi-gpt-5.6-terra",
+        "count": 26,
+        "artifactCount": 0,
+        "tokensUsed": 32494
+      },
+      {
+        "model": "kimi-2",
+        "count": 23,
+        "artifactCount": 1,
+        "tokensUsed": 9119514
+      },
+      {
+        "model": "arch-qwen3.8-max",
+        "count": 20,
+        "artifactCount": 21,
+        "tokensUsed": 10775322
+      },
+      {
+        "model": "qwen3.8-max",
+        "count": 16,
+        "artifactCount": 16,
+        "tokensUsed": 12852988
+      },
+      {
+        "model": "yundou-gpt-5.6-sol",
+        "count": 14,
+        "artifactCount": 0,
+        "tokensUsed": 63882
+      },
+      {
+        "model": "opencode-ox-alpha-free",
+        "count": 14,
+        "artifactCount": 0,
+        "tokensUsed": 0
+      },
+      {
+        "model": "kimi-1",
+        "count": 14,
+        "artifactCount": 0,
+        "tokensUsed": 567723
+      },
+      {
+        "model": "agens",
+        "count": 9,
+        "artifactCount": 48,
+        "tokensUsed": 16757072
+      },
+      {
+        "model": "x-preview-f-free",
+        "count": 9,
+        "artifactCount": 8,
+        "tokensUsed": 9779076
+      },
+      {
+        "model": "gpt-5-6-luna",
+        "count": 8,
+        "artifactCount": 0,
+        "tokensUsed": 369012
+      },
+      {
+        "model": "deepseek-v4-flash",
+        "count": 7,
+        "artifactCount": 0,
+        "tokensUsed": 592599
+      },
+      {
+        "model": "ims-gzj-kimi-for-coding",
+        "count": 7,
+        "artifactCount": 0,
+        "tokensUsed": 253805
+      },
+      {
+        "model": "ali-glm-5",
+        "count": 6,
+        "artifactCount": 0,
+        "tokensUsed": 0
+      },
+      {
+        "model": "gpt-5-6-sol",
+        "count": 5,
+        "artifactCount": 0,
+        "tokensUsed": 62380
+      },
+      {
+        "model": "ali-deepseek-flash",
+        "count": 3,
+        "artifactCount": 0,
+        "tokensUsed": 1430761
+      },
+      {
+        "model": "my",
+        "count": 2,
+        "artifactCount": 0,
+        "tokensUsed": 72471
+      },
+      {
+        "model": "main",
+        "count": 2,
+        "artifactCount": 0,
+        "tokensUsed": 111556
+      },
+      {
+        "model": "gpt-5-6-luna-responses",
+        "count": 1,
+        "artifactCount": 0,
+        "tokensUsed": 0
+      },
+      {
+        "model": "ims-wq-kimi-for-coding",
+        "count": 1,
+        "artifactCount": 0,
+        "tokensUsed": 0
+      }
+    ],
+    "summary": {
+      "totalTasks": 1577,
+      "successCount": 996,
+      "failedCount": 575,
+      "cancelledCount": 6,
+      "totalArtifacts": 1210,
+      "totalTokens": 838667989,
+      "uniqueUsers": 18,
+      "uniqueModels": 31
+    },
+    "to": "2026-08-26",
+    "users": [
+      {
+        "userId": "zhangyufeng",
+        "email": "zhangyufeng@myai.tech",
+        "count": 227,
+        "successCount": 175,
+        "artifactCount": 304,
+        "tokensUsed": 127868189
+      },
+      {
+        "userId": "shao_suisui",
+        "email": "shao_suisui@myai.tech",
+        "count": 224,
+        "successCount": 66,
+        "artifactCount": 145,
+        "tokensUsed": 49244812
+      },
+      {
+        "userId": "jia_shuai",
+        "email": "jia_shuai@myai.tech",
+        "count": 159,
+        "successCount": 81,
+        "artifactCount": 129,
+        "tokensUsed": 54358074
+      },
+      {
+        "userId": "taoyongkang",
+        "email": "taoyongkang@mininglamp.com",
+        "count": 145,
+        "successCount": 50,
+        "artifactCount": 16,
+        "tokensUsed": 27220059
+      },
+      {
+        "userId": "anonymous",
+        "email": "",
+        "count": 143,
+        "successCount": 106,
+        "artifactCount": 120,
+        "tokensUsed": 107720788
+      },
+      {
+        "userId": "hu_jingli",
+        "email": "hu_jingli@myai.tech",
+        "count": 136,
+        "successCount": 125,
+        "artifactCount": 77,
+        "tokensUsed": 77964556
+      },
+      {
+        "userId": "xu_xu",
+        "email": "xu_xu@myai.tech",
+        "count": 121,
+        "successCount": 115,
+        "artifactCount": 83,
+        "tokensUsed": 103969113
+      },
+      {
+        "userId": "chenzhipeng.a",
+        "email": "chenzhipeng.a@myai.tech",
+        "count": 87,
+        "successCount": 72,
+        "artifactCount": 99,
+        "tokensUsed": 78231321
+      },
+      {
+        "userId": "xiechentao",
+        "email": "xiechentao@myai.tech",
+        "count": 74,
+        "successCount": 72,
+        "artifactCount": 86,
+        "tokensUsed": 120096677
+      },
+      {
+        "userId": "wu_yong",
+        "email": "wu_yong@myai.tech",
+        "count": 54,
+        "successCount": 8,
+        "artifactCount": 52,
+        "tokensUsed": 8361065
+      },
+      {
+        "userId": "tang_xiang",
+        "email": "tang_xiang@myai.tech",
+        "count": 51,
+        "successCount": 5,
+        "artifactCount": 14,
+        "tokensUsed": 834580
+      },
+      {
+        "userId": "dingmaoju",
+        "email": "dingmaoju@myai.tech",
+        "count": 48,
+        "successCount": 41,
+        "artifactCount": 66,
+        "tokensUsed": 45501987
+      },
+      {
+        "userId": "wangqing.a",
+        "email": "wangqing.a@myai.tech",
+        "count": 37,
+        "successCount": 28,
+        "artifactCount": 1,
+        "tokensUsed": 9660473
+      },
+      {
+        "userId": "ci_li",
+        "email": "ci_li@myai.tech",
+        "count": 31,
+        "successCount": 24,
+        "artifactCount": 8,
+        "tokensUsed": 11076886
+      },
+      {
+        "userId": "zou_guangqian_1",
+        "email": "zou_guangqian_1@myai.tech",
+        "count": 26,
+        "successCount": 15,
+        "artifactCount": 5,
+        "tokensUsed": 11443836
+      },
+      {
+        "userId": "gaozijian",
+        "email": "gaozijian@myai.tech",
+        "count": 7,
+        "successCount": 7,
+        "artifactCount": 0,
+        "tokensUsed": 253805
+      },
+      {
+        "userId": "yan_yong",
+        "email": "yan_yong@myai.tech",
+        "count": 4,
+        "successCount": 3,
+        "artifactCount": 5,
+        "tokensUsed": 4800353
+      },
+      {
+        "userId": "yuyayong",
+        "email": "yuyayong@myai.tech",
+        "count": 3,
+        "successCount": 3,
+        "artifactCount": 0,
+        "tokensUsed": 61415
+      }
+    ]
+  },
+  "users": [
+    {
+      "userId": "xiechengtao",
+      "from": "2026-08-13",
+      "to": "2026-08-26",
+      "agents": [],
+      "models": [],
+      "count": 0,
+      "reports": []
+    },
+    {
+      "userId": "xiechentao",
+      "from": "2026-08-13",
+      "to": "2026-08-26",
+      "agents": [
+        {
+          "subagentType": "grok-build-plan",
+          "count": 68,
+          "artifactCount": 86,
+          "tokensUsed": 119782850
+        },
+        {
+          "subagentType": "atlas-sdd:3-program-design-agent",
+          "count": 3,
+          "artifactCount": 0,
+          "tokensUsed": 265992
+        },
+        {
+          "subagentType": "general-purpose",
+          "count": 2,
+          "artifactCount": 0,
+          "tokensUsed": 47835
+        },
+        {
+          "subagentType": "atlas-sdd:4-software-engineer-agent",
+          "count": 1,
+          "artifactCount": 0,
+          "tokensUsed": 0
+        }
+      ],
+      "models": [
+        {
+          "model": "arch-kimi-for-coding",
+          "count": 74,
+          "artifactCount": 86,
+          "tokensUsed": 120096677
+        }
+      ],
+      "count": 74,
+      "reports": [
+        {
+          "id": 880,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-56-34e24a14-4fa0-458b-ad42-fb01e001bbee",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 2222367,
+          "toolCalls": 219,
+          "turns": 1,
+          "tokensUsed": 21586353,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/详设Review问题-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "/tmp/csa-verify-approval.js",
+              "kind": "code"
+            },
+            {
+              "path": "/tmp/csa-verify.js",
+              "kind": "code"
+            },
+            {
+              "path": "documents/detailed-design/REQ-CSA-001-detailed-design-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/csa-init-schema.sql",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/sl-permission-init.md",
+              "kind": "doc"
+            },
+            {
+              "path": "tools/yapi-sync/yapi-sync.js",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 7,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T10:41:27.860272100+00:00",
+          "completedAt": "2026-08-21T11:18:30.429220600+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T19:18:30Z"
+        },
+        {
+          "id": 876,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-17-ccd09b17-f5d3-4be5-b326-208ef6a5c6d3",
+          "parentSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "childSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 667942,
+          "toolCalls": 10,
+          "turns": 1,
+          "tokensUsed": 430871,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T10:44:21.163744900+00:00",
+          "completedAt": "2026-08-21T10:55:29.222921+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T18:55:29Z"
+        },
+        {
+          "id": 875,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-15-f50a8d98-04fe-45eb-b564-1f13e070dfcc",
+          "parentSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "childSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 492946,
+          "toolCalls": 28,
+          "turns": 1,
+          "tokensUsed": 794600,
+          "artifacts": [
+            {
+              "path": "C:/Users/XCT/.atlas/config.toml",
+              "kind": "code"
+            },
+            {
+              "path": "C:/Users/XCT/.claude/settings.json",
+              "kind": "code"
+            },
+            {
+              "path": "C:/Users/XCT/kill-mcp.ps1",
+              "kind": "other"
+            }
+          ],
+          "artifactCount": 3,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T10:35:51.415169600+00:00",
+          "completedAt": "2026-08-21T10:44:06.534782500+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T18:44:06Z"
+        },
+        {
+          "id": 724,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-9-2fae3b17-8ade-4e8e-a38d-25375adc0d3f",
+          "parentSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "childSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 49262,
+          "toolCalls": 4,
+          "turns": 1,
+          "tokensUsed": 172597,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T07:55:16.139468900+00:00",
+          "completedAt": "2026-08-21T07:56:05.851731200+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T15:56:06Z"
+        },
+        {
+          "id": 722,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-51-b20d927c-8619-4a1a-afb9-7ee7bec8ce5c",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 144584,
+          "toolCalls": 5,
+          "turns": 1,
+          "tokensUsed": 133688,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T07:51:35.125384400+00:00",
+          "completedAt": "2026-08-21T07:54:01.500678600+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T15:54:01Z"
+        },
+        {
+          "id": 719,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-8-922d9620-c35a-4b2d-aaed-b06be315e518",
+          "parentSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "childSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 39719,
+          "toolCalls": 2,
+          "turns": 1,
+          "tokensUsed": 70452,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T07:47:53.763910600+00:00",
+          "completedAt": "2026-08-21T07:48:46.927860500+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T15:48:47Z"
+        },
+        {
+          "id": 717,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-50-0e886ec8-2d14-4290-b208-efd6ce096bc5",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 26514,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 241504,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T07:44:24.311232+00:00",
+          "completedAt": "2026-08-21T07:44:52.187748500+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T15:44:52Z"
+        },
+        {
+          "id": 715,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-49-670d5bde-113a-4e4c-b74b-f3394761995f",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 15813,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 120364,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T07:42:53.936885+00:00",
+          "completedAt": "2026-08-21T07:43:10.808705500+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T15:43:11Z"
+        },
+        {
+          "id": 714,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-48-c2cf8d8a-5e49-4d9a-bbed-c8879479fe87",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 16157,
+          "toolCalls": 2,
+          "turns": 1,
+          "tokensUsed": 239784,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T07:41:29.703981400+00:00",
+          "completedAt": "2026-08-21T07:41:46.617770900+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T15:41:46Z"
+        },
+        {
+          "id": 710,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-47-7a9509cb-59c9-485a-9528-a6fa07d6d072",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 25302,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 238328,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T07:36:05.814542900+00:00",
+          "completedAt": "2026-08-21T07:36:31.831835800+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T15:36:32Z"
+        },
+        {
+          "id": 708,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-46-3a03548f-a5a0-49d1-88ab-956b6a2480ec",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 1145421,
+          "toolCalls": 94,
+          "turns": 1,
+          "tokensUsed": 8253563,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/详设Review问题-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/detailed-design/REQ-CSA-001-detailed-design-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/csa-init-schema.sql",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/sl-permission-init.md",
+              "kind": "doc"
+            },
+            {
+              "path": "tools/yapi-sync/yapi-sync.js",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 5,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T07:16:58.696685500+00:00",
+          "completedAt": "2026-08-21T07:36:05.098947900+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T15:36:05Z"
+        },
+        {
+          "id": 687,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-44-fb169f13-b917-480f-a97b-d53dc3f3e955",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 2463741,
+          "toolCalls": 113,
+          "turns": 1,
+          "tokensUsed": 11506681,
+          "artifacts": [
+            {
+              "path": "C:\\temp\\prototype-audit\\audit-round-1.js",
+              "kind": "code"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\documents\\detailed-design\\prototype-design-gap-report-2026-08-21.md",
+              "kind": "doc"
+            },
+            {
+              "path": "cms-special-allowance-frontend/prototype-audit-all-rounds.js",
+              "kind": "code"
+            },
+            {
+              "path": "cms-special-allowance-frontend/prototype-audit-logic-dialog.js",
+              "kind": "code"
+            },
+            {
+              "path": "cms-special-allowance-frontend/prototype-audit-round-1.js",
+              "kind": "code"
+            },
+            {
+              "path": "cms-special-allowance-frontend/prototype-audit-supplement.js",
+              "kind": "code"
+            },
+            {
+              "path": "documents/detailed-design/REQ-CSA-001-detailed-design-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/detailed-design/cache-service-integration-design.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/csa-init-schema.sql",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/sl-permission-init.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 10,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T06:35:07.723805500+00:00",
+          "completedAt": "2026-08-21T07:16:11.631846900+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T15:16:11Z"
+        },
+        {
+          "id": 673,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-43-47b78d90-6272-4111-b3f5-4b687cdb5770",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 50985,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 109267,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T06:32:54.096242600+00:00",
+          "completedAt": "2026-08-21T06:33:45.539095400+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T14:33:45Z"
+        },
+        {
+          "id": 669,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-42-af27cfe3-6243-4a61-9d37-3809e939f4b3",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 1301057,
+          "toolCalls": 86,
+          "turns": 1,
+          "tokensUsed": 6572544,
+          "artifacts": [
+            {
+              "path": "C:\\temp\\analyze_formula.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\temp\\analyze_formula2.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\temp\\update_example.py",
+              "kind": "code"
+            },
+            {
+              "path": "C:\\temp\\verify_schema.py",
+              "kind": "code"
+            },
+            {
+              "path": "documents/detailed-design/REQ-CSA-001-detailed-design-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/detailed-design/cache-service-integration-design.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/csa-init-schema.sql",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 7,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T06:04:25.087421900+00:00",
+          "completedAt": "2026-08-21T06:26:06.314705100+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T14:26:06Z"
+        },
+        {
+          "id": 654,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-40-2d7b5dc7-7993-41ef-b381-f35a839b6e88",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 179883,
+          "toolCalls": 5,
+          "turns": 1,
+          "tokensUsed": 976511,
+          "artifacts": [
+            {
+              "path": "E:\\CMS_WS\\csa\\tmp_search_proto2.py",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T05:51:00.625840900+00:00",
+          "completedAt": "2026-08-21T05:54:00.939643800+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T13:54:01Z"
+        },
+        {
+          "id": 650,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-39-4942ae07-5504-45e0-83f3-bd02a57bcfaf",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 49263,
+          "toolCalls": 2,
+          "turns": 1,
+          "tokensUsed": 313798,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T05:49:19.479308500+00:00",
+          "completedAt": "2026-08-21T05:50:09.165105400+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T13:50:09Z"
+        },
+        {
+          "id": 649,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-38-be200ff8-65e4-4c03-b906-b00b0ad8649d",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 331883,
+          "toolCalls": 16,
+          "turns": 1,
+          "tokensUsed": 2403884,
+          "artifacts": [
+            {
+              "path": "E:\\CMS_WS\\csa\\tmp_search_proto.py",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T05:42:21.403366500+00:00",
+          "completedAt": "2026-08-21T05:47:53.560350200+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T13:47:53Z"
+        },
+        {
+          "id": 648,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-37-c18b676c-dff7-43e0-8398-f7dcdc19ae1d",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 20036,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 146306,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T05:40:51.205834700+00:00",
+          "completedAt": "2026-08-21T05:41:11.560870300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T13:41:11Z"
+        },
+        {
+          "id": 647,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-36-bbe16421-ec06-4981-87e7-adb0f9da2be0",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 18993,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 145654,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T05:39:46.107549+00:00",
+          "completedAt": "2026-08-21T05:40:05.316206800+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T13:40:05Z"
+        },
+        {
+          "id": 646,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-35-2cb08804-5dc9-4202-8610-c1ad53521abc",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 2050403,
+          "toolCalls": 103,
+          "turns": 1,
+          "tokensUsed": 13559773,
+          "artifacts": [
+            {
+              "path": "documents/detailed-design/REQ-CSA-001-detailed-design-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/detailed-design/allowance-params-example.txt",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/detailed-design/cache-service-integration-design.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/csa-init-schema.sql",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 4,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T05:05:34.840944500+00:00",
+          "completedAt": "2026-08-21T05:39:45.686471300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T13:39:45Z"
+        },
+        {
+          "id": 644,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-7-5f733143-e991-4144-a7f8-d4f374d5ce55",
+          "parentSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "childSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 522296,
+          "toolCalls": 23,
+          "turns": 1,
+          "tokensUsed": 660769,
+          "artifacts": [
+            {
+              "path": "~/.atlas/config.toml",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T05:27:28.937201400+00:00",
+          "completedAt": "2026-08-21T05:36:11.659496100+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T13:36:11Z"
+        },
+        {
+          "id": 628,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-6-51e114b0-be8b-41cb-9456-f77a315e108e",
+          "parentSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "childSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 10471,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 153042,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T05:06:51.756669500+00:00",
+          "completedAt": "2026-08-21T05:07:02.772064300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T13:07:03Z"
+        },
+        {
+          "id": 627,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-5-d663040d-bbcc-40dc-ab27-c44122bcbe9b",
+          "parentSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "childSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 92811,
+          "toolCalls": 6,
+          "turns": 1,
+          "tokensUsed": 1021619,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/前端原型与Smoke测试计划-2026-08-20.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T05:04:39.355140100+00:00",
+          "completedAt": "2026-08-21T05:06:12.368150900+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T13:06:12Z"
+        },
+        {
+          "id": 626,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-34-cdeb9c13-fb86-4bf8-a470-304361cb8677",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 17125,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 132851,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T05:03:40.954925500+00:00",
+          "completedAt": "2026-08-21T05:03:58.403071600+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T13:03:58Z"
+        },
+        {
+          "id": 624,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-33-5e0a3de9-f6f9-44e3-abdc-493784004536",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 117947,
+          "toolCalls": 10,
+          "turns": 1,
+          "tokensUsed": 1442725,
+          "artifacts": [
+            {
+              "path": "documents/detailed-design/REQ-CSA-001-detailed-design-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/memory-init.md",
+              "kind": "doc"
+            },
+            {
+              "path": "tools/db-sync/sync-dp-c-user.js",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 3,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T04:05:32.343578800+00:00",
+          "completedAt": "2026-08-21T04:07:30.475914100+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T12:07:30Z"
+        },
+        {
+          "id": 623,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-4-eb32ef95-d589-4d60-85eb-7f5c6a06f414",
+          "parentSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "childSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 136596,
+          "toolCalls": 9,
+          "turns": 1,
+          "tokensUsed": 1060105,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\XCT\\.atlas\\config.toml",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T04:04:05.250096800+00:00",
+          "completedAt": "2026-08-21T04:06:23.488486600+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T12:06:23Z"
+        },
+        {
+          "id": 621,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-3-b1b3da3e-7495-4a70-bc6b-e502669d9450",
+          "parentSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "childSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 30297,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 106507,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T04:00:38.560311800+00:00",
+          "completedAt": "2026-08-21T04:01:09.304660900+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T12:01:09Z"
+        },
+        {
+          "id": 619,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-32-91d96c72-19d5-4238-830e-7fec14be0b65",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 675276,
+          "toolCalls": 33,
+          "turns": 1,
+          "tokensUsed": 2946540,
+          "artifacts": [
+            {
+              "path": "E:\\CMS_WS\\csa\\tools\\db-sync\\sync-cms-tables.js",
+              "kind": "code"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\tools\\db-sync\\sync-dp-c-user.js",
+              "kind": "code"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\tools\\db-sync\\sync-job-level.js",
+              "kind": "code"
+            },
+            {
+              "path": "documents/detailed-design/REQ-CSA-001-detailed-design-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/csa-init-schema.sql",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/memory-init.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 6,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T03:47:42.439222600+00:00",
+          "completedAt": "2026-08-21T03:58:58.146157500+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T11:58:58Z"
+        },
+        {
+          "id": 618,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-2-9f0ff0b9-2694-4092-b295-8d6aa4a48e94",
+          "parentSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "childSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 30162,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 105652,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T03:58:04.049996900+00:00",
+          "completedAt": "2026-08-21T03:58:34.575370200+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T11:58:34Z"
+        },
+        {
+          "id": 617,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-1-fde72959-9fa4-46d2-b72a-693a4338da22",
+          "parentSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "childSessionId": "01a0225e-95ff-7e93-ae02-d372453494d5",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 373475,
+          "toolCalls": 15,
+          "turns": 1,
+          "tokensUsed": 1682904,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/前端原型与Smoke测试计划-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\.claude\\plans\\2026-08-20\\前端原型与Smoke测试计划-2026-08-20.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 2,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T03:46:00.271692900+00:00",
+          "completedAt": "2026-08-21T03:52:14.233782600+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T11:52:14Z"
+        },
+        {
+          "id": 614,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-0-1cdd7b49-4f4a-487d-9854-e046d45c2279",
+          "parentSessionId": "01a0226b-b0ad-71d2-a302-2b37459bd3a2",
+          "childSessionId": "01a0226b-b0ad-71d2-a302-2b37459bd3a2",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 37342,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 24536,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T03:45:58.434298500+00:00",
+          "completedAt": "2026-08-21T03:46:55.840498500+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T11:46:56Z"
+        },
+        {
+          "id": 610,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-31-6c6fd522-6991-420d-a7f9-54b9c3055fe0",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 220566,
+          "toolCalls": 23,
+          "turns": 1,
+          "tokensUsed": 600229,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T03:35:01.970240400+00:00",
+          "completedAt": "2026-08-21T03:38:45.027760900+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T11:38:49Z"
+        },
+        {
+          "id": 589,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-30-e1b23cee-b9b4-482f-8a6e-f49361fbfe41",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 1242995,
+          "toolCalls": 61,
+          "turns": 1,
+          "tokensUsed": 9371964,
+          "artifacts": [
+            {
+              "path": "documents/detailed-design/REQ-CSA-001-detailed-design-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/detailed-design/allowance-params-example.txt",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/detailed-design/cache-service-integration-design.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/system-init/csa-init-schema.sql",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 4,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T02:24:59.785589800+00:00",
+          "completedAt": "2026-08-21T02:45:43.374240400+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T10:45:43Z"
+        },
+        {
+          "id": 582,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-29-8664daa9-becc-4531-911a-13ac70cc2de2",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 904794,
+          "toolCalls": 59,
+          "turns": 1,
+          "tokensUsed": 6477384,
+          "artifacts": [
+            {
+              "path": "documents/detailed-design/REQ-CSA-001-detailed-design-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/detailed-design/allowance-params-example.txt",
+              "kind": "doc"
+            },
+            {
+              "path": "documents/detailed-design/cache-service-integration-design.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 3,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T01:26:03.083521900+00:00",
+          "completedAt": "2026-08-21T01:41:08.372057100+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T09:41:08Z"
+        },
+        {
+          "id": 578,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-28-57e4f2e5-d52d-44fd-a530-a88e984d4a96",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 91237,
+          "toolCalls": 9,
+          "turns": 1,
+          "tokensUsed": 622394,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T01:18:37.206644900+00:00",
+          "completedAt": "2026-08-21T01:20:09.120158300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T09:20:09Z"
+        },
+        {
+          "id": 577,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-27-e51d15aa-0c65-419d-90d5-67733e487e38",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 421770,
+          "toolCalls": 10,
+          "turns": 1,
+          "tokensUsed": 622300,
+          "artifacts": [
+            {
+              "path": "documents/detailed-design/allowance-params-example.txt",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-21T01:06:03.153481800+00:00",
+          "completedAt": "2026-08-21T01:13:05.342764500+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-21T09:13:05Z"
+        },
+        {
+          "id": 553,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "01a01ec6-4940-7c31-a846-99f45bbdc5b3",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01ec6-4940-7c31-a846-99f45bbdc5b3",
+          "subagentType": "atlas-sdd:3-program-design-agent",
+          "model": "arch-kimi-for-coding",
+          "description": "按章节8和9修正特规津贴详设",
+          "status": "completed",
+          "success": true,
+          "durationMs": 1863677,
+          "toolCalls": 139,
+          "turns": 1,
+          "tokensUsed": 85757,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T10:45:08.019296400+00:00",
+          "completedAt": "2026-08-20T11:16:10.308065900+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T19:16:10Z"
+        },
+        {
+          "id": 552,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-25-ead8a042-04a0-4c8f-ba06-504c8682346b",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 156111,
+          "toolCalls": 3,
+          "turns": 1,
+          "tokensUsed": 630778,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T10:42:41.571576800+00:00",
+          "completedAt": "2026-08-20T10:45:18.039770100+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T18:45:18Z"
+        },
+        {
+          "id": 525,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "01a01e28-b1bb-7a91-8cb3-eaa5d865e6c4",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01e28-b1bb-7a91-8cb3-eaa5d865e6c4",
+          "subagentType": "atlas-sdd:3-program-design-agent",
+          "model": "arch-kimi-for-coding",
+          "description": "按review修正特规津贴详设",
+          "status": "completed",
+          "success": true,
+          "durationMs": 2515442,
+          "toolCalls": 81,
+          "turns": 1,
+          "tokensUsed": 86513,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T07:53:00.128912700+00:00",
+          "completedAt": "2026-08-20T08:34:54.168938700+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T16:34:54Z"
+        },
+        {
+          "id": 523,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-23-46351049-6249-4d2f-8d1e-5d140af26c87",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 21571,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 259896,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T08:23:51.071091600+00:00",
+          "completedAt": "2026-08-20T08:24:12.956356300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T16:24:13Z"
+        },
+        {
+          "id": 509,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-22-fd28a4d2-872e-4082-9089-2c2ae499fe58",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 128291,
+          "toolCalls": 2,
+          "turns": 1,
+          "tokensUsed": 381595,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T07:51:01.361207600+00:00",
+          "completedAt": "2026-08-20T07:53:10.081443300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T15:53:10Z"
+        },
+        {
+          "id": 507,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-21-cae70584-3c7c-4e26-a082-7f1b5630dc99",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 283716,
+          "toolCalls": 17,
+          "turns": 1,
+          "tokensUsed": 2125401,
+          "artifacts": [
+            {
+              "path": "E:\\CMS_WS\\csa\\tmp_search_proto.js",
+              "kind": "code"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\tmp_settlement_context.js",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 2,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T07:36:24.697030100+00:00",
+          "completedAt": "2026-08-20T07:41:08.848191300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T15:41:09Z"
+        },
+        {
+          "id": 505,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-20-c4358063-5e3c-429f-934c-c89f5d3ce321",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 70477,
+          "toolCalls": 6,
+          "turns": 1,
+          "tokensUsed": 618438,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T07:22:21.405847900+00:00",
+          "completedAt": "2026-08-20T07:23:32.368669500+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T15:23:32Z"
+        },
+        {
+          "id": 500,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "01a01df1-f464-7d83-92d5-4b1306b20c93",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01df1-f464-7d83-92d5-4b1306b20c93",
+          "subagentType": "general-purpose",
+          "model": "arch-kimi-for-coding",
+          "description": "执行数据库初始化和YAPI同步",
+          "status": "completed",
+          "success": true,
+          "durationMs": 708723,
+          "toolCalls": 51,
+          "turns": 1,
+          "tokensUsed": 47835,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T06:53:13.734409200+00:00",
+          "completedAt": "2026-08-20T07:05:00.062596100+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T15:05:00Z"
+        },
+        {
+          "id": 498,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-18-d644adfa-0b45-4fa1-8515-723eaa92f523",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 16022,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 136170,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T06:58:21.577925700+00:00",
+          "completedAt": "2026-08-20T06:58:38.552769700+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T14:58:38Z"
+        },
+        {
+          "id": 496,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-17-cfd733f5-8f7f-4b06-8010-8ffe08bf259f",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 48591,
+          "toolCalls": 3,
+          "turns": 1,
+          "tokensUsed": 268333,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T06:52:29.946094700+00:00",
+          "completedAt": "2026-08-20T06:53:19.027834700+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T14:53:19Z"
+        },
+        {
+          "id": 495,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "01a01def-87bf-7453-b647-188a8fad2a6d",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01def-87bf-7453-b647-188a8fad2a6d",
+          "subagentType": "general-purpose",
+          "model": "arch-kimi-for-coding",
+          "description": "执行数据库初始化和YAPI同步",
+          "status": "cancelled",
+          "success": false,
+          "durationMs": 138603,
+          "toolCalls": 15,
+          "turns": 1,
+          "tokensUsed": 0,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T06:50:41.281226600+00:00",
+          "completedAt": "2026-08-20T06:52:51.119928400+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T14:52:51Z"
+        },
+        {
+          "id": 494,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-16-fd00f249-a679-4560-b9f5-95cd97c2e919",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 13061,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 131942,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T06:51:36.031704700+00:00",
+          "completedAt": "2026-08-20T06:51:49.802161700+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T14:51:50Z"
+        },
+        {
+          "id": 493,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "01a01df0-3593-77c0-8eb3-60d9c2dd20fb",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01df0-3593-77c0-8eb3-60d9c2dd20fb",
+          "subagentType": "atlas-sdd:4-software-engineer-agent",
+          "model": "arch-kimi-for-coding",
+          "description": "前端原型与Smoke测试实现",
+          "status": "cancelled",
+          "success": false,
+          "durationMs": 23923,
+          "toolCalls": 5,
+          "turns": 1,
+          "tokensUsed": 0,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T06:51:18.283852400+00:00",
+          "completedAt": "2026-08-20T06:51:40.847581100+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T14:51:41Z"
+        },
+        {
+          "id": 492,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-15-1e000594-bbbf-480a-84d7-7ee1a6a11ee6",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 153212,
+          "toolCalls": 7,
+          "turns": 1,
+          "tokensUsed": 378703,
+          "artifacts": [
+            {
+              "path": "~/.claude/settings.json",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T06:49:00.656474700+00:00",
+          "completedAt": "2026-08-20T06:51:34.406472300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T14:51:34Z"
+        },
+        {
+          "id": 491,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-14-7c712c30-9279-4bfe-89f5-86bf2105c279",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 20500,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 58602,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T06:47:08.022620+00:00",
+          "completedAt": "2026-08-20T06:47:29.072046800+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T14:47:29Z"
+        },
+        {
+          "id": 486,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-12-66bc9116-5c60-4a66-94ff-05da4e904ad7",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 114909,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 105887,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/前端原型与Smoke测试计划-2026-08-20.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T06:37:03.776340800+00:00",
+          "completedAt": "2026-08-20T06:38:59.003343900+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T14:38:59Z"
+        },
+        {
+          "id": 485,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "01a01db9-4edf-74f2-858d-8e19cfec0cbd",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01db9-4edf-74f2-858d-8e19cfec0cbd",
+          "subagentType": "atlas-sdd:3-program-design-agent",
+          "model": "arch-kimi-for-coding",
+          "description": "特规津贴详细设计",
+          "status": "completed",
+          "success": true,
+          "durationMs": 2842465,
+          "toolCalls": 112,
+          "turns": 1,
+          "tokensUsed": 93722,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T05:51:22.387808200+00:00",
+          "completedAt": "2026-08-20T06:38:41.575239+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T14:38:41Z"
+        },
+        {
+          "id": 477,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-11-cae543e3-5cb5-4e02-9f46-d20d8318b947",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 683784,
+          "toolCalls": 2,
+          "turns": 1,
+          "tokensUsed": 145078,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T05:50:20.368654500+00:00",
+          "completedAt": "2026-08-20T06:01:44.632057300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T14:01:44Z"
+        },
+        {
+          "id": 476,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-10-a3525f4b-3375-4678-9062-c85e5aaca402",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 93643,
+          "toolCalls": 5,
+          "turns": 1,
+          "tokensUsed": 267691,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/特规津贴详细设计计划-2026-08-20.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T05:47:57.965431500+00:00",
+          "completedAt": "2026-08-20T05:49:33.368128700+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T13:49:34Z"
+        },
+        {
+          "id": 475,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-9-00936663-691e-4f72-bcd1-022312e050ba",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 30211,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 42859,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T05:45:31.801596100+00:00",
+          "completedAt": "2026-08-20T05:46:02.503702300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T13:46:02Z"
+        },
+        {
+          "id": 474,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-8-3030d365-f870-47e6-a206-0a4305dd8dee",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 74245,
+          "toolCalls": 4,
+          "turns": 1,
+          "tokensUsed": 204087,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/特规津贴详细设计计划-2026-08-20.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T05:39:55.739958700+00:00",
+          "completedAt": "2026-08-20T05:41:10.464566200+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T13:41:10Z"
+        },
+        {
+          "id": 473,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-7-18414454-e304-489f-9543-2e5c7bd1df6b",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 31266,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 74726,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T05:39:07.653517300+00:00",
+          "completedAt": "2026-08-20T05:39:39.976249700+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T13:39:40Z"
+        },
+        {
+          "id": 459,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-6-4c0ca519-63fa-451a-91ba-c899b0d0ed72",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 25466,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 70720,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/特规津贴详细设计计划-2026-08-20.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T05:07:01.070324100+00:00",
+          "completedAt": "2026-08-20T05:07:26.945183300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T13:07:27Z"
+        },
+        {
+          "id": 455,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-5-9e804a5f-97b2-4b20-be33-27bf76b52015",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 33087,
+          "toolCalls": 1,
+          "turns": 1,
+          "tokensUsed": 63226,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T05:04:26.549462+00:00",
+          "completedAt": "2026-08-20T05:05:00.596368500+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T13:05:00Z"
+        },
+        {
+          "id": 453,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-4-4673c071-c728-4ff2-bb28-22eb28f338db",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 538892,
+          "toolCalls": 24,
+          "turns": 1,
+          "tokensUsed": 3816940,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/特规津贴详细设计计划-2026-08-20.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T03:50:42.814387900+00:00",
+          "completedAt": "2026-08-20T03:59:43.360174600+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T11:59:43Z"
+        },
+        {
+          "id": 442,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-3-c33f77e1-4a82-42cb-bcff-30e8a523014f",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 159320,
+          "toolCalls": 9,
+          "turns": 1,
+          "tokensUsed": 1545318,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/特规津贴详细设计计划-2026-08-20.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T03:43:03.357683600+00:00",
+          "completedAt": "2026-08-20T03:45:43.269504200+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T11:45:43Z"
+        },
+        {
+          "id": 434,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-2-347b6ec1-59c0-4726-aa64-6f20f9dca2bc",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 213162,
+          "toolCalls": 13,
+          "turns": 1,
+          "tokensUsed": 2066149,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/特规津贴详细设计计划-2026-08-20.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T03:34:21.549765100+00:00",
+          "completedAt": "2026-08-20T03:37:56.726688+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T11:37:56Z"
+        },
+        {
+          "id": 427,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-1-fa74de88-9d93-41eb-a8d3-ef8294ca420b",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 91377,
+          "toolCalls": 4,
+          "turns": 1,
+          "tokensUsed": 711601,
+          "artifacts": [
+            {
+              "path": ".claude/plans/2026-08-20/特规津贴详细设计计划-2026-08-20.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T03:25:00.217432100+00:00",
+          "completedAt": "2026-08-20T03:26:32.698360300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T11:26:32Z"
+        },
+        {
+          "id": 426,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-0-c7f31b5c-8fab-4c2a-8c32-6ff206851f38",
+          "parentSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "childSessionId": "01a01d1e-273c-77a0-9aa6-7a9c9d2d7992",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 576868,
+          "toolCalls": 36,
+          "turns": 1,
+          "tokensUsed": 3237445,
+          "artifacts": [
+            {
+              "path": ".claude/tmp_extract_proto.js",
+              "kind": "code"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\.claude\\plans\\2026-08-20\\特规津贴详细设计计划-2026-08-20.md",
+              "kind": "doc"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\.claude\\tmp_analyze_proto.js",
+              "kind": "code"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\.claude\\tmp_extract_proto.js",
+              "kind": "code"
+            }
+          ],
+          "artifactCount": 4,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T03:07:04.926968800+00:00",
+          "completedAt": "2026-08-20T03:16:43.735673100+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T11:16:43Z"
+        },
+        {
+          "id": 415,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-8-d939f998-73d5-4dbb-a5df-4894cad7786b",
+          "parentSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "childSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 104816,
+          "toolCalls": 8,
+          "turns": 1,
+          "tokensUsed": 611145,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T02:41:07.219818300+00:00",
+          "completedAt": "2026-08-20T02:42:52.814437700+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T10:42:52Z"
+        },
+        {
+          "id": 414,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-7-a5ba4f78-f344-4433-befc-d364535591e1",
+          "parentSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "childSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 21796,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 148899,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T02:40:05.789677700+00:00",
+          "completedAt": "2026-08-20T02:40:29.721666900+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T10:40:29Z"
+        },
+        {
+          "id": 413,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-6-3650d2f1-2372-470b-8148-0a4d26aada90",
+          "parentSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "childSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 49053,
+          "toolCalls": 3,
+          "turns": 1,
+          "tokensUsed": 576164,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\XCT\\.atlas\\skills\\migrate-cctoatlas-test\\SKILL.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T02:36:04.410564300+00:00",
+          "completedAt": "2026-08-20T02:36:53.834050500+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T10:36:53Z"
+        },
+        {
+          "id": 412,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-5-ed6d2cc8-2c2c-416f-8154-fadd2a34eb9f",
+          "parentSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "childSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 223169,
+          "toolCalls": 4,
+          "turns": 1,
+          "tokensUsed": 653667,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\XCT\\.atlas\\skills\\migrage-cctoatlas-test\\SKILL.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 1,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T02:30:32.553088700+00:00",
+          "completedAt": "2026-08-20T02:34:16.248092100+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T10:34:16Z"
+        },
+        {
+          "id": 410,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-4-89de72b4-2d80-4671-b143-177d2310f1e9",
+          "parentSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "childSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 100288,
+          "toolCalls": 2,
+          "turns": 1,
+          "tokensUsed": 377976,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T02:28:12.399235600+00:00",
+          "completedAt": "2026-08-20T02:29:52.948962300+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T10:29:52Z"
+        },
+        {
+          "id": 406,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-3-d08065bb-793a-4b99-bdd4-b31b73c9c12d",
+          "parentSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "childSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 14822,
+          "toolCalls": 0,
+          "turns": 1,
+          "tokensUsed": 125316,
+          "artifacts": [],
+          "artifactCount": 0,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T02:27:13.844034+00:00",
+          "completedAt": "2026-08-20T02:27:29.120565900+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T10:27:28Z"
+        },
+        {
+          "id": 405,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-2-55684e0f-b16b-4d01-bc8e-e21320746894",
+          "parentSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "childSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 148766,
+          "toolCalls": 8,
+          "turns": 1,
+          "tokensUsed": 969690,
+          "artifacts": [
+            {
+              "path": "C:\\Users\\XCT\\.atlas\\memory\\MEMORY.md",
+              "kind": "doc"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\.atlas\\memory-import-guide.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 2,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T02:22:48.639110+00:00",
+          "completedAt": "2026-08-20T02:25:17.925857700+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T10:25:17Z"
+        },
+        {
+          "id": 404,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-1-d178d212-1844-41f2-af2c-6707759600de",
+          "parentSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "childSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 457809,
+          "toolCalls": 44,
+          "turns": 1,
+          "tokensUsed": 2091715,
+          "artifacts": [
+            {
+              "path": "E:\\CMS_WS\\csa\\.atlas\\AGENTS.md",
+              "kind": "doc"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\.atlas\\memory-import-guide.md",
+              "kind": "doc"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\.atlas\\memory-seed.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 3,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T02:14:53.915293100+00:00",
+          "completedAt": "2026-08-20T02:22:32.079517200+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T10:22:31Z"
+        },
+        {
+          "id": 402,
+          "userId": "xiechentao",
+          "email": "xiechentao@myai.tech",
+          "subagentId": "main-turn-0-d36a9028-f750-4286-834e-fd0d4506d0b0",
+          "parentSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "childSessionId": "01a01ce5-bb2c-7161-86a8-551fe0e3395b",
+          "subagentType": "grok-build-plan",
+          "model": "arch-kimi-for-coding",
+          "description": "<user_query>",
+          "status": "completed",
+          "success": true,
+          "durationMs": 761148,
+          "toolCalls": 43,
+          "turns": 1,
+          "tokensUsed": 1838650,
+          "artifacts": [
+            {
+              "path": "E:\\CMS_WS\\csa\\.atlas\\AGENTS.md",
+              "kind": "doc"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\.atlas\\config.toml",
+              "kind": "code"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\.atlas\\config.toml.example",
+              "kind": "other"
+            },
+            {
+              "path": "E:\\CMS_WS\\csa\\.atlas\\memory-seed.md",
+              "kind": "doc"
+            }
+          ],
+          "artifactCount": 4,
+          "cwd": "E:\\CMS_WS\\csa",
+          "startedAt": "2026-08-20T02:02:12.149747700+00:00",
+          "completedAt": "2026-08-20T02:14:53.610061+00:00",
+          "clientIp": "10.218.220.127",
+          "clientVersion": "0.2.130",
+          "createdAt": "2026-08-20T10:14:53Z"
+        }
+      ]
+    }
+  ],
+  "unresolvedEmails": [
+    "xiechengtao",
+    "xiechentao"
+  ]
+}

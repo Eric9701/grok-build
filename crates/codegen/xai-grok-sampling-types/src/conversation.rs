@@ -636,6 +636,49 @@ impl ConversationRequest {
     pub fn strip_images(&mut self) -> Vec<Arc<str>> {
         strip_images_where(&mut self.items, |_| true)
     }
+
+    /// GLM / Kimi Chat Completions reject `image_url` (`messages.content.type`
+    /// must be `text`). Drop images before they hit the wire.
+    pub fn strip_images_for_text_only_chat_completions(&mut self) {
+        if chat_completions_rejects_image_url(self.model.as_deref()) {
+            let _ = self.strip_images();
+        }
+    }
+}
+
+/// True when this Chat Completions slug cannot accept `content.type=image_url`.
+///
+/// Zhipu GLM-5 returns `messages.content.type 参数非法，取值范围 ['text']`.
+/// Vision slugs (`glm-5v`, `glm-4.6v`, `*vision*`) keep images.
+pub fn chat_completions_rejects_image_url(model: Option<&str>) -> bool {
+    let Some(model) = model else {
+        return false;
+    };
+    let m = model.to_ascii_lowercase();
+    glm_chat_completions_is_text_only(&m) || kimi_chat_completions_is_text_only(&m)
+}
+
+fn glm_chat_completions_is_text_only(m: &str) -> bool {
+    if !(m.contains("glm") || m.contains("zhipu")) {
+        return false;
+    }
+    if m.contains("vision") || m.contains("vlm") || m.contains("-vl") || m.contains("_vl") {
+        return false;
+    }
+    let Some(idx) = m.find("glm") else {
+        // `zhipu-*` routing names without `glm` are still GLM text by default.
+        return true;
+    };
+    let rest = m[idx + 3..].trim_start_matches(['-', '_']);
+    let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.');
+    !rest.starts_with('v')
+}
+
+fn kimi_chat_completions_is_text_only(m: &str) -> bool {
+    if !(m.contains("kimi") || m.contains("moonshot")) {
+        return false;
+    }
+    !(m.contains("vision") || m.contains("vlm") || m.contains("-vl") || m.contains("_vl"))
 }
 
 /// Strip only `urls`. Unlisted images (compaction, newer turns) stay.
@@ -4779,6 +4822,20 @@ mod tests {
         assert_eq!(calls[1].id.as_ref(), "call_anon2");
         assert_eq!(calls[2].id.as_ref(), ":1");
         assert_eq!(uniquify_tool_calls(&mut calls), 0);
+    }
+
+    #[test]
+    fn chat_completions_rejects_image_url_glm_text_keeps_vision() {
+        assert!(chat_completions_rejects_image_url(Some("glm-5")));
+        assert!(chat_completions_rejects_image_url(Some("GLM-5.2")));
+        assert!(chat_completions_rejects_image_url(Some("glm-4.5-air")));
+        assert!(chat_completions_rejects_image_url(Some("kimi-k2.5")));
+        assert!(chat_completions_rejects_image_url(Some("moonshot-v1")));
+        assert!(!chat_completions_rejects_image_url(Some("glm-5v")));
+        assert!(!chat_completions_rejects_image_url(Some("glm-4.6v")));
+        assert!(!chat_completions_rejects_image_url(Some("glm-5v-turbo")));
+        assert!(!chat_completions_rejects_image_url(Some("grok-4")));
+        assert!(!chat_completions_rejects_image_url(None));
     }
 
     // ========== strip_images tests ==========

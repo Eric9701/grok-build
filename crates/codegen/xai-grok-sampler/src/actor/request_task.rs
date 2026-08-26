@@ -417,6 +417,12 @@ async fn apply_retry_decision(
                     error_code: Some(ApiErrorCode::InvalidImage),
                     ..
                 } if status.as_u16() == 400 => StripReason::ServerRejected,
+                SamplingError::Api { status, message, .. }
+                    if status.as_u16() == 400 && err.is_image_processing_error()
+                        && message.contains("messages.content.type") =>
+                {
+                    StripReason::UnsupportedContentType
+                }
                 SamplingError::Api { .. }
                 | SamplingError::StreamError { .. }
                 | SamplingError::Auth { .. }

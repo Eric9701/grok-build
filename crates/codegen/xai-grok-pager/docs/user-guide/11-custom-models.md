@@ -14,6 +14,14 @@ List all available models:
 atlas models
 ```
 
+Admin 刚改完模型分配、或本地目录看起来过期时，立刻从远程拉一次（作废 5 分钟磁盘缓存并同步 `config.toml`）：
+
+```bash
+atlas models refresh
+```
+
+会话内等价斜杠：`/refresh-model`（别名 `/refresh-models`）。刷新后再用 `/model` 选择器即可看到新目录。
+
 ---
 
 ## Selecting a Model
@@ -344,8 +352,12 @@ supports_backend_search = true
 # List available models (including custom)
 atlas models
 
+# Force-refresh the catalog from the remote server
+atlas models refresh
+
 # Use in the TUI via slash command
 /model my-model
+/refresh-model
 
 # Use in headless mode
 atlas -p "Hello" -m my-model

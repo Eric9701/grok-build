@@ -1,0 +1,5 @@
+interface:
+  display_name: "User Work Profile"
+  short_description: "Task-report 工作画像（单人/多人）"
+policy:
+  allow_implicit_invocation: false

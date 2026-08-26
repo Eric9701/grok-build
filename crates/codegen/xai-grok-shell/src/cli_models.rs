@@ -60,7 +60,26 @@ pub async fn list_models(
     client_type: &str,
     client_version: &str,
 ) -> Result<acp::SessionModelState> {
-    let _init: acp::InitializeResponse = acp_send(
+    initialize_models_channel(acp_tx, client_type, client_version).await?;
+    fetch_model_state(acp_tx).await
+}
+
+/// Force-refresh the remote catalog, then return the updated model state.
+pub async fn refresh_models(
+    acp_tx: &AcpAgentTx,
+    client_type: &str,
+    client_version: &str,
+) -> Result<acp::SessionModelState> {
+    initialize_models_channel(acp_tx, client_type, client_version).await?;
+    fetch_refresh_state(acp_tx).await
+}
+
+async fn initialize_models_channel(
+    acp_tx: &AcpAgentTx,
+    client_type: &str,
+    client_version: &str,
+) -> Result<acp::InitializeResponse> {
+    Ok(acp_send(
         acp::InitializeRequest::new(acp::ProtocolVersion::V1)
             .client_capabilities(
                 acp::ClientCapabilities::new()
@@ -77,19 +96,25 @@ pub async fn list_models(
             ),
         acp_tx,
     )
-    .await?;
-
-    fetch_model_state(acp_tx).await
+    .await?)
 }
 
 /// Fetch model state via `x.ai/models/list` over an initialized channel.
 pub async fn fetch_model_state(acp_tx: &AcpAgentTx) -> Result<acp::SessionModelState> {
+    catalog_ext_request(acp_tx, "x.ai/models/list").await
+}
+
+/// Force-refresh via `x.ai/models/refresh` over an initialized channel.
+pub async fn fetch_refresh_state(acp_tx: &AcpAgentTx) -> Result<acp::SessionModelState> {
+    catalog_ext_request(acp_tx, "x.ai/models/refresh").await
+}
+
+async fn catalog_ext_request(
+    acp_tx: &AcpAgentTx,
+    method: &str,
+) -> Result<acp::SessionModelState> {
     let params = serde_json::value::to_raw_value(&serde_json::json!({}))?;
-    let resp: acp::ExtResponse = acp_send(
-        acp::ExtRequest::new("x.ai/models/list", params.into()),
-        acp_tx,
-    )
-    .await?;
+    let resp: acp::ExtResponse = acp_send(acp::ExtRequest::new(method, params.into()), acp_tx).await?;
     parse_models_list_response(resp.0.get())
 }
 
@@ -99,7 +124,7 @@ fn parse_models_list_response(raw: &str) -> Result<acp::SessionModelState> {
     let parsed: crate::session::ExtMethodResult<acp::SessionModelState> =
         serde_json::from_str(raw)?;
     if let Some(err) = parsed.error {
-        anyhow::bail!("models/list failed: {err}");
+        anyhow::bail!("models catalog request failed: {err}");
     }
     parsed
         .result

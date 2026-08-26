@@ -82,6 +82,17 @@ impl SessionActor {
                 ok_end_turn(0, None)
             }
             BuiltinAction::ContextInfo => ok_end_turn(0, None),
+            BuiltinAction::RefreshModels => {
+                let msg = match self.models_manager.force_refresh().await {
+                    Ok(n) => {
+                        let noun = if n == 1 { "model" } else { "models" };
+                        format!("Refreshed {n} {noun} from remote.")
+                    }
+                    Err(e) => format!("Could not refresh models: {e}"),
+                };
+                self.send_host_turn_slash_command_output(&msg).await;
+                ok_end_turn(0, None)
+            }
             BuiltinAction::HooksTrust => {
                 let msg = match Self::do_hooks_trust_project(&self.session_info.cwd) {
                     Ok(root) => {

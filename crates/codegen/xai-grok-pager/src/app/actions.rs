@@ -591,6 +591,8 @@ pub enum Action {
     /// session and persists via `Effect::PersistSetting`. Does not
     /// carry effort — use `Action::SwitchModel` for that.
     SetDefaultModel(acp::ModelId),
+    /// Force-refresh the remote model catalog (`/refresh-model`).
+    RefreshModels,
     /// Clear the persisted default model (`cfg.models.default = None`).
     /// Active session's model is unchanged; next session resolves
     /// via the shell's default-resolution chain.
@@ -2278,6 +2280,8 @@ pub enum Effect {
         target: DoctorFixTarget,
         plan: Box<crate::diagnostics::FixPlan>,
     },
+    /// Force-refresh the remote model catalog via `x.ai/models/refresh`.
+    RefreshModels,
 }
 /// Wire params for `x.ai/session/rename`. Shared with the effect executor
 /// so dispatch tests can pin the exact camelCase payload.
@@ -3139,6 +3143,10 @@ pub enum TaskResult {
     DoctorFixApplied {
         target: DoctorFixTarget,
         result: Result<crate::diagnostics::FixOutcome, String>,
+    },
+    /// `x.ai/models/refresh` completed.
+    ModelsRefreshed {
+        result: Result<usize, String>,
     },
 }
 #[cfg(test)]
