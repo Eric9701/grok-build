@@ -345,7 +345,7 @@ explore = true                        # enable/disable specific types
 plan = false
 
 [subagents.models]
-explore = "grok-build"               # route to different models
+explore = "grok-4.6"               # route to different models
 ```
 
 To pin the model a subagent uses, set its entry under `[subagents.models]`.
@@ -628,7 +628,7 @@ auth_token_ttl = 3600
 default = "company-grok"
 
 [model.company-grok]
-model = "grok-build"
+model = "grok-4.6"
 base_url = "https://grok-proxy.acme.com/"
 name = "Atlas Build Latest (Proxy)"
 context_window = 128000

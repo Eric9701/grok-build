@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-pub use xai_grok_home::{default_grok_home, grok_home, user_grok_home};
+pub use xai_dirs::{default_grok_home, grok_home, user_grok_home};
 
 /// Project-local config directory name (preferred).
 pub const PROJECT_DIR_NAME: &str = ".atlas";

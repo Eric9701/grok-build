@@ -294,10 +294,23 @@ Upsert-TomlSection $ConfigFile 'endpoints' @('cli_chat_proxy_base_url', 'cli_upd
 
 if ($env:GROK_DEPLOYMENT_KEY) {
     $ProxyUrl = if ($env:GROK_PROXY_URL) { $env:GROK_PROXY_URL } else { $ProxyUrlDefault }
+    # Refuse userinfo / empty-host proxies before attaching the key.
+    # Atlas enterprise may use an internal HTTP atlas-server; https is not required.
+    try {
+        $proxyUri = [Uri]$ProxyUrl
+    } catch {
+        Write-Error "GROK_PROXY_URL must be an http:// or https:// URL."
+        exit 1
+    }
+    if (-not $proxyUri.IsAbsoluteUri -or ($proxyUri.Scheme -ne 'https' -and $proxyUri.Scheme -ne 'http') -or -not $proxyUri.Host -or $proxyUri.UserInfo) {
+        Write-Error "GROK_PROXY_URL must be an http:// or https:// URL."
+        exit 1
+    }
     Write-Host '  Fetching deployment config...' -ForegroundColor DarkGray
     try {
         $headers = @{ 'Authorization' = "Bearer $($env:GROK_DEPLOYMENT_KEY)" }
-        $deployResponse = Invoke-RestMethod -Uri "$ProxyUrl/deployment/config" -Headers $headers -UseBasicParsing
+        # IRM follows redirects and would resend the Bearer token.
+        $deployResponse = Invoke-RestMethod -Uri "$ProxyUrl/deployment/config" -Headers $headers -UseBasicParsing -MaximumRedirection 0
     } catch {
         Write-Host "  Warning: failed to fetch deployment config from $ProxyUrl/deployment/config" -ForegroundColor Yellow
         $deployResponse = $null
