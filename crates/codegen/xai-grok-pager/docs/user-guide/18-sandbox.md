@@ -15,7 +15,7 @@ grok --sandbox workspace
 # Read-only mode (read everywhere, write only to ~/.atlas/ + temp dirs)
 grok --sandbox read-only
 
-# Most restrictive profile (read CWD + system paths, write CWD + temp dirs + ~/.atlas/, no child network)
+# Most restrictive profile (read CWD + system paths + ~/.atlas, write CWD + ~/.atlas/sessions + temp dirs, no child network)
 grok --sandbox strict
 ```
 
@@ -23,13 +23,13 @@ grok --sandbox strict
 
 ## Built-in Profiles
 
-| Profile               | FS Read            | FS Write                                       | Child Network | Use Case                          |
-| --------------------- | ------------------ | ---------------------------------------------- | ------------- | --------------------------------- |
-| `off` (default)       | Unrestricted       | Unrestricted                                   | Unrestricted  | No sandbox                        |
-| `workspace`           | Everywhere         | CWD + `~/.atlas/` + `/tmp` + `/var/tmp`         | Allowed       | Normal development                |
-| `devbox`              | Everywhere         | All top-level dirs except `/data`              | Allowed       | Disposable dev VMs                |
-| `read-only`           | Everywhere         | `~/.atlas/` + `/tmp` + `/var/tmp`               | Blocked¹      | Exploration, code review          |
-| `strict`              | CWD + system paths | CWD + `~/.atlas/` + `/tmp` + `/var/tmp`         | Blocked¹      | Untrusted code                    |
+| Profile               | FS Read                         | FS Write                                        | Child Network | Use Case                          |
+| --------------------- | ------------------------------- | ----------------------------------------------- | ------------- | --------------------------------- |
+| `off` (default)       | Unrestricted                    | Unrestricted                                    | Unrestricted  | No sandbox                        |
+| `workspace`           | Everywhere                      | CWD + `~/.atlas/` + `/tmp` + `/var/tmp`          | Allowed       | Normal development                |
+| `devbox`              | Everywhere                      | All top-level dirs except `/data`               | Allowed       | Disposable dev VMs                |
+| `read-only`           | Everywhere                      | `~/.atlas/` + `/tmp` + `/var/tmp`                | Blocked¹      | Exploration, code review          |
+| `strict`              | CWD + system paths + `~/.atlas` | CWD + `~/.atlas/sessions` + `/tmp` + `/var/tmp`  | Blocked¹      | Untrusted code                    |
 
 ¹ Child-network blocking is enforced on **Linux only** (via seccomp). On macOS it is a no-op — these profiles do not restrict child-process network there.
 
@@ -43,11 +43,11 @@ To block specific files (e.g. `.env` or credential paths) on top of a profile, d
 
 **read-only** -- Use when you want the agent to analyze code without modifying your project files. The agent can read everything but can only write to `~/.atlas/` (needed for session persistence) and temp directories. Child-process network access is blocked on Linux (no-op on macOS).
 
-**strict** -- The most restrictive profile, for reviewing untrusted code. The agent can only read files within the current working directory and essential system paths. Writes are limited to CWD, `~/.atlas/`, and temp directories. Child-process network access is blocked on Linux (no-op on macOS).
+**strict** -- The most restrictive profile, for reviewing untrusted code. The agent can read the current working directory, essential system paths, and `~/.atlas`. Writes are limited to CWD, `~/.atlas/sessions`, and temp directories — not the whole `~/.atlas` tree. Child-process network access is blocked on Linux (no-op on macOS).
 
 ### Direct global hook write protection
 
-Under `workspace`, `read-only`, and `strict` (and custom profiles that extend those bases), the Grok state directory remains writable for session/runtime files, but the kernel **write-denies** the Grok-owned direct disk paths used as user-global hook sources (they stay readable):
+Under `workspace`, `read-only`, and `strict` (and custom profiles that extend those bases), the kernel **write-denies** the Grok-owned direct disk paths used as user-global hook sources (they stay readable when granted). Built-in `strict` can read `~/.atlas` (hooks stay readable); writes are CWD + `~/.atlas/sessions` + temp, not the whole tree. Write-deny still applies where the profile grants write:
 
 - `~/.atlas/hooks/` (hook directory)
 - `~/.atlas/hooks-paths` (registry file; not loaded as hook JSON — only its absolute targets are)
@@ -251,7 +251,7 @@ The default (`inherit = "all"`, `ignore_default_excludes = true`) leaves the env
 
 ## Event Logging
 
-Sandbox events are logged to `~/.atlas/sandbox-events.jsonl` for debugging. Events include:
+Sandbox events are logged to `~/.atlas/sessions` for debugging. Events include:
 
 - Profile applied (which profile, timestamp)
 - Violations (attempted access to denied paths)

@@ -167,6 +167,10 @@ New-Item -ItemType Directory -Path $DownloadDir -Force | Out-Null
 New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 
 $Channel = if ($env:GROK_CHANNEL) { $env:GROK_CHANNEL } else { 'stable' }
+if ($Channel -cnotmatch '^(stable|alpha|enterprise)$') {
+    Write-Error "Invalid GROK_CHANNEL: '$Channel' (expected stable, alpha, or enterprise)"
+    exit 1
+}
 
 if (-not $Version) { Write-Host "Fetching latest $Channel version from $BaseUrl..." -ForegroundColor DarkGray }
 $probeResult = Download-String "$BaseUrl/$Channel"
@@ -245,8 +249,10 @@ try {
 
 $ConfigFile = Join-Path $GrokDir 'config.toml'
 $cliLines = @('installer = "internal"')
-if ($Channel -ne 'stable') {
-    $cliLines += "channel = `"$Channel`""
+if ($Channel -ceq 'alpha') {
+    $cliLines += 'channel = "alpha"'
+} elseif ($Channel -ceq 'enterprise') {
+    $cliLines += 'channel = "enterprise"'
 }
 $endpointLines = @(
     "cli_chat_proxy_base_url = `"$ProxyUrlDefault`"",

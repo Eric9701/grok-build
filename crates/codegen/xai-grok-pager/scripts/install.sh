@@ -210,6 +210,13 @@ mkdir -p "$DOWNLOAD_DIR" "$BIN_DIR"
 
 platform="${os}-${arch}"
 CHANNEL="${GROK_CHANNEL:-stable}"
+case "$CHANNEL" in
+    stable|alpha|enterprise) ;;
+    *)
+        echo "Invalid GROK_CHANNEL: '${CHANNEL}' (expected stable, alpha, or enterprise)" >&2
+        exit 1
+        ;;
+esac
 
 if [ -z "$TARGET" ]; then echo "Fetching latest ${CHANNEL} version from ${BASE_URL}..." >&2; fi
 probe_result=$(download_file "${BASE_URL}/${CHANNEL}" 2>/dev/null) || true
