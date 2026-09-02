@@ -394,7 +394,7 @@ describe("session rows (regression: only the label was clickable)", () => {
     const meta = doc.querySelector(".history-row .history-row-meta") as HTMLElement;
     click(window, meta); // a non-label part of the row
 
-    expect(posted).toContainEqual({ type: "resumeSession", id: "s1" });
+    expect(posted).toContainEqual({ type: "resumeSession", id: "s1", cwd: undefined, claim: true });
   });
 
   it("delete button opens the in-page confirm; confirming posts deleteSession, no resume", async () => {
@@ -503,7 +503,7 @@ describe("session rows (regression: only the label was clickable)", () => {
     click(window, rows[1] as HTMLElement);
 
     expect(posted.filter((p) => p.type === "resumeSession")).toEqual([
-      { type: "resumeSession", id: "s2", cwd: undefined },
+      { type: "resumeSession", id: "s2", cwd: undefined, claim: true },
     ]);
     expect(doc.getElementById("session-name-label")!.textContent).toBe("Refactor parser");
     expect((doc.querySelector(".msg.user") as HTMLElement).hidden).toBe(true);
@@ -1252,17 +1252,38 @@ describe("provider onboarding", () => {
     expect(posted).toEqual([]);
   });
 
-  it("shows desk sign-in guidance remotely and posts no provider-management action", () => {
+  it("offers a remote sign-in on every provider panel, and still no sign-out", () => {
+    // This test used to assert the opposite — "Sign in at the desk", and zero
+    // buttons — which was correct while `runGrokLogin` opened a terminal a
+    // remote could not see. The host now runs the CLI's headless device-code
+    // flow for a remote request, so a dead end became an offer.
+    //
+    // What has NOT changed, and is the half still worth pinning: a remote is
+    // offered no way to sign OUT, on any of these panels.
+    //
+    // The capability is not decoration here. Without it this panel falls back
+    // to the old desk-only guidance on purpose, because a host that predates
+    // remote sign-in drops the request silently — see
+    // test/remote-device-login.dom.test.ts for that half.
     const { window, doc, posted } = bootWebview({ remote: true });
+    dispatch(window, {
+      type: "initialState",
+      effort: "", cwd: "/w", useCtrlEnter: false, extVersion: "3.18.0",
+      showThinking: false, expandCommandOutputs: false, steerByDefault: false,
+      soundNotifications: false, processingSound: false, readRepliesAloud: false,
+      capabilities: { remoteAgentSignIn: true },
+    });
+    posted.length = 0;
 
     for (const state of ["connect-agent", "auth-required", "codex-login", "claude-login"] as const) {
       dispatch(window, { type: "onboarding", state });
       const onboarding = doc.getElementById("welcome-onboarding")!;
-      expect(onboarding.textContent).toContain("Sign in at the desk");
-      expect(onboarding.textContent).toContain("computer running this workspace");
-      expect(onboarding.querySelectorAll("button")).toHaveLength(0);
+      expect(onboarding.textContent).not.toContain("Sign in at the desk");
+      expect(onboarding.querySelectorAll('[data-act="connectRemote"]').length).toBeGreaterThan(0);
+      expect(onboarding.querySelectorAll('[data-act="logout"]')).toHaveLength(0);
     }
 
+    // Nothing is posted until something is pressed.
     expect(types(posted)).not.toContain("runGrokLogin");
     expect(types(posted)).not.toContain("logout");
   });
@@ -3155,6 +3176,11 @@ describe("gear entry: Move view (Settings → Advanced)", () => {
 describe("context popover (donut click, #39)", () => {
   it("opens on donut click with the context line, closes on outside click", () => {
     const { window, doc, posted } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, { type: "promptComplete", meta: { totalTokens: 44123 } });
 
     click(window, $(doc, "donut"));
@@ -3169,6 +3195,11 @@ describe("context popover (donut click, #39)", () => {
 
   it("renders a structured session/info breakdown without changing adapter occupancy", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, { type: "contextUsage", used: 16017, window: 512000 });
     dispatch(window, {
       type: "contextUsage",
@@ -3209,6 +3240,11 @@ describe("context popover (donut click, #39)", () => {
     // Authoritative 100 / 10 system / 80 messages → overhead 10. Keep the
     // group (overhead stays 10, not an invented 40) and re-fetch session/info.
     const { window, doc, posted } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "contextUsage",
       used: 100,
@@ -3246,6 +3282,11 @@ describe("context popover (donut click, #39)", () => {
 
   it("keeps the snapshot when a used-only frame restates the same used", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "contextUsage",
       used: 100,
@@ -3264,6 +3305,11 @@ describe("context popover (donut click, #39)", () => {
 
   it("keeps the snapshot after promptComplete moves used and re-fetches session/info", () => {
     const { window, doc, posted } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "contextUsage",
       used: 100,
@@ -3286,6 +3332,11 @@ describe("context popover (donut click, #39)", () => {
 
   it("shows Reasoning/overhead only when used exceeds system + messages", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "contextUsage",
       used: 25000,
@@ -3307,6 +3358,11 @@ describe("context popover (donut click, #39)", () => {
 
   it("labels Tool definitions with the CLI's tool count when present", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "contextUsage",
       used: 24273,
@@ -3329,6 +3385,11 @@ describe("context popover (donut click, #39)", () => {
 
   it("labels Claude and Codex occupancy as context used, not last prompt", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "session",
       sessionId: "s1",
@@ -3347,6 +3408,11 @@ describe("context popover (donut click, #39)", () => {
 
   it("offers Compact, disabled until there is context to compact", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     click(window, $(doc, "donut"));
     const pop = $(doc, "context-popover");
     const act = pop.querySelector(".context-compact") as HTMLElement;
@@ -3363,6 +3429,11 @@ describe("context popover (donut click, #39)", () => {
 
   it("Compact sends /compact bare once there is context", () => {
     const { window, doc, posted } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, { type: "promptComplete", meta: { totalTokens: 44123 } });
     click(window, $(doc, "donut"));
     const act = $(doc, "context-popover").querySelector(".context-compact") as HTMLElement;
@@ -3375,6 +3446,11 @@ describe("context popover (donut click, #39)", () => {
 describe("context popover — usage breakdown (#53)", () => {
   it("shows no usage rows until the CLI reports usage", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, { type: "promptComplete", meta: { totalTokens: 1000 } });
     click(window, $(doc, "donut"));
     const txt = $(doc, "context-popover").textContent!;
@@ -3387,6 +3463,11 @@ describe("context popover — usage breakdown (#53)", () => {
 
   it("leads with Session total and never shows a cache-creation row", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "usage",
       turn: { inputTokens: 16394, outputTokens: 160, cachedReadTokens: 16256, reasoningTokens: 127 },
@@ -3406,6 +3487,11 @@ describe("context popover — usage breakdown (#53)", () => {
 
   it("Last turn is collapsed by default and expands on click", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "usage",
       turn: { inputTokens: 16394, outputTokens: 160, modelCalls: 3 },
@@ -3426,6 +3512,11 @@ describe("context popover — usage breakdown (#53)", () => {
 
   it("a restore-only session total (no turn yet) shows the session section alone", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     // Cold restore: the host seeds from ITS store, so there's no `turn`.
     dispatch(window, { type: "usage", session: { inputTokens: 500, outputTokens: 40 } });
     click(window, $(doc, "donut"));
@@ -3436,6 +3527,11 @@ describe("context popover — usage breakdown (#53)", () => {
 
   it("shows reported session and turn cost at Grok's 10^10-ticks-per-USD scale", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "usage",
       turn: { inputTokens: 16000, costUsdTicks: 80_000_000 },
@@ -3452,6 +3548,11 @@ describe("context popover — usage breakdown (#53)", () => {
 
   it("omits an incomplete session cost while retaining the current turn's cost", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "usage",
       turn: { inputTokens: 16000, costUsdTicks: 80_000_000 },
@@ -3475,6 +3576,11 @@ describe("context popover — usage breakdown (#53)", () => {
 
   it("clears both usage ledgers when the local view switches sessions", () => {
     const { window, doc } = bootWebview();
+    // The breakdown is a CODING-mode surface: knowledge work shows the number
+    // and Compact and stops, because the rows below are exactly the "tool
+    // details" that mode hides everywhere else. These tests are about the
+    // rows, so they must say which mode they are in.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "usage",
       turn: { inputTokens: 16000, costUsdTicks: 80_000_000 },
@@ -3986,6 +4092,7 @@ describe("remote tab session reconnect", () => {
       type: "resumeSession",
       id: "rejected",
       cwd: "/work/repo-b",
+      claim: true,
     });
     expect(JSON.parse(window.sessionStorage.getItem("atlas.remote.tabSession:default")!))
       .toMatchObject({ id: "current", repoCwd: "/work/repo-b" });

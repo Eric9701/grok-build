@@ -9,7 +9,9 @@ import * as path from "node:path";
 import {
   brandedDesktopProfilePath,
   brandedDesktopProfileStagingPath,
-  DEFAULT_PROJECT_DIRNAME,
+  DEFAULT_PROJECT_NAME,
+  LEGACY_PROJECT_ROOT_DIRNAME,
+  PROJECT_ROOT_DIRNAME,
   DESKTOP_PROFILE_DIRNAME,
   desktopProfileLooksOccupied,
   desktopUserHomeDir,
@@ -355,17 +357,20 @@ describe("desktop userData branding + legacy migration", () => {
 });
 
 describe("first-run default project paths", () => {
-  it("prefers <home>/Atlas and falls back INSIDE userData, never to its root", () => {
-    expect(DEFAULT_PROJECT_DIRNAME).toBe("Atlas");
-    expect(preferredDefaultProjectPath("/Users/sam")).toBe(path.join("/Users/sam", "Atlas"));
-    const profile = "/Users/sam/Library/Application Support/GrokBuildDesktop";
+  it("prefers <home>/<root>/<project> and falls back INSIDE userData, never to its root", () => {
+    // The root is a CONTAINER and the first-run folder is a PROJECT inside it.
+    // They used to be one directory doing both jobs, which is why the projects
+    // list showed a folder named after the tool.
+    expect(PROJECT_ROOT_DIRNAME).toBe("AFK Pilot");
+    expect(DEFAULT_PROJECT_NAME).toBe("My First Project");
+    expect(preferredDefaultProjectPath("/Users/sam"))
+      .toBe(path.join("/Users/sam", "AFK Pilot", "My First Project"));    const profile = "/Users/sam/Library/Application Support/GrokBuildDesktop";
     // The profile root holds config.json, globalStorage and the encrypted
     // device-token secrets. A default project must never BE that directory:
     // authorizing it as a workspace would put credentials inside the agent's
     // reach, and inside a linked remote's file API.
     expect(fallbackDefaultProjectPath(profile)).not.toBe(profile);
-    expect(fallbackDefaultProjectPath(profile)).toBe(path.join(profile, "Atlas"));
-  });
+    expect(fallbackDefaultProjectPath(profile)).toBe(path.join(profile, "My First Project"));  });
 
   it("reads USERPROFILE on Windows and HOME elsewhere", () => {
     expect(desktopUserHomeDir({ USERPROFILE: "C:\\Users\\sam", HOME: "/home/gitbash" }, "win32", () => "unused"))
@@ -375,8 +380,7 @@ describe("first-run default project paths", () => {
     expect(desktopUserHomeDir({}, "linux", () => "/fallback-home")).toBe("/fallback-home");
   });
 
-  it("creates ~/Atlas when that path is writable", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "grok-default-proj-"));
+  it("creates ~/AFK Pilot/My First Project when that path is writable", () => {    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "grok-default-proj-"));
     try {
       const home = path.join(tmp, "home");
       const userData = path.join(tmp, "userData");
@@ -384,8 +388,7 @@ describe("first-run default project paths", () => {
       fs.mkdirSync(userData);
       const out = provisionDefaultProjectDir({ homeDir: home, userDataDir: userData });
       expect(out?.usedFallback).toBe(false);
-      expect(out?.dir).toBe(path.resolve(home, "Atlas"));
-      expect(fs.statSync(out!.dir).isDirectory()).toBe(true);
+      expect(out?.dir).toBe(path.resolve(home, "AFK Pilot", "My First Project"));      expect(fs.statSync(out!.dir).isDirectory()).toBe(true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -398,17 +401,15 @@ describe("first-run default project paths", () => {
       const userData = path.join(tmp, "userData");
       fs.mkdirSync(home);
       fs.mkdirSync(userData);
-      // Occupied by a FILE — mkdir of that path fails, so the fallback wins.
-      fs.writeFileSync(path.join(home, "Atlas"), "not a directory");
-      const out = provisionDefaultProjectDir({ homeDir: home, userDataDir: userData });
+      // Occupied by a FILE — mkdir beneath it fails, so the fallback wins.
+      fs.writeFileSync(path.join(home, "AFK Pilot"), "not a directory");      const out = provisionDefaultProjectDir({ homeDir: home, userDataDir: userData });
       expect(out?.usedFallback).toBe(true);
       // The profile ROOT holds config.json, globalStorage and the encrypted
       // device-token secrets. Authorizing it as a workspace would let a prompt
       // — or a linked remote's file API — read or overwrite credentials.
       expect(out?.dir).not.toBe(path.resolve(userData));
-      expect(out?.dir).toBe(path.resolve(userData, "Atlas"));
-      expect(fs.statSync(path.join(home, "Atlas")).isFile()).toBe(true);
-    } finally {
+      expect(out?.dir).toBe(path.resolve(userData, "My First Project"));
+      expect(fs.statSync(path.join(home, "AFK Pilot")).isFile()).toBe(true);    } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -421,9 +422,8 @@ describe("first-run default project paths", () => {
       fs.mkdirSync(home);
       fs.mkdirSync(userData);
       // Both candidate paths occupied by files, so neither mkdir can succeed.
-      fs.writeFileSync(path.join(home, "Atlas"), "not a directory");
-      fs.writeFileSync(path.join(userData, "Atlas"), "not a directory");
-      // Null, not "some directory that happens to exist" — the caller then
+      fs.writeFileSync(path.join(home, "AFK Pilot"), "not a directory");
+      fs.writeFileSync(path.join(userData, "My First Project"), "not a directory");      // Null, not "some directory that happens to exist" — the caller then
       // leaves the open set empty and the user gets the empty-project state.
       expect(provisionDefaultProjectDir({ homeDir: home, userDataDir: userData })).toBeNull();
     } finally {
@@ -431,19 +431,162 @@ describe("first-run default project paths", () => {
     }
   });
 
-  it("uses an already-existing ~/Atlas rather than falling back", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "grok-default-exist-"));
+  it("KEEPS an existing ~/Grok Build as the root, so nobody's projects move", () => {    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "grok-default-exist-"));
     try {
       const home = path.join(tmp, "home");
       const userData = path.join(tmp, "userData");
-      const preferred = path.join(home, "Atlas");
-      fs.mkdirSync(preferred, { recursive: true });
+      // A machine that already has the old root keeps it forever. Renaming it
+      // would strand every project inside, and relocating somebody's work to
+      // improve a folder name is a bad trade at any quality of name.
+      expect(LEGACY_PROJECT_ROOT_DIRNAME).toBe("Grok Build");
+      const preferred = path.join(home, "Grok Build");      fs.mkdirSync(preferred, { recursive: true });
       fs.mkdirSync(userData);
       const out = provisionDefaultProjectDir({ homeDir: home, userDataDir: userData });
       expect(out?.usedFallback).toBe(false);
-      expect(out?.dir).toBe(path.resolve(preferred));
+      // The old root is honoured — and the project still goes INSIDE it, so a
+      // machine that upgrades never gets a second top-level folder.
+      expect(out?.dir).toBe(path.resolve(preferred, "My First Project"));
+      expect(out?.dir.startsWith(path.resolve(preferred))).toBe(true);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("REFUSES a symlink planted at the ROOT, not just at the project", (ctx) => {
+    // The follow-up to the finding below, and the more dangerous half: a link
+    // at `~/AFK Pilot` is not seen by an lstat of `~/AFK Pilot/My First
+    // Project`, because mkdirSync -recursive happily creates that leaf THROUGH
+    // the link and the leaf it creates is a perfectly ordinary directory.
+    // Checking only the final folder therefore proves nothing about where the
+    // final folder actually is.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "grok-default-root-link-"));
+    try {
+      const home = path.join(tmp, "home");
+      const userData = path.join(tmp, "userData");
+      const secrets = path.join(tmp, "secrets");
+      fs.mkdirSync(home, { recursive: true });
+      fs.mkdirSync(userData);
+      fs.mkdirSync(secrets);
+      fs.writeFileSync(path.join(secrets, "secret.txt"), "private");
+
+      try {
+        fs.symlinkSync(secrets, path.join(home, "AFK Pilot"), "junction");
+      } catch {
+        // Unprivileged Windows without Developer Mode cannot create one. The
+        // guard is still there; this environment cannot exercise it, and a
+        // silent pass would be a lie about coverage.
+        ctx.skip();
+        return;
+      }
+
+      const out = provisionDefaultProjectDir({ homeDir: home, userDataDir: userData });
+      expect(out?.dir).not.toBe(path.resolve(home, "AFK Pilot", "My First Project"));
+      expect(out?.usedFallback).toBe(true);
+      expect(fs.existsSync(path.join(secrets, "secret.txt"))).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("REFUSES a symlink already sitting at the first-run path", (ctx) => {
+    // Found in review, with a working reproduction: a junction there became the
+    // authorized workspace, and canonical file authorization resolved to its
+    // TARGET — so a link pointing at the home directory handed a linked remote
+    // the whole of it.
+    //
+    // The path is deterministic and, being new, exists on nobody's machine yet.
+    // Anything already there was put there by something that is not us.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "grok-default-link-"));
+    try {
+      const home = path.join(tmp, "home");
+      const userData = path.join(tmp, "userData");
+      const secrets = path.join(tmp, "secrets");
+      fs.mkdirSync(path.join(home, "AFK Pilot"), { recursive: true });
+      fs.mkdirSync(userData);
+      fs.mkdirSync(secrets);
+      fs.writeFileSync(path.join(secrets, "secret.txt"), "private");
+
+      let linked = false;
+      try {
+        fs.symlinkSync(secrets, path.join(home, "AFK Pilot", "My First Project"), "junction");
+        linked = true;
+      } catch {
+        // Unprivileged Windows without Developer Mode cannot create one. The
+        // guard is still there; this environment just cannot exercise it.
+      }
+      // A silent pass would claim coverage this environment cannot give.
+      if (!linked) { ctx.skip(); return; }
+
+      const out = provisionDefaultProjectDir({ homeDir: home, userDataDir: userData });
+      // Anywhere but the link. Falling back costs a directory; adopting it
+      // costs everything the link points at.
+      expect(out?.dir).not.toBe(path.resolve(home, "AFK Pilot", "My First Project"));
+      expect(out?.usedFallback).toBe(true);
+      expect(fs.existsSync(path.join(secrets, "secret.txt"))).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mistake a FILE named ~/Grok Build for the old root", () => {
+    // existsSync is true for a file. Calling that "legacy" points every create
+    // at a path that cannot hold projects.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "grok-default-file-"));
+    try {
+      const home = path.join(tmp, "home");
+      const userData = path.join(tmp, "userData");
+      fs.mkdirSync(home);
+      fs.mkdirSync(userData);
+      fs.writeFileSync(path.join(home, "Grok Build"), "not a directory");
+      const out = provisionDefaultProjectDir({ homeDir: home, userDataDir: userData });
+      expect(out?.dir).toBe(path.resolve(home, "AFK Pilot", "My First Project"));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the new root only when there is no old one", () => {
+    // The other half of the same rule: a fresh machine gets the product's name,
+    // never the agent's.
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "grok-default-fresh-"));
+    try {
+      const home = path.join(tmp, "home");
+      const userData = path.join(tmp, "userData");
+      fs.mkdirSync(home);
+      fs.mkdirSync(userData);
+      const out = provisionDefaultProjectDir({ homeDir: home, userDataDir: userData });
+      expect(out?.dir).toBe(path.resolve(home, "AFK Pilot", "My First Project"));
+      expect(fs.existsSync(path.join(home, "Grok Build"))).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("nothing is written outside the root we chose", () => {
+  it("refuses BEFORE creating, not after", (ctx) => {
+    // The order is the whole finding. `recursive: true` follows a junction at
+    // the root and creates the leaf inside its TARGET, so a check that runs
+    // afterwards correctly declines to adopt a directory it has already caused
+    // to be written somewhere nobody chose.
+    const created: string[] = [];
+    // Resolved, because the guard walks from `path.resolve(base)` and a bare
+    // "/mock/home" gains a drive letter on Windows — a fixture mismatch there
+    // would make this pass for the wrong reason.
+    const home = path.resolve("/mock/home");
+    const userData = path.resolve("/mock/data");
+    const root = path.join(home, "AFK Pilot");
+    const io = {
+      // A directory exists once something has made it — otherwise the fallback
+      // can never succeed and this would pass because EVERYTHING failed.
+      existsSync: (p: string) => p === root || p === home || p === userData || created.includes(p),
+      statSync: () => ({ isDirectory: () => true }),
+      lstatSync: (p: string) => ({ isSymbolicLink: () => p === root }),
+      mkdirSync: (p: string) => { created.push(p); },
+    };
+    const out = provisionDefaultProjectDir({ homeDir: home, userDataDir: userData, fs: io });
+    expect(created).not.toContain(path.join(root, "My First Project"));
+    expect(out?.usedFallback).toBe(true);
+    void ctx;
   });
 });

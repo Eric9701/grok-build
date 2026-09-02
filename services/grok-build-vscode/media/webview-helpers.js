@@ -24,7 +24,7 @@
   // copy and test/protocol.test.ts asserts the two are set-equal in both
   // directions (and that chat.js actually handles every host type).
   const HOST_MESSAGE_TYPES = [
-    "initialState", "moveViewHint", "providerState", "mcpServers", "mcpConnectors", "routines", "codexInstallProgress", "planModeAvailability", "showThinking", "appPurpose", "fontScale", "grokUpdateStatus", "updateAvailable", "updateReady", "telemetryEnabled", "thumbsFeedback", "initialized",
+    "initialState", "moveViewHint", "welcomeTips", "projectSetup", "providerState", "mcpServers", "mcpConnectors", "routines", "codexInstallProgress", "planModeAvailability", "showThinking", "appPurpose", "fontScale", "grokUpdateStatus", "updateAvailable", "updateReady", "telemetryEnabled", "thumbsFeedback", "initialized",
     "cliUpdating", "session", "localModels", "sessionName", "modelChanged", "modeChanged", "openModePopover",
     "voiceState", "voiceConfigured", "voicePartial", "voiceSubmit", "voiceTranscript",
     "voiceError", "chips", "commandsUpdate", "mentionResults", "projectDirListing", "projectFileContent", "projectFileWriteResult", "userMessage", "agentStart", "thoughtChunk",
@@ -39,12 +39,12 @@
   const WEBVIEW_MESSAGE_TYPES = [
     "ready", "remotePreferences", "send", "newSession", "cancel", "pickModel", "setMode", "removeChip",
     "toggleChip", "openFile", "showInFolder", "openUrl", "openText", "openDiff", "exportExpr", "setEffort",
-    "addProjectFolder", "removeProjectFolder",
-    "openGlobalConfig", "openProjectConfig", "listLocalModels", "addLocalModel", "editLocalModel", "removeLocalModel", "listMcpServers", "connectMcpConnector", "disconnectMcpConnector", "showLogs", "toggleDevTools", "openSettings", "openSettingsSurface", "closeSettingsSurface", "moveView",
+    "addProjectFolder", "removeProjectFolder", "createProject", "cloneProject", "setupGithubCli",
+    "openGlobalConfig", "openProjectConfig", "listLocalModels", "addLocalModel", "editLocalModel", "removeLocalModel", "listMcpServers", "connectMcpConnector", "disconnectMcpConnector", "showLogs", "toggleDevTools", "openSettings", "openSettingsSurface", "closeSettingsSurface", "dismissWelcomeTip", "welcomeTipShown", "moveView",
     "listRoutines", "saveRoutine", "deleteRoutine", "setRoutinePaused", "runRoutineNow",
     "setShowThinking", "setAppPurpose", "setExpandCommandOutputs",
     "dropFile", "permissionAnswer", "exitPlanAnswer", "questionAnswer", "questionCancel",
-    "setModel", "installCodex", "cancelCodexInstall", "runInstallCmd", "runGrokLogin", "logout", "checkGrokUpdate", "updateGrok",
+    "setModel", "installCodex", "cancelCodexInstall", "runInstallCmd", "runGrokLogin", "cancelDeviceLogin", "submitDeviceLoginCode", "logout", "checkGrokUpdate", "updateGrok",
     "recheckConnection", "refreshProviders", "retryProviderSession", "listSessions", "listRepoSessions", "selectRepo", "toggleRepoPin", "setRepoArchived", "setRepoColor", "toggleSessionPin", "resumeSession", "renameSession", "deleteSession",
       "clearAllSessions", "pickFile", "mentionQuery", "addMentionFile", "listProjectDir", "readProjectFile", "writeProjectFile", "pasteImage", "uploadFile", "voiceStart", "voiceStop",
       "remoteVoiceStart", "remoteVoiceChunk", "remoteVoiceStop",
@@ -1915,6 +1915,557 @@
   }
 
   /**
+   * Empty-state advice — the tip catalogue and the rule for choosing one.
+   *
+   * The welcome screen is the most-seen surface in the product and, once an
+   * agent is connected, the only one that says nothing. This fills that slot
+   * with one line naming a capability the user has NOT set up yet.
+   *
+   * ELIGIBILITY, NOT RANDOMNESS. Every entry declares the condition under
+   * which it is worth saying, and all of those conditions read state the
+   * client already holds. Shuffling a fixed list would eventually advertise
+   * Codex to someone running Codex, and one visibly wrong tip discredits every
+   * later one. So the pool is the tips that are still true, and rotation only
+   * chooses among those — which is why this needs no randomness and stays a
+   * pure function.
+   *
+   * `deskOnly` is the same rule that keeps the move-view hint off phones: a
+   * remote may not sign an agent in or link a connector (both `host-local`),
+   * so suggesting it there is advice the reader cannot take from where they
+   * are standing.
+   *
+   * Copy carries ONE `{braced}` span — the actionable phrase. The renderer
+   * splits on it and builds text nodes plus a single control, so tip text
+   * never reaches innerHTML.
+   */
+  const WELCOME_TIPS = [
+    {
+      id: "providers",
+      copy: "Grok isn’t your only agent. {Connect Codex or Claude Code} and pick one per conversation.",
+      target: "settings:providers",
+      // Was deskOnly, on the rule that a remote may not sign an agent in. It
+      // can since 3.19.x, and on a cloud machine this is the only surface
+      // there is (owner asked why it never appears, 2026-08-31).
+      deskOnly: false,
+      remoteNeedsSignIn: true,
+      // Not "fewer than all three": the moment a SECOND agent exists the user
+      // has discovered that agents are interchangeable here, which is the only
+      // thing this tip was ever teaching.
+      eligible: (f) => !f.altAgentConnected,
+    },
+    {
+      id: "routines",
+      copy: "Work that repeats can run itself. {Set up a routine} and it opens a session on schedule.",
+      target: "settings:routines",
+      deskOnly: false,
+      eligible: (f) => f.routineCount === 0,
+    },
+    {
+      id: "connectors",
+      copy: "Give your agent your tools. {Connect Notion, Linear or GitHub} and it can read and write them.",
+      target: "settings:connectors",
+      deskOnly: true,
+      eligible: (f) => f.connectorCount === 0,
+    },
+    {
+      id: "remote",
+      copy: "Leave the desk without leaving the work. {Continue on your phone.}",
+      target: "settings:account",
+      deskOnly: true,
+      // Three states, not two (see state.remoteLinked): null means the host has
+      // not read the token yet, and inviting an already-linked machine to link
+      // again is the exact confusion that tri-state exists to prevent.
+      eligible: (f) => f.remoteLinked === false,
+    },
+    {
+      id: "readAloud",
+      copy: "Grok can read its replies out loud — turn it on in {Voice settings}.",
+      target: "settings:voice",
+      deskOnly: false,
+      eligible: (f) => !f.readRepliesAloud,
+    },
+    {
+      id: "voice",
+      copy: "Talk instead of typing — set up {voice control} and dictate into the composer.",
+      target: "settings:voice",
+      deskOnly: false,
+      eligible: (f) => !f.voiceConfigured,
+    },
+    {
+      id: "mentions",
+      // The actionable phrase, not the character: "@" alone is about six pixels
+      // wide, and no amount of padding turns that into a finger-sized target
+      // without visibly shoving the sentence around it.
+      copy: "{Mention a file with @}, or drop one onto the composer.",
+      // Dropping a file works in the host's own webview only: the browser's
+      // drop handler reads file:// URIs and posts HOST paths, which a phone
+      // does not have. Advising it there is advice that cannot be taken.
+      copyWhen: (f) => (f.isRemote ? "{Mention a file with @} to bring it into the conversation." : undefined),
+      target: "mention",
+      deskOnly: false,
+      eligible: () => true,
+    },
+    {
+      id: "worktrees",
+      // It DOES have an action, which the first version of this tip missed:
+      // `newWorktreeSession` takes no source conversation — it cuts from the
+      // current project — so it works perfectly well from an empty screen. The
+      // copy names what the click does rather than describing a menu path
+      // nobody remembers ("… > Continue in a new chat > Use a new worktree").
+      copy: "Trying something risky? {Start it in a worktree} — your checkout stays untouched.",
+      target: "worktree",
+      deskOnly: true,
+      // Every condition the destination list itself applies, so the link can
+      // never fire something the host would refuse: coding mode, a CLI that
+      // supports worktrees, and not already inside one (they do not nest).
+      eligible: (f) => f.appPurpose === "coding" && f.worktreeSupported && !f.inWorktree,
+    },
+  ];
+
+  /** Catalogue entry by id, or undefined for an id this client doesn't know. */
+  function welcomeTipById(id) {
+    for (const tip of WELCOME_TIPS) if (tip.id === id) return tip;
+    return undefined;
+  }
+
+  /** A tip's copy for these facts: some tips say something different where the
+   *  action behind them differs (a cloud machine cannot connect Claude Code; a
+   *  browser cannot drop a file onto the composer). */
+  function welcomeTipCopy(tip, facts) {
+    if (!tip) return "";
+    const variant = typeof tip.copyWhen === "function" ? tip.copyWhen(facts || {}) : undefined;
+    return typeof variant === "string" && variant ? variant : tip.copy;
+  }
+
+  /**
+   * The tips still worth showing, in catalogue order (most useful first).
+   *
+   * Facts are read defensively: an older host sends no counts at all, and a
+   * count we do not have must not become "zero routines" — that would advertise
+   * routines to the one user who already has twenty. Absent counts suppress the
+   * tips that depend on them rather than guessing.
+   */
+  function welcomeTipsFor(facts) {
+    const f = facts || {};
+    const dismissed = Array.isArray(f.dismissed)
+      ? new Set(f.dismissed)
+      : new Set(Object.keys(f.dismissed || {}));
+    // Seen already today. The pool is small, so without this the same two or
+    // three lines come round again every time a conversation ends — which is
+    // how advice turns into wallpaper.
+    const shownToday = new Set(Array.isArray(f.shownToday) ? f.shownToday : []);
+    // …except whatever is on screen RIGHT NOW. It was added to that set the
+    // moment it rendered, and a repaint must not make the line the reader is
+    // in the middle of vanish from under them.
+    if (f.keepId) shownToday.delete(f.keepId);
+    const known = {
+      appPurpose: f.appPurpose === "coding" ? "coding" : "knowledge",
+      isRemote: !!f.isRemote,
+      altAgentConnected: !!f.altAgentConnected,
+      routineCount: typeof f.routineCount === "number" ? f.routineCount : -1,
+      connectorCount: typeof f.connectorCount === "number" ? f.connectorCount : -1,
+      readRepliesAloud: !!f.readRepliesAloud,
+      voiceConfigured: !!f.voiceConfigured,
+      // Opt-OUT, matching the client's own default: a CLI is assumed to support
+      // worktrees until a create says otherwise, and reading absence as "no"
+      // here would have hidden the tip on every host that never mentions it.
+      worktreeSupported: f.worktreeSupported !== false,
+      inWorktree: !!f.inWorktree,
+      cloudHost: !!f.cloudHost,
+      remoteCanConnectAgents: !!f.remoteCanConnectAgents,
+      remoteLinked: f.remoteLinked === true ? true : f.remoteLinked === false ? false : null,
+    };
+    return WELCOME_TIPS.filter((tip) => {
+      if (dismissed.has(tip.id)) return false;
+      if (shownToday.has(tip.id)) return false;
+      if (known.isRemote && tip.deskOnly) return false;
+      // A tip whose action needs a capability this remote does not have is the
+      // same dead end deskOnly was invented to prevent — just decided by what
+      // the host advertises rather than by where the reader is standing.
+      if (known.isRemote && tip.remoteNeedsSignIn && !known.remoteCanConnectAgents) return false;
+      // -1 is "the host never told us" — see the doc comment.
+      if (tip.id === "routines" && known.routineCount < 0) return false;
+      if (tip.id === "connectors" && known.connectorCount < 0) return false;
+      return tip.eligible(known);
+    });
+  }
+
+  /**
+   * Split a tip's copy into [before, action, after]. Exactly one `{...}` span
+   * is expected; copy without one yields the whole string as `before` and no
+   * action, which renders as a plain sentence rather than throwing.
+   */
+  function splitWelcomeTipCopy(copy) {
+    const text = typeof copy === "string" ? copy : "";
+    const open = text.indexOf("{");
+    const close = text.indexOf("}", open + 1);
+    if (open < 0 || close < 0) return { before: text, action: "", after: "" };
+    return {
+      before: text.slice(0, open),
+      action: text.slice(open + 1, close),
+      after: text.slice(close + 1),
+    };
+  }
+
+  /* ------------------------------------------------- Add project */
+
+  /**
+   * The Add project menu, as data.
+   *
+   * Two rails render this — the desktop/remote one in chat.js and VS Code's own
+   * in projects-rail.js — and they have different popover primitives but must
+   * not have different menus. So the SPEC lives here and each surface draws it.
+   *
+   * Mode changes what is ADDED, never what is taken away. Knowledge work gets
+   * the two entries everyone needs; Coding gains cloning, at the top, because
+   * that is what a coder reaches for first. A preference most people never open
+   * must not be able to hide a way in.
+   */
+  function addProjectMenuItems(opts) {
+    const o = opts || {};
+    const items = [];
+    if (o.canClone && o.appPurpose === "coding") {
+      items.push({
+        id: "clone",
+        label: "Clone from GitHub",
+        description: "Paste a repository URL.",
+      });
+    }
+    if (o.canCreate) {
+      items.push({
+        id: "new",
+        label: "New project",
+        description: "Name it. We make the folder.",
+      });
+    }
+    if (o.canImport !== false) {
+      items.push({
+        id: "import",
+        label: "Import a folder",
+        description: "Choose one you already have.",
+      });
+    }
+    // Cloning is a CODING affordance, so in knowledge work it is simply absent
+    // — and an absent thing explains nothing. Someone who came here to clone a
+    // repository finds two options that are not it and no way to know that the
+    // third exists one setting away (owner, 2026-09-01).
+    //
+    // The hint goes HERE rather than under the project name, because this is
+    // where the person is standing when they want it, and a permanent line
+    // elsewhere would be noise for everyone who never does. It acts: selecting
+    // it opens the setting rather than describing where to find it.
+    if (o.canClone && o.appPurpose !== "coding") {
+      items.push({
+        id: "clone-needs-coding",
+        label: "Clone from GitHub?",
+        // Short on purpose: the rail is narrow and the longer sentence was
+        // being truncated mid-word there (owner, 2026-09-01).
+        description: "Switch to Coding mode in the settings.",
+      });
+    }
+    return items;
+  }
+
+  /** Copy for each form, keyed the same way the menu items are. */
+  const ADD_PROJECT_FORMS = {
+    "new": {
+      title: "New project",
+      body: "We'll create the folder for you. You can move it later.",
+      label: "Project name",
+      placeholder: "Q3 Positioning",
+      confirm: "Create",
+      busy: "Creating",
+    },
+    clone: {
+      title: "Clone from GitHub",
+      body: "Uses the Git credentials already on this machine. No token to paste.",
+      label: "Repository URL",
+      placeholder: "https://github.com/you/project",
+      confirm: "Clone",
+      busy: "Cloning",
+    },
+  };
+
+  /**
+   * The folder name a typed value would produce, for the live destination
+   * preview. Empty string when there is nothing to show yet.
+   *
+   * A PREVIEW, not a validator: the host owns both, and re-implementing its
+   * rules here would be a second registry that drifts. This only has to be
+   * right about the common case, and wrong quietly rather than loudly — an
+   * empty preview is a blank line, and the host answers a bad name with the
+   * real reason.
+   */
+  function addProjectFolderPreview(kind, value) {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) return "";
+    if (kind !== "clone") return raw.replace(/[\\/:*?"<>|]/g, "");
+    const stripped = raw.split("#")[0].split("?")[0].replace(/\/+$/, "");
+    const segment = (stripped.split(/[/:]/).pop() || "").replace(/\.git$/i, "");
+    return segment.replace(/[\\/:*?"<>|]/g, "");
+  }
+
+  /**
+   * Build the Add project form.
+   *
+   * Owns its own DOM and nothing else: the caller mounts it, hands it host
+   * frames through `update`, and gets the typed value back through `onSubmit`.
+   * Both rails use this one so the two cannot drift into different forms.
+   *
+   * Returns { el, update, focus, destroy }.
+   */
+  function addProjectForm(opts) {
+    const o = opts || {};
+    const kind = o.kind === "clone" ? "clone" : "new";
+    const copy = ADD_PROJECT_FORMS[kind];
+    const doc = o.document || (typeof document !== "undefined" ? document : null);
+    if (!doc) return null;
+
+    const el = doc.createElement("div");
+    el.className = "add-project-form";
+    el.dataset.kind = kind;
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-modal", "true");
+    el.setAttribute("aria-label", copy.title);
+
+    const title = doc.createElement("div");
+    title.className = "add-project-title";
+    title.textContent = copy.title;
+    el.appendChild(title);
+
+    const body = doc.createElement("div");
+    body.className = "add-project-body";
+    body.textContent = copy.body;
+    el.appendChild(body);
+
+    const label = doc.createElement("label");
+    label.className = "add-project-label";
+    label.textContent = copy.label;
+    const inputId = "add-project-input-" + kind;
+    label.setAttribute("for", inputId);
+    el.appendChild(label);
+
+    const input = doc.createElement("input");
+    input.id = inputId;
+    input.type = "text";
+    input.className = "add-project-input";
+    input.placeholder = copy.placeholder;
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    el.appendChild(input);
+
+    // Where it will land, updated as they type. The whole point of the feature
+    // is that nobody has to choose a folder, so the folder has to be visible.
+    const dest = doc.createElement("div");
+    dest.className = "add-project-dest";
+    el.appendChild(dest);
+
+    const problem = doc.createElement("div");
+    problem.className = "add-project-error";
+    problem.setAttribute("role", "alert");
+    problem.hidden = true;
+    el.appendChild(problem);
+
+    const fixBtn = doc.createElement("button");
+    fixBtn.type = "button";
+    fixBtn.className = "add-project-fix";
+    fixBtn.hidden = true;
+    el.appendChild(fixBtn);
+
+    // Headless GitHub sign-in. Same wording as the agent connect card: a
+    // code, a copy button, a link that opens the vendor page in a new tab.
+    // Only the clone form ever receives `projectSetup.github`.
+    const githubBox = doc.createElement("div");
+    githubBox.className = "add-project-github";
+    githubBox.hidden = true;
+    const githubHeading = doc.createElement("div");
+    githubHeading.className = "add-project-github-heading";
+    const githubDesc = doc.createElement("p");
+    githubDesc.className = "add-project-github-desc";
+    const githubCmd = doc.createElement("div");
+    githubCmd.className = "add-project-github-cmd";
+    const githubCode = doc.createElement("code");
+    const githubCopy = doc.createElement("button");
+    githubCopy.type = "button";
+    githubCopy.className = "add-project-github-copy";
+    githubCopy.title = "Copy";
+    githubCopy.textContent = "Copy";
+    githubCmd.appendChild(githubCode);
+    githubCmd.appendChild(githubCopy);
+    const githubOpen = doc.createElement("a");
+    githubOpen.className = "add-project-github-open";
+    githubOpen.target = "_blank";
+    githubOpen.rel = "noopener noreferrer";
+    githubOpen.textContent = "Open the sign-in page";
+    const githubNote = doc.createElement("p");
+    githubNote.className = "add-project-github-note";
+    githubBox.appendChild(githubHeading);
+    githubBox.appendChild(githubDesc);
+    githubBox.appendChild(githubCmd);
+    githubBox.appendChild(githubOpen);
+    githubBox.appendChild(githubNote);
+    el.appendChild(githubBox);
+
+    githubCopy.addEventListener("click", function () {
+      const code = githubCopy.dataset.cmd || "";
+      if (!code || !navigator.clipboard || typeof navigator.clipboard.writeText !== "function") return;
+      navigator.clipboard.writeText(code).then(function () {
+        githubCopy.textContent = "Copied";
+        githubCopy.classList.add("copied");
+        setTimeout(function () {
+          githubCopy.textContent = "Copy";
+          githubCopy.classList.remove("copied");
+        }, 1500);
+      }).catch(function () { /* clipboard blocked */ });
+    });
+
+    const actions = doc.createElement("div");
+    actions.className = "add-project-actions";
+    const cancel = doc.createElement("button");
+    cancel.type = "button";
+    cancel.className = "add-project-btn";
+    cancel.textContent = "Cancel";
+    const submit = doc.createElement("button");
+    submit.type = "button";
+    submit.className = "add-project-btn add-project-primary";
+    submit.textContent = copy.confirm;
+    actions.appendChild(cancel);
+    actions.appendChild(submit);
+    el.appendChild(actions);
+
+    let root = typeof o.root === "string" ? o.root : "";
+    let busy = false;
+
+    function paintDest() {
+      const folder = addProjectFolderPreview(kind, input.value);
+      dest.textContent = root ? root + "/" + (folder || "…") : folder;
+      submit.disabled = busy || !folder;
+    }
+
+    function fire() {
+      if (submit.disabled) return;
+      if (typeof o.onSubmit === "function") o.onSubmit(input.value.trim());
+    }
+
+    input.addEventListener("input", paintDest);
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); fire(); }
+    });
+    submit.addEventListener("click", fire);
+    cancel.addEventListener("click", function () {
+      if (typeof o.onCancel === "function") o.onCancel();
+    });
+    fixBtn.addEventListener("click", function () {
+      if (typeof o.onFix === "function") o.onFix(fixBtn.dataset.fix);
+    });
+
+    function paintGithub(s) {
+      const g = (kind === "clone" && s.github && typeof s.github === "object") ? s.github : null;
+      const status = g && typeof g.status === "string" ? g.status : "";
+      if (!status) {
+        githubBox.hidden = true;
+        return false;
+      }
+      githubBox.hidden = false;
+      githubBox.dataset.status = status;
+      const url = typeof g.url === "string" && /^https?:\/\//i.test(g.url) ? g.url : "";
+      const code = typeof g.code === "string" ? g.code : "";
+      if (status === "starting") {
+        githubHeading.textContent = "Connecting GitHub";
+        githubDesc.textContent = "Asking the GitHub CLI for a sign-in code…";
+        githubDesc.hidden = false;
+        githubCmd.hidden = true;
+        githubOpen.hidden = true;
+        githubNote.hidden = true;
+      } else if (status === "waiting" && url) {
+        githubHeading.textContent = "Finish signing in to GitHub";
+        githubDesc.textContent = code
+          ? "Open the link, then confirm this code:"
+          : "Open the link to finish signing in.";
+        githubDesc.hidden = false;
+        githubCmd.hidden = !code;
+        githubCode.textContent = code;
+        githubCopy.dataset.cmd = code;
+        githubCopy.textContent = "Copy";
+        githubCopy.classList.remove("copied");
+        githubOpen.hidden = false;
+        githubOpen.href = url;
+        githubNote.hidden = false;
+        githubNote.textContent = "Keep this page open — it finishes on its own.";
+      } else if (status === "done") {
+        githubHeading.textContent = "GitHub connected";
+        githubDesc.textContent = typeof g.message === "string" && g.message
+          ? g.message
+          : "Signed in to GitHub. Try to clone again.";
+        githubDesc.hidden = false;
+        githubCmd.hidden = true;
+        githubOpen.hidden = true;
+        githubNote.hidden = true;
+      } else if (status === "failed") {
+        githubHeading.textContent = "Could not connect GitHub";
+        githubDesc.textContent = typeof g.message === "string" ? g.message : "";
+        githubDesc.hidden = !githubDesc.textContent;
+        githubCmd.hidden = true;
+        githubOpen.hidden = true;
+        githubNote.hidden = true;
+      } else {
+        githubBox.hidden = true;
+        return false;
+      }
+      return status === "starting" || status === "waiting";
+    }
+
+    /** Apply a `projectSetup` frame. Everything the host says, in one place. */
+    function update(state) {
+      const s = state || {};
+      if (typeof s.root === "string" && s.root) root = s.root;
+      busy = s.busy === kind;
+      input.disabled = busy;
+      // A static "Cloning…" reads as a stuck button — the owner could not tell
+      // anything was happening. Reuse the SAME three blinking dots every other
+      // progress indicator here uses (.blink-dots, animated in chat.css) rather
+      // than inventing a second spinner. Built as nodes, not innerHTML: this
+      // component is shared and takes no HTML anywhere else.
+      submit.textContent = "";
+      submit.appendChild(doc.createTextNode(busy ? copy.busy : copy.confirm));
+      if (busy) {
+        const dots = doc.createElement("span");
+        dots.className = "blink-dots";
+        dots.setAttribute("aria-hidden", "true");
+        for (let i = 0; i < 3; i++) {
+          const d = doc.createElement("span");
+          d.textContent = ".";
+          dots.appendChild(d);
+        }
+        submit.appendChild(dots);
+      }
+      el.classList.toggle("is-busy", busy);
+      const githubLive = paintGithub(s);
+      const message = busy || githubLive ? "" : (typeof s.error === "string" ? s.error : "");
+      problem.textContent = message;
+      problem.hidden = !message;
+      // The fix button only ever appears with the failure that earned it, so a
+      // stale "Sign in to GitHub" cannot outlive the error it belonged to.
+      const fix = busy || githubLive || !message ? "" : (s.fix || "");
+      fixBtn.hidden = !fix;
+      fixBtn.dataset.fix = fix || "";
+      if (fix === "auth-gh") fixBtn.textContent = "Sign in to GitHub";
+      else if (fix === "install-gh") {
+        fixBtn.textContent = s.fixCommand ? "Install the GitHub CLI (" + s.fixCommand + ")" : "Install the GitHub CLI";
+      }
+      paintDest();
+    }
+
+    paintDest();
+    return {
+      el: el,
+      update: update,
+      focus: function () { try { input.focus(); } catch (_) { /* detached */ } },
+      value: function () { return input.value.trim(); },
+    };
+  }
+
+  /**
    * How long the waiting indicator has been on screen, for its label.
    *
    * A turn has no deadline the user can see. `session/prompt` tolerates 30
@@ -1937,7 +2488,7 @@
     return `${hr}h ${min % 60}m`;
   }
 
-  const api = { formatWaitElapsed, FILE_EXTS, HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, looksLikeFileRef, formatRelativeTime, brandUserFacingText, brandModelDisplayName, modelPickerLabel, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, highlightQueryParts, appendHighlightedText, commandProgramLabel, commandTextPreview, MAX_COMMAND_OUTPUT_CHARS, capCommandOutput, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, panelReclampOnResizeAllowed, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards };
+  const api = { WELCOME_TIPS, welcomeTipById, welcomeTipsFor, welcomeTipCopy, splitWelcomeTipCopy, addProjectMenuItems, addProjectFolderPreview, addProjectForm, formatWaitElapsed, FILE_EXTS, HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, looksLikeFileRef, formatRelativeTime, brandUserFacingText, brandModelDisplayName, modelPickerLabel, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, highlightQueryParts, appendHighlightedText, commandProgramLabel, commandTextPreview, MAX_COMMAND_OUTPUT_CHARS, capCommandOutput, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, panelReclampOnResizeAllowed, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

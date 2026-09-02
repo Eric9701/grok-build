@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import * as os from "node:os";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { TerminalManager, resolveExitCode, buildKillPlan, resolveTerminalShell, grokShellEnvValue, commandLanguageForDialect } from "../src/terminal-manager";
+import { TerminalManager, resolveExitCode, buildKillPlan, resolveTerminalShell, posixShellFromEnv, grokShellEnvValue, commandLanguageForDialect, unwrapGrokBashLoginWrapper, posixSpawnArgv, parseOneShellWord } from "../src/terminal-manager";
 
 // Use `node -e` everywhere so tests are deterministic on Windows, macOS, and Linux.
 // Quoting strategy: single-quote the outer node script, escape inner single quotes if any.
@@ -237,9 +237,31 @@ describe("buildKillPlan", () => {
     }
   });
 
-  it("uses a SIGTERM signal on POSIX", () => {
+  it("signals the whole process GROUP on POSIX, not just the shell", () => {
+    // `sh -c 'node build.js & wait'` is one wrapper and one long-lived child.
+    // Signalling the wrapper alone leaves the child running with nothing
+    // tracking it — and a running command is what keeps a cloud machine awake,
+    // so we would stop paying for a machine that is still working and then
+    // freeze it. On a laptop the orphan is the battery.
     const plan = buildKillPlan(1234, "linux");
-    expect(plan).toEqual({ kind: "signal", signal: "SIGTERM" });
+    expect(plan).toEqual({ kind: "group", signal: "SIGTERM", pid: 1234 });
+  });
+
+  it("kills the group by negative pid, and falls back to the child", () => {
+    const killed: number[] = [];
+    const m = new TerminalManager({
+      platform: "linux",
+      killImpl: (pid) => {
+        killed.push(pid);
+        if (pid < 0) throw new Error("ESRCH"); // group already gone
+      },
+    });
+    const { terminalId } = m.create({ command: nodeEval("setTimeout(() => {}, 3000)") });
+    m.kill(terminalId);
+    // The negative pid is the group; the throw proves the fallback path runs
+    // rather than leaving the command alive.
+    expect(killed.some((p) => p < 0)).toBe(true);
+    m.release(terminalId);
   });
 });
 
@@ -249,7 +271,7 @@ describe("resolveTerminalShell", () => {
   const PWSH = "C:\\Program Files\\PowerShell\\7\\pwsh.exe";
   const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
 
-  it("returns true (/bin/sh) on POSIX without probing PATH", () => {
+  it("returns true (/bin/sh) on POSIX without probing PATH when $SHELL is unset", () => {
     let probed = false;
     const shell = resolveTerminalShell("linux", () => {
       probed = true;
@@ -259,7 +281,26 @@ describe("resolveTerminalShell", () => {
     expect(probed).toBe(false); // never shell out to `where` off Windows
   });
 
-  it("returns true on darwin", () => {
+  it("uses $SHELL on POSIX when it is an absolute path", () => {
+    let probed = false;
+    const shell = resolveTerminalShell(
+      "darwin",
+      () => {
+        probed = true;
+        return PWSH;
+      },
+      "auto",
+      "/bin/zsh",
+    );
+    expect(shell).toBe("/bin/zsh");
+    expect(probed).toBe(false);
+  });
+
+  it("falls back to /bin/sh when POSIX $SHELL is /bin/sh itself", () => {
+    expect(resolveTerminalShell("linux", () => undefined, "auto", "/bin/sh")).toBe(true);
+  });
+
+  it("returns true on darwin without $SHELL", () => {
     expect(resolveTerminalShell("darwin", () => PWSH)).toBe(true);
   });
 
@@ -294,8 +335,8 @@ describe("resolveTerminalShell", () => {
     expect(probed).toBe(false); // escape hatch short-circuits before `where`
   });
 
-  it("pref 'cmd' is a no-op on POSIX (still /bin/sh)", () => {
-    expect(resolveTerminalShell("linux", () => undefined, "cmd")).toBe(true);
+  it("pref 'cmd' forces /bin/sh on POSIX even when $SHELL is zsh", () => {
+    expect(resolveTerminalShell("linux", () => undefined, "cmd", "/bin/zsh")).toBe(true);
   });
 
   it("pref 'auto' matches the default (PowerShell on Windows)", () => {
@@ -316,13 +357,306 @@ describe("grokShellEnvValue (GROK_SHELL derived from the shell we run)", () => {
   it("maps the cmd.exe fallback (true) to 'cmd' on Windows", () => {
     expect(grokShellEnvValue(true, "win32")).toBe("cmd");
   });
-  it("returns undefined on POSIX (grok's host detection is correct there)", () => {
+  it("leaves GROK_SHELL unset on POSIX when the host is /bin/sh", () => {
     expect(grokShellEnvValue(true, "linux")).toBeUndefined();
-    expect(grokShellEnvValue("/bin/bash", "darwin")).toBeUndefined();
+  });
+  it("sets nothing on POSIX, whatever shell we resolved", () => {
+    // This replaces a PR assertion that GROK_SHELL carries the dialect on
+    // POSIX. It does not: upstream builds the model-facing `Shell:` from
+    // `$SHELL` on Unix (`resolve_shell_display`) and reads GROK_SHELL there as
+    // a PATH to a shell binary, validated as executable — so a bare `zsh`
+    // never reached the model. Running the shell `$SHELL` names is the
+    // alignment, which is what the rest of this PR does.
+    expect(grokShellEnvValue("/bin/zsh", "darwin")).toBeUndefined();
+    expect(grokShellEnvValue("/opt/homebrew/bin/bash", "linux")).toBeUndefined();
+    expect(grokShellEnvValue(true, "linux")).toBeUndefined();
+  });
+  it("refuses a $SHELL whose grammar is not POSIX", () => {
+    // `posixSpawnArgv` hands the agent's POSIX script to this shell as an
+    // explicit `-c` argument, so an unrecognised grammar breaks commands that
+    // work today rather than merely running them somewhere else.
+    for (const s of ["/usr/bin/fish", "/usr/local/bin/nu", "/bin/tcsh", "/usr/bin/pwsh"]) {
+      expect(posixShellFromEnv(s)).toBe(true);
+    }
+    expect(posixShellFromEnv("/bin/zsh")).toBe("/bin/zsh");
+    expect(posixShellFromEnv("/opt/homebrew/bin/bash")).toBe("/opt/homebrew/bin/bash");
   });
   it("returns undefined for an unrecognized Windows shell path", () => {
     expect(grokShellEnvValue("C:\\weird\\thing.exe", "win32")).toBeUndefined();
   });
+});
+
+describe("posixShellFromEnv", () => {
+  it("keeps Node's /bin/sh fallback for empty, relative, or sh paths", () => {
+    expect(posixShellFromEnv(undefined)).toBe(true);
+    expect(posixShellFromEnv("")).toBe(true);
+    expect(posixShellFromEnv("zsh")).toBe(true);
+    expect(posixShellFromEnv("/bin/sh")).toBe(true);
+    expect(posixShellFromEnv("/usr/bin/sh")).toBe(true);
+  });
+  it("returns an absolute login shell path", () => {
+    expect(posixShellFromEnv("/bin/zsh")).toBe("/bin/zsh");
+    expect(posixShellFromEnv("  /usr/bin/zsh  ")).toBe("/usr/bin/zsh");
+  });
+});
+
+describe("unwrapGrokBashLoginWrapper", () => {
+  it("unwraps grok's /bin/bash -lc payload", () => {
+    // NOT `bash -lc echo hi` -> `echo hi`: POSIX hands `-c` only the next word,
+    // so bash runs `echo` and `hi` becomes `$0`. Rewriting it to `echo hi`
+    // changes what the command does — harmless there, destructive for
+    // `bash -lc rm -rf target`, which really does run `rm` with no operands.
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc 'echo'")).toBe("echo");
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc echo hi")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc rm -rf target")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc 'echo hi'")).toBe("echo hi");
+    expect(unwrapGrokBashLoginWrapper('/bin/bash -lc "echo hi"')).toBe("echo hi");
+  });
+
+  it("unwraps bash -l -c, -cl, and --login -c", () => {
+    // Quoted payloads, which is what grok actually sends. The unquoted
+    // multi-word spellings that used to be asserted here are refused now: POSIX
+    // gives `-c` only the next word, so rewriting them changes the command.
+    expect(unwrapGrokBashLoginWrapper("bash -l -c 'echo hi'")).toBe("echo hi");
+    expect(unwrapGrokBashLoginWrapper("bash -cl 'echo hi'")).toBe("echo hi");
+    expect(unwrapGrokBashLoginWrapper("bash --login -c 'echo hi'")).toBe("echo hi");
+    expect(unwrapGrokBashLoginWrapper("/usr/bin/env bash -lc 'echo hi'")).toBe("echo hi");
+  });
+
+  it("peels POSIX nested single quotes in the inner script", () => {
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc 'it'\\''s'")).toBe("it's");
+  });
+
+  it("leaves non-wrappers alone", () => {
+    expect(unwrapGrokBashLoginWrapper("echo hi")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("bash --version")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("bash script.sh")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("bash -c echo hi")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("/bin/zsh -lc echo hi")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("echo /bin/bash -lc foo")).toBeUndefined();
+  });
+
+  it("unwraps a bare one-word payload, which shlex leaves unquoted", () => {
+    // `try_quote` only quotes what needs it, so the commands most likely to be
+    // typed arrive naked. These have nothing to expand, glob or split.
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc ls")).toBe("ls");
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc pwd")).toBe("pwd");
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc ./scripts/build.sh")).toBe("./scripts/build.sh");
+  });
+
+  it("still refuses unquoted text a shell would read differently", () => {
+    // Each of these means one thing to the outer shell we used to hand it to and
+    // another to the host we would hand it to instead, so the wrapper stays.
+    for (const payload of ["echo hi", "$HOME", "*.ts", "a&&b", "a|b", "a>b", "~/x", "a;b", "`id`", "a\b"]) {
+      expect(unwrapGrokBashLoginWrapper(`/bin/bash -lc ${payload}`)).toBeUndefined();
+    }
+  });
+
+  it("unwraps only the outer grok layer", () => {
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc '/bin/bash -lc echo hi'")).toBe(
+      "/bin/bash -lc echo hi",
+    );
+  });
+});
+
+describe("posixSpawnArgv", () => {
+  it("runs the inner script under $SHELL, not bash -lc", () => {
+    expect(posixSpawnArgv("/bin/bash -lc 'echo hi'", "/bin/zsh")).toEqual({
+      file: "/bin/zsh",
+      args: ["-c", "echo hi"],
+    });
+  });
+
+  it("passes a raw command through to $SHELL -c", () => {
+    expect(posixSpawnArgv("echo hi", "/bin/zsh")).toEqual({
+      file: "/bin/zsh",
+      args: ["-c", "echo hi"],
+    });
+  });
+
+  it("uses /bin/sh when the host is Node's fallback, and keeps the wrapper there", () => {
+    // Corrects the PR's expectation, which peeled the wrapper here too. On
+    // `/bin/sh` there is nothing to gain and something to lose: macOS `/bin/sh`
+    // IS bash 3.2, so the script lands on the same shell either way, while on
+    // Linux it is dash — and a script grok deliberately wrote for bash would
+    // newly fail on `[[ ]]`, arrays or process substitution. Leaving the
+    // wrapper is what v3.19.5 did, and for this host it was right.
+    expect(posixSpawnArgv("/bin/bash -lc 'echo'", true)).toEqual({
+      file: "/bin/sh",
+      args: ["-c", "/bin/bash -lc 'echo'"],
+    });
+  });
+});
+
+const describePosix = process.platform === "win32" ? describe.skip : describe;
+
+describePosix("POSIX host does not exec grok's bash -lc wrapper", () => {
+  it("runs the agent's command, and routes it by host capability", async () => {
+    // `$0` was the probe here and it is NOT portable: zsh reports the shell's
+    // path, bash on ubuntu-latest reported an empty string, and on the retained
+    // path the OUTER `sh -c` expands it before the inner shell ever sees it. CI
+    // failed twice on that alone while both dev machines passed. So this asserts
+    // what we actually promise — the command runs, and the ROUTING is right —
+    // and leaves shell trivia out of it.
+    const m = new TerminalManager();
+    const { terminalId } = m.create({ command: `/bin/bash -lc 'printf HIT'` });
+    const { exitCode } = await m.waitForExit(terminalId);
+    const result = m.output(terminalId);
+    // SELF-DESCRIBING on failure. This assertion has now failed twice on
+    // ubuntu-latest and cannot be reproduced on macOS, on Windows (skipped), or
+    // on a real Ubuntu 26.04 under WSL where the same manager returns HIT
+    // 25 times out of 25. Guessing at the cause from a bare `expected '' to be
+    // 'HIT'` is what produced the two wrong fixes before this one, so let the
+    // failing machine say what it saw.
+    const seen = JSON.stringify({
+      shell: process.env.SHELL ?? null,
+      host: posixShellFromEnv(process.env.SHELL),
+      argv: posixSpawnArgv(`/bin/bash -lc 'printf HIT'`, posixShellFromEnv(process.env.SHELL)),
+      exitCode,
+      output: result.output,
+      truncated: result.truncated,
+    });
+    expect(exitCode, `command did not exit cleanly: ${seen}`).toBe(0);
+    expect(result.output.trim(), `no output from the agent's command: ${seen}`).toBe("HIT");
+    m.release(terminalId);
+
+    const host = posixShellFromEnv(process.env.SHELL);
+    const base = host === true ? "sh" : host.slice(host.lastIndexOf("/") + 1);
+    const argv = posixSpawnArgv("/bin/bash -lc 'printf HIT'", host);
+    expect(argv.file).toBe(host === true ? "/bin/sh" : host);
+    if (base === "bash" || base === "zsh") {
+      expect(argv.args[1]).toBe("printf HIT"); // peeled: the host stands in for bash
+    } else {
+      expect(argv.args[1]).toBe("/bin/bash -lc 'printf HIT'"); // retained
+    }
+  });
+});
+
+describe("unwrapGrokBashLoginWrapper refuses what it does not model", () => {
+  it("leaves a wrapper carrying any other flag completely alone", () => {
+    // Dropping a flag while still running the script is worse than not
+    // unwrapping: `-n` means syntax-check WITHOUT executing, so discarding it
+    // would turn a dry run into a real one.
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -n -l -c 'rm target'")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -e -lc 'x'")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -u -lc 'x'")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("/bin/bash --posix -lc 'x'")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("/bin/bash --restricted -lc 'x'")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lnc 'x'")).toBeUndefined();
+    // ...while the shapes grok actually sends still unwrap.
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc 'echo hi'")).toBe("echo hi");
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -cl 'echo hi'")).toBe("echo hi");
+    expect(unwrapGrokBashLoginWrapper("/bin/bash --login -c 'echo hi'")).toBe("echo hi");
+  });
+
+  it("decodes a double-quoted payload the way the shell would", () => {
+    // POSIX drops the backslash before `$`, a backtick, a quote and a
+    // backslash. Leaving `\$` intact turned an expansion into literal text.
+    expect(unwrapGrokBashLoginWrapper('/bin/bash -lc "printf %s \\"\$HOME\\""'))
+      .toBe('printf %s "$HOME"');
+    expect(unwrapGrokBashLoginWrapper('/bin/bash -lc "echo \`date\`"')).toBe("echo `date`");
+  });
+});
+
+describe("posixSpawnArgv only unwraps where it is safe", () => {
+  it("decodes concatenated shlex quoting, which is what grok emits", () => {
+    // Rust's `shlex::try_quote` does not pick one style for the whole script:
+    // it CONCATENATES chunks when no single strategy encodes the string, so
+    // `echo '$HOME'` becomes `"echo '"'$HOME'"'"` — one word made of a
+    // double-quoted, a single-quoted and another double-quoted segment. An
+    // earlier version refused this shape, which left every command containing
+    // a quote on the old bash-3.2 path; the one before that passed the raw text
+    // through and a real zsh answered `exit 127, no such file or directory`.
+    const mixed = String.raw`/bin/bash -lc "echo '"'$HOME'"'"`;
+    expect(unwrapGrokBashLoginWrapper(mixed)).toBe("echo '$HOME'");
+    expect(posixSpawnArgv(mixed, "/bin/zsh")).toEqual({
+      file: "/bin/zsh",
+      args: ["-c", "echo '$HOME'"],
+    });
+  });
+
+  it("treats backslash-newline as a line continuation, not a newline", () => {
+    // POSIX removes BOTH characters. Decoding it to a newline split the script:
+    // `printf '<%s>' foo\<newline>bar` prints `<foobar>`, but a real newline
+    // makes it print `<foo>` and then try to run `bar`.
+    const dq = '"foo' + String.fromCharCode(92) + String.fromCharCode(10) + 'bar"';
+    expect(parseOneShellWord(dq)).toEqual({ word: "foobar", rest: "" });
+    const bare = "foo" + String.fromCharCode(92) + String.fromCharCode(10) + "bar";
+    expect(parseOneShellWord(bare)).toEqual({ word: "foobar", rest: "" });
+  });
+
+  it("separates tokens on POSIX blanks only, never Unicode spaces", () => {
+    // `trimStart()` strips NBSP; a shell does not. A command starting with NBSP
+    // fails today as an invalid pathname, and trimming it would make us
+    // recognise the wrapper and RUN what previously could not run.
+    const nbsp = String.fromCharCode(0x00a0);
+    expect(unwrapGrokBashLoginWrapper(nbsp + "/bin/bash -lc 'printf HIT'")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper(" /bin/bash -lc 'printf HIT'")).toBe("printf HIT");
+  });
+
+  it("unwraps a quoted payload, or an unquoted one that cannot be read two ways", () => {
+    // `shlex::try_quote` quotes anything containing a shell character and passes
+    // everything else through, so `echo` really does arrive naked. Unquoted text
+    // is where the readings CAN diverge — the old path let the OUTER shell expand
+    // `$VAR` before bash saw it, while unwrapping makes it the script the host
+    // expands — so the test is whether there is anything to expand at all.
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc echo")).toBe("echo");
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc $PAYLOAD")).toBeUndefined();
+    expect(unwrapGrokBashLoginWrapper("/bin/bash -lc 'echo hi'")).toBe("echo hi");
+  });
+
+  it("parses a shell word the way a shell does", () => {
+    expect(parseOneShellWord("'a b'c")).toEqual({ word: "a bc", rest: "" });
+    expect(parseOneShellWord('"x\\"y" tail')).toEqual({ word: 'x"y', rest: " tail" });
+    expect(parseOneShellWord("plain rest")).toEqual({ word: "plain", rest: " rest" });
+    expect(parseOneShellWord("'unterminated")).toBeUndefined();
+    expect(parseOneShellWord('"unterminated')).toBeUndefined();
+  });
+
+  it("keeps grok's bash wrapper when the host cannot stand in for bash", () => {
+    // `/bin/sh`, dash and ksh cannot run `[[ ]]`, arrays or process
+    // substitution. Grok sent the script to BASH deliberately, so on those
+    // hosts the wrapper stays and the script still reaches bash — which is
+    // what v3.19.5 did and is right for them.
+    const wrapped = "/bin/bash -lc 'echo hi'";
+    expect(posixSpawnArgv(wrapped, true)).toEqual({ file: "/bin/sh", args: ["-c", wrapped] });
+    expect(posixSpawnArgv(wrapped, "/bin/dash").args[1]).toBe(wrapped);
+    expect(posixSpawnArgv(wrapped, "/bin/ksh").args[1]).toBe(wrapped);
+    // ...and is peeled for the hosts that can.
+    expect(posixSpawnArgv(wrapped, "/bin/zsh")).toEqual({ file: "/bin/zsh", args: ["-c", "echo hi"] });
+    expect(posixSpawnArgv(wrapped, "/opt/homebrew/bin/bash").args[1]).toBe("echo hi");
+  });
+});
+
+describePosix("waitForExit waits for the output, but not forever", () => {
+  it("has the full output by the time it resolves", async () => {
+    // `exit` can fire before stdout reaches us. Three ubuntu-latest runs showed
+    // a clean `printf` returning nothing; resolving on the pipes instead is the
+    // difference between an agent reading a command's output and reading "".
+    for (let i = 0; i < 20; i++) {
+      const m = new TerminalManager();
+      const { terminalId } = m.create({ command: "/bin/sh -c 'printf PAYLOAD'" });
+      await m.waitForExit(terminalId);
+      expect(m.output(terminalId).output.trim()).toBe("PAYLOAD");
+      m.release(terminalId);
+    }
+  });
+
+  it("returns promptly when something is left holding the pipe", async () => {
+    // The regression the obvious fix would cause: waiting for `close` alone
+    // means a command that starts a daemon blocks until the DAEMON exits. The
+    // background `sleep` here inherits stdout, so `close` cannot arrive — and
+    // this must still come back.
+    const m = new TerminalManager();
+    const started = Date.now();
+    const { terminalId } = m.create({ command: "/bin/sh -c '(sleep 30 &) ; printf DONE'" });
+    const { exitCode } = await m.waitForExit(terminalId);
+    const took = Date.now() - started;
+    expect(exitCode).toBe(0);
+    expect(took, `waited ${took}ms for a command whose child holds stdout`).toBeLessThan(10000);
+    m.kill(terminalId);
+    m.release(terminalId);
+  }, 20000);
 });
 
 describe("commandLanguageForDialect (View all command language)", () => {
@@ -400,4 +734,154 @@ describe("TerminalManager kill fallback (Windows taskkill failure)", () => {
     expect(signalled).toBe(false);
     m.release(terminalId);
   }, 15000);
+});
+
+describe("anyRunning — the honest answer to 'is this machine still doing something'", () => {
+  /**
+   * Session status cannot answer that. An agent can start a twenty-five-minute
+   * build and THEN ask a question, at which point the session says it is
+   * waiting for a person while the build carries on — and on a cloud machine,
+   * believing the status there freezes the build.
+   */
+  it("is false with nothing to run", () => {
+    expect(new TerminalManager().anyRunning()).toBe(false);
+  });
+
+  it("is true while a command runs and false once it exits", async () => {
+    const m = new TerminalManager();
+    const { terminalId } = m.create({ command: nodeEval("setTimeout(() => {}, 300)") });
+    expect(m.anyRunning()).toBe(true);
+    await m.waitForExit(terminalId);
+    expect(m.anyRunning()).toBe(false);
+    m.release(terminalId);
+  });
+
+  it("stays true while ANY command is still going", async () => {
+    // The case that matters: a quick one finishing must not make a long one
+    // invisible.
+    const m = new TerminalManager();
+    const quick = m.create({ command: nodeEval("process.exit(0)") }).terminalId;
+    const slow = m.create({ command: nodeEval("setTimeout(() => {}, 600)") }).terminalId;
+    await m.waitForExit(quick);
+    expect(m.anyRunning()).toBe(true);
+    await m.waitForExit(slow);
+    expect(m.anyRunning()).toBe(false);
+    m.release(quick);
+    m.release(slow);
+  });
+
+  it("is false once a running command is released", async () => {
+    // Released means we have stopped tracking it; holding a machine awake for
+    // something nothing is watching would be a bill with no owner.
+    const m = new TerminalManager();
+    const { terminalId } = m.create({ command: nodeEval("setTimeout(() => {}, 5000)") });
+    expect(m.anyRunning()).toBe(true);
+    m.release(terminalId);
+    expect(m.anyRunning()).toBe(false);
+  });
+});
+
+describe("commands belong to whoever started them", () => {
+  /**
+   * A terminal is a child of the extension, not of the agent, so it outlives the
+   * ACP client that asked for it — and once that client is gone nothing can
+   * send it `terminal/release`. Left alone it is a command nobody owns, and
+   * since a running command is what keeps a cloud machine awake, it holds one
+   * running and billing until the extension itself exits.
+   */
+  it("takes an owner's commands with it and leaves everyone else's", async () => {
+    const m = new TerminalManager();
+    const alice = {};
+    const bob = {};
+    const a = m.ownedBy(alice).create({ command: nodeEval("setTimeout(() => {}, 5000)") }).terminalId;
+    const b = m.ownedBy(bob).create({ command: nodeEval("setTimeout(() => {}, 5000)") }).terminalId;
+    expect(m.anyRunning()).toBe(true);
+
+    expect(m.releaseOwnedBy(alice)).toBe(1);
+    // Bob's is still going, so the machine is still busy.
+    expect(m.anyRunning()).toBe(true);
+    expect(() => m.output(a)).toThrow();
+
+    expect(m.releaseOwnedBy(bob)).toBe(1);
+    expect(m.anyRunning()).toBe(false);
+    void b;
+  });
+
+  it("stops reporting a machine as busy once the owner is gone", async () => {
+    // The whole point: this is what reopened the ghost path.
+    const m = new TerminalManager();
+    const owner = {};
+    m.ownedBy(owner).create({ command: nodeEval("setTimeout(() => {}, 5000)") });
+    expect(m.anyRunning()).toBe(true);
+    m.releaseOwnedBy(owner);
+    expect(m.anyRunning()).toBe(false);
+  });
+
+  it("releasing an owner with nothing running is a no-op", () => {
+    expect(new TerminalManager().releaseOwnedBy({})).toBe(0);
+  });
+
+  it("hands the agent the same interface either way", () => {
+    // The owned view must be indistinguishable from the manager, or the ACP
+    // side would need to know about ownership.
+    const m = new TerminalManager();
+    const view = m.ownedBy({});
+    for (const k of ["create", "output", "waitForExit", "kill", "release"]) {
+      expect(typeof (view as unknown as Record<string, unknown>)[k]).toBe("function");
+    }
+  });
+});
+
+describe("signalling a process group, and when not to", () => {
+  /**
+   * Three versions of this rule have now been wrong in three different ways, so
+   * the reasoning is worth keeping next to the tests.
+   *
+   * Signalling whenever asked can reach a pid the OS recycled and kill somebody
+   * else's work. Probing first with signal 0 does not save it: that proves *a*
+   * group holds the id, not that it is ours — an empty group releases its id
+   * and the next holder answers the probe just as happily.
+   *
+   * The wrapper's own liveness is the one thing that settles it. Alive, its
+   * group exists and is unambiguously ours. Exited, we cannot tell our
+   * surviving descendants from a stranger's group, and killing a stranger is
+   * the worse mistake.
+   */
+  function manager() {
+    const sent: Array<{ pid: number; signal: NodeJS.Signals | 0 }> = [];
+    const m = new TerminalManager({
+      platform: "linux",
+      killImpl: (pid, signal) => { sent.push({ pid, signal }); },
+    });
+    return { m, sent };
+  }
+
+  it("signals the group while the command is running", () => {
+    const { m, sent } = manager();
+    const { terminalId } = m.create({ command: nodeEval("setTimeout(() => {}, 3000)") });
+    m.kill(terminalId);
+    expect(sent.some((c) => c.pid < 0 && c.signal === "SIGTERM")).toBe(true);
+    m.release(terminalId);
+  });
+
+  it("sends NOTHING once the command has exited", async () => {
+    // Where the pid may since have been recycled. Our cleanup must never kill
+    // somebody else's work, and a detached job outliving its shell — which is
+    // what detaching means — is the accepted cost.
+    const { m, sent } = manager();
+    const { terminalId } = m.create({ command: nodeEval("process.exit(0)") });
+    await m.waitForExit(terminalId);
+    m.kill(terminalId);
+    expect(sent).toEqual([]);
+    m.release(terminalId);
+    expect(sent).toEqual([]);
+  });
+
+  it("never probes — a probe cannot tell our group from a stranger's", async () => {
+    const { m, sent } = manager();
+    const { terminalId } = m.create({ command: nodeEval("setTimeout(() => {}, 3000)") });
+    m.kill(terminalId);
+    expect(sent.every((c) => c.signal !== 0)).toBe(true);
+    m.release(terminalId);
+  });
 });

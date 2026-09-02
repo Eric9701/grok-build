@@ -1,5 +1,218 @@
 # Changelog
 
+## 4.1.0 — 2026-09-01
+
+**The browser stops being the lesser half.** Rewinding a message, connecting Claude Code, signing in to GitHub and cloning a private repository were all things you had to walk to a desk to do — which on a cloud machine means walking to a computer that does not exist. All four now work from a phone. And a conversation no longer belongs to whichever tab opened it first: the tab you are holding wins.
+
+### From a browser
+
+- **Rewind and Edit, from whichever screen you are driving.** They were gated to the desk on the assumption that a remote could not be trusted with them — but there is no desk on a cloud machine, so the feature was simply missing there. An unsent message now belongs to its conversation and comes back to the surface that asked for it: edit from a phone and the text arrives on the phone, not in a draft at a laptop nobody is sitting at. If you switch conversations while the rewind is still running, the message parks on the conversation it was written for and comes back the next time that conversation loads. Nothing is lost.
+
+- **Claude Code connects from a browser.** It never could, because Claude's CLI does not print a device code and poll — it prints a link and waits for you to paste the result back. That is a different shape from Grok and Codex, and probing the wrong command is what kept it desk-only. The card now reads in the order you act: what you are about to do, the link that does it, then the field for what it gives back.
+
+- **Sign in to GitHub, and clone a private repository.** A cloud machine could only ever clone public repositories, which is most of the promise missing for most people's code. The old fix button opened a terminal on the host — on a hosted machine that is a screen with nobody at it. Signing in now happens where you are: a link and a short code, the same shape as connecting an agent. We never handle the token; `gh` stores its own credential, and git is wired to use it before the flow reports success, because a sign-in that leaves cloning broken is worse than no sign-in at all.
+
+- **When something genuinely cannot happen in a browser, it says so.** Installing the GitHub CLI needs elevation, so it stays a desk action — and rather than silently opening an invisible terminal, it tells you where to do it. On a cloud machine the message says the truth instead: `gh` ships with the image, so its absence is a broken machine, not a missing step.
+
+### One conversation, several tabs
+
+- **The tab you are holding wins.** A conversation used to belong to the tab that opened it for as long as that tab's connection lasted, and nothing ever expired — so a forgotten tab on a laptop could make a conversation unreachable from your phone, with a refusal that named "another tab" without being able to say which. Now an explicit ask takes it: tapping a session in the rail, picking one from history, or choosing Continue here. No timer, no idle threshold, nothing to configure.
+
+- **A tab that loses a conversation is told what happened, once.** It keeps its transcript, its controls freeze, and one button takes the conversation back. Reconnecting after a network change does not count as asking, so a phone waking from your pocket cannot silently steal a conversation back from the screen in your hand.
+
+### Fixed
+
+- **Re-focusing a live conversation showed the wrong agent.** Joining from a phone a conversation the desk already held left the model picker and the chrome describing whatever was there before — and on a session whose models had not arrived yet, the same path threw and wiped the transcript to an error.
+
+- **A machine that is waking now says so.** Opening a page for a sleeping cloud machine showed nothing at all while it came up, which reads as a broken link rather than a machine getting out of bed.
+
+- **Knowledge work says where cloning went.** Clone from GitHub is a coding affordance and is absent in knowledge-work mode, where an absent thing explains nothing. The menu now says it is one setting away, and selecting the hint opens that setting.
+
+- **A rewind while another rewind was still parked no longer replaces it.** Narrow to trigger, and fixed anyway: the outcome was a message you wrote disappearing from the transcript and the composer at once.
+
+- **Cloud machines with no SVG decoder no longer die on a missing icon.** New machines carry the fix; existing ones are upgraded in place.
+
+## 4.0.0 — 2026-08-31
+
+**Cloud machines.** A hosted environment you reach from a browser, with Grok Build and the agents already on it — no laptop to leave running, nothing to install. This release is the one that makes connecting an agent there work end to end, because a cloud machine has no desk: there is no second screen to answer a dialog, no terminal to read, and no one sitting at it. Every fix below came out of using one for real.
+
+### Connecting an agent
+
+- **One dialog, not two implementations.** The sign-in used to report into the transcript's welcome card, which refuses to draw over a conversation — so on a machine with any history the code, the progress and the failure were invisible, and Settings had grown a second copy of the whole flow to work around it. There is now one renderer, in a dialog, and both places open it. Closing it puts you back exactly where you were.
+
+- **A sign-in finishes the job.** Connecting an account proved the credential and then stopped: the model picker stayed empty and the card still offered to connect the agent you had just connected, until you reloaded the page. Signing in now does what the Providers "Check again" button has always done — start the conversation that was waiting for an agent, fill the picker, and put the card away.
+
+- **The agents are named as products.** Grok Build by SpaceXAI, Codex by OpenAI, Claude Code by Anthropic — in Settings, in the sign-in dialog, and on the buttons, with each vendor's mark beside it. The heading used to say "Connect Grok" while the button under it said "Connect Grok Build", because there were two lists of names.
+
+- **Step one of the Codex sign-in is a link again**, and the security warning OpenAI is about to show you is named in bold before you meet it. Signing out puts the next sign-in back at step one, instead of dropping you at the code with the setting still off.
+
+- **Disconnecting says it is disconnecting.** A sign-out from a browser crosses the network, wakes a machine that may have gone to sleep, and runs the vendor's own CLI — ten to fifteen seconds during which the button said "Sign out" and nothing happened, so people clicked it again. It now reads "Disconnecting…" and refuses the second click.
+
+### Cloud machines
+
+- **The projects rail is there from the first frame.** It used to wait for the machine to answer before drawing, which on a machine that was asleep meant the pre-rail layout — no rail, no file explorer — was the whole screen until it woke. Measured at four seconds of waiting; now a third of a second. A linked laptop still waits, because its Grok Build may be older than the answer.
+
+- **A machine that is asleep is not a machine that is broken.** Sleeping is what a cloud machine does when you stop typing, and it wakes on your next message — so the page no longer announces it as a fault while you are reading. If a message is waiting to send, it says so, calmly, and sends it when the machine comes back.
+
+- **The empty conversation calls itself AFK Pilot Cloud** there, rather than naming an extension nobody installed.
+
+### Fixed
+
+- **"Could not restore this tab's previous conversation."** An empty conversation was remembered as worth restoring whenever anything at all had been drawn in the transcript — including the notice saying an account had signed out. The machine then cleared that empty conversation away, so the next refresh asked for something that no longer existed, drew the error, and armed itself to do it again. Refreshing made it worse; only "New session" escaped. A conversation now counts as empty when it has no turns in it, and a refused restore forgets what it was refused.
+
+- **"Sessions need a newer Grok Build"** was not a version check at all — it was an eight-second timeout, latched for as long as the page stayed open. A machine that was waking, or busy signing an account out, got labelled as an old install and never asked again. Reconnecting now asks again.
+
+- **Signing out cleans up after itself.** Each sign-out replaced its conversations and left the empty ones behind, so a few connect/disconnect cycles put untitled sessions in the rail that nobody could account for.
+
+- **The slash menu starts where your text starts.** In a browser it was drawn against the outside edge of the composer rather than the centred text inside it, so it hung further to the left the wider the window — which made it look like it depended on zoom.
+
+- **The code and the buttons in the sign-in dialog are centred** by construction rather than by arithmetic that happened to work at one font size.
+
+## 3.19.8 — 2026-08-31
+
+Almost everything here is about **cloud machines** — the hosted environment you reach from a browser — because that is where a week of real use found the gaps. At a desk, the one change you will notice is the model picker.
+
+### Fixed — connecting an agent from a browser
+
+- **A sign-in that did not survive a refresh.** Connect Grok, connect Codex, reload the page, and both accounts offered Connect again. Two things were wrong and both had to go: the sign-in verified the credential but never recorded the account as connected — only the Providers refresh and the Check button ever did that — and the refresh itself was withheld from remotes, which is right for a laptop that has a desk behind it and wrong for a cloud machine, where the browser is the only surface there is. Signing in now records what it proved, and a cloud machine can re-observe its own accounts.
+
+- **A machine that went to sleep in the middle of a sign-in.** Start a connection on a phone, switch to the vendor's page to approve it, and nothing on the machine is talking any more — so it was allowed to pause, which killed the connection the CLI was waiting on. Codex approvals that "worked" produced no credential. A sign-in now counts as work for as long as it runs, including while the credential is being checked afterwards.
+
+- **"Codex approved the sign-in, but no usable credential landed."** It had landed. The check that looks for it opens a throwaway session, reads the models, and deletes it — and Codex cannot delete a session that never wrote anything, so a working sign-in was declared a failure one step after it succeeded. Cleaning up can no longer fail the check that comes before it.
+
+- **Connecting Codex is now two numbered steps, and the security warning is not a surprise.** Codex needs one setting turned on in your OpenAI account before any code is accepted, and OpenAI's page then warns — correctly — that device codes are used in phishing and to continue only if a CLI started the sign-in. Step 1 gets you to the setting, with the link and the exact place it hides. Step 2 shows the code beside a note saying that warning is coming, that this machine's Codex CLI is what started this, and never to use a code you did not start yourself.
+
+- **Connecting from Settings looked like a button that did nothing.** The sign-in reported into the transcript's welcome card, which refuses to draw over a conversation — so on a machine with any history, the code, the progress and the failure were all invisible. Settings → Providers now shows the whole flow itself: the code, a Copy button, the sign-in link, and Cancel. Tapping Connect again while one is running repeats the current code to the tab you are holding instead of answering with silence.
+
+- **Success is announced only when it is true.** The CLI exiting cleanly means the vendor approved; it does not mean this machine can use the account. "Connected" now waits for the credential to answer, and when it does not, the message says which of the two failed — a sign-in that never landed, or a sign-in that landed and needs another moment.
+
+### Fixed — cloud machines
+
+- **A machine being built is no longer reported as broken.** A brand-new environment can take up to twenty-five minutes to install from scratch, and the page called it a failure after ninety seconds — advising a reset for a machine that was working perfectly. It now explains at ninety seconds, blames only after twenty-five minutes, and shows progress in the calm blue of a notice rather than the red of an error. Reopening the page for a machine that has worked for days no longer mistakes it for a first boot.
+
+- **Claude Code says so up front.** It cannot be connected on a cloud machine yet — its sign-in needs a terminal — so instead of a Connect button that always ends in a wall, the row and the start screen say we are working on adding it. Grok is marked as the recommended agent there, and a fresh machine offers all three rather than whichever one happened to be asked for.
+
+- **Anonymous usage stats and Thumbs feedback can be changed.** Both were read-only on any remote. A cloud machine has no desk to change them from, so read-only meant never.
+
+- **Settings stopped talking about "the desk"** on a machine that does not have one, and the tips stopped suggesting things a browser cannot do — dropping a file onto the composer works in the app's own window, not in a browser. The tip that suggests connecting a second agent now appears on remotes at all, which is where it matters most: on a cloud machine that is the only way to do it.
+
+### Fixed
+
+- **A newly connected agent appears in the model picker straight away.** Connect Codex from a conversation that already has messages in it and it was missing from the picker until you reloaded — the catalogue was refreshed only for conversations that had not started yet. A first-time agent is purely additive, so it now reaches the picker you are actually looking at.
+
+- **"Update Grok Build to preview"** read as an instruction to install a version called "preview". The rail now says the sessions it cannot list need a newer Grok Build, and when the chat reports that a project folder is no longer open, it adds that the machine is running an older build — the two halves of the same fact, previously on opposite sides of the screen.
+
+- **A sign-out that could not run now logs why.** The message said only that it "could not be observed"; the log now carries the path and the error, which is what the diagnosis actually needs.
+
+## 3.19.7 — 2026-08-30
+
+### Fixed
+
+- **Less of the freeze when you have a lot of conversations.** Reported as a hard lock with a white title bar (#133, #131) and as session switching going wrong (#138). We reproduced it here rather than guessing: with 3000 conversations on disk the app's main thread — the one that paints the window — stopped responding for about a second at a time. The cause was not the agent being slow. A test that stalled the agent by three seconds left the window perfectly responsive; that is a spinner, not a freeze. It was us, walking your entire conversation folder to sort it by date, **up to four times for every click**, on the thread that draws the app — and nothing on screen changed as a result of any of those walks. Opening a conversation no longer rebuilds the list at all, because the set of conversations does not change when you open one, and the periodic tidy-up of abandoned empty conversations no longer runs on every click, because it ignores anything under 30 minutes old and so could never have found something a run half an hour earlier had missed. Measured on one machine at 3000 conversations, before and after, back to back: catalog walks over three conversation opens **from 11 down to 4**, total time the window spent unresponsive **roughly halved** (4.8s to 2.3s), and the worst single stall from about 1.1s to 0.8s. **This is an improvement, not a cure** — a stall you can still notice remains, one walk per open is still there, and the change that removes it is written down and waiting. If you have a large history, this release should feel better; please say so on #133 if it does not.
+
+- **Dark High Contrast made the effort dots and the check mark invisible.** They were painted in VS Code's button colour, which that theme defines as pure black, so they vanished into the popover behind them (#139, thanks @HubKing). They now use the link colour, which every theme guarantees is readable as text. A test now enforces the rule across the whole UI, and it immediately found a third place with the same bug that nobody had reported: the settings toggle switch, which could have rendered "on" identically to "off".
+
+- **One-word commands run in your shell too.** 3.19.6 unwrapped the agent's `bash -lc` wrapper only when the command inside was quoted — and the tool that builds those wrappers leaves anything simple unquoted. So `ls`, `pwd`, `make` and `pytest` kept the old path and stayed on macOS's bash 3.2, which is most of what anyone actually types (#140, thanks @russwyte). A bare command built only from characters no shell treats specially is now unwrapped too; anything with whitespace, a variable, a glob, a tilde, a pipe or a redirect still keeps the wrapper, because those are where the two readings could differ.
+
+- **"Connect Codex" opened a terminal that could not start.** Installing Codex with npm leaves two files side by side: one for Git Bash and one for Windows. We were finding the Git Bash one first, and Windows cannot execute it at all — so the sign-in terminal failed to launch with nothing to click, and the same unusable path was handed to the agent process. We now look for the Windows one first, which is what the Grok CLI lookup has always done.
+
+- **Connectors stop asking you to sign in again out of nowhere.** A connector whose stored credential has gone missing cannot refresh it, so the proxy starts a fresh sign-in and opens a browser — unprompted, on every new conversation, for ever, because nothing recorded that it failed. One connector in that state reads as the app demanding sign-ins at random. Those connectors are now left out until you reconnect them: the row says so and offers a Connect button, and no browser opens unless you press it. This is deliberately not about expiry — credentials expire every few hours by design and are renewed silently; only a credential that is actually gone counts.
+
+### Fixed — cloud environments
+
+- **Providers can be connected and disconnected from the page that lists them.** Settings → Providers was read-only for a remote, which was true when it was written and stopped being true when headless sign-in shipped — leaving the onboarding card as the only way to connect an agent from a phone or a cloud machine. Signing **out** now works too, but only on a cloud environment, where the remote is the machine's only surface: a credential you can grant and never revoke is the worse answer there. At a desk it stays local, because signing out revokes a credential every window on that machine shares.
+
+- **The Codex sign-in card's own button did nothing.** The card that explains the one account setting Codex needs was shown unconditionally, so pressing "I've turned it on — connect" re-drew the same card. It could never be got past. The advice is still shown first — it saves a wait for a failure almost every account hits — but it is advice, not a gate, and the second attempt now runs for real. The step naming the setting also says **at the very bottom**, because that is where it is on the page.
+
+- **A new machine no longer says it is broken while it is still starting.** Opening a cloud environment straight after creating or resetting it announced that it was not responding — a message written for a machine that went away, shown to one that had not arrived yet, which is the first thing a new user sees. Starting up and having gone offline are now separate states with separate words, and a first boot that genuinely never finishes still says so after 90 seconds rather than reassuring you for ever.
+
+- **A provider that cannot be signed in from a cloud machine no longer tells you to go and do it at your computer.** There is no computer to walk to. It now says what does work there.
+
+## 3.19.6 — 2026-08-30
+
+### Fixed
+
+- **Agent commands really do run in your own shell now.** 3.19.5 switched the shell on macOS and Linux and that was not enough: Grok sends every command already wrapped as `/bin/bash -lc …`, so running it under zsh just meant zsh handed it straight back to bash — the same bash 3.2 from 2007, sourcing the same profile, printing the same sdkman error. Verified against the real CLI: **every** command it issues arrives inside that wrapper. The wrapper is now unwrapped and the command is given to your shell as an explicit argument, so it cannot bounce back into bash — when that shell can stand in for bash (zsh, bash). On `/bin/sh`, dash or ksh the wrapper is deliberately left alone, because Grok wrote the script for bash and a smaller shell would fail on syntax it is entitled to use. A command the model itself wrote as `bash -lc …` is left alone. Found, diagnosed and fixed by **@russwyte** in #141 — including the part 3.19.5 missed. A `$SHELL` we cannot drive (fish, nushell) or that is not a runnable file still falls back to `/bin/sh`. **If a project's `.env` sets `SHELL`,** the agent reads that while your commands still run under the shell VS Code itself was started with — so bash-only syntax could now fail where it previously worked. Rare, and on the list to fix. **One behaviour change worth knowing:** that wrapper was also making every command run through a *login* shell, so your profile was being sourced. It no longer is. If a tool is on a `PATH` that only `~/.zprofile` or `~/.bash_profile` sets, the agent may stop finding it — tell us if that happens to you, it is the kind of trade-off worth revisiting with real cases.
+
+## 3.19.5 — 2026-08-30
+
+### Fixed
+
+- **Agent commands run in your own shell on macOS and Linux.** Every command the agent ran went through `/bin/sh`, which on macOS is bash 3.2 from 2007 — not the shell you actually use. Anything that branches on which shell is running took the wrong branch: sdkman printed a `bad substitution` error at the top of every command's output, because seeing bash 3.2 sends it down a path that needs bash 4. Commands now run under the shell `$SHELL` names, when it is one the agent can drive (sh, bash, zsh, ksh, dash, ash), and fall back to `/bin/sh` otherwise. That also lines the two halves up: the agent decides which dialect to write from `$SHELL`, so running the shell `$SHELL` names means the shell it describes and the shell it gets are the same one. **This changes which shell runs your command, not what your profile sets up:** as before, commands are not run through a login shell, so `~/.zshrc` and `~/.bash_profile` are still not read and a tool that only exists on a `PATH` set there is still not found. Setting **Terminal shell** to `cmd` forces `/bin/sh` exactly as before, and Windows is unchanged. Thanks to @russwyte (#140), whose report named the cause precisely.
+
+- **A slow conversation open now says where the time went.** The `session open:` line in the log listed phases that could add up to a small fraction of the time the open really took, with nothing admitting the gap — one report showed 5.2 seconds against 379ms of named work, and every phase on it looked fast. The line now accounts for its whole total: whatever the named phases do not claim is printed as `other`, and the clock starts when you click rather than partway through, so finding the conversation and reading its stored details are on the line too. That last part is not small — on a machine with a lot of history it was the largest single piece of the open, and it was invisible. Starting a new conversation is now timed too — in one reporter's log that step took between 2.2 and 4.8 seconds every single time, and nothing on the line said so. Chasing #131, #133 and #138; if you have been hit by one of those, a fresh log now says considerably more.
+
+## 3.19.4 — 2026-08-28
+
+### Added
+
+- **The file panel can be told to look again.** It read each folder once and kept that listing for as long as the project stayed open, so anything changing files behind its back — the agent writing them, a build, a branch switch, another editor — left it quietly wrong with no way to ask for a fresh look. There is now a **Refresh** control in the panel header, **Refresh this folder** on a folder's right-click menu, and the same button inside an empty folder, which is where it is easiest to conclude the panel is simply broken. Refreshing keeps your place: folders you had open stay open, and your filter text, scroll position and open file tabs all survive. Thanks to @leriksen71LJR (#134).
+
+### Fixed
+
+- **A folder too big to list in full appeared to be empty.** Past the listing cap, the "Folder truncated" note replaced the very entries it was meant to sit under, so a large folder showed the warning and none of its files. The note now sits below them.
+
+## 3.19.3 — 2026-08-28
+
+### Fixed
+
+- **The desktop app writes its log again.** 3.19.2 added a log file so anyone chasing a problem would have something to send, and the code that started it could not run — the app threw on every launch before writing a line, so the release whose whole purpose was to produce logs produced none. It writes from the first line now, and rotation measures what it actually wrote rather than guessing at startup, so a long session no longer grows one file without end. Still under **Settings → Advanced → Show logs**.
+- **A long turn survives you putting your phone down.** On a cloud environment the machine is suspended when nothing has touched it for about a minute, and suspended means frozen — so a turn that spent four minutes running tests or an install was stopped in the middle of the work you had walked away from. That is the one thing remote control exists to prevent. The machine now says it is still working while the agent is working and for as long as any command it started is still running, however long that takes; if it stops to ask you something and you do not come back, it goes to sleep after twenty minutes and wakes when you open the page, with the question still there. **Nothing changes on your own computer**, where the wake lock already covered this.
+
+### Changed
+
+- **A new install no longer files your work under the name of the tool.** New projects went into `~/Grok Build`, and on the desktop app that folder was also your first project — the product's name on a folder that is yours. New installs now get an **AFK Pilot** folder holding a first project called **My First Project**, so the container and the project are no longer the same thing. If you already have a `~/Grok Build` folder it keeps being used and nothing moves; that decision is made once and remembered, so an upgrade never scatters your projects across two roots. In a cloud environment the welcome screen now reads **AFK Pilot (Cloud)**, which is the product you are actually in.
+
+## 3.19.2 — 2026-08-27
+
+### Fixed
+
+- **You can get the logs off the desktop app.** *Settings → Advanced → Show logs* did nothing: it was wired to an empty function, DevTools is disabled in packaged builds, and the log went to stdout — which is discarded when the app starts from an icon rather than a terminal. Anyone asked for a log went looking and correctly found none. The app now writes a log file under its own data folder, keeps one previous copy, and **Show logs** opens the folder with it selected. Lines are written as they happen, so the ones just before a freeze survive. Reported while chasing #131 and #133 by @RudyParengal, who was right that the button did nothing.
+- **A proposed-change diff you closed stays closed.** Returning to a conversation reopened the `Grok proposed:` tab and pushed the files you were working in off the screen. Auto-open now happens once when the change is proposed, not every time the conversation is redrawn — a new edit still opens, and **open diff** reopens it whenever you want. Thanks to @tarekmaalouf (#132) for pinning down exactly what was happening.
+
+## 3.19.1 — 2026-08-27
+
+### Fixed
+
+- **Cloud environments can start.** The Linux build published in 3.19.0 could install itself on a hosted machine and then never come up: a packaged build refuses to take its relay or its device token from the environment, which is right for an app on your desk and impossible for a machine with no keyboard. That one build is now marked as a cloud build at package time and accepts an identity only when the machine also declares itself a cloud environment. **Nothing changes for the Mac and Windows apps** — they still refuse the environment exactly as before, and the Linux AppImage remains a cloud-only artifact rather than a desktop download.
+
+## 3.19.0 — 2026-08-27
+
+### Added
+
+- **Connect an agent from your phone.** The remote empty state used to say sign-in could only happen at your computer, and stop there — true of how it worked, and a dead end at the moment you most wanted a next step. Pressing **Connect** from a phone or browser now runs the agent CLI's headless sign-in and shows you the link and the short code it prints; you confirm it in your own browser and the page finishes on its own. The credential still lands on the computer running the extension, the same as before — nothing is kept in the browser and the relay never sees it. **Nothing changes at your computer**, where Connect still opens a terminal, because there the CLI opens your browser for you. Grok works this way today; Codex needs both a recent CLI and "Allow device code login" enabled on the account; **Claude has to be connected at your computer**, because its sign-in is a terminal interface that prints nothing when it is not attached to one. The app finds this out by asking the CLI rather than by checking a version, so an agent that gains the ability starts working without an update here. Signing *out* stays at your computer. See [Signing agents in](https://github.com/phuryn/grok-build-vscode/blob/main/docs/provider-login.md).
+
+## 3.18.0 — 2026-08-26
+
+### Added
+
+- **Add project can make one, not just find one.** It used to be a single control that opened your operating system's folder picker — right for a folder that already exists, and wrong for everything else. There are three ways in now. **New project** takes a name and creates `~/Grok Build/<name>`: one folder, no `git init`, and nothing to choose in a file dialog. **Import a folder** is the picker, unchanged. **Clone from GitHub** takes a repository URL and checks it out beside the others; it appears in Coding mode, because that is where it belongs. A host that offers only one of the three shows no menu at all.
+- **Naming a project and cloning one work from your phone.** They send a name or a URL and let the computer running the extension decide where it goes, which is why they can travel when the folder picker never could — a native dialog is not something a browser can show or answer. Importing stays at the desk for that reason.
+- **Cloning uses the Git credentials you already have.** No token to paste, nothing stored, and public repositories need nothing at all — on most machines the GitHub CLI is never needed at all. When a private repository does fail, the form says so and offers the next step rather than printing what Git said. **Sign in to GitHub** runs `gh auth login` *and* `gh auth setup-git`, because login alone asks whether to configure Git and lets you say no — which would leave the clone failing exactly as before. If the CLI is not installed, the button offers to install it and names the exact command first; if there is no package manager to install it with either — a Mac without Homebrew, Windows without winget — it points at cli.github.com rather than offering a button that would run a command which is also missing.
+- **A tip on the empty screen.** Once an agent is connected the welcome screen had nothing to say; it now carries one quiet line naming something you have not set up yet — another agent, a routine, connectors, read aloud, `@` file mentions, a worktree. Each links to the exact place it names. You are never shown advice about something you have already done, no tip appears twice in a day, and **✕** means *not today* rather than never. When it all applies to you, the line is simply gone. See [Tips on the empty screen](https://github.com/phuryn/grok-build-vscode/blob/main/docs/empty-state-tips.md).
+
+### Fixed
+
+- **The Settings link on a tip opens the right page.** Every tip that points at Settings now lands on its own category rather than the top of the page.
+
+### Documentation
+
+- [Projects](https://github.com/phuryn/grok-build-vscode/blob/main/docs/projects.md) — the three ways to add one, where new folders go, name rules, and what happens when a clone needs credentials.
+- [Signing agents in](https://github.com/phuryn/grok-build-vscode/blob/main/docs/provider-login.md) — how Grok, Codex and Claude authenticate, including the headless paths for a machine you only ever reach remotely.
+- [Tips on the empty screen](https://github.com/phuryn/grok-build-vscode/blob/main/docs/empty-state-tips.md) — what can be suggested, the rules it follows, and where the state lives.
+
+## 3.17.2 — 2026-08-25
+
+### Fixed
+
+- **The routine model picker lists each agent once.** It was showing every provider twice — three headings holding a single "use this agent's default" row, then three more holding the real models. The default row is now offered only where it means something: when an agent has no other model to show yet, or when a routine is already set to it. New routines start on a real model, the way the composer does.
+
+## 3.17.1 — 2026-08-25
+
+### Fixed
+
+- **Routines now load in the VS Code Settings tab.** Opening Settings as a tab (rather than through the chat panel) left the Routines page saying "Loading routines…" and never finishing. The tab listens for its own updates and had never been told about routines, so the answer arrived and was dropped. The chat panel and the desktop app were unaffected.
+
 ## 3.17.0 — 2026-08-24
 
 ### Added

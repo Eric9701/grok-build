@@ -17,7 +17,7 @@ export const REMOTE_PROTO_VERSION = 1;
 /** Optional richer-device fields on hello / link/start. */
 export type RelayClientMeta = {
   clientLabel?: string;
-  platform?: "win" | "mac" | "linux";
+  platform?: "win" | "mac" | "linux" | "cloud";
   osLabel?: string;
 };
 
@@ -27,14 +27,42 @@ export type RelayClientSource = {
   release: string;
   appName: string;
   isDesktop: boolean;
+  /** This host IS an AFK Pilot cloud environment. Set from
+   *  {@link CLOUD_ENVIRONMENT_ENV}; see {@link relayClientMeta}. */
+  isCloud?: boolean;
 };
+
+/**
+ * Marks a host as a hosted cloud environment rather than someone's machine.
+ *
+ * The host reports this about ITSELF rather than the relay inferring it, for
+ * the same reason every other client field works that way: the relay stores
+ * what it is told and never invents a label. When the relay grows a real
+ * environments table it will know independently, and this stays true anyway.
+ */
+export const CLOUD_ENVIRONMENT_ENV = "GROK_CLOUD_ENVIRONMENT";
+
+/** The parenthetical a cloud environment shows in the device picker. */
+export const CLOUD_CLIENT_LABEL = "by afkpilot.com";
 
 /** extension -> relay */
 export type UplinkFrame =
   | { t: "hello"; proto: number; device?: { name?: string }; client?: RelayClientMeta }
   | { t: "host"; msg: HostMsg }
   | { t: "host-to"; clientIds: string[]; msg: HostMsg }
-  | { t: "snapshot"; clientId: string; msgs: HostMsg[] };
+  | { t: "snapshot"; clientId: string; msgs: HostMsg[] }
+  /**
+   * "I am mid-turn." No payload, no side effect at the other end — its only job
+   * is to ARRIVE. A cloud machine is held awake by traffic on its uplink, and a
+   * turn spends most of its life waiting on a tool with nothing to say, so
+   * streaming text keeps the machine alive only by accident. This does it on
+   * purpose.
+   *
+   * Additive, so REMOTE_PROTO_VERSION does not move: a relay that predates it
+   * does not recognise the frame, drops it, and says nothing. Sending it is
+   * therefore safe against every relay this extension can reach.
+   */
+  | { t: "working" };
 
 /** relay -> extension */
 export type RelayFrame =
@@ -64,6 +92,10 @@ export function hostToFrame(clientIds: string[], msg: HostMsg): UplinkFrame {
 
 export function snapshotFrame(clientId: string, msgs: HostMsg[]): UplinkFrame {
   return { t: "snapshot", clientId, msgs };
+}
+
+export function workingFrame(): UplinkFrame {
+  return { t: "working" };
 }
 
 /** Parse + shape-validate a relay->extension frame. null = drop (never throw). */
@@ -250,11 +282,20 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
         (value.cwd === undefined || isRemoteCwd(value.cwd))
         ? msg as WebviewMsg
         : null;
-    case "resumeSession":
-      return isRemoteSessionId(value.id) &&
-        (value.cwd === undefined || isRemoteCwd(value.cwd))
-        ? msg as WebviewMsg
-        : null;
+    case "resumeSession": {
+      if (!isRemoteSessionId(value.id)) return null;
+      if (value.cwd !== undefined && !isRemoteCwd(value.cwd)) return null;
+      if (value.claim !== undefined && typeof value.claim !== "boolean") return null;
+      // Reconstruct so a future field cannot ride this newly-extended payload
+      // the way `send` used to. `claim: true` is the only value that changes
+      // host behaviour; false/absent is today's refusal.
+      return {
+        type: "resumeSession",
+        id: value.id,
+        ...(typeof value.cwd === "string" ? { cwd: value.cwd } : {}),
+        ...(value.claim === true ? { claim: true } : {}),
+      };
+    }
     case "renameSession":
     case "deleteSession":
       // cwd is optional and, when present, must look like a repo path. The host
@@ -423,8 +464,19 @@ export const RELAY_DEVICE_TOKEN_SECRET = "grok.remoteControl.deviceToken";
 export function resolveRelayUrl(opts: {
   isProduction: boolean;
   env?: Record<string, string | undefined>;
+  /**
+   * A build made to run as a cloud environment — see
+   * `PACKAGED_CLOUD_BUILD_FIELD`. Such a build is packaged, so `isProduction`
+   * is true, but it has no user at a keyboard and is told where to dial by the
+   * relay that created it. Requires the machine to ALSO declare itself a cloud
+   * environment at runtime, so the artifact alone is not enough.
+   */
+  cloudBuild?: boolean;
 }): string {
-  if (opts.isProduction) return REMOTE_RELAY_URL;
+  const cloudManaged = !!opts.cloudBuild && isCloudEnvironment(
+    (opts.env ?? {}) as NodeJS.ProcessEnv,
+  );
+  if (opts.isProduction && !cloudManaged) return REMOTE_RELAY_URL;
   const raw = (opts.env ?? {})[RELAY_URL_ENV];
   if (typeof raw !== "string") return REMOTE_RELAY_URL;
   const trimmed = raw.trim();
@@ -478,9 +530,25 @@ export function resolveRelayUrl(opts: {
 export function resolveInjectedDeviceToken(opts: {
   isProduction: boolean;
   env?: Record<string, string | undefined>;
+  /** See {@link resolveRelayUrl}. A cloud build takes its identity from the
+   *  environment because nothing else can give it one. */
+  cloudBuild?: boolean;
 }): string | undefined {
-  if (opts.isProduction) return undefined;
   const env = opts.env ?? {};
+  // A cloud environment is the one case where a packaged build may take its
+  // identity from the environment: the relay created the machine, wrote the
+  // file over TLS, and there is nobody there to link it by hand.
+  //
+  // It also skips the URL interlock below. That interlock pairs the token to a
+  // relay override so the two cannot be split — good on a desk, wrong here,
+  // because a production cloud machine dials the PRODUCTION relay and would
+  // otherwise be refused for pointing exactly where it should.
+  if (opts.cloudBuild && isCloudEnvironment(env as NodeJS.ProcessEnv)) {
+    const injected = env[RELAY_DEVICE_TOKEN_ENV];
+    if (typeof injected !== "string") return undefined;
+    return injected.trim() || undefined;
+  }
+  if (opts.isProduction) return undefined;
   const resolved = resolveRelayUrl({ isProduction: false, env });
   const baseline = resolveRelayUrl({ isProduction: false, env: {} });
   if (resolved === baseline) return undefined;
@@ -503,6 +571,7 @@ export function resolveInjectedDeviceToken(opts: {
 export function consumeInjectedDeviceToken(opts: {
   isProduction: boolean;
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
+  cloudBuild?: boolean;
 }): string | undefined {
   const token = resolveInjectedDeviceToken(opts);
   delete opts.env[RELAY_DEVICE_TOKEN_ENV];
@@ -610,6 +679,17 @@ export type LinkStartBody = {
 
 /** Same mapped `clientLabel` / `platform` / `osLabel` as link/start — omit empty. */
 export function relayClientMeta(input: RelayClientSource): RelayClientMeta {
+  // A cloud environment says what it IS and nothing about the box underneath.
+  //
+  // It genuinely runs the desktop host on Linux, and reporting either fact is
+  // worse than useless to the person reading the picker: they cannot act on the
+  // operating system of a machine they do not administer, and "desktop app" is
+  // actively wrong — nobody installed anything. What they need to know is who
+  // runs it, so the whole parenthetical is "by afkpilot.com" and the OS half is
+  // omitted rather than blanked.
+  if (input.isCloud) {
+    return { clientLabel: CLOUD_CLIENT_LABEL, platform: "cloud" };
+  }
   const clientLabel = sanitizeRelayDeviceField(deviceClientLabel(input.appName, input.isDesktop));
   const platform = devicePlatformCode(input.platform);
   const osLabel = sanitizeRelayDeviceField(deviceOsLabel(input.platform, input.release));
@@ -629,6 +709,7 @@ export function buildLinkStartBody(input: {
   installId: string;
   appName: string;
   isDesktop: boolean;
+  isCloud?: boolean;
 }): LinkStartBody {
   return {
     name: deviceDisplayName(input.hostname, input.platform, input.release),
@@ -643,4 +724,15 @@ export const MAX_BACKOFF_MS = 30_000;
 /** Reconnect backoff: double up to the cap. */
 export function nextBackoffMs(prev: number): number {
   return Math.min(Math.max(prev, INITIAL_BACKOFF_MS) * 2, MAX_BACKOFF_MS);
+}
+
+/**
+ * Is this host an AFK Pilot cloud environment?
+ *
+ * One env var, read in one place, so "am I hosted" is never re-derived from
+ * something adjacent like the platform or the relay URL. Both of those have
+ * other reasons to be true.
+ */
+export function isCloudEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[CLOUD_ENVIRONMENT_ENV] === "1";
 }

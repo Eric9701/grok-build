@@ -671,6 +671,38 @@ body.rail-resizing * {
 /* The empty rail's one actionable thing. Sits under the note rather than beside
    it: on the screen where a user has nothing else to click, the next step
    should read as a step, not as decoration on an error message. */
+/* "+ Add project" — full width, under the project list and in the empty rail.
+   TWIN of the rule in projects-rail.css: that stylesheet is loaded ONLY by the
+   VS Code rail webview (sidebar.ts), so a rule written only there never reaches
+   the desktop or browser rail, which chat.css serves. Keep the two in step. */
+.rail-add-project-wide {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: calc(100% - 16px);
+  margin: 6px 8px 2px;
+  padding: 6px 12px;
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground, CanvasText));
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+}
+.rail-add-project-wide:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.3));
+}
+.rail-add-project-wide:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.rail-add-project-wide-plus { font-size: 14px; line-height: 1; opacity: 0.9; }
+/* The 36px floor every other control here uses; 44 on a phone, where this is
+   the primary way to add a project. */
+@media (hover: none), (pointer: coarse) {
+  .rail-add-project-wide { min-height: 44px; font-size: 13.5px; }
+}
+
 .rail-empty-action {
   display: block;
   margin-top: 6px;
@@ -905,6 +937,17 @@ body.rail-resizing * {
     padding: 4px;
     margin: -4px;
   }
+  /* GLYPH size, not the tap target — the tap target was already 36px here and
+     that was never the complaint. The owner, on a phone: "why size is smaller
+     than in files explorer?" Because these were 13px and 12px against the file
+     panel's 20px, so a 36px button held an icon under two thirds its size and
+     read as a different, lesser control.
+     20px is not a new number: `#session-head .rail-action-btn svg` in chat.css
+     has used it all along, and it is exactly what .gfp-icon-button uses. In a
+     36px box it leaves 8px of breathing room each side. */
+  .rail-action-btn svg,
+  .rail-session-actions .rail-action-btn svg,
+  .rail-repo-actions .rail-action-btn svg { width: 20px; height: 20px; }
   .rail-session-repo { font-size: 12px; }
   .rail-menu-item { padding: 11px 10px; }
   .rail-head-btn { padding-block: 12px 8px; }
@@ -1165,7 +1208,13 @@ a:hover {
 .toolbar-popover-item:hover .mode-item-label { color: var(--vscode-list-hoverForeground, var(--vscode-foreground)); }
 .toolbar-popover-item.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground)); }
 .toolbar-popover-item.active .mode-item-desc { color: var(--vscode-list-activeSelectionForeground, var(--vscode-descriptionForeground)); opacity: 0.75; }
-.popover-check { color: var(--vscode-button-background); flex-shrink: 0; }
+/* textLink, not button-background. `button.background` is a SURFACE colour and
+   is only legible with `button.foreground` painted on it: VS Code's Dark High
+   Contrast theme sets it to pure BLACK, so a bare check mark in it disappears
+   into the popover (#139). Every other mark in this popover — .popover-back,
+   .popover-action, .popover-update-avail — already uses the link colour, which
+   is contrast-checked as a foreground in all four theme kinds. */
+.popover-check { color: var(--vscode-textLink-foreground, #3794ff); flex-shrink: 0; }
 .mode-popover-item { white-space: normal; align-items: flex-start; }
 
 /* On/off switcher used by toggle items in the gear popover (e.g. Show thinking
@@ -1385,6 +1434,89 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
 }
 .welcome-tip b { font-weight: 600; }
 .welcome-tip [role="button"] { cursor: pointer; }
+
+/* Empty-state advice shares the hint's box and measure, so the two tenants of
+   this slot cannot look like different features. It differs only in being a
+   ROW: bulb, one line of copy, and a dismiss the hint never needed (that one
+   retires itself by being taken). */
+.welcome-tip.welcome-advice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  /* Wider than the 30ch the hint above uses. That measure is right for a
+     numbered instruction list read one step at a time; the same width turns a
+     single advisory sentence into a five-line column in the middle of an
+     otherwise empty screen. One sentence, two or three lines. */
+  max-width: 46ch;
+}
+.welcome-tip-bulb {
+  flex: none;
+  display: inline-block;
+  /* No width/height here: the glyph carries its own, the way every entry in
+     chat.js's ICON map does. Sizing it from the stylesheet as well would mean
+     two places to change and one of them silently winning. */
+  vertical-align: -2px;
+  /* Same muted colour as the sentence it introduces. The emoji this replaced
+     was a saturated yellow that read as a call to action, which is the one
+     thing this slot is not. */
+  opacity: 0.85;
+}
+.welcome-tip-bulb svg { display: block; }
+/* The move-view hint is a paragraph, not a flex row, so its mark sits inline. */
+.welcome-tip:not(.welcome-advice) .welcome-tip-bulb { display: inline-block; }
+.welcome-tip-body { flex: 1; min-width: 0; }
+/* Not .icon-btn: that primitive is a 20x20 chrome member with its own hover
+   plate, and this sits inside a 6% wash where the plate reads as a second box.
+   A bare glyph at the copy's own size is the whole control. */
+.welcome-tip-dismiss {
+  flex: none;
+  background: none;
+  border: 0;
+  padding: 0 1px;
+  margin: -1px 0 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+}
+.welcome-tip-dismiss:hover { opacity: 1; }
+.welcome-tip-dismiss:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+  opacity: 1;
+}
+/* Touch devices: both of this row's controls are finger-sized targets drawn at
+   mouse scale, and the screens gate holds every tappable thing to 36px with no
+   exemptions. Same technique as .icon-btn above — grow the INVISIBLE hit box,
+   leave the glyph and the type alone.
+   The actionable phrase stays a plain inline (never inline-block): it wraps
+   mid-sentence — "Connect Codex or Claude Code" breaks across two lines at this
+   measure — and an atomic box would force it onto one line and push the tip
+   past its own width. Vertical padding on an inline element enlarges the hit
+   box without touching the line height, so only the horizontal padding needs
+   pulling back out with a negative margin. */
+@media (hover: none), (pointer: coarse) {
+  .welcome-tip.welcome-advice .muted-link {
+    /* Padding on an INLINE element gives a hit box of line-box + 2x padding,
+       and the line box is a font-metric — 11px each side cleared 36 on Windows
+       (14.8px line) and landed on 34 in CI on Linux (12px line). Sized from the
+       shortest metric, not the local one: 12 + 26 = 38. The horizontal pair is
+       what carries the narrowest action phrase ("Plan") over the same floor. */
+    padding: 13px 12px;
+    margin: 0 -12px;
+  }
+  .welcome-tip-dismiss {
+    width: 36px;
+    height: 36px;
+    margin: -9px -10px 0 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.7;
+  }
+}
 .muted-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .muted-link:hover { opacity: 0.8; }
 
@@ -1435,12 +1567,19 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
+/* A row, not a block with a button floated on top of it. As a block the code
+   sat 7px high in its own field and the copy button — absolutely positioned at
+   top: 4px — was 2px off centre; both were measured on a phone (owner,
+   2026-08-31). Centring is structural here: the field centres its children,
+   so a taller code string or a different icon size cannot re-break it. */
 .onb-cmd {
-  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: var(--vscode-textCodeBlock-background);
   border: 1px solid var(--vscode-editorWidget-border);
   border-radius: 4px;
-  padding: 8px 36px 8px 10px;
+  padding: 6px 6px 6px 10px;
   font-family: var(--vscode-editor-font-family);
   font-size: 12px;
   word-break: break-all;
@@ -1451,10 +1590,22 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
   color: var(--vscode-foreground);
   font-size: 12px;
 }
+.onb-code-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--vscode-foreground);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 0;
+  outline: none;
+}
 .onb-copy {
-  position: absolute;
-  top: 4px;
-  right: 4px;
+  /* A flex item beside the code, pushed to the end — the absolute position it
+     used to have could only ever be centred by luck. */
+  margin-left: auto;
+  flex: 0 0 auto;
   background: transparent;
   border: none;
   color: var(--vscode-descriptionForeground);
@@ -1469,6 +1620,14 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
   color: var(--vscode-foreground);
 }
 .onb-copy.copied { color: var(--vscode-charts-green, #4ec9b0); }
+/* A provider mark inside a connect button. .provider-logo is sized by its
+   glyph box elsewhere (100%/100%), so it needs its own size here. */
+.onb-action .provider-logo {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
 .onb-action {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
@@ -1478,7 +1637,17 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
   font-family: inherit;
   font-size: 12px;
   cursor: pointer;
+  /* Centre the label in the box rather than leaving it to line-height: these
+     are <a> and <button> with the same class, and on a phone the text sat
+     visibly high in both (owner, 2026-08-31). */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 32px;
+  line-height: 1.25;
   text-align: center;
+  box-sizing: border-box;
 }
 .onb-action code {
   background: rgba(255,255,255,0.12);
@@ -1488,6 +1657,41 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
   color: inherit;
 }
 .onb-action:hover { background: var(--vscode-button-hoverBackground); }
+.onb-code-entry .onb-action {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 4px 10px;
+}
+/* The remote sign-in panel's "Open the sign-in page" is a real link, because on
+   a phone it has to open a real browser tab. It still has to look like the
+   buttons above and below it.
+
+   `color` is repeated here deliberately, not inherited from .onb-action: the
+   global `a { color: var(--vscode-textLink-foreground) }` above wins over the
+   class, and this shipped for one screenshot as link-blue text on the blue
+   button fill — 1.12:1, an effectively blank button that every DOM assertion
+   was happy with. scripts/remote-signin-check.mjs now measures the contrast. */
+a.onb-action {
+  /* flex, not block: this element has the same class as the <button> beside
+     it and must look identical. `display: block` here beat the class's own
+     centring on specificity, so a link-button's label sat 13px high while
+     the button next to it was centred — measured, not eyeballed (owner,
+     2026-08-31). */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  color: var(--vscode-button-foreground);
+  text-decoration: none;
+}
+a.onb-action:hover {
+  color: var(--vscode-button-foreground);
+  text-decoration: none;
+}
+a.onb-action.onb-secondary,
+a.onb-action.onb-secondary:hover {
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+}
 .onb-action.onb-secondary {
   background: var(--vscode-button-secondaryBackground, transparent);
   color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
@@ -3164,9 +3368,11 @@ textarea#input {
   border: 1.5px solid var(--vscode-descriptionForeground);
   background: transparent;
 }
+/* Same reason as .popover-check: `button.background` is hcDark BLACK, which
+   made the filled dots vanish on the high-contrast background (#139). */
 .effort-dot.active::before {
-  background: var(--vscode-button-background);
-  border-color: var(--vscode-button-background);
+  background: var(--vscode-textLink-foreground, #3794ff);
+  border-color: var(--vscode-textLink-foreground, #3794ff);
 }
 .effort-dot:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
 .effort-dot.active { opacity: 1; }
@@ -3556,7 +3762,12 @@ textarea#input {
   background: var(--vscode-list-activeSelectionBackground);
   color: var(--vscode-list-activeSelectionForeground);
 }
-.slash-name { font-family: var(--vscode-editor-font-family); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+/* Deliberately NOT the editor font. This was `--vscode-editor-font-family`,
+   i.e. monospace, on the theory that a slash command is a literal token — but
+   the row is a menu item being read, not code being edited, and the owner
+   noticed it as looking wrong before knowing why. The `@` mention rows below
+   already use the UI font; this makes the two popovers agree. */
+.slash-name { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .slash-desc { font-size: 11px; color: var(--vscode-descriptionForeground); overflow-wrap: anywhere; }
 /* The matched run inside a slash/skill row. Uses the house accent
    (--vscode-charts-blue, the same one the composer's voice and command tokens
@@ -3878,6 +4089,88 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   border-top: 1px solid var(--vscode-editorWidget-border);
   border-bottom: 1px solid var(--vscode-editorWidget-border);
   opacity: 0.8;
+}
+
+/* The takeover state, standing WHERE the composer would be.
+   It was a 12px stripe above a still-live-looking composer, which read as
+   chrome to skip past (owner, 2026-09-01). The composer is precisely what
+   stopped working, so the explanation takes its place: a real heading, one
+   sentence that leads with "nothing was lost", and one full-width action the
+   size of a thing you tap. */
+.session-superseded-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid var(--vscode-focusBorder, var(--vscode-editorWidget-border));
+  border-radius: 8px;
+  margin: 0 0 8px;
+  background: var(--vscode-textBlockQuote-background, rgba(86, 156, 214, 0.08));
+}
+.session-superseded-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--vscode-foreground);
+}
+.session-superseded-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--vscode-descriptionForeground);
+}
+.session-superseded-btn {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  /* Matches the send button's tap target rather than a link-sized chip. */
+  min-height: 34px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  align-self: flex-start;
+  min-width: 160px;
+}
+.session-superseded-btn:hover { background: var(--vscode-button-hoverBackground); }
+/* The composer is frozen, so it does not sit under the card pretending
+   otherwise. Every control inside it is `disabled` in the renderer as well —
+   opacity alone still takes clicks. */
+body.session-superseded .composer-card {
+  display: none;
+}
+body.session-superseded .card-actions,
+body.session-superseded .plan-tools,
+body.session-superseded .question-actions {
+  pointer-events: none;
+  opacity: 0.45;
+}
+/* Rewind and Edit act on the frozen conversation. Kept visible so the
+   transcript still reads normally, but genuinely not clickable. */
+body.session-superseded .msg-rewind-btn,
+body.session-superseded .msg-edit-btn {
+  opacity: 0.35;
+  pointer-events: none;
+}
+/* On a phone this card IS the screen's answer to "why can't I type", and that
+   is where it was too small to register. It lives here rather than in the
+   relay's own stylesheet because chat.css loads last and would otherwise win
+   on load order — the override never applied at all when it was over there. */
+@media (hover: none) and (pointer: coarse) {
+  .session-superseded-banner { padding: 16px; gap: 10px; }
+  .session-superseded-title { font-size: 17px; }
+  .session-superseded-body { font-size: 14px; }
+  .session-superseded-btn {
+    font-size: 15px;
+    min-height: 44px;
+    align-self: stretch;
+    width: 100%;
+  }
 }
 
 .plan-notice {
@@ -4329,6 +4622,37 @@ mjx-container[display="true"] {
   padding: 24px;
   background: rgba(0, 0, 0, 0.45);
 }
+/* The connect wizard reuses the dialog chrome but carries far more than a
+   confirmation: a heading, a security note, a code to read across the room,
+   two links and a set of steps. At the confirm dialog's 340px that stack ran
+   to 600px tall and the code wrapped awkwardly. Wider, and scrollable rather
+   than clipped on a short phone screen. */
+/* Above the settings overlay (z-index 120), because Settings is one of the two
+   places this is opened FROM. At the confirm dialog's 100 it opened behind the
+   page that launched it — the very failure the wizard replaced. */
+.connect-wizard-overlay { z-index: 200; }
+
+.confirm-panel.connect-wizard-panel {
+  width: min(460px, 100%);
+  max-height: min(88vh, 760px);
+  display: flex;
+  flex-direction: column;
+}
+.connect-wizard-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+/* The panel is the container now, so the card inside it stops imposing the
+   width and the top margin it needs when it sits in the welcome screen —
+   widening the dialog did nothing while this capped the content at 320px. */
+.connect-wizard-body .onb {
+  max-width: none;
+  margin-top: 0;
+}
+/* The panel's own actions already read as the flow's controls; the dialog's
+   footer button is the way OUT of the window, so it stays quiet and last. */
+.connect-wizard-panel .confirm-actions { margin-top: 10px; }
+
 .confirm-panel {
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
   border: 1px solid var(--vscode-editorWidget-border);
@@ -4750,3 +5074,217 @@ body.vscode-light .preview-overlay {
 @media (hover: none) and (pointer: coarse) and (max-width: 899px) {
   .rail-search-wrap { margin-block: 8px; }
 }
+
+/* ---- Add project: the menu's rich rows, and the name / URL form ---- */
+
+/* Three entries that differ by a verb. The second line is what makes "New
+   project" and "Import a folder" distinguishable before you have used both. */
+.rail-menu-item-rich { align-items: flex-start; }
+.rail-menu-item-rich .rail-menu-icon { margin-top: 2px; }
+.rail-menu-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.rail-menu-desc {
+  color: var(--vscode-descriptionForeground, currentColor);
+  font-size: 11px;
+  line-height: 1.35;
+  opacity: 0.85;
+}
+
+/* Modal, not inline: the rail underneath rebuilds on every catalog frame, and a
+   form living inside it would be recreated out from under the caret — the bug
+   the routines form spent a review round on. */
+.add-project-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.42);
+}
+.add-project-form {
+  width: min(380px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, currentColor));
+  background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background, Canvas));
+  color: var(--vscode-foreground, CanvasText);
+  box-shadow: 0 12px 40px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.4));
+}
+.add-project-title { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.add-project-body {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground, currentColor);
+  opacity: 0.9;
+}
+.add-project-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground, currentColor);
+  margin-top: 4px;
+}
+.add-project-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--vscode-input-foreground, CanvasText);
+  background: var(--vscode-input-background, Canvas);
+  border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border, currentColor));
+  border-radius: 5px;
+}
+.add-project-input:focus {
+  outline: none;
+  border-color: var(--vscode-focusBorder, currentColor);
+}
+.add-project-input:disabled { opacity: 0.6; }
+/* The destination, live. The whole point of the feature is that nobody has to
+   choose a folder, which only works if they can see the one being chosen. */
+.add-project-dest {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground, currentColor);
+  word-break: break-all;
+  min-height: 17px;
+}
+.add-project-error {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vscode-errorForeground, currentColor);
+}
+.add-project-error[hidden] { display: none; }
+/* The one case where we can act rather than explain. Quiet — it is a way out of
+   a failure, not the thing the form is for. */
+.add-project-fix {
+  align-self: flex-start;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground, CanvasText));
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+  border: 1px solid transparent;
+  text-align: left;
+}
+.add-project-fix:hover { filter: brightness(1.15); }
+.add-project-fix[hidden] { display: none; }
+.add-project-github {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.add-project-github[hidden],
+.add-project-github-cmd[hidden],
+.add-project-github-open[hidden],
+.add-project-github-desc[hidden],
+.add-project-github-note[hidden] { display: none; }
+.add-project-github-heading { font-size: 13px; font-weight: 600; line-height: 1.3; }
+.add-project-github-desc,
+.add-project-github-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--vscode-descriptionForeground, currentColor);
+}
+.add-project-github-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--vscode-textCodeBlock-background);
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border, currentColor));
+  border-radius: 4px;
+  padding: 6px 6px 6px 10px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+}
+.add-project-github-cmd code {
+  background: none;
+  padding: 0;
+  color: var(--vscode-foreground, CanvasText);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+.add-project-github-copy {
+  margin-left: auto;
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--vscode-descriptionForeground, currentColor);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 12px;
+}
+.add-project-github-copy:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+  color: var(--vscode-foreground, CanvasText);
+}
+.add-project-github-copy.copied { color: var(--vscode-charts-green); }
+.add-project-github-open {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 7px 10px;
+  border-radius: 4px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  text-decoration: none;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+.add-project-github-open:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
+.add-project-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.add-project-btn {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 6px 14px;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground, CanvasText));
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+}
+.add-project-primary {
+  color: var(--vscode-button-foreground, Canvas);
+  background: var(--vscode-button-background, var(--vscode-focusBorder, currentColor));
+}
+.add-project-primary:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground, var(--vscode-button-background, currentColor));
+}
+.add-project-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Touch: the universal 36px floor, same as every other control. */
+@media (hover: none), (pointer: coarse) {
+  .add-project-btn, .add-project-fix, .add-project-input,
+  .add-project-github-copy, .add-project-github-open { min-height: 36px; }
+}
+/* The pre-flight step list. Numbered because these are steps in an order, and
+   the reader is following them in another window. */
+.onb-steps {
+  margin: 0;
+  padding-left: 1.15rem;
+  color: var(--vscode-descriptionForeground);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.onb-steps li { margin: 0; }

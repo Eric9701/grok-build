@@ -212,6 +212,30 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // Writes host state (globalState), same as the repo pin — classified with it
   // rather than as a view op, even though nothing is destroyed.
   toggleSessionPin: "full",
+  // Retires one empty-state tip machine-wide. Same class as the repo pin: it
+  // writes a host note and reaches nothing else. Deliberately NOT host-local —
+  // a phone is shown a filtered subset of the same tips, and a reader who can
+  // see a tip must be able to be done with it.
+  dismissWelcomeTip: "full",
+  // Same class, and deliberately NOT host-local: a phone showing a tip is the
+  // same person seeing that advice, so it should not come round on the desk an
+  // hour later either.
+  welcomeTipShown: "full",
+  // Making a project is NOT addProjectFolder, and the difference is the
+  // whole reason these two are reachable from a phone while that one is
+  // not. `addProjectFolder` opens a native picker (nothing for a remote to
+  // see) and accepts whatever path comes back. These accept a NAME and a
+  // URL; the host derives the destination inside its own single root and
+  // refuses anything that resolves outside it (src/project-create.ts). A
+  // remote can say what, never where.
+  createProject: "full",
+  cloneProject: "full",
+  // The follow-up when a clone failed on credentials. A remote `auth` runs
+  // the same headless device-code flow as `runGrokLogin` and reports the
+  // URL and code in the clone form — the person asking is the only one who
+  // can see it. Install still opens a terminal (package managers ask for
+  // elevation). Signing in is not bound to a conversation.
+  setupGithubCli: "full",
   resumeSession: "view",
   renameSession: "view",
   // read-only workspace file-name lookup (the composer's @ popover)
@@ -261,13 +285,31 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   newWorktreeSession: "host-local",
   applyWorktree: "host-local",
   removeWorktree: "host-local",
-  // Rewind discards work already on disk — stays host-local. Desktop (local
-  // host) supports it via confirmInChat; remote must not.
-  rewindSession: "host-local",
-  // Edit-and-resend is a rewind underneath, so the same host-local gate.
-  editLastMessage: "host-local",
-  // The last gate before a rewind reverts files — only the local webview answers.
-  uiConfirmAnswer: "host-local",
+  // Rewind and edit-and-resend were `host-local` until 2026-09-01, on the
+  // grounds that rewind discards work already on disk and only the careful
+  // local surface should be able to ask for it. Two things retired that
+  // argument, and the owner made the call:
+  //
+  //   1. A remote can already tell the agent to rewrite or delete any file in
+  //      the repo — that is the product. Refusing the rewind of edits it was
+  //      allowed to request is a locked door beside an open one, not a
+  //      safeguard.
+  //   2. There is no longer a more careful surface to prefer. The confirmation
+  //      moved in-chat in 2.0.0 (`confirmInChat` -> `uiConfirmRequest`), so the
+  //      desk webview and the browser render the SAME dialog from the same
+  //      frame. `host-local` bought a different asker, not a different check.
+  //
+  // The actor here is the account holder acting on their own machine, so this
+  // is a scoping rule, not a security boundary (CLAUDE-ops § Name who is harmed
+  // before you harden anything). `propose`, matching forkSession and send.
+  rewindSession: "propose",
+  // Edit-and-resend is a rewind underneath, so it moves with it.
+  editLastMessage: "propose",
+  // MUST move in the same commit as rewindSession. `confirmInChat` resolves
+  // only when an answer comes back; a client that can be shown the dialog and
+  // cannot answer it leaves the promise pending forever, the rewind silently
+  // never happens, and the entry leaks in `pendingConfirms`.
+  uiConfirmAnswer: "propose",
   // Workflow pause/resume/stop is a slash turn (same class as queueSend/steer).
   workflowControl: "propose",
   // Donut popover re-fetch — read-only meter, no turn / no mutation.
@@ -302,8 +344,38 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   logout: "host-local",
   deleteSession: "full",
   clearAllSessions: "full",
-  runInstallCmd: "full",
-  runGrokLogin: "host-local",
+  // Host-local, because the handler it reaches is a NATIVE modal and a
+  // terminal on the host's own screen. A remote may not see either, so
+  // routing it was a promise the code cannot keep — the remote UI already
+  // hides the action (found while documenting what works where, 2026-08-31).
+  runInstallCmd: "host-local",
+  // WAS host-local until 2026-08-26, and the reason it moved is worth being
+  // precise about: the POLICY did not soften, the IMPLEMENTATION changed.
+  //
+  // The old comment said "it must never clear credentials or open a login
+  // terminal on the host", and that was exactly right about what the handler
+  // did — it spawned an interactive terminal on the desk, which a remote can
+  // neither see nor type into, and which nobody should be able to open on
+  // someone else's machine from a phone.
+  //
+  // The handler now branches on origin. A desk request still gets that
+  // terminal, unchanged, because at a desk it is the better affordance: the CLI
+  // opens the browser for you. A remote request instead runs the CLI's headless
+  // device-code flow with pipes and renders the URL and code into the
+  // transcript. No terminal is opened, nothing is typed on the host, and the
+  // only thing the flow can do is ADD a credential the user obtains themselves
+  // from the vendor, in their own browser, against their own account.
+  //
+  // `logout` stays host-local, and the asymmetry is deliberate rather than an
+  // oversight: signing in adds an option, signing out takes one away from every
+  // other surface at once.
+  runGrokLogin: "full",
+  // Stops a flow this same remote started. Refusing it would leave the only
+  // party who can see the panel unable to close it.
+  cancelDeviceLogin: "full",
+  // The paste that finishes the same flow. Refusing it would leave the only
+  // party who can see the card unable to finish.
+  submitDeviceLoginCode: "full",
   // host-local: native pickers/editors/config/mic on the dev box
   // Replacing the CLI binary belongs here, not in "full" (2026-08-11). The
   // binaries live on the desk machine and only the desk can replace them, so a
@@ -415,13 +487,188 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   restartToUpdate: "host-local",
 };
 
+/**
+ * Session-bound remote messages. After a tab's active mapping is removed
+ * (another tab claimed the conversation), these are refused until the tab
+ * explicitly resumes, selects a repo, or starts a new session. `remoteSessionFor`
+ * used to adopt the desk session or mint a blank one when there was no mapping,
+ * so a stale Send from a frozen transcript could silently start or target
+ * another conversation.
+ *
+ * Exhaustive on WebviewMsg so a new type cannot land unclassified.
+ */
+export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> = {
+  ready: false,
+  remotePreferences: false,
+  listSessions: false,
+  listRepoSessions: false,
+  selectRepo: false,
+  toggleRepoPin: false,
+  setRepoArchived: false,
+  setRepoColor: false,
+  toggleSessionPin: false,
+  dismissWelcomeTip: false,
+  welcomeTipShown: false,
+  createProject: false,
+  cloneProject: false,
+  setupGithubCli: false,
+  resumeSession: false,
+  renameSession: false,
+  mentionQuery: true,
+  listProjectDir: false,
+  readProjectFile: false,
+  send: true,
+  newSession: false,
+  cancel: true,
+  setMode: true,
+  setEffort: true,
+  setModel: true,
+  installCodex: false,
+  cancelCodexInstall: false,
+  questionAnswer: true,
+  questionCancel: true,
+  queueSend: true,
+  dequeueSend: true,
+  clearQueuedSends: true,
+  steerSend: true,
+  turnFeedback: true,
+  forkSession: true,
+  newWorktreeSession: false,
+  applyWorktree: true,
+  removeWorktree: true,
+  rewindSession: true,
+  editLastMessage: true,
+  uiConfirmAnswer: true,
+  workflowControl: true,
+  refreshContextDetails: true,
+  pasteImage: true,
+  uploadFile: true,
+  writeProjectFile: false,
+  removeChip: true,
+  toggleChip: true,
+  addMentionFile: true,
+  recheckConnection: false,
+  refreshProviders: false,
+  retryProviderSession: true,
+  permissionAnswer: true,
+  exitPlanAnswer: true,
+  logout: false,
+  deleteSession: false,
+  clearAllSessions: false,
+  runInstallCmd: false,
+  runGrokLogin: false,
+  cancelDeviceLogin: false,
+  submitDeviceLoginCode: false,
+  updateGrok: false,
+  checkGrokUpdate: false,
+  pickModel: true,
+  openFile: false,
+  showInFolder: false,
+  openUrl: false,
+  openText: false,
+  openDiff: false,
+  exportExpr: false,
+  addProjectFolder: false,
+  removeProjectFolder: false,
+  openGlobalConfig: false,
+  openProjectConfig: false,
+  listMcpServers: false,
+  listRoutines: false,
+  saveRoutine: false,
+  deleteRoutine: false,
+  setRoutinePaused: false,
+  runRoutineNow: false,
+  connectMcpConnector: false,
+  disconnectMcpConnector: false,
+  showLogs: false,
+  toggleDevTools: false,
+  openSettings: false,
+  openSettingsSurface: false,
+  closeSettingsSurface: false,
+  moveView: false,
+  dropFile: true,
+  pickFile: true,
+  voiceStart: true,
+  voiceStop: true,
+  // Remote voice owns its OWN admission check, per client rather than per
+  // session, and refusing a chunk from a client with no live capture is the
+  // thing it exists to do — visibly, with a `voiceError` the person can see.
+  // Refusing these here instead would swap that visible rejection for a silent
+  // one, which is how a phone ends up holding a dead microphone button with no
+  // explanation. Voice is not session-bound in the first place.
+  remoteVoiceStart: false,
+  remoteVoiceChunk: false,
+  remoteVoiceStop: false,
+  setShowThinking: false,
+  setExpandCommandOutputs: false,
+  setSteerByDefault: false,
+  setSoundNotifications: false,
+  setProcessingSound: false,
+  setReadRepliesAloud: false,
+  setSummarizeRepliesAloud: false,
+  setVoiceSendPhrase: false,
+  setVoiceKeyterms: false,
+  setTelemetryEnabled: false,
+  setThumbsFeedback: false,
+  setAppPurpose: false,
+  summarizeSpeech: true,
+  requestImageFull: true,
+  composerFocus: false,
+  remoteSignIn: false,
+  remoteSignOut: false,
+  unlinkRemoteDevice: false,
+  openRemotePortal: false,
+  openUpdateRelease: false,
+  restartToUpdate: false,
+};
+
+export function remoteRequiresBoundSession(type: WebviewMsg["type"]): boolean {
+  return REMOTE_REQUIRES_BOUND_SESSION[type];
+}
+
 const TIER_RANK: Record<RemoteTier, number> = { "read-only": 0, propose: 1, full: 2 };
+
+/**
+ * Dispositions that CHANGE when this host IS a cloud environment.
+ *
+ * `host-local` means "this acts on the LOCAL machine", and the protection it
+ * buys is for the person sitting at that machine. A cloud environment has no
+ * such person: the remote client is the only surface it has, and it belongs to
+ * the account that rented it. So the argument for holding `logout` back does
+ * not merely weaken there, it inverts — a box you can sign IN to and never out
+ * of is a box with a credential you cannot revoke from the only place you can
+ * reach it. cloud-environments.md called this one out before it was built.
+ *
+ * Named as an override table rather than folded into INBOUND_DISPOSITION so the
+ * desk classification stays readable as the default, and so anything added here
+ * has to be added deliberately. Everything not listed keeps its desk answer.
+ */
+const CLOUD_DISPOSITION: Partial<Record<WebviewMsg["type"], InboundDisposition>> = {
+  logout: "full",
+  // Re-observing the accounts is host-local on a desk because a phone should
+  // not be able to spawn CLI probes on somebody's laptop. On a cloud machine
+  // the remote is the ONLY user, and withholding it meant the promotion that
+  // makes a sign-in stick never ran there at all: connect an agent, refresh,
+  // and the page offered Connect again for an account that was signed in
+  // (owner, 2026-08-31). Read-only observation, promoting only on evidence.
+  refreshProviders: "full",
+  // Preferences about the machine the person is looking at. Read-only on a
+  // remote because a desk owner can set them at the desk; on a cloud machine
+  // there is no desk, so read-only means never (owner, 2026-08-31).
+  setTelemetryEnabled: "full",
+  setThumbsFeedback: "full",
+};
 
 /** May this WebviewMsg type, arriving from a remote connection of `tier`, be
  *  routed into the host's onMessage? `control` and `host-local` are never
- *  routed regardless of tier. */
-export function allowFromRemote(type: WebviewMsg["type"], tier: RemoteTier): boolean {
-  const d = INBOUND_DISPOSITION[type];
+ *  routed regardless of tier — except where {@link CLOUD_DISPOSITION} says the
+ *  answer differs on a host that IS a cloud environment. */
+export function allowFromRemote(
+  type: WebviewMsg["type"],
+  tier: RemoteTier,
+  opts: { isCloud?: boolean } = {},
+): boolean {
+  const d = (opts.isCloud ? CLOUD_DISPOSITION[type] : undefined) ?? INBOUND_DISPOSITION[type];
   switch (d) {
     case "view":
       return true;
@@ -584,6 +831,16 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   // Placement is a property of the machine running the extension, and `moveView`
   // is host-local anyway — a remote could neither act on the hint nor need it.
   moveViewHint: "host-local",
+  // Empty-state advice. Mirrored because the pool is per-CLIENT, not per-host:
+  // the desk-only entries are filtered by the reader (welcomeTipsFor reads
+  // isRemote), and what is left here is two counts and a list of ids the user
+  // has finished with. No project data, no payload — see the type.
+  welcomeTips: "mirror",
+  // Where new projects go and how the last attempt went. `root` is the
+  // display form (`~/Grok Build`) and nothing here carries a created path —
+  // the repo catalog delivers that, already trimmed to what this client may
+  // reach. So there is no project data in the frame to authorize.
+  projectSetup: "mirror",
   showThinking: "mirror",
   appPurpose: "mirror",
   fontScale: "mirror",
@@ -714,6 +971,8 @@ export type OutboundProjectAuth =
 export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth> = {
   // Device-global / host chrome — not project data.
   moveViewHint: "none",
+  welcomeTips: "none",
+  projectSetup: "none",
   showThinking: "none",
   appPurpose: "none",
   fontScale: "none",
@@ -840,7 +1099,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
  * the projects rail asks for a preview of a SIBLING project on purpose, so
  * "the recipient does not own this cwd" is the normal case, not an attack.
  * Treating them alike silently dropped every `repoSessions` answer over the
- * relay — the phone's rail then sat on "Update Grok Build to preview" forever
+ * relay — the phone's rail then sat on its update-Grok-Build note forever
  * against a host that was perfectly current and had already answered.
  *
  * Authorization is unchanged either way: {@link mayDeliverRemoteHostMsg} checks

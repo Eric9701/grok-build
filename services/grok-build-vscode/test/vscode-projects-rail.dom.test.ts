@@ -187,7 +187,7 @@ describe("VS Code projects rail renderer", () => {
     rowEl.click();
 
     expect(posted).toEqual([
-      { type: "resumeSession", id: "g1", cwd: "/work/gamma" },
+      { type: "resumeSession", id: "g1", cwd: "/work/gamma", claim: true },
     ]);
     expect(posted.some((p) => p.type === "selectRepo")).toBe(false);
   });
@@ -206,7 +206,7 @@ describe("VS Code projects rail renderer", () => {
     posted.length = 0;
     projectRows[1].click();
     expect(posted).toEqual([
-      { type: "resumeSession", id: "live-b", cwd: "/work/alpha" },
+      { type: "resumeSession", id: "live-b", cwd: "/work/alpha", claim: true },
     ]);
   });
 
@@ -744,9 +744,12 @@ describe("VS Code projects rail renderer", () => {
         activeCwd: "",
         canAddProject: true,
       });
-      const link = doc.querySelector(".rail-empty-action") as HTMLButtonElement;
+      const link = doc.querySelector(".rail-add-project-wide") as HTMLButtonElement;
       expect(link).toBeTruthy();
-      expect(link.textContent).toBe("Add a project folder");
+      // One control for both places it appears — under the project list and
+      // here. A link and a button offering the same action in one rail is a
+      // second mechanism, not a second affordance.
+      expect(link.textContent).toContain("Add project");
       posted.length = 0;
       link.click();
       expect(posted).toEqual([{ type: "addProjectFolder" }]);

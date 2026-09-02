@@ -25,9 +25,27 @@ import { assertPinnedAfterZoomedExpandedTurn, hostMsg } from "./desk-stick-to-bo
 const root = process.cwd();
 const OUT = process.env.SCREENS_DIR || ".screens";
 const mainJs = path.join(root, "out", "desktop", "main.js");
-const electronExe = path.join(root, "node_modules", "electron", "dist", process.platform === "win32" ? "electron.exe" : "electron");
+const electronExe = await resolveElectronExe(root);
 const fixtureCli = path.join(root, "test", "fixtures", process.platform === "win32" ? "fake-grok-acp.cmd" : "fake-grok-acp.sh");
 const log = (m) => console.log(`[desk-screens] ${m}`);
+
+/** Electron's own binary, which is NOT `dist/electron` everywhere: macOS keeps
+ *  it inside `Electron.app`. The `electron` package exports the resolved path
+ *  for exactly this reason, so ask it rather than rebuilding the path here. */
+async function resolveElectronExe(root) {
+  try {
+    const mod = await import("electron");
+    const exe = typeof mod.default === "string" ? mod.default : undefined;
+    if (exe && fs.existsSync(exe)) return exe;
+  } catch {
+    // fall through to the layout-based guess
+  }
+  const dist = path.join(root, "node_modules", "electron", "dist");
+  if (process.platform === "win32") return path.join(dist, "electron.exe");
+  if (process.platform === "darwin") return path.join(dist, "Electron.app", "Contents", "MacOS", "Electron");
+  return path.join(dist, "electron");
+}
+
 
 assert.ok(fs.existsSync(mainJs), `Missing ${mainJs} — run \`npm run compile\` first`);
 assert.ok(fs.existsSync(electronExe), `Missing Electron at ${electronExe}`);
@@ -37,6 +55,26 @@ fs.mkdirSync(OUT, { recursive: true });
 
 // The shared grok-qa fixture: a fixed project AND a fixed session store, so the
 // rail has real history in it and the frames are comparable between runs.
+// Which root new projects go in is a per-machine decision the product makes
+// from the disk (`shouldUseLegacyRoot`), so ask the product rather than mirror
+// it — the same reason `qa-fixture.mjs` imports the real catalog encoder.
+const { projectRoot, shouldUseLegacyRoot, legacyProjectRootPath, displayPath } =
+  await import("../out/project-create.js");
+const home = os.homedir();
+const legacyRoot = legacyProjectRootPath(home);
+let legacyIsDirectory = false;
+try {
+  legacyIsDirectory = fs.statSync(legacyRoot).isDirectory();
+} catch {
+  legacyIsDirectory = false; // absent (or unreadable) is not legacy
+}
+const useLegacyRoot = shouldUseLegacyRoot({ legacyIsDirectory });
+const expectedProjectDest = displayPath(
+  path.join(projectRoot(home, { useLegacyRoot }), "Q3 Positioning"),
+  home,
+);
+log(`project root for this machine: ${expectedProjectDest} (legacy folder ${legacyIsDirectory ? "present" : "absent"})`);
+
 const qa = buildQaFixture();
 const workspace = qa.project;
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "grok-screens-ud-"));
@@ -228,9 +266,226 @@ try {
   await shot("desk-1-chat");
   await assertNoBlankIcons("desk chat");
   await assertBarIcons("desk chat");
+
+  // ---- empty-state advice -------------------------------------------------
+  // happy-dom proves the wiring; only a real engine can say whether the line
+  // fits. Three ways this fails invisibly to a DOM suite: the row overflows the
+  // 30ch measure, the dismiss glyph renders as a zero-size box (the exact bug
+  // that shipped three empty icons through a green suite), or the tip paints
+  // UNDER the composer because the welcome column ran out of room.
+  const tip = await page.evaluate(() => {
+    const el = document.getElementById("welcome-tip");
+    if (!el) return null;
+    const welcome = document.getElementById("welcome");
+    const body = el.querySelector(".welcome-tip-body");
+    const close = el.querySelector(".welcome-tip-dismiss");
+    const action = el.querySelector(".muted-link, b");
+    const composer = document.querySelector("footer.composer");
+    const r = el.getBoundingClientRect();
+    const wr = welcome ? welcome.getBoundingClientRect() : null;
+    const cr = composer ? composer.getBoundingClientRect() : null;
+    const clr = close ? close.getBoundingClientRect() : null;
+    const ar = action ? action.getBoundingClientRect() : null;
+    return {
+      id: el.dataset.tip || "",
+      text: (body?.textContent || "").replace(/\s+/g, " ").trim(),
+      width: Math.round(r.width),
+      height: Math.round(r.height),
+      scrollW: el.scrollWidth,
+      clientW: el.clientWidth,
+      insideWelcome: !!(wr && r.top >= wr.top - 1 && r.bottom <= wr.bottom + 1),
+      aboveComposer: !!(cr && r.bottom <= cr.top + 1),
+      close: clr ? { w: Math.round(clr.width), h: Math.round(clr.height) } : null,
+      action: ar ? { w: Math.round(ar.width), h: Math.round(ar.height), tag: action.tagName } : null,
+      // A 512-viewBox SVG with no width/height renders as an empty box, which
+      // is precisely the defect class this harness was written for.
+      bulb: (() => {
+        const svg = el.querySelector(".welcome-tip-bulb svg");
+        if (!svg) return null;
+        const b = svg.getBoundingClientRect();
+        return { w: Math.round(b.width), h: Math.round(b.height), fill: getComputedStyle(svg).fill };
+      })(),
+      actionColor: action ? getComputedStyle(action).color : "",
+      bodyColor: body ? getComputedStyle(body).color : "",
+    };
+  });
+  assert.ok(tip, "desk chat: empty-state advice must render on a settled welcome screen");
+  assert.ok(tip.id, "desk chat: the tip must carry its id, so a screenshot says WHICH tip it is");
+  assert.ok(tip.text.length > 10, `desk chat: tip text looks empty — ${JSON.stringify(tip)}`);
+  assert.ok(tip.height > 10 && tip.width > 80, `desk chat: tip has no box — ${JSON.stringify(tip)}`);
+  assert.ok(
+    tip.scrollW <= tip.clientW + 1,
+    `desk chat: tip text overflows its own box (${tip.scrollW} > ${tip.clientW}) — ${JSON.stringify(tip)}`,
+  );
+  assert.ok(tip.insideWelcome, `desk chat: tip must sit inside the welcome block — ${JSON.stringify(tip)}`);
+  assert.ok(tip.aboveComposer, `desk chat: tip must not paint under the composer — ${JSON.stringify(tip)}`);
+  assert.ok(
+    tip.close && tip.close.w >= 6 && tip.close.h >= 6,
+    `desk chat: dismiss control rendered with no size — ${JSON.stringify(tip)}`,
+  );
+  assert.ok(
+    tip.action && tip.action.w >= 20 && tip.action.h >= 6,
+    `desk chat: the actionable span rendered with no size — ${JSON.stringify(tip)}`,
+  );
+  assert.ok(
+    tip.bulb && tip.bulb.w >= 8 && tip.bulb.h >= 8,
+    `desk chat: the advice mark rendered with no size — ${JSON.stringify(tip)}`,
+  );
+  log(`welcome tip: ${tip.id} — "${tip.text}" (${tip.width}x${tip.height}), mark ${tip.bulb.w}x${tip.bulb.h} ${tip.bulb.fill}`);
+  await shot("desk-1b-welcome-tip");
+
+  // Taking the advice opens the settings page it names and retires the line.
+  await page.click("#welcome-tip .muted-link");
+  await page.waitForTimeout(400);
+  const afterTake = await page.evaluate(() => ({
+    settingsOpen: !!document.getElementById("settings-overlay"),
+    category: document.querySelector(".settings-nav-item.active")?.dataset.category || "",
+    tip: document.getElementById("welcome-tip")?.dataset.tip || null,
+  }));
+  assert.ok(afterTake.settingsOpen, `desk chat: taking a tip must open Settings — ${JSON.stringify(afterTake)}`);
+  // The whole point of the owner's third request: the link must land on the
+  // RIGHT page, not merely open Settings somewhere.
+  assert.equal(
+    afterTake.category,
+    "providers",
+    `desk chat: the agents tip must open Settings on Providers — ${JSON.stringify(afterTake)}`,
+  );
+  await shot("desk-1c-welcome-tip-target");
+  log(`welcome tip target: settings open on "${afterTake.category}"`);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  const retired = await page.evaluate(
+    () => document.getElementById("welcome-tip")?.dataset.tip || null,
+  );
+  assert.notEqual(retired, tip.id, "desk chat: acting on advice must retire that advice");
   // Proves the host actually READ the fixture store. Without this the check
   // passes just as happily against an empty rail, which is exactly what a wrong
   // session-directory encoding produces — silently.
+  // ---- Add project ---------------------------------------------------------
+  // The menu and the form are built from the shared spec, so what a DOM test
+  // cannot see is whether the three rows fit the rail's popover width and
+  // whether the modal is centred over the app rather than clipped by it.
+  await page.click(".rail-add-project");
+  await page.waitForSelector(".rail-menu", { timeout: 5000 });
+  const menu = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll(".rail-menu-item")];
+    const box = document.querySelector(".rail-menu").getBoundingClientRect();
+    return {
+      labels: rows.map((r) => r.querySelector(".rail-menu-label")?.textContent?.trim() || ""),
+      descriptions: rows.map((r) => r.querySelector(".rail-menu-desc")?.textContent?.trim() || ""),
+      clipped: rows.some((r) => r.scrollWidth > r.clientWidth + 1),
+      onScreen: box.left >= 0 && box.right <= window.innerWidth && box.bottom <= window.innerHeight,
+      iconSizes: rows.map((r) => {
+        const svg = r.querySelector("svg");
+        const b = svg ? svg.getBoundingClientRect() : { width: 0, height: 0 };
+        return [Math.round(b.width), Math.round(b.height)];
+      }),
+    };
+  });
+  // Knowledge work is the desktop default, so the clone ACTION is not on this
+  // menu — but since 4.1.0 a hint is, because an absent affordance explains
+  // nothing to the person who opened this menu looking for it. Order matters:
+  // the hint is last, after the two things that do work here.
+  assert.deepEqual(
+    menu.labels,
+    ["New project", "Import a folder", "Clone from GitHub?"],
+    `desk: add-project menu — ${JSON.stringify(menu)}`,
+  );
+  assert.ok(menu.descriptions.every(Boolean), `desk: every entry needs its second line — ${JSON.stringify(menu)}`);
+  assert.ok(!menu.clipped, `desk: menu rows are clipped — ${JSON.stringify(menu)}`);
+  assert.ok(menu.onScreen, `desk: menu runs off the window — ${JSON.stringify(menu)}`);
+  // Painted, not a specific size: the rail scales its own glyphs, and pinning
+  // the number here would fail the next time that scale is tuned. Zero is the
+  // failure worth catching — three empty boxes once shipped through a green
+  // suite and three review rounds.
+  // The knowledge-work hint is DELIBERATELY iconless — the owner looked at the
+  // rendered row on 2026-09-01 and kept it that way. Exempted by label rather
+  // than by index or by relaxing the rule: an iconless row is normally the bug
+  // this assertion exists to catch, and "some row may have no icon" would hand
+  // that back. Everything that is meant to be painted still must be.
+  const iconExempt = new Set(["Clone from GitHub?"]);
+  const mustPaint = menu.iconSizes.filter((_, i) => !iconExempt.has(menu.labels[i]));
+  assert.equal(
+    mustPaint.length,
+    menu.labels.length - menu.labels.filter((l) => iconExempt.has(l)).length,
+    `desk: icon exemption did not match a row — ${JSON.stringify(menu)}`,
+  );
+  assert.ok(
+    mustPaint.every(([w, h]) => w >= 10 && h >= 10),
+    `desk: menu icons rendered with no size — ${JSON.stringify(menu)}`,
+  );
+  await shot("desk-1d-add-project-menu");
+  log(`add project menu: ${menu.labels.join(" / ")}`);
+
+  await page.click(".rail-menu-item");
+  await page.waitForSelector(".add-project-form", { timeout: 5000 });
+  await page.fill(".add-project-input", "Q3 Positioning");
+  const formBox = await page.evaluate(() => {
+    const el = document.querySelector(".add-project-form");
+    const b = el.getBoundingClientRect();
+    return {
+      dest: document.querySelector(".add-project-dest").textContent.trim(),
+      submitLabel: document.querySelector(".add-project-primary").textContent.trim(),
+      submitEnabled: !document.querySelector(".add-project-primary").disabled,
+      onScreen: b.top >= 0 && b.bottom <= window.innerHeight && b.left >= 0 && b.right <= window.innerWidth,
+      width: Math.round(b.width),
+      focused: document.activeElement?.className || "",
+      scrimCovers: (() => {
+        const s = document.querySelector(".add-project-scrim").getBoundingClientRect();
+        return Math.round(s.width) === window.innerWidth && Math.round(s.height) === window.innerHeight;
+      })(),
+    };
+  });
+  // The point of the whole feature: nobody types a path, and everybody sees one.
+  //
+  // The expected path is DERIVED from the product's own rule, not written out.
+  // It was written out — as `~/Grok Build/…` — and that only holds on a machine
+  // which already has the legacy folder. This dev box does; the macOS test box
+  // does not and correctly showed `~/AFK Pilot/…`, so the check failed on a
+  // product that was working. A CI runner would have failed the same way.
+  assert.equal(formBox.dest, expectedProjectDest, `desk: destination preview — ${JSON.stringify(formBox)}`);
+  assert.ok(formBox.submitEnabled, `desk: Create stayed disabled — ${JSON.stringify(formBox)}`);
+  assert.ok(formBox.onScreen, `desk: the form is clipped by the window — ${JSON.stringify(formBox)}`);
+  assert.ok(formBox.scrimCovers, `desk: the scrim does not cover the window — ${JSON.stringify(formBox)}`);
+  assert.ok(
+    formBox.focused.includes("add-project-input"),
+    `desk: the form must open with the caret in the field — ${JSON.stringify(formBox)}`,
+  );
+  await shot("desk-1e-add-project-form");
+  log(`add project form: ${formBox.dest} (${formBox.width}px, focus ${formBox.focused})`);
+
+  // A failure keeps the form up with something to act on. Driven through the
+  // host frame rather than a real clone — the shape is what is being checked.
+  await page.evaluate(() => window.dispatchEvent(new MessageEvent("message", { data: {
+    type: "projectSetup",
+    root: "~/Grok Build",
+    error: "Git couldn't authenticate. If the repository is private, you need to sign in first.",
+    fix: "auth-gh",
+  } })));
+  const failed = await page.evaluate(() => {
+    const err = document.querySelector(".add-project-error");
+    const fix = document.querySelector(".add-project-fix");
+    return {
+      stillOpen: !!document.querySelector(".add-project-form"),
+      error: err && !err.hidden ? err.textContent.trim() : "",
+      fix: fix && !fix.hidden ? fix.textContent.trim() : "",
+      fixBox: fix ? Math.round(fix.getBoundingClientRect().height) : 0,
+    };
+  });
+  assert.ok(failed.stillOpen, "desk: a failed attempt must not close the form");
+  assert.ok(failed.error.includes("sign in"), `desk: failure text — ${JSON.stringify(failed)}`);
+  assert.equal(failed.fix, "Sign in to GitHub", `desk: the offered fix — ${JSON.stringify(failed)}`);
+  assert.ok(failed.fixBox >= 10, `desk: the fix button has no box — ${JSON.stringify(failed)}`);
+  await shot("desk-1f-add-project-failure");
+  log(`add project failure: "${failed.error}" → ${failed.fix}`);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
+  assert.equal(
+    await page.evaluate(() => !!document.querySelector(".add-project-form")),
+    false,
+    "desk: Escape must close the form",
+  );
+
   const railTitles = await page.evaluate(
     () => [...document.querySelectorAll(".rail-session .rail-session-name, .rail-session")]
       .map((n) => (n.textContent || "").trim()).filter(Boolean),
@@ -509,7 +764,16 @@ try {
   await page.waitForTimeout(250);
 
   let stateC = null;
-  for (const width of [400, 320, 280, 240, 220, 200]) {
+  // A SWEEP, not a list of six magic widths. Which width flips the strip from
+  // one state to the next is a function of font metrics, and those are not the
+  // same on every platform: the old list walked straight over state B on macOS
+  // (saw a and c, never b) and failed a strip that was working correctly. Step
+  // finely enough that no state can fall between two probes; the loop still
+  // breaks as soon as B and C have both been seen, so this costs nothing on the
+  // platform where the old widths happened to line up.
+  const sweep = [];
+  for (let w = 420; w >= 180; w -= 10) sweep.push(w);
+  for (const width of sweep) {
     await setPanelWidth(width);
     const strip = await assertStripGeometry(`desk strip @${width}`);
     if (strip.state && !seenStates.has(strip.state)) {
@@ -540,6 +804,15 @@ try {
           fullW: Math.round(Number(el.dataset.fullW) || 0),
         })));
   };
+  // BOTH settles must follow the same bounce. This one used to measure straight
+  // out of the state sweep above while the second measured after a bounce to
+  // 220 — so the two sides of the comparison had different histories, and the
+  // check only passed because the sweep happened to end somewhere that produced
+  // the same number. Widening the sweep by a few widths broke it on Windows and
+  // macOS alike, reporting a 157→138 "ratchet" in a product that was fine. A
+  // ratchet still shows: it would make settled2 WIDER than settled1.
+  await setPanelWidth(220);
+  await page.waitForTimeout(300);
   const settled1 = await settleMeasure();
   await setPanelWidth(220);
   await page.waitForTimeout(300);
@@ -741,6 +1014,28 @@ try {
       log(`captured ${name}.png`);
     },
   });
+
+  // The desktop app must have written a log somebody can actually retrieve.
+  //
+  // This runs the REAL startup path, which is the only thing that would have
+  // caught what 3.19.2 shipped: `startFileLogging` was called from the
+  // profile-resolution block while the `let` bindings it assigns still sat
+  // below it in the file. Function declarations hoist, `let` does not, so the
+  // assignment threw a temporal-dead-zone ReferenceError that the surrounding
+  // catch swallowed. The app launched fine, no sink was installed, and Show
+  // logs stayed a no-op. The unit tests passed throughout — they covered the
+  // log-file helper in isolation, never this module's initialization order.
+  const logFile = path.join(userData, "logs", "desktop.log");
+  assert.ok(
+    fs.existsSync(logFile),
+    `the desktop app must write ${logFile} — Show logs has nothing to open without it`,
+  );
+  const logged = fs.readFileSync(logFile, "utf8");
+  assert.ok(
+    logged.includes("[desktop "),
+    "the log file must carry the app's own lines, not just exist",
+  );
+  log(`log file written (${logged.length} bytes)`);
 
   log(`ALL CHECKS PASSED — frames in ${OUT}/`);
 } finally {

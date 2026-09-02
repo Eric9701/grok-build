@@ -27,6 +27,28 @@
       : "default"
   );
   const REMOTE_SESSION_KEY = "atlas.remote.tabSession:" + REMOTE_STORAGE_SUFFIX;
+  /**
+   * "The user CHOSE to leave that conversation, and has not landed on another."
+   *
+   * The remembered identity is cleared both when a conversation is lost and
+   * when the user deliberately switches repo, starts a new session, or opens a
+   * row in another project. Downstream those two collapse into the same null,
+   * so the relay page reported a deliberate switch as
+   *   "1 queued action was not sent because this tab had no remembered
+   *    conversation to restore"
+   * — telling the owner his message had failed when he had simply moved on,
+   * mid-turn, on a phone (2026-09-01).
+   *
+   * A sibling storage key rather than a field on the identity, because the
+   * whole point is that there IS no identity at that moment. It is cleared the
+   * instant a real one is saved, so it bounds itself on an EVENT rather than a
+   * timer: it can only ever describe the gap between letting go and landing.
+   */
+  const REMOTE_SWITCH_KEY = "atlas.remote.tabSwitchedByChoice:" + REMOTE_STORAGE_SUFFIX;
+  // Set by the relay's page before this file loads. Only ever says "the host on
+  // the other end is one the relay installed", which is why it can skip a
+  // compatibility wait rather than change any behaviour.
+  const IS_CLOUD_HOST = typeof window !== "undefined" && window.grokCloudHost === true;
   const REMOTE_TAB_TOKEN_KEY = "atlas.remote.tabToken:" + REMOTE_STORAGE_SUFFIX;
   const REMOTE_TAB_OWNER_KEY = "atlas.remote.tabOwner:" + REMOTE_STORAGE_SUFFIX;
   const REMOTE_TAB_CHANNEL = "atlas.remote.tabClaim:" + REMOTE_STORAGE_SUFFIX;
@@ -75,9 +97,26 @@
     if (!IS_REMOTE) return;
     rememberedRemoteSession = value;
     try {
-      if (value) sessionStorage.setItem(REMOTE_SESSION_KEY, JSON.stringify(value));
-      else sessionStorage.removeItem(REMOTE_SESSION_KEY);
+      if (value) {
+        sessionStorage.setItem(REMOTE_SESSION_KEY, JSON.stringify(value));
+        // Landed. Whatever the user left behind is no longer the current story.
+        sessionStorage.removeItem(REMOTE_SWITCH_KEY);
+      } else sessionStorage.removeItem(REMOTE_SESSION_KEY);
     } catch (_) { /* storage unavailable/private mode */ }
+  }
+
+  /**
+   * Let go of the remembered conversation BECAUSE THE USER ASKED TO.
+   *
+   * Same clearing as `saveRememberedRemoteSession(null)`, plus a note saying so.
+   * Used only where a person acted: the repo chip, New session, and a rail row
+   * or repo in another project. Host-driven clears (a session deleted under us,
+   * a refused restore) deliberately keep the plain form — those really are
+   * losses and should still read as such.
+   */
+  function forgetRememberedSessionByChoice() {
+    saveRememberedRemoteSession(null);
+    try { sessionStorage.setItem(REMOTE_SWITCH_KEY, "1"); } catch (_) { /* private mode */ }
   }
 
   function replaceRemoteTabIdentity() {
@@ -182,6 +221,15 @@
     resolveRemoteTabTokenReady = resolve;
   });
 
+  const SESSION_SUPERSEDED_CODE = "session-superseded";
+
+  /** Explicit user actions set `claim`. Reconnect restore MUST omit it. */
+  function postResumeSession(id, cwd, opts) {
+    const msg = { type: "resumeSession", id, cwd: cwd || undefined };
+    if (opts && opts.claim) msg.claim = true;
+    vscode.postMessage(msg);
+  }
+
   function restoreRememberedRemoteSession() {
     const saved = rememberedRemoteSession;
     if (!IS_REMOTE || !saved) return;
@@ -191,7 +239,9 @@
     // Startup restore has no display name in the remembered payload, and the
     // page is already on the welcome/"Starting" hold. Treating it like a
     // user click would invent a title we do not have.
-    vscode.postMessage({ type: "resumeSession", id: saved.id, cwd: saved.cwd || undefined });
+    // Deliberately NOT a claim: a thawing background tab must not steal the
+    // conversation back from the tab that asked for it.
+    postResumeSession(saved.id, saved.cwd || undefined);
   }
   const ttsAvailable = !!window.speechSynthesis && typeof window.SpeechSynthesisUtterance === "function";
 
@@ -315,6 +365,9 @@
     providersChecking: false,
     onboardingMode: null,
     onboardingInfo: {},
+    /** provider -> the device-login card last sent by the host. Mirrored into
+     *  Settings so a connect started there reports where the click happened. */
+    deviceLoginByProvider: {},
     codexInstall: { phase: "idle", receivedBytes: 0, totalBytes: 0, reason: "" },
     availableModels: [],
     currentModeId: "agent",
@@ -430,6 +483,16 @@
     mentionActive: 0,
     mentionQuery: null,
     pendingDiffByToolCallId: new Map(),
+    // Permission requests whose diff has already been auto-opened once.
+    //
+    // NOT cleared by resetForNewSession, deliberately — like imagePreviews
+    // above. Auto-open is meant to fire when a permission card ARRIVES, and
+    // re-entering a conversation re-renders its pending cards from the
+    // transcript, which is not an arrival. Clearing this per session would
+    // reproduce exactly the bug it fixes: close the proposed diff, switch
+    // chats, come back, and it reopens over the files you were working in
+    // (#132).
+    autoOpenedDiffRequests: new Set(),
     toolItemsByToolCallId: new Map(),
     toolFailuresById: new Map(), // toolCallId → error text, so a single-call group carries it onto the flat
     // Media-gen toolCallIds (isMediaGenToolCall on the initial tool_call). The
@@ -467,6 +530,10 @@
     // that drops `toggleSessionPin`, which is a control that looks broken
     // rather than absent (the same trap the repo chip avoids).
     pinnedSessionsKnown: false,
+    // Remote tab lost this conversation to another tab's explicit claim.
+    // Transcript stays; composer and turn controls freeze until Continue here
+    // (a claim) or a different conversation is opened.
+    sessionSuperseded: null,
     /** Desktop update rail — `updateAvailable` (notice) or `updateReady` (restart). */
     appUpdate: null,
     repoPreviews: {},
@@ -707,6 +774,22 @@
     // inviting the user to re-link a device that was working. Unknown shows
     // nothing at all.
     remoteLinked: null,
+    // Display form of the one directory new and cloned projects land in
+    // (`projectSetup.root`, e.g. `~/Grok Build`). Empty until the host says —
+    // the Add project form shows the destination as you type, so it needs this
+    // before anyone has typed anything.
+    projectRoot: "",
+    // Last `projectSetup.github` from the host, so a reconnect can reopen the
+    // clone form onto the code the CLI is still polling.
+    projectGithub: null,
+    // Empty-state tip facts from the host (`welcomeTips`): the two counts the
+    // chat client never receives on its own plus the retired ids. null until
+    // the frame lands, which suppresses the count-dependent tips rather than
+    // reading an absent count as zero.
+    welcomeTips: null,
+    // Which eligible tip is showing. Advances only when the screen BECOMES
+    // empty, so a repaint cannot shuffle the line under the reader.
+    welcomeTipCursor: 0,
     // toolExpandOverride (per-session, in-memory): the Command Palette
     // Expand/Collapse All latch. null = follow the setting above; true/false =
     // force ALL groups + details open/closed for this session, and keep applying
@@ -735,6 +818,11 @@
     arrowUp: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>`,
     arrowDown: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>`,
     brain: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4"/><path d="M9 13a4.5 4.5 0 0 0 3-4"/></svg>`,
+    // The empty state's advice mark. Lucide `lightbulb`, on this map's own
+    // conventions — 24 viewBox, stroke 2, currentColor — so it sits in the
+    // same drawn language as every other glyph in the product rather than
+    // being the one filled outlier.
+    idea: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>`,
     orbit: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.341 6.484A10 10 0 0 1 10.266 21.85"/><path d="M3.659 17.516A10 10 0 0 1 13.74 2.152"/><circle cx="12" cy="12" r="3"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/></svg>`,
     square: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>`,
     spinner: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`,
@@ -1851,6 +1939,24 @@
     }
     contextPopover.appendChild(act);
 
+    // KNOWLEDGE WORK STOPS HERE: the number and the action on it, nothing else.
+    //
+    // Everything below is the technical account — system prompt, reasoning
+    // overhead, tool definitions, per-turn token and cost rows. That is the
+    // same class of thing knowledge work already hides everywhere else; the
+    // gear describes the mode as "Hides worktrees, thinking traces, and tool
+    // details", and this popover was simply missed when that rule was applied.
+    // Somebody writing a document does not need to know how many tokens the
+    // tool definitions cost, and "Context used 12,400 / 128,000 (10%)" plus a
+    // way to compact is the whole of what the donut is being asked.
+    //
+    // The two lines that make the popover VISIBLE are the last thing this
+    // function does, so returning early skipped them and the donut simply did
+    // nothing in the default mode. Found by review; my own test read
+    // textContent off the hidden element and passed, which is the same mistake
+    // as proving a package exists instead of proving the thing works.
+    if (!isCodingPurpose()) { showContextPopover(); return; }
+
     // Snapshot addends are internally consistent (overhead from snapshot.used).
     // Occupancy that has moved does not hide the group: an open popover
     // re-fetches session/info so header and rows become current together.
@@ -1953,6 +2059,12 @@
       : "Counted by the CLI at the end of each turn.";
     contextPopover.appendChild(fine);
 
+    showContextPopover();
+  }
+
+  /** Size it to its content, then reveal it. Both halves, always — see the
+   * knowledge-work return above for what happens when only some of it runs. */
+  function showContextPopover() {
     positionPopover(contextPopover, donutEl);
     contextPopover.hidden = false;
   }
@@ -2600,6 +2712,7 @@
     return {
       isRemote: IS_REMOTE,
       isDesktop: isDesktopHostCaps(),
+      deviceLogin: state.deviceLoginByProvider,
       clientOwnsFontScale: CLIENT_OWNS_FONT_SCALE,
       ttsAvailable,
       steerSupported: state.steerSupported !== false,
@@ -2775,6 +2888,11 @@
       onLocal: (name) => {
         if (name === "explainRemote") showRemoteExplainer();
         if (name === "openDeviceManager") window.open("/", "_blank", "noopener");
+        // Settings → Providers → Connect. The overlay stays open behind the
+        // wizard so closing it returns the reader where they were.
+        if (typeof name === "string" && name.indexOf("connectWizard:") === 0) {
+          openConnectWizard(name.slice("connectWizard:".length));
+        }
       },
       closeOnAction: true,
       onClose: closeSettingsOverlay,
@@ -3927,6 +4045,23 @@
     return state.activeProvider !== "claude" && state.activeProvider !== "codex";
   }
 
+  /**
+   * Rewind and edit-and-resend ride grok's `_x.ai/rewind/*` extension. Codex
+   * and Claude answer `unsupported`, and until 2026-09-01 the buttons rendered
+   * for them anyway — clicking one produced a host-side warning, which is a
+   * poor answer at a desk and NO answer at all on a cloud machine, where
+   * nobody is at the screen to read it. Same shape as steerableProvider().
+   */
+  function rewindCapableProvider() {
+    if (state.activeProvider === "claude" || state.activeProvider === "codex") return false;
+    // A host older than 4.1.0 classifies rewindSession / editLastMessage as
+    // host-local and drops them without a reply, so the buttons would be dead
+    // for every remote user who has not updated — and the relay always ships
+    // first. Field presence, never a version check; the desk is never gated.
+    if (IS_REMOTE && !(state.hostCaps && state.hostCaps.remoteRewind)) return false;
+    return true;
+  }
+
   function providerDisplayName(provider) {
     if (provider === "codex") return "Codex";
     if (provider === "claude") return "Claude";
@@ -4149,7 +4284,7 @@
         if (!repo.available || repoSwitcherLocked()) return;
         state.repoSwitchPending = true;
         renderRepoChip();
-        saveRememberedRemoteSession(null);
+        forgetRememberedSessionByChoice();
         vscode.postMessage({ type: "selectRepo", cwd: repo.cwd });
         closePopovers();
       };
@@ -4414,7 +4549,7 @@
         row.onclick = () => {
           if (active) { closePopovers(); return; }
           startRailResumeTransition(s.id, s.cwd, s.cwd, s.displayName);
-          vscode.postMessage({ type: "resumeSession", id: s.id, cwd: s.cwd });
+          postResumeSession(s.id, s.cwd, { claim: true });
           closePopovers();
         };
       }
@@ -4557,12 +4692,31 @@
     return document.body.classList.contains("desk") && !!railMount();
   }
 
+  /** A cloud machine, as the page that served this client was told by the
+   *  relay that provisioned it. */
+  function cloudHostLayout() {
+    return IS_CLOUD_HOST && !!railMount();
+  }
+
+  /**
+   * May this surface paint the rail chrome BEFORE the catalog arrives?
+   *
+   * Only where there is no host version skew to protect against. Desktop
+   * qualifies because renderer and host ship together; a cloud machine
+   * qualifies because the relay installed that host itself. Everything else
+   * waits for a `repos` frame, since an extension older than v2.0.5 never
+   * sends one and an empty sidebar is worse than a plain column.
+   */
+  function railChromeBeforeCatalog() {
+    return desktopLargeLayout() || cloudHostLayout();
+  }
+
   /**
    * Rail is live when the mount exists AND (desktop first-frame chrome, or the
    * host has proven it feeds a multi-repo catalog). Never gated on IS_REMOTE.
    */
   function railAvailable() {
-    return !!railMount() && (desktopLargeLayout() || state.reposKnown);
+    return !!railMount() && (railChromeBeforeCatalog() || state.reposKnown);
   }
 
   /** The list body. The browser page wraps the rail in fixed chrome (brand,
@@ -4816,8 +4970,20 @@
       btn.setAttribute("role", "menuitem");
       btn.disabled = !!item.disabled;
       if (item.title) btn.title = item.title;
-      btn.innerHTML = `<span class="rail-menu-icon">${item.icon || ""}</span><span></span>`;
-      btn.lastChild.textContent = item.label;
+      // A description is optional and only the Add project menu uses one: its
+      // three entries differ by a verb, and "New project" vs "Import a folder"
+      // is not self-explanatory until you have used both.
+      btn.innerHTML = `<span class="rail-menu-icon">${item.icon || ""}</span>` +
+        (item.description
+          ? `<span class="rail-menu-text"><span class="rail-menu-label"></span><small class="rail-menu-desc"></small></span>`
+          : `<span></span>`);
+      if (item.description) {
+        btn.classList.add("rail-menu-item-rich");
+        btn.querySelector(".rail-menu-label").textContent = item.label;
+        btn.querySelector(".rail-menu-desc").textContent = item.description;
+      } else {
+        btn.lastChild.textContent = item.label;
+      }
       btn.onclick = (e) => {
         e.stopPropagation();
         closeRailMenu();
@@ -5267,6 +5433,7 @@
    * model.
    */
   function startRailTransition(fields) {
+    if (state.sessionSuperseded) clearSessionSuperseded();
     clearRailTransitionTimer();
     const token = ++railTransitionSeq;
     state.railTransition = { token, ...fields };
@@ -5569,6 +5736,8 @@
     railProbeTimer = setTimeout(() => {
       railProbeTimer = null;
       if (state.repoPreviewsSupported) return;
+      // A verdict, not a fact: nothing answered in time. Said out loud so the
+      // rail has something to show, and dropped on the next reconnect.
       state.repoPreviewsUnsupported = true;
       renderRail();
     }, ms);
@@ -5579,6 +5748,23 @@
    *  but that is a correction owed when the conversation ARRIVES, not a reason to
    *  refuse the fold forever. Keyed on the repo changing, so re-collapsing the
    *  project you are working in sticks until you go somewhere else. */
+  /**
+   * Forget an unanswered capability probe.
+   *
+   * `repoPreviewsUnsupported` is inferred from silence, so it is only ever as
+   * good as the moment it was measured. A reconnect may be a different host —
+   * or the same one, no longer busy — and without this the page carried
+   * "Sessions need a newer Grok Build" about a current host for as long as it
+   * stayed open (owner, on a cloud machine that had just run a CLI sign-out,
+   * 2026-08-31).
+   */
+  function forgetRailProbeVerdict() {
+    if (state.repoPreviewsSupported) return;
+    if (railProbeTimer) { clearTimeout(railProbeTimer); railProbeTimer = null; }
+    state.repoPreviewsUnsupported = false;
+    state.repoPreviewsAsked = {};
+  }
+
   function railFollowLiveRepo() {
     // Via the display target (confirmed or pending), not the host-confirmed
     // active cwd alone: a worktree conversation reports the WORKTREE as its
@@ -5609,7 +5795,7 @@
     // user most needs the rail, because it is where the only useful control
     // lives. Hiding it made the empty-state action unreachable and left the
     // File menu — which the desktop hides — as the sole route in.
-    const on = desktopLargeLayout() ||
+    const on = railChromeBeforeCatalog() ||
       (railAvailable() && (state.repos.length > 0 || canAddProjectFolder()));
     const panel = railPanel();
     if (panel) panel.hidden = !on;
@@ -5721,6 +5907,11 @@
         list.className = "rail-list rail-projects";
         for (const repo of repos) list.appendChild(renderRailRepo(repo, false));
         root.appendChild(list);
+        // Full-width target under the list, not only the small "+" in the group
+        // head. With one project or none the rail is mostly empty space and the
+        // header glyph is easy to miss — and on a phone, easy to miss AND hard
+        // to hit. Same control, said where there is room to say it.
+        if (canAddProjectFolder() && !q) root.appendChild(railAddProjectWide());
       }
       shownAnything = true;
     }
@@ -5750,18 +5941,13 @@
     }
 
     if (!shownAnything) {
-      if (!state.reposKnown && desktopLargeLayout()) {
+      if (!state.reposKnown && railChromeBeforeCatalog()) {
         root.appendChild(railNote("Loading…"));
       } else if (!q && canAddProjectFolder()) {
         // An empty rail that only says "No projects yet" is a dead end on the
         // one screen where the user has nothing else to click.
         const empty = railNote("No projects yet");
-        const add = document.createElement("button");
-        add.type = "button";
-        add.className = "rail-empty-action";
-        add.textContent = "Add a project folder";
-        add.onclick = () => vscode.postMessage({ type: "addProjectFolder" });
-        empty.appendChild(add);
+        empty.appendChild(railAddProjectWide());
         root.appendChild(empty);
       } else {
         root.appendChild(railNote(q ? "No matches." : "No projects yet"));
@@ -5849,32 +6035,228 @@
   }
 
   /**
-   * "Add project" — capability, not a host flag: only a host that answers
-   * `addProjectFolder` gets the control. Opening the picker is host-local (a
-   * native dialog on the desk that a phone could not see or answer), so a
-   * remote never shows it either.
+   * "Add project" — capability, not a host flag. Three ways in now, and they do
+   * not all have the same reach: opening the native picker is host-local (a
+   * dialog on the desk that a phone could not see or answer), while naming a
+   * new project or cloning a URL are things a remote CAN do, because the host
+   * derives the destination rather than being handed one. So the control shows
+   * wherever at least one entry is available, and the menu carries whichever
+   * ones are.
    *
-   * VS Code answers that message now too, but this rail is not where it lands:
+   * VS Code answers these messages too, but this rail is not where it lands:
    * `railAvailable()` needs a rail MOUNT and the VS Code chat view has none —
    * it gets a separate `atlas.projects` view (media/projects-rail.js), which
    * carries its own copy of this control.
    */
+  /**
+   * "+ Add project", full width, at button height.
+   *
+   * The TWIN of addProjectWideButton in projects-rail.js — the two rails are
+   * separate implementations and have drifted into different wording before,
+   * which is why the clone hint was moved to a shared builder. Keep these two
+   * in step: same class, same label, same behaviour. It replaces the empty
+   * state's text link rather than joining it; a link and a button offering one
+   * action in one rail is a second mechanism, not a second affordance.
+   */
+  function railAddProjectWide() {
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "rail-add-project-wide";
+    const plus = document.createElement("span");
+    plus.className = "rail-add-project-wide-plus";
+    plus.setAttribute("aria-hidden", "true");
+    plus.textContent = "+";
+    add.appendChild(plus);
+    add.appendChild(document.createTextNode("Add project"));
+    add.onclick = () => openAddProjectMenu(add);
+    return add;
+  }
+
   function railAddProjectButton() {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "rail-action-btn rail-add-project";
     btn.innerHTML = ICON.plus;
-    btn.title = "Add project folder";
-    btn.setAttribute("aria-label", "Add project folder");
+    btn.title = "Add project";
+    btn.setAttribute("aria-label", "Add project");
     btn.onclick = (e) => {
       e.stopPropagation();
-      vscode.postMessage({ type: "addProjectFolder" });
+      openAddProjectMenu(btn);
     };
     return btn;
   }
 
+  /**
+   * What this host offers as ways into a project.
+   *
+   * Importing needs a native picker, so it stays desk-only exactly as it always
+   * was. Creating and cloning take a NAME and a URL — the host derives the
+   * destination inside its own root — so they work from a phone, which is the
+   * whole reason they exist as separate messages rather than as arguments to
+   * `addProjectFolder`.
+   */
+  function addProjectCaps() {
+    const caps = state.hostCaps || {};
+    return {
+      appPurpose: state.appPurpose === "coding" ? "coding" : "knowledge",
+      canImport: !IS_REMOTE && caps.addProjectFolder === true,
+      canCreate: caps.createProject === true,
+      canClone: caps.cloneProject === true,
+    };
+  }
+
   function canAddProjectFolder() {
-    return !IS_REMOTE && !!(state.hostCaps && state.hostCaps.addProjectFolder);
+    const caps = addProjectCaps();
+    return caps.canImport || caps.canCreate || caps.canClone;
+  }
+
+  const ADD_PROJECT_ICON = {
+    "new": `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><path d="M12 10v6M9 13h6"/></svg>`,
+    "import": `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>`,
+    clone: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 15V9a3 3 0 0 1 3-3h6"/></svg>`,
+  };
+
+  /**
+   * Open the Add project menu — or, when this host offers exactly one way in,
+   * just do that one thing.
+   *
+   * A menu with a single item is a click that asks permission to be a click.
+   * Older hosts advertise only `addProjectFolder`, so on those this control
+   * behaves exactly as it did before, with no menu at all.
+   */
+  function openAddProjectMenu(anchor) {
+    const helpers = window.GrokWebviewHelpers;
+    if (!helpers || typeof helpers.addProjectMenuItems !== "function") {
+      vscode.postMessage({ type: "addProjectFolder" });
+      return;
+    }
+    const spec = helpers.addProjectMenuItems(addProjectCaps());
+    const run = (id) => {
+      // The knowledge-work hint acts instead of instructing: it opens the
+      // setting that would put Clone in this menu.
+      if (id === "clone-needs-coding") openSettingsCategory("general");
+      else if (id === "import") vscode.postMessage({ type: "addProjectFolder" });
+      else openAddProjectForm(id);
+    };
+    // One way in is a click, not a menu that asks permission to be a click.
+    // NONE at all means the host has not said yet — the no-project onboarding
+    // card can be on screen before `initialState` lands, and its button has to
+    // do something. Falling through to the picker is what it did before.
+    if (spec.length <= 1) { run(spec.length ? spec[0].id : "import"); return; }
+    openRailMenu(
+      anchor,
+      spec.map((item) => ({
+        label: item.label,
+        description: item.description,
+        icon: ADD_PROJECT_ICON[item.id] || "",
+        onSelect: () => run(item.id),
+      })),
+      "add-project",
+    );
+  }
+
+  let addProjectFormApi = null;
+  let addProjectFormScrim = null;
+  let addProjectFormKeydown = null;
+
+  function closeAddProjectForm() {
+    if (addProjectFormScrim) addProjectFormScrim.remove();
+    // Capture-phase, so it must come off again — a listener left behind would
+    // swallow Escape everywhere else in the app for the rest of the session.
+    if (addProjectFormKeydown) document.removeEventListener("keydown", addProjectFormKeydown, true);
+    addProjectFormKeydown = null;
+    addProjectFormScrim = null;
+    addProjectFormApi = null;
+  }
+
+  /**
+   * The name/URL form, over a scrim.
+   *
+   * Modal on purpose: it is two fields and one button, and the rail underneath
+   * re-renders on every catalog frame — an inline form would be rebuilt out
+   * from under the caret, which is the bug the routines form spent a round on.
+   */
+  function openAddProjectForm(kind) {
+    const helpers = window.GrokWebviewHelpers;
+    if (!helpers || typeof helpers.addProjectForm !== "function") return;
+    closeAddProjectForm();
+    closeRailMenu();
+    const api = helpers.addProjectForm({
+      kind,
+      root: state.projectRoot,
+      onSubmit: (value) => {
+        vscode.postMessage(
+          kind === "clone"
+            ? { type: "cloneProject", url: value }
+            : { type: "createProject", name: value },
+        );
+      },
+      onCancel: closeAddProjectForm,
+      // Local: signing in happens in a terminal, and the form stays open so
+      // they can clone again afterwards.
+      //
+      // Remote: older hosts classify `setupGithubCli` as host-local and DROP
+      // it silently. A new host advertises `remoteGithubSignIn` and runs the
+      // headless device-code flow into this form. Capability, never a version
+      // check — the same reason Connect is gated on `remoteAgentSignIn`.
+      onFix: (fix) => {
+        const install = fix === "install-gh";
+        // INSTALL has no headless path and is not getting one: a package
+        // manager asks for elevation, so the host opens a terminal for it. On a
+        // cloud machine that terminal is an Xvfb screen nobody is at, and
+        // pressing the button again just opens another one — the very dead end
+        // the sign-in flow exists to remove, reintroduced on the other branch.
+        // Caught by review before release. The capability says the host can
+        // sign in headlessly; it says nothing about installing.
+        if (IS_REMOTE && install) {
+          if (addProjectFormApi) {
+            addProjectFormApi.update({
+              error: IS_CLOUD_HOST
+                // A cloud machine ships gh, so this is a broken machine rather
+                // than a missing step, and there is no computer to walk to.
+                ? "The GitHub CLI is missing on this cloud machine, which should not happen. "
+                  + "Reset the machine from Settings, or tell us and we will look."
+                // Literal, not the host's GITHUB_CLI_DOWNLOAD: that constant
+                // lives in project-create.ts and is not in scope here, so
+                // referencing it would throw at the moment of the click.
+                : "Install the GitHub CLI on the computer running this workspace — cli.github.com — then try again here.",
+            });
+          }
+          return;
+        }
+        if (IS_REMOTE && !(state.hostCaps && state.hostCaps.remoteGithubSignIn)) {
+          const cloud = IS_CLOUD_HOST;
+          if (addProjectFormApi) {
+            addProjectFormApi.update({
+              error: cloud
+                ? "Signing in to GitHub needs a terminal, and a cloud machine has none. "
+                  + "Public repositories clone as they are; private ones need this, and it is coming."
+                : "Sign in to GitHub on the computer running this workspace — a terminal opens there — then try again here.",
+            });
+          }
+          return;
+        }
+        // Local keeps both actions: a terminal there is one the person can see.
+        vscode.postMessage({ type: "setupGithubCli", action: install ? "install" : "auth" });
+      },
+    });
+    if (!api) return;
+    const scrim = document.createElement("div");
+    scrim.className = "add-project-scrim";
+    scrim.appendChild(api.el);
+    scrim.addEventListener("mousedown", (e) => { if (e.target === scrim) closeAddProjectForm(); });
+    document.body.appendChild(scrim);
+    addProjectFormScrim = scrim;
+    addProjectFormApi = api;
+    addProjectFormKeydown = (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      closeAddProjectForm();
+    };
+    document.addEventListener("keydown", addProjectFormKeydown, true);
+    api.update({ root: state.projectRoot, github: state.projectGithub || undefined });
+    api.focus();
   }
 
   /**
@@ -6142,7 +6524,7 @@
     // the new conversation (they must differ from previousSessionId).
     const previousSessionId = state.activeSessionId;
     const repoCwd = state.selectedRepoCwd || state.activeRepoCwd || "";
-    saveRememberedRemoteSession(null);
+    forgetRememberedSessionByChoice();
     // Veil before the host-style reset so the click can unhide the welcome.
     // resetForNewSession marks the old nodes pending-clear, and a pending-clear
     // transcript must not grow an empty-state panel on top of it.
@@ -7058,8 +7440,8 @@
       // `cwd` rides along so a session in another repo reopens in ITS checkout —
       // the host resolves sessions by cwd, and omitting it would look the id up
       // under the repo we happen to be in.
-      if (!sameCwd(repo.cwd, state.selectedRepoCwd)) saveRememberedRemoteSession(null);
-      vscode.postMessage({ type: "resumeSession", id: s.id, cwd: s.cwd || repo.cwd });
+      if (!sameCwd(repo.cwd, state.selectedRepoCwd)) forgetRememberedSessionByChoice();
+      postResumeSession(s.id, s.cwd || repo.cwd, { claim: true });
     };
   }
 
@@ -7098,7 +7480,7 @@
       window.__grokRailNewIntent = null;
     }
     renderRepoChip();
-    saveRememberedRemoteSession(null);
+    forgetRememberedSessionByChoice();
     vscode.postMessage({ type: "selectRepo", cwd: repo.cwd });
   }
 
@@ -7127,6 +7509,7 @@
     ver.dataset.status = busy ? text : "";
     if (!busy) {
       ver.textContent = text;
+      renderWelcomeTip();
       return;
     }
     ver.textContent = "";
@@ -7134,6 +7517,7 @@
     const label = document.createElement("span");
     label.textContent = text;
     ver.appendChild(label);
+    renderWelcomeTip();
   }
 
   /**
@@ -7211,22 +7595,15 @@
    * `moveViewHint` is decided by the host and goes false the moment that picker
    * is opened from anywhere, so taking the advice retires the advice.
    */
-  function renderWelcomeTip() {
+  function renderMoveViewTip() {
     const welcome = $("welcome");
     if (!welcome) return;
     const existing = $("welcome-tip");
-    // Never in the browser client. The capability is mirrored to remotes with
-    // the rest of initialState, but where the chat sits is a property of the
-    // machine running the extension — `moveView` is host-local and the relay
-    // drops it, so a phone would get advice it cannot take.
-    if (IS_REMOTE || !(state.hostCaps && state.hostCaps.moveViewHint === true)) {
-      if (existing) existing.remove();
-      return;
-    }
     if (existing) return;
     const tip = document.createElement("p");
     tip.id = "welcome-tip";
     tip.className = "welcome-tip muted";
+    tip.dataset.tip = "moveView";
     // Built here rather than in the host's HTML skeleton, so the relay's mirror
     // of that skeleton cannot drift out of sync over an element it never shows.
     // Two steps, because the second cannot be done for the user. The host's
@@ -7245,7 +7622,7 @@
     // exist. `role`/`tabindex`/keydown put back the semantics the anchor was
     // providing.
     tip.innerHTML =
-      "\u{1F4A1} <b>To move Atlas to the right</b>" +
+      `<span class="welcome-tip-bulb">${ICON.idea}</span> <b>To move Atlas to the right</b>` +
       "<br>After moving, click <b>Toggle Agents Side Bar</b> to show it." +
       '<br><span id="welcome-tip-link" class="muted-link" role="button" tabindex="0">Click here</span>' +
       " and select <b>New Secondary Side Bar Entry</b>.";
@@ -7268,6 +7645,317 @@
         if (e.key === "Enter" || e.key === " ") open(e);
       };
     }
+  }
+
+  /**
+   * Everything the tip pool needs, read off state the client already holds.
+   *
+   * Two facts are read CONSERVATIVELY rather than optimistically, because the
+   * failure modes are not symmetric. An absent routine/connector count means
+   * the host has not told us yet - welcomeTipsFor drops those tips rather than
+   * treating "unknown" as "zero", which would advertise routines to someone
+   * running twenty. Same for providers: until `providerState` arrives, claim an
+   * alternate agent IS connected, so the one tip a multi-agent user would find
+   * silly cannot flash on screen during startup.
+   */
+  /** Whatever tip is on screen right now, or "". */
+  function currentWelcomeTipId() {
+    const el = document.getElementById("welcome-tip");
+    return (el && el.dataset && el.dataset.tip) || "";
+  }
+
+  function welcomeTipFacts() {
+    const host = state.welcomeTips || {};
+    const providers = state.providers || [];
+    const altConnected = providers.some(
+      (p) => p && (p.id === "codex" || p.id === "claude") && p.connected,
+    );
+    return {
+      appPurpose: state.appPurpose === "coding" ? "coding" : "knowledge",
+      isRemote: IS_REMOTE,
+      // Mirrors continueChatDestinations(), so the tip is never offered where
+      // the action it links to would be refused.
+      worktreeSupported: state.worktreeSupported !== false,
+      inWorktree: !!state.isWorktree,
+      altAgentConnected: !state.providersKnown || altConnected,
+      // A cloud machine can connect agents from here and cannot connect Claude
+      // Code at all; both change what the providers tip should say and whether
+      // it may be shown.
+      cloudHost: !!(state.hostCaps && state.hostCaps.remoteAgentSignOut),
+      remoteCanConnectAgents: !!(state.hostCaps && state.hostCaps.remoteAgentSignIn),
+      routineCount: host.routineCount,
+      connectorCount: host.connectorCount,
+      // A phone's read-aloud is its own client-side preference, not the desk's.
+      readRepliesAloud: IS_REMOTE ? !!state.remoteTts : !!state.readRepliesAloud,
+      voiceConfigured: !!state.voiceConfigured,
+      remoteLinked: state.remoteLinked,
+      // Host list plus anything retired here. The union, so the control works
+      // before the first frame and keeps working if the host never answers.
+      dismissed: (Array.isArray(host.dismissed) ? host.dismissed : [])
+        .concat(Array.from(welcomeTipsRetiredHere)),
+      shownToday: (Array.isArray(host.shownToday) ? host.shownToday : [])
+        .concat(Array.from(welcomeTipsClosedHere)),
+      // The tip on screen is exempt from the once-a-day filter — it joined that
+      // list when it rendered, and a repaint must not blank it mid-read. Closing
+      // it with the X is exactly the act of releasing that pin.
+      keepId: welcomeTipsClosedHere.has(currentWelcomeTipId())
+        ? ""
+        : currentWelcomeTipId(),
+    };
+  }
+
+  /**
+   * Record that a tip has had its turn today, once per client.
+   *
+   * Deliberately NOT conditional on the host frame having arrived — that is the
+   * same mistake the dismiss control made, where an effect that depended on a
+   * frame landing silently did nothing when it had not.
+   */
+  function noteWelcomeTipShown(id, force) {
+    if (!force && welcomeTipsNoted.has(id)) return;
+    welcomeTipsNoted.add(id);
+    const host = state.welcomeTips;
+    if (host && Array.isArray(host.shownToday) && host.shownToday.indexOf(id) < 0) {
+      host.shownToday = host.shownToday.concat([id]);
+    }
+    vscode.postMessage({ type: "welcomeTipShown", id });
+  }
+
+  /** The X: done with this one for today. */
+  function closeWelcomeTipForToday(id) {
+    welcomeTipsClosedHere.add(id);
+    // `force`, because the render already noted this id and the once-guard
+    // would otherwise swallow the message. That guard exists to stop repaints
+    // rewriting the file all afternoon; a deliberate close is not a repaint,
+    // and if the render's note never reached the host then without this one
+    // tomorrow would look exactly like today. The host is idempotent per day,
+    // so the extra message costs nothing when the first one did arrive.
+    noteWelcomeTipShown(id, true);
+  }
+
+  /**
+   * Where a tip's action goes. Every destination is real and reachable from an
+   * empty screen — that is the bar a tip has to clear to earn a link at all,
+   * and the reason the Plan tip was removed rather than given one: it pointed
+   * at a mode menu, which is a control, not work.
+   */
+  function runWelcomeTipTarget(target) {
+    if (typeof target !== "string") return;
+    if (target.indexOf("settings:") === 0) {
+      openSettingsCategory(target.slice("settings:".length));
+      return;
+    }
+    if (target === "worktree") {
+      // No confirm step: the host refuses a non-git folder and a nested
+      // worktree with a message of its own, and on an empty screen the only
+      // other destination ("use this checkout") is what the screen already is.
+      vscode.postMessage({ type: "newWorktreeSession" });
+      return;
+    }
+    if (target === "mention") {
+      // Put the caret where the advice points and type the character for them.
+      // Anything less leaves the reader to find the composer and remember what
+      // the tip said; the popover then opens on its own from the input handler.
+      const input = $("input");
+      if (!input) return;
+      input.focus();
+      const at = input.selectionStart === null || input.selectionStart === undefined
+        ? input.value.length
+        : input.selectionStart;
+      const before = input.value.slice(0, at);
+      const insert = (before && !/\s$/.test(before) ? " " : "") + "@";
+      input.value = before + insert + input.value.slice(at);
+      const caret = at + insert.length;
+      if (typeof input.setSelectionRange === "function") input.setSelectionRange(caret, caret);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
+  /**
+   * Tips retired in THIS client, whatever the host has said.
+   *
+   * The dismiss control used to write only into `state.welcomeTips.dismissed`,
+   * which meant it did nothing at all whenever that frame had not arrived: no
+   * local record, so the next render recomputed the same pool and put the same
+   * tip straight back. On a host too old to answer, the X stayed inert for
+   * ever. A control whose effect depends on a frame having landed is a control
+   * that silently does nothing, so this set is consulted unconditionally and
+   * merged with whatever the host reports.
+   */
+  const welcomeTipsRetiredHere = new Set();
+
+  /**
+   * Tips the reader has closed with the X — NOT TODAY, not for ever.
+   *
+   * Every tip is already recorded as shown for the day the moment it renders,
+   * so closing one does not need to record anything new: it only has to release
+   * the pin that keeps the tip currently on screen exempt from that day filter.
+   * Tomorrow it comes round again.
+   */
+  const welcomeTipsClosedHere = new Set();
+
+  /** Ids this client has already reported as shown, so a repaint cannot post
+   *  the same note over and over. */
+  const welcomeTipsNoted = new Set();
+
+  /** Retire a tip - the same message for "took it" and "not interested",
+   *  because both mean the reader is done with it. */
+  function retireWelcomeTip(id) {
+    // First, and never conditionally: this is what makes the click work.
+    welcomeTipsRetiredHere.add(id);
+    const host = state.welcomeTips;
+    if (host && Array.isArray(host.dismissed) && host.dismissed.indexOf(id) < 0) {
+      host.dismissed = host.dismissed.concat([id]);
+    }
+    vscode.postMessage({ type: "dismissWelcomeTip", id });
+  }
+
+  /**
+   * Advice in the empty state: one line naming something this user has not set
+   * up yet.
+   *
+   * THE SLOT IS SHARED with the move-view hint above, which wins while the host
+   * still offers it - that hint is about a window that is currently in the
+   * wrong place, which outranks anything on this list.
+   *
+   * Three suppressions, each a rule rather than a special case:
+   *  - while the status line is BUSY (Starting / Loading conversation), because
+   *    a tip under a spinner competes with the one line the reader is waiting
+   *    for;
+   *  - while the onboarding card is up, because that empty state already has a
+   *    call to action and does not need a second one;
+   *  - when the pool is empty, in which case the screen goes back to what it is
+   *    today. A permanently occupied slot stops being advice.
+   *
+   * Rotation advances only when the screen BECOMES empty (`advance`), never on
+   * a repaint - otherwise a provider frame arriving mid-startup would shuffle
+   * the line under the reader's eyes.
+   */
+  function renderWelcomeAdviceTip(advance) {
+    const welcome = $("welcome");
+    if (!welcome) return;
+    // Rotate first. The screen becoming empty is what advances the cursor, and
+    // that has already happened by the time any of the suppressions below run —
+    // a desktop cold start is BUSY at this moment, and holding the rotation
+    // until it settles (where no `advance` is passed) would pin one tip for ever.
+    if (advance) state.welcomeTipCursor = (state.welcomeTipCursor || 0) + 1;
+    const helpers = window.GrokWebviewHelpers;
+    const existing = $("welcome-tip");
+    const drop = () => { if (existing) existing.remove(); };
+    if (!helpers || typeof helpers.welcomeTipsFor !== "function") return drop();
+    const status = $("welcome-version");
+    if (status && status.classList.contains("welcome-status-busy")) return drop();
+    // BOTH the mode and the node. The node alone is a proxy that is briefly
+    // wrong: showOnboarding sets the mode, reveals the welcome — which stamps
+    // the status line, which re-renders this slot — and only then writes the
+    // card's HTML. In that gap the node is still empty, so a tip rendered over
+    // an empty state that was about to have a call to action in it, and burned
+    // its own once-a-day turn doing so.
+    if (state.onboardingMode) return drop();
+    const onb = $("welcome-onboarding");
+    if (onb && onb.childNodes.length) return drop();
+
+    const pool = helpers.welcomeTipsFor(welcomeTipFacts());
+    if (!pool.length) return drop();
+    const cursor = state.welcomeTipCursor || 0;
+    const tip = pool[((cursor % pool.length) + pool.length) % pool.length];
+
+    // Idempotent: the same advice already on screen is left alone, so the
+    // status-line and provider frames that call through here cannot flicker it.
+    if (existing && existing.dataset.tip === tip.id) return;
+    drop();
+
+    const parts = helpers.splitWelcomeTipCopy(
+      typeof helpers.welcomeTipCopy === "function" ? helpers.welcomeTipCopy(tip, welcomeTipFacts()) : tip.copy,
+    );
+    const el = document.createElement("p");
+    el.id = "welcome-tip";
+    el.className = "welcome-tip welcome-advice muted";
+    el.dataset.tip = tip.id;
+
+    const bulb = document.createElement("span");
+    bulb.className = "welcome-tip-bulb";
+    bulb.innerHTML = ICON.idea;
+    bulb.setAttribute("aria-hidden", "true");
+    el.appendChild(bulb);
+
+    const body = document.createElement("span");
+    body.className = "welcome-tip-body";
+    // textContent throughout - tip copy is never parsed as markup.
+    body.appendChild(document.createTextNode(parts.before));
+    if (parts.action) {
+      // A <span role="button">, not an <a href="#">: an anchor makes the
+      // webview attempt a navigation and the editor answers by trying to open a
+      // file that does not exist. Same reason as the move-view hint above.
+      const action = document.createElement(tip.target ? "span" : "b");
+      action.textContent = parts.action;
+      if (tip.target) {
+        action.className = "muted-link";
+        action.setAttribute("role", "button");
+        action.setAttribute("tabindex", "0");
+        const go = (e) => {
+          if (e) e.preventDefault();
+          // The click must NOT reach the document. Several handlers there close
+          // every popover on any outside click, and this one runs first — so a
+          // target that opens a popover had it built and then hidden again in
+          // the same tick, which is precisely how the Plan link looked broken
+          // while doing exactly what it was told.
+          if (e && typeof e.stopPropagation === "function") e.stopPropagation();
+          runWelcomeTipTarget(tip.target);
+          // Acting on advice retires the advice - the principle the move-view
+          // hint established. Retire AFTER opening, so a target that refuses to
+          // open still leaves the reader holding the tip.
+          retireWelcomeTip(tip.id);
+          renderWelcomeTip();
+        };
+        action.onclick = go;
+        action.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") go(e); };
+      }
+      body.appendChild(action);
+    }
+    body.appendChild(document.createTextNode(parts.after));
+    el.appendChild(body);
+
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "welcome-tip-dismiss";
+    close.title = "Not today";
+    close.setAttribute("aria-label", "Hide this tip until tomorrow");
+    close.textContent = "\u00d7";
+    close.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeWelcomeTipForToday(tip.id);
+      renderWelcomeTip();
+    };
+    el.appendChild(close);
+
+    welcome.appendChild(el);
+    // After the append, so a tip that failed to build is not marked as seen.
+    noteWelcomeTipShown(tip.id);
+  }
+
+  /**
+   * The empty state's single advice slot.
+   *
+   * `advance` rotates to the next eligible tip and is passed only from the two
+   * places where the screen genuinely becomes empty again - a new session, and
+   * the deferred transcript wipe. Every other caller is a repaint.
+   */
+  function renderWelcomeTip(advance) {
+    // Never in the browser client. The capability is mirrored to remotes with
+    // the rest of initialState, but where the chat sits is a property of the
+    // machine running the extension - `moveView` is host-local and the relay
+    // drops it, so a phone would get advice it cannot take.
+    if (!IS_REMOTE && state.hostCaps && state.hostCaps.moveViewHint === true) {
+      const existing = $("welcome-tip");
+      if (existing && existing.dataset.tip !== "moveView") existing.remove();
+      renderMoveViewTip();
+      return;
+    }
+    const stale = $("welcome-tip");
+    if (stale && stale.dataset.tip === "moveView") stale.remove();
+    renderWelcomeAdviceTip(advance);
   }
 
   // clearMessages marks existing transcript nodes instead of destroying them.
@@ -7434,7 +8122,8 @@
     }
     if (kind) {
       applyWelcomeRevealKind(kind);
-      renderWelcomeTip();
+      // A genuinely new empty screen — rotate to the next piece of advice.
+      renderWelcomeTip(true);
     }
     if (chrome) resetSessionChrome();
     revealWelcome();
@@ -7768,6 +8457,7 @@
   }
 
   function resetForNewSession() {
+    clearSessionSuperseded();
     stopProcessingCue();
     cancelPendingSpeech();
     // The transcript is about to be emptied wholesale; drop the reference so a
@@ -7807,7 +8497,7 @@
       } else {
         pendingWelcomeReveal = null;
         applyWelcomeRevealKind(welcomeRevealKind());
-        renderWelcomeTip();
+        renderWelcomeTip(true);
       }
     }
     state.welcomeVisible = true;
@@ -7968,8 +8658,395 @@
     }
   }
 
+  /**
+   * Connecting an agent from a phone.
+   *
+   * This panel used to say "accounts can only be connected on the computer
+   * running this workspace" and stop there. That was true of the old
+   * implementation — `runGrokLogin` opened a terminal on the desk, which a
+   * remote cannot see — and it was a dead end at the exact moment someone most
+   * wanted a next step. The host now runs the CLI's headless device-code flow
+   * for a remote request, so the answer is a URL and a short code instead.
+   *
+   * Everything below renders from what the host reported. The client makes no
+   * judgement about which providers have a headless flow: it offers the button,
+   * and a provider that cannot be signed in from here comes back `unavailable`
+   * with a sentence saying so. That way a CLI that grows the flow starts working
+   * without a client change, and one that loses it stops lying.
+   */
+  /** Host-supplied panel text: escaped, then `**bold**` and `[label](https://…)`
+   *  re-admitted. Never the other way round — see the note on the steps below. */
+  function onbRich(text) {
+    return escapeHtml(String(text == null ? "" : text))
+      .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+      .replace(
+        /\[([^\]\n]+)\]\((https:\/\/[^\s)]+)\)/g,
+        (_m, label, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`,
+      );
+  }
+
+  function remoteConnectPanel(mode, info, ver) {
+    const device = info.device;
+    const provider = info.provider
+      || (mode === "codex-login" ? "codex" : mode === "claude-login" ? "claude" : mode === "auth-required" ? "grok" : "");
+    // The products' own names, everywhere this panel speaks. Not "Grok": that
+    // is the model, the extension is Grok Build, and a heading that disagrees
+    // with the button beneath it reads as two different things to connect.
+    const NAMES = { grok: "Grok Build", codex: "Codex", claude: "Claude Code" };
+    const name = NAMES[provider] || "an agent";
+    const status = (text) => { if (ver) setWelcomeStatus(text, false); };
+
+    // The relay serves this page, so it is always as new as the last deploy
+    // while the host is whatever the user installed. A host built before remote
+    // sign-in existed classifies `runGrokLogin` as host-local and DROPS it
+    // silently — so offering Connect there would be a button that does nothing,
+    // which is worse than the honest dead end it replaced. Capability, never a
+    // version check.
+    if (!(state.hostCaps && state.hostCaps.remoteAgentSignIn)) {
+      status("Sign in at the desk");
+      return `<div class="onb">` +
+        `<p class="onb-heading">Sign in at the desk</p>` +
+        `<p class="onb-desc">${escapeHtml(name === "an agent" ? "Agent" : name)} accounts can only be connected on the computer running this workspace. Sign in there, then refresh this remote view.</p>` +
+      `</div>`;
+    }
+    const cancel = `<button class="onb-action onb-secondary" type="button" data-act="cancelDeviceLogin" `
+      + `data-provider="${escapeHtml(provider)}">Cancel</button>`;
+
+    if (device && device.status === "waiting" && device.url) {
+      status(device.needsCode ? (device.submitted ? "Confirming sign-in" : "Paste the code") : "Confirm the code");
+      const paste = !!device.needsCode;
+      const codeChip = !paste && device.code
+        ? `<p class="onb-desc">Open the link, then confirm this code:</p>` +
+          // Same markup as every other copyable value in this panel, so it
+          // inherits the existing copy handler and its copied state.
+          `<div class="onb-cmd">` +
+            `<code>${escapeHtml(device.code)}</code>` +
+            `<button class="onb-copy" type="button" title="Copy" data-cmd="${escapeHtml(device.code)}">${ICON.copy}</button>` +
+          `</div>`
+        : (!paste ? `<p class="onb-desc">Open the link to finish signing in.</p>` : "");
+      // Paste-code is a SEQUENCE, and the card now reads in that order: what
+      // you are about to do, the link that does it, then the field for what it
+      // gives you back. The field used to sit ABOVE the link, so the first
+      // thing on screen was somewhere to paste a code you had no way to have
+      // yet (owner, 2026-09-01).
+      const pasteIntro = paste && !device.submitted
+        ? `<p class="onb-desc">Open the sign-in page, sign in, then paste the code it shows you:</p>`
+        : "";
+      const pasteEntry = paste && !device.submitted
+        ? `<div class="onb-cmd onb-code-entry">` +
+            `<input class="onb-code-input" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste code" aria-label="Paste sign-in code">` +
+            `<button class="onb-action" type="button" data-act="submitDeviceLoginCode" data-provider="${escapeHtml(provider)}">Submit</button>` +
+          `</div>`
+        : "";
+      return `<div class="onb">` +
+        `<p class="onb-heading">${device.preflight ? "Step 2 of 2 &mdash; confirm the code" : `Finish signing in to ${escapeHtml(name)}`}</p>` +
+        // The vendor's own page warns that device codes are used in phishing
+        // and to continue only if the CLI started the sign-in. Saying that
+        // BEFORE they meet it turns an alarming page into an expected one
+        // (owner, with the screenshot, 2026-08-31).
+        (device.note ? `<p class="onb-desc onb-note">${onbRich(device.note)}</p>` : "") +
+        codeChip +
+        pasteIntro +
+        `<a class="onb-action" href="${escapeHtml(device.url)}" target="_blank" rel="noopener noreferrer">Open the sign-in page</a>` +
+        // AFTER the link: you cannot have a code until you have been there.
+        pasteEntry +
+        // The setting to check, beside the code it gates — not on a screen
+        // before it that cost an extra click to get past.
+        (device.preflight && Array.isArray(device.preflight.steps) && device.preflight.steps.length
+          ? `<p class="onb-desc">${onbRich(device.preflight.reason || "")}</p>` +
+            `<ol class="onb-steps">${device.preflight.steps
+              .map((s) => `<li>${onbRich(s)}</li>`)
+              .join("")}</ol>`
+          : "") +
+        cancel +
+        // Device-code finishes without another tap. Paste-code does not, until
+        // the code has been written back.
+        `<p class="onb-desc">${paste
+          ? (device.submitted
+            ? "Code sent &mdash; keep this page open, it finishes on its own."
+            : "This page stays open so you can paste the code back.")
+          : "Keep this page open &mdash; it finishes on its own."}</p>` +
+      `</div>`;
+    }
+
+    if (device && device.status === "starting") {
+      status("Starting sign-in");
+      return `<div class="onb">` +
+        `<p class="onb-heading">Connecting ${escapeHtml(name)}</p>` +
+        `<p class="onb-desc">Asking the ${escapeHtml(name)} CLI for a sign-in code&hellip;</p>` +
+        cancel +
+      `</div>`;
+    }
+
+    if (device && device.status === "verifying") {
+      status("Confirming sign-in");
+      return `<div class="onb">` +
+        `<p class="onb-heading">Almost there</p>` +
+        `<p class="onb-desc">Signed in — confirming the credential on this machine…</p>` +
+      `</div>`;
+    }
+
+    if (device && device.status === "done") {
+      status("Connected");
+      return `<div class="onb">` +
+        `<p class="onb-heading">${escapeHtml(name)} connected</p>` +
+        `<p class="onb-desc">You can start a conversation.</p>` +
+      `</div>`;
+    }
+
+    // Shown BEFORE anything is attempted, when a sign-in is likely to fail for a
+    // reason the reader can fix in seconds. Codex device-code login is off by
+    // default on every account — telling somebody that after a wait and a
+    // failure is telling them too late.
+    if (device && device.preflight) {
+      status("One setting first");
+      const pf = device.preflight;
+      // Escape FIRST, then allow `**bold**` and one link — never the other way
+      // round. The step strings come from the host, and the point of the escape
+      // is that nothing in them can become markup; re-admitting two shapes
+      // afterwards, on text that is already inert, keeps that true. Both are
+      // needed here: the setting people cannot find sits at the bottom of a
+      // long page, and the page it sits on should be one tap away.
+      const steps = (pf.steps || [])
+        .map((s) => `<li>${onbRich(s)}</li>`)
+        .join("");
+      return `<div class="onb">` +
+        `<p class="onb-heading">${escapeHtml(pf.title || `Turn on device sign-in for ${name}`)}</p>` +
+        `<p class="onb-desc">${onbRich(pf.reason || "")}</p>` +
+        (steps ? `<ol class="onb-steps">${steps}</ol>` : "") +
+        (pf.url
+          ? `<a class="onb-action" href="${escapeHtml(pf.url)}" target="_blank" rel="noopener noreferrer">Open ${escapeHtml(name)} settings</a>`
+          : "") +
+        // Still offered, because the setting may already be on — and because a
+        // screen that only sends you elsewhere is a dead end with a link on it.
+        `<button class="onb-action onb-secondary" type="button" data-act="connectRemote" data-provider="${escapeHtml(provider)}">${escapeHtml(pf.continueLabel || "I've turned it on — connect")}</button>` +
+      `</div>`;
+    }
+
+    if (device && (device.status === "failed" || device.status === "unavailable")) {
+      const stuck = device.status === "unavailable";
+      status(stuck ? "Sign in at your computer" : "Sign-in failed");
+      // `unavailable` gets no retry button. Offering one for a flow that cannot
+      // work here is how a dead end gets disguised as a loop.
+      return `<div class="onb">` +
+        `<p class="onb-heading">${stuck ? `Connect ${escapeHtml(name)} at your computer` : `Could not connect ${escapeHtml(name)}`}</p>` +
+        `<p class="onb-desc">${escapeHtml(device.message || "")}</p>` +
+        (stuck
+          ? ""
+          : `<button class="onb-action" type="button" data-act="connectRemote" data-provider="${escapeHtml(provider)}">Try again</button>`) +
+      `</div>`;
+    }
+
+    // No flow started yet. `connect-agent` means nothing is connected at all, so
+    // offer each rather than guessing which one the person wants. The client
+    // does not decide which of these can work headlessly — it asks, and the host
+    // answers `unavailable` with a reason for any that cannot.
+    status("Connect an agent");
+    // A cloud machine with NOTHING connected gets the whole menu, even when the
+    // frame names one provider (the session's agent needing auth). On a fresh
+    // machine that narrowing hid the choice entirely: the owner saw only Grok
+    // where all three belong (2026-08-31). Once something IS connected, the
+    // frame's provider is the specific thing being asked for again.
+    const nothingConnected = !((state.providers || []).some((p) => p && p.connected));
+    const cloudFresh = !!(state.hostCaps && state.hostCaps.remoteAgentSignOut) && nothingConnected;
+    const offer = provider && !cloudFresh ? [provider] : ["grok", "codex", "claude"];
+    // A cloud machine's three agents are not equal offers: Grok is the native
+    // one. Ranking is the cloud-only part; every agent that has a headless
+    // flow is offered, including Claude Code's paste-code sign-in.
+    const cloudHost = !!(state.hostCaps && state.hostCaps.remoteAgentSignOut);
+    const buttons = offer
+      .map((id) => {
+        const rec = cloudHost && id === "grok" ? " (recommended)" : "";
+        // The mark the reader already knows from the model picker and the
+        // provider rows. currentColor, so it takes the button's foreground.
+        return `<button class="onb-action" type="button" data-act="connectRemote" data-provider="${id}">`
+          + providerLogoMarkup(id)
+          + `<span>Connect ${NAMES[id]}${rec}</span></button>`;
+      })
+      .join("");
+    return `<div class="onb">` +
+      `<p class="onb-heading">${provider ? `Connect ${escapeHtml(name)}` : "Connect an agent"}</p>` +
+      `<p class="onb-desc">Sign in with your own account. You will open a link and confirm a short code &mdash; no password is typed here, and nothing is stored on this page.</p>` +
+      buttons +
+    `</div>`;
+  }
+
   /** `beforeRender` runs after the mode is set and before markup is built, so a
    *  host-launched terminal can be recorded against the panel it belongs to. */
+  /**
+   * Connecting an agent, in ONE place.
+   *
+   * There used to be two renderers for this flow: the transcript's onboarding
+   * card, and a set of rows inside Settings → Providers. The second existed
+   * only because the first cannot paint over a conversation
+   * (`revealWelcome` holds while `.msg` nodes exist), so a Connect clicked in
+   * Settings had nowhere to report. Two implementations of one auth flow is
+   * one too many to keep true (owner, 2026-08-31).
+   *
+   * A dialog is subject to no such hold, so the flow lives here and both
+   * surfaces become entry points. The markup is the SAME builder the welcome
+   * card uses, and the document-level `.onb-action` delegation already wires
+   * every button inside it, so there is nothing to duplicate and nothing to
+   * keep in step.
+   */
+  let connectWizard = null;
+
+  function connectWizardProvider() {
+    return connectWizard ? connectWizard.provider : "";
+  }
+
+  function closeConnectWizard() {
+    if (!connectWizard) return;
+    document.removeEventListener("keydown", connectWizard.onKey, true);
+    delete document.body.dataset.modalAbove;
+    connectWizard.overlay.remove();
+    const opener = connectWizard.opener;
+    connectWizard = null;
+    if (opener && typeof opener.focus === "function" && document.contains(opener)) {
+      try { opener.focus(); } catch { /* the opener may have gone with a repaint */ }
+    }
+  }
+
+  function openConnectWizard(provider, opener) {
+    if (connectWizard && connectWizard.provider === provider) {
+      renderConnectWizard();
+      return;
+    }
+    closeConnectWizard();
+    const overlay = document.createElement("div");
+    overlay.className = "confirm-overlay connect-wizard-overlay";
+    const panel = document.createElement("div");
+    panel.className = "confirm-panel connect-wizard-panel";
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    panel.setAttribute("aria-label", `Connect ${provider}`);
+    const body = document.createElement("div");
+    body.className = "connect-wizard-body";
+    panel.appendChild(body);
+    const actions = document.createElement("div");
+    actions.className = "confirm-actions";
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "confirm-btn";
+    closeBtn.textContent = "Close";
+    // Closing the window never cancels the sign-in: the flow lives on the host
+    // and finishes on its own, which is exactly what the card promises.
+    // Cancelling is a separate, explicit button inside the panel.
+    closeBtn.onclick = (e) => { e.stopPropagation(); closeConnectWizard(); };
+    actions.appendChild(closeBtn);
+    panel.appendChild(actions);
+    overlay.appendChild(panel);
+    overlay.onclick = (e) => { if (e.target === overlay) { e.stopPropagation(); closeConnectWizard(); } };
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); closeConnectWizard(); } };
+    document.addEventListener("keydown", onKey, true);
+    // Tells any page underneath (the settings overlay has its own Escape and
+    // Tab trap) that a modal owns the keyboard while this is up.
+    document.body.dataset.modalAbove = "connect-wizard";
+    document.body.appendChild(overlay);
+    connectWizard = { provider, overlay, panel, body, onKey, opener: opener || document.activeElement };
+    // Nothing has come back from the host yet — and on a cloud machine the
+    // first frame is seconds away. Open on "starting" rather than repainting
+    // the offer that was just clicked, which read as a click that did nothing
+    // (owner, 2026-08-31). A real frame replaces this on arrival.
+    if (!state.deviceLoginByProvider[provider]) connectWizard.lastDevice = { status: "starting" };
+    renderConnectWizard();
+    const focusTarget = body.querySelector(".onb-action") || closeBtn;
+    try { focusTarget.focus(); } catch { /* focus is a courtesy, never a failure */ }
+  }
+
+  /** Paint the wizard from the flow state the host last sent. */
+  function renderConnectWizard() {
+    if (!connectWizard) return;
+    const provider = connectWizard.provider;
+    // The mirror is the live source, but a confirmed account retires its
+    // mirror, so a settled panel keeps its own copy of the last thing it was
+    // told rather than falling back to the empty-state offer.
+    const device = state.deviceLoginByProvider[provider] || connectWizard.lastDevice;
+    // `ver` is null on purpose: the welcome status line belongs to the welcome
+    // card, and a modal must not rewrite it.
+    connectWizard.body.innerHTML = remoteConnectPanel(
+      "auth-required",
+      { provider, device, platform: state.onboardingInfo && state.onboardingInfo.platform },
+      null,
+    );
+  }
+
+  /**
+   * Keep the wizard in step with the host, and open it when a flow begins
+   * wherever the click came from — the card, Settings, or another tab.
+   */
+  function syncConnectWizard(provider, device) {
+    if (!IS_REMOTE || !provider) return;
+    // Only a RUNNING flow opens a wizard. A settled outcome renders wherever
+    // the reader already is: in this dialog when one is open (which it is
+    // whenever they got here by clicking Connect), and in the card otherwise.
+    // Opening one for `failed` meant the card and the dialog both painted the
+    // same retry button — the relay's sign-in check found it as a strict-mode
+    // locator violation, which is a person seeing the same panel twice.
+    const live = !!device && (device.status === "starting" || device.status === "waiting"
+      || device.status === "verifying" || !!device.preflight);
+    if (live) {
+      openConnectWizard(provider);
+      if (connectWizard) connectWizard.lastDevice = device;
+      return;
+    }
+    if (!connectWizard || connectWizard.provider !== provider) return;
+    if (device && device.status === "done") {
+      // Show the confirmation, then get out of the way. The account is
+      // connected; keeping a dialog up over it is make-work.
+      connectWizard.lastDevice = device;
+      connectWizard.settled = true;
+      renderConnectWizard();
+      setTimeout(() => {
+        if (connectWizard && connectWizard.provider === provider) closeConnectWizard();
+      }, 1600);
+      return;
+    }
+    // Nothing repaints a finished panel. Between "connected" and the close
+    // there is a window where the mirror is already gone, and repainting in
+    // it turned a success into an offer to start over.
+    if (connectWizard.settled) return;
+    // No flow left to show — a cancel, or a bare frame after one ends. The
+    // wizard exists to RUN a flow, so with nothing to run it gets out of the
+    // way rather than repainting itself as an invitation to start another;
+    // the card underneath is the entry point and is already offering one.
+    if (!device) {
+      closeConnectWizard();
+      return;
+    }
+    renderConnectWizard();
+  }
+
+  /** The onboarding modes that are asking for an account to be connected. */
+  const CONNECT_ONBOARDING_MODES = {
+    "connect-agent": true,
+    "codex-login": true,
+    "claude-login": true,
+    "auth-required": true,
+  };
+
+  /**
+   * Nothing in this transcript is a conversation.
+   *
+   * The second signal for "this session is empty, do not remember it". It used
+   * to be `welcomeVisible`, which an error bubble turns off — including the
+   * host's own sign-out notice, so an empty session was remembered, reaped, and
+   * then failed to restore on every refresh (owner, 2026-08-31). Errors and
+   * notices are momentary UI; a turn is the thing that makes a conversation
+   * worth restoring. Pending authored text still counts, because `numMessages`
+   * lags during the first send.
+   */
+  function transcriptHasNoTurns() {
+    const messages = $("messages");
+    if (!messages) return true;
+    // `.msg.error` is a notice and `.msg.thinking` is scaffolding; anything
+    // else in the transcript is somebody's conversation.
+    if (messages.querySelector(".msg:not(.error):not(.thinking)")) return false;
+    const input = $("input");
+    const typed = input && typeof input.value === "string" ? input.value.trim() : "";
+    return !typed;
+  }
+
   function showOnboarding(mode, info, beforeRender) {
     info = info || {};
     state.onboardingMode = mode;
@@ -7989,14 +9066,25 @@
     const ver = $("welcome-version");
     if (!onb) return;
     if (IS_REMOTE && (mode === "connect-agent" || mode === "codex-login" || mode === "claude-login" || mode === "auth-required")) {
-      if (ver) setWelcomeStatus("Sign in at the desk", false);
-      const providerName = mode === "codex-login" ? "Codex" : mode === "claude-login" ? "Claude" : mode === "auth-required" ? "Atlas" : "an agent";
-      onb.innerHTML =
-        `<div class="onb">` +
-          `<p class="onb-heading">Sign in at the desk</p>` +
-          `<p class="onb-desc">${providerName} accounts can only be connected on the computer running this workspace. Sign in there, then refresh this remote view.</p>` +
-        `</div>`;
-      return;
+      // The card is an ENTRY POINT, not a second renderer: a live flow belongs
+      // to the wizard, so the card keeps showing the offer underneath it.
+      // The card NEVER renders a live flow. Stripping it only while the wizard
+      // was already open left a window -- this function runs before
+      // syncConnectWizard on the very frame that starts a flow -- where both
+      // painted it, so the code and its Cancel existed twice on the page. The
+      // relay's own sign-in check caught that as a strict-mode locator
+      // violation; a person would have seen it by closing the dialog.
+      //
+      // A SETTLED outcome still lands here when no wizard is open, so nothing
+      // is lost if the reader closed it.
+      const device = info && info.device;
+      const liveFlow = !!device && (device.status === "starting" || device.status === "waiting"
+        || device.status === "verifying" || !!device.preflight);
+      const wizardOwnsIt = !!connectWizard && info && info.provider === connectWizard.provider;
+      const forCard = device && (liveFlow || wizardOwnsIt)
+        ? Object.assign({}, info, { device: undefined })
+        : info;
+      onb.innerHTML = remoteConnectPanel(mode, forCard, ver);      return;
     }
     if (mode === "no-project") {
       // Desktop with nothing open. Names the block and points at the same
@@ -8286,8 +9374,13 @@
       actions.appendChild(copyBtn);
       // Rewind sits next to Copy on user bubbles only (P2-9). Latest message
       // has nothing after it to discard — hidden via refreshUserRewindButtons.
-      // Desktop-only: the host rewind flow runs native VS Code UI.
-      if (role === "user" && !IS_REMOTE) {
+      //
+      // Built for every client since 2026-09-01: remote clients used to be
+      // excluded here because the host's rewind flow ran native VS Code UI, and
+      // that stopped being true when the confirmation moved in-chat. Visibility
+      // is decided in refreshUserRewindButtons, which also owns the provider
+      // gate — so a session that switches provider does not need re-rendering.
+      if (role === "user") {
         const rewindBtn = document.createElement("button");
         rewindBtn.className = "msg-action-btn msg-rewind-btn";
         rewindBtn.type = "button";
@@ -8384,6 +9477,14 @@
       if (ed) ed.hidden = true;
     }
     const prefixCount = state.historyPrefixUserCount || 0;
+    // One provider gate for both buttons: the RPC underneath either exists on
+    // this session's CLI or it does not, and a control that always fails is
+    // worse than an absent one.
+    const capable = rewindCapableProvider();
+    // A conversation another tab has taken is frozen: these act on it, so they
+    // are disabled rather than merely dimmed. Visible, so the transcript still
+    // reads normally, but genuinely unclickable.
+    const frozen = !!state.sessionSuperseded;
     users.forEach((el, i) => {
       el.dataset.userBubbleIndex = String(prefixCount + i);
       const isLast = i === users.length - 1;
@@ -8391,12 +9492,16 @@
       if (btn) {
         // Hide on the tip: that message is Edit's, which does the same rewind
         // and returns the text. Not a wire limitation — execute accepts the tip.
-        btn.hidden = users.length <= 1 || isLast;
+        btn.hidden = !capable || users.length <= 1 || isLast;
+        btn.disabled = frozen;
       }
       // Edit is the exact complement: only the tip, which is the message a
       // rewind can't remove and the one you most often want to retype (#56).
       const edit = el.querySelector(".msg-edit-btn");
-      if (edit) edit.hidden = !isLast;
+      if (edit) {
+        edit.hidden = !capable || !isLast;
+        edit.disabled = frozen;
+      }
     });
   }
 
@@ -9881,6 +10986,20 @@
     vscode.postMessage(openDiffMessage(diff, requestId));
   }
 
+  /**
+   * Remember that this request's diff has been auto-opened.
+   *
+   * Bounded, because it is never cleared: a long-lived window with thousands of
+   * permissions would otherwise keep every id forever. Sets iterate in
+   * insertion order, so dropping the front drops the oldest — and an id old
+   * enough to be evicted belongs to a card nobody is about to re-render.
+   */
+  function rememberAutoOpenedDiff(requestId) {
+    const seen = state.autoOpenedDiffRequests;
+    seen.add(requestId);
+    while (seen.size > 500) seen.delete(seen.values().next().value);
+  }
+
   function openDiffMessage(diff, requestId) {
     const positionedSites = diff.sites.filter(
       (site) => Number.isInteger(site.oldLine) || Number.isInteger(site.newLine),
@@ -9952,6 +11071,28 @@
     scrollToBottom();
   }
 
+  /**
+   * An outdated host cannot describe its own age, so the client says it.
+   *
+   * Observed 2026-08-31: an old desktop answered a new session with "That
+   * project folder is no longer open on the desktop" while the rail, on the
+   * same screen, said every project needed a newer Grok Build. Both were the
+   * same fact -- the host is behind -- and only one of them said so. The host
+   * that produced the sentence is the one that cannot be taught a better one,
+   * so the newest thing in the loop supplies the missing half.
+   *
+   * Matched on the literal because an old host offers no other signal; the
+   * sentence is APPENDED, never replaced, so if the folder really is closed
+   * the original answer still stands.
+   */
+  function errorTextForHostAge(text) {
+    if (!state.repoPreviewsUnsupported) return text;
+    if (!/no longer open on the desktop|archived, so it is not available from here/.test(text)) return text;
+    return text
+      + " That machine is also running an older Grok Build, which can report projects"
+      + " incorrectly — updating it there is worth trying first.";
+  }
+
   function addError(text, code) {
     clearWelcome();
     const el = document.createElement("div");
@@ -9960,6 +11101,103 @@
     if (typeof code === "string" && code) el.setAttribute("data-error-code", code);
     appendTranscriptChild(el);
     scrollToBottom();
+  }
+
+  function sessionSupersededCwd(id) {
+    const row = (state.sessions || []).find((s) => s && s.id === id)
+      || (state.pinnedSessions || []).find((s) => s && s.id === id)
+      || (state.railSelectedRows || []).find((s) => s && s.id === id);
+    return (row && row.cwd) || state.activeRepoCwd || state.selectedRepoCwd || state.cwd || "";
+  }
+
+  /** Every composer control, not just the textarea. A frozen conversation that
+   *  still offers Add context, the mode picker or Send is offering actions the
+   *  host will refuse — and `disabled` is what makes them genuinely unclickable
+   *  rather than merely faded (owner, 2026-09-01). */
+  function setComposerFrozen(frozen) {
+    for (const el of [input, micBtn, addBtn, gearBtn, modeBtn, sendBtn]) {
+      if (el) el.disabled = frozen;
+    }
+    // Rewind and Edit hang off the message bubbles rather than the composer,
+    // and they act on this conversation, so they freeze with it.
+    refreshUserRewindButtons();
+  }
+
+  function renderSessionSupersededBanner() {
+    let el = document.getElementById("session-superseded-banner");
+    if (!state.sessionSuperseded) {
+      if (el) el.remove();
+      document.body.classList.remove("session-superseded");
+      setComposerFrozen(false);
+      updateSendButton();
+      return;
+    }
+    document.body.classList.add("session-superseded");
+    setComposerFrozen(true);
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "session-superseded-banner";
+      el.className = "session-superseded-banner";
+      const composer = document.querySelector(".composer");
+      if (composer) composer.insertBefore(el, composer.firstChild);
+      else return;
+    }
+    // A CARD standing where the composer would be, not a stripe above it.
+    // The composer is the thing that no longer works, so the explanation takes
+    // its place instead of hovering over something that still looks usable — a
+    // 12px strip over a live-looking composer read as ignorable chrome, and the
+    // wording had to carry the whole state in one muted line (owner,
+    // 2026-09-01, from a phone).
+    el.replaceChildren();
+    const title = document.createElement("p");
+    title.className = "session-superseded-title";
+    title.textContent = "This conversation moved to another tab";
+    const body = document.createElement("p");
+    body.className = "session-superseded-body";
+    // Says the thing a person actually wants to know first: nothing is lost.
+    body.textContent = "Nothing was lost — it is still here. Take it back to carry on in this tab.";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "session-superseded-btn";
+    btn.textContent = "Continue here";
+    btn.onclick = () => {
+      const held = state.sessionSuperseded;
+      if (!held) return;
+      postResumeSession(held.id, held.cwd, { claim: true });
+    };
+    el.append(title, body, btn);
+  }
+
+  function enterSessionSuperseded(id, cwd) {
+    if (!id) return;
+    state.sessionSuperseded = { id, cwd: cwd || sessionSupersededCwd(id) };
+    // STOP THE MICROPHONE FIRST, and treat a takeover as a cancel.
+    //
+    // The frozen card hides the composer, and the mic button lives in it — so
+    // the only in-page way to stop a capture goes away with it. A start already
+    // waiting on the browser's permission prompt is worse: it resumes after the
+    // takeover, checks only its own `cancelled` flag, installs the capture and
+    // starts streaming. The tab would then be recording with no visible control
+    // and nothing but the 120-second timer to end it.
+    //
+    // Both halves of that were introduced here — admitting voice without a
+    // bound session, and hiding the composer — so both are closed here.
+    if (IS_REMOTE) {
+      if (remoteMicStart) remoteMicStart.cancelled = true;
+      if (remoteMic) stopBrowserMic(true);
+      else if (remoteMicStart) remoteMicStart = null;
+      state.mic = "idle";
+      clearVoiceInsertion();
+      state.voiceLive = false;
+      renderMic();
+    }
+    renderSessionSupersededBanner();
+  }
+
+  function clearSessionSuperseded() {
+    if (!state.sessionSuperseded) return;
+    state.sessionSuperseded = null;
+    renderSessionSupersededBanner();
   }
 
   // Does this surface open files in a host editor tab? Opt-out polarity on
@@ -11532,6 +12770,7 @@
       // the card in one press instead of walking every option.
       btn.tabIndex = i === (defaultIndex >= 0 ? defaultIndex : 0) ? 0 : -1;
       btn.onclick = () => {
+        if (state.sessionSuperseded) return;
         vscode.postMessage({
           type: "permissionAnswer",
           requestId,
@@ -11689,7 +12928,16 @@
       // cover the permission buttons, so previewInApp waits for the tap.
       // Moving a remote transcript on card arrival is disorienting; its
       // explicit tap expands inline.
-      if (!IS_REMOTE && !hostPreviewsInApp()) openDiff();
+      //
+      // ONCE per request, not once per render. This card is rebuilt every time
+      // its conversation is re-entered, and firing again there reopened a diff
+      // the reader had closed — on top of the files they were actually working
+      // in (#132). A new edit is a new request id and still opens, which is the
+      // behaviour that was wanted.
+      if (!IS_REMOTE && !hostPreviewsInApp() && !state.autoOpenedDiffRequests.has(req.id)) {
+        rememberAutoOpenedDiff(req.id);
+        openDiff();
+      }
     }
 
     const { buttons, defaultIndex } =
@@ -12641,7 +13889,15 @@
     modeBtn.disabled = state.busyLocked;
     modeBtn.classList.toggle("disabled", state.busyLocked);
     modeBtn.title = modeButtonTitle(state.currentModeId);
-    if (state.onboardingMode === "no-project") {
+    if (state.sessionSuperseded) {
+      sendBtn.innerHTML = ICON.arrowUp;
+      sendBtn.title = "This conversation is open in another tab";
+      sendBtn.disabled = true;
+      if (newBtn) {
+        newBtn.disabled = false;
+        newBtn.title = "New session";
+      }
+    } else if (state.onboardingMode === "no-project") {
       sendBtn.innerHTML = ICON.arrowUp;
       sendBtn.title = "Add a project folder first";
       sendBtn.disabled = true;
@@ -12679,6 +13935,7 @@
   // both Enter and the button click funnel through, so send-intent can never
   // turn into a cancel (#37). A composer holding only an attachment is send-intent.
   function queueFromComposer() {
+    if (state.sessionSuperseded) return true;
     if (state.pendingPaste > 0) return true;
     const t = input.value.trim();
     const chips = explicitVisibleChips(state.chips);
@@ -12753,6 +14010,7 @@
   }
 
   function sendOrStop() {
+    if (state.sessionSuperseded) return;
     if (state.onboardingMode === "no-project") return;
     if (state.busy) {
       // Typed text signals send-intent — queue it; text present never cancels.
@@ -12882,6 +14140,7 @@
   }
 
   function toggleMic() {
+    if (state.sessionSuperseded) return;
     if (IS_REMOTE) {
       toggleBrowserMic();
       return;
@@ -13278,6 +14537,7 @@
   // back to the queue, which is the safe home for the text either way.
   // Attachments ride `_x.ai/interject` `content` (same encoder as a send).
   function queueOutgoing(text, chips) {
+    if (state.sessionSuperseded) return;
     const attachments = Array.isArray(chips) ? chips : explicitVisibleChips(state.chips);
     if (
       state.steerByDefault && state.steerSupported && steerableProvider() && state.busy && !state.busyLocked
@@ -13409,6 +14669,7 @@
       steerBtn.onpointerdown = (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (state.sessionSuperseded) return;
         // steerSend first so the host can snapshot the queue before this
         // clear races (webview handlers are not serialized across awaits).
         const msg = { type: "steerSend", text, fromQueue: true };
@@ -14325,6 +15586,10 @@
         // Field presence: an older host never sends this, and command View all
         // then omits language rather than inventing a dialect.
         state.commandLanguage = typeof msg.commandLanguage === "string" ? msg.commandLanguage : "";
+        // Every remote snapshot carries an initialState, so this is where a
+        // reconnect lands. Whatever the rail concluded from silence belongs to
+        // the host that was quiet, not to this one.
+        forgetRailProbeVerdict();
         restoreRememberedRemoteSession();
         // Capability field presence — never a version check. Local hosts ignore.
         ensureRemoteFilesBrowser();
@@ -14358,10 +15623,69 @@
         if (state.hostCaps) state.hostCaps.moveViewHint = msg.value === true;
         renderWelcomeTip();
         break;
+      case "projectSetup":
+        // `root` is stated on every frame, including the first — the form has to
+        // show a destination before anyone has typed, and before any attempt has
+        // been made there is nothing else in the frame at all.
+        if (typeof msg.root === "string" && msg.root) state.projectRoot = msg.root;
+        // `done` is the only close signal. Silence is not one: a failed attempt
+        // also stops being busy, and closing on that would throw away the error
+        // the user needs to read.
+        if (msg.done) {
+          state.projectGithub = null;
+          closeAddProjectForm();
+          break;
+        }
+        if (msg.busy) state.projectGithub = null;
+        else if (msg.github && typeof msg.github === "object") state.projectGithub = msg.github;
+        else if (msg.error) state.projectGithub = null;
+        // Reconnect: the form is gone, the CLI is still polling, and the
+        // snapshot carried the code. Reopen the clone form so they can finish.
+        if (!addProjectFormApi && msg.github && (msg.github.status === "starting" || msg.github.status === "waiting")) {
+          openAddProjectForm("clone");
+        }
+        if (addProjectFormApi) addProjectFormApi.update({ ...msg, github: state.projectGithub || msg.github });
+        break;
+      case "welcomeTips":
+        // Deliberately NOT an advance: this frame arrives on startup and after
+        // every routine/connector change, and rotating the advice because a
+        // connector was linked in another window would be movement with no
+        // meaning. Re-render so a tip whose condition just went false leaves.
+        state.welcomeTips = {
+          routineCount: msg.routineCount,
+          connectorCount: msg.connectorCount,
+          dismissed: Array.isArray(msg.dismissed) ? msg.dismissed : [],
+          // Absent on an older host: no field, no once-a-day filter, and the
+          // pool behaves exactly as it did before this existed.
+          shownToday: Array.isArray(msg.shownToday) ? msg.shownToday : [],
+        };
+        renderWelcomeTip();
+        break;
       case "providerState":
         state.providersKnown = true;
         state.providers = Array.isArray(msg.providers) ? msg.providers.filter((provider) =>
           provider && (provider.id === "grok" || provider.id === "codex" || provider.id === "claude")) : [];
+        // A confirmed account retires its device-flow mirror. Without this the
+        // "Connected" flow row would resurface in Settings after a later
+        // sign-out, describing a connection that no longer exists.
+        for (const provider of state.providers) {
+          const mirrored = state.deviceLoginByProvider[provider.id];
+          if (!mirrored) continue;
+          // A terminal "done" can always lie: connected, it is redundant with
+          // the snapshot; disconnected, it claims an account the user just
+          // signed out of. A `failed` or `unavailable` mirror is the
+          // explanation for what just happened, so it survives the refresh
+          // Providers sends on open (round 2) — but only while the provider is
+          // still unhealthy. Once a snapshot says the account is connected and
+          // working, that explanation is history, and keeping it left a row
+          // offering Sign out above the reason a previous attempt failed
+          // (round 3).
+          var healthy = provider.connected && provider.needsLogin !== true;
+          var terminal = mirrored.status === "failed" || mirrored.status === "unavailable";
+          if (mirrored.status === "done" || (healthy && terminal)) {
+            delete state.deviceLoginByProvider[provider.id];
+          }
+        }
         // Read, never latched on click: a host too old to know `refreshProviders`
         // sends no frame at all, and a locally-set flag would spin forever.
         // Absent means idle, which is also what every pre-refresh host means.
@@ -14371,11 +15695,23 @@
         // borrows the welcome overlay; dismiss it when the provider it was
         // waiting for is now connected, without clearing or replaying messages.
         {
-          const pendingProvider = $("welcome-onboarding")?.querySelector(
+          // What the card is ASKING FOR, not which button it happens to draw.
+          // Keying on the recovery button meant a device-code card — the only
+          // way to connect from a phone or a cloud machine — was never
+          // dismissed by its own success (owner, 2026-08-31).
+          const onboardingProvider = $("welcome-onboarding")?.querySelector(
             '[data-act="recheckProvider"][data-provider], [data-act="recheck"][data-provider]',
-          )?.dataset?.provider;
-          if (pendingProvider && state.providers.some((provider) =>
-            provider.id === pendingProvider && provider.connected)) {
+          )?.dataset?.provider
+            || (CONNECT_ONBOARDING_MODES[state.onboardingMode]
+              ? (state.onboardingInfo && state.onboardingInfo.provider) || ""
+              : "");
+          const anyConnected = state.providers.some((provider) => provider.connected);
+          const askedForConnected = onboardingProvider && state.providers.some((provider) =>
+            provider.id === onboardingProvider && provider.connected);
+          // `connect-agent` names no provider: it is the "pick any of the
+          // three" card, so any connected account answers it.
+          const chooserAnswered = state.onboardingMode === "connect-agent" && anyConnected;
+          if ($("welcome-onboarding")?.childElementCount && (askedForConnected || chooserAnswered)) {
             clearWelcome();
           }
         }
@@ -15635,11 +16971,44 @@
           // Record the host-launched terminal BEFORE rendering, so the panel is
           // painted with the done mark already on rather than flashing an
           // untouched button first.
-          showOnboarding(msg.state, { platform: msg.platform, reason: msg.reason, provider: msg.provider }, () => {
+          showOnboarding(msg.state, { platform: msg.platform, reason: msg.reason, provider: msg.provider, device: msg.device }, () => {
             if (msg.launched) markOnboardingLaunchedByHost(msg.provider);
           });
+          // Mirror the device flow into Settings → Providers. The welcome card
+          // above cannot render over a painted conversation, so for a click
+          // made from the settings overlay this mirror IS the feedback.
+          if (msg.provider) {
+            // A terminal "done" is only worth mirroring while the snapshot has
+            // not caught up. Storing it unconditionally left a latent card that
+            // reappeared as "Connected" after a later sign-out in the same tab,
+            // hiding the real Connect row (review, 2026-08-31) -- providerState
+            // can arrive BEFORE this frame, so the retirement below cannot be
+            // the only cure.
+            var settledDone = msg.device && msg.device.status === "done";
+            var alreadyConnected = (state.providers || []).some(function (p) {
+              return p && p.id === msg.provider && p.connected;
+            });
+            if (msg.device && !(settledDone && alreadyConnected)) {
+              state.deviceLoginByProvider[msg.provider] = msg.device;
+            } else {
+              delete state.deviceLoginByProvider[msg.provider];
+            }
+            refreshSettingsOverlay();
+            // AFTER the mirror: renderConnectWizard reads it, and syncing
+            // first painted the previous state every time (caught by driving
+            // the states in a browser, 2026-08-31).
+            syncConnectWizard(msg.provider, msg.device);
+          }
         break;
       case "error":
+        // The host refused to restore a specific conversation, and named it.
+        // Keeping that id meant the next reload asked for the same dead
+        // session, drew the same error, and re-armed itself — the owner could
+        // only escape by clicking New session (2026-08-31).
+        if (msg.resumeFailed && typeof msg.resumeFailed.id === "string"
+          && rememberedRemoteSession && rememberedRemoteSession.id === msg.resumeFailed.id) {
+          saveRememberedRemoteSession(null);
+        }
         // The relay bounces a quota-refused frame as a plain error, which
         // renders in the transcript — behind the settings overlay the reader is
         // looking at. At the paywall that made Create appear to do nothing, at
@@ -15655,6 +17024,32 @@
           state.repoSwitchPending = false;
           setConversationLoading(false);
           renderRepoChip();
+        }
+        {
+          const supersededId = msg.code === SESSION_SUPERSEDED_CODE
+            && msg.resumeFailed && typeof msg.resumeFailed.id === "string"
+            ? msg.resumeFailed.id
+            : (msg.code === SESSION_SUPERSEDED_CODE ? (state.activeSessionId || "") : "");
+          // A takeover names the conversation it displaced. Abort only a rail
+          // transition TO that id — an unrelated newer click must not be
+          // cancelled by it, and must not freeze this view into the old one.
+          if (supersededId) {
+            const resumeToThis = state.railTransition
+              && state.railTransition.kind === "resume"
+              && state.railTransition.sessionId === supersededId;
+            const transitioningElsewhere = !!state.railTransition && !resumeToThis;
+            if (resumeToThis) abortRailTransition();
+            if (!transitioningElsewhere) {
+              // Deliberately no transcript error. The card IS the message, and
+              // adding one printed the same sentence twice — once calmly where
+              // the composer used to be, once in red above it, which reads as
+              // two different things having gone wrong (owner, 2026-09-01).
+              // Nothing failed here: the conversation moved, and it is one tap
+              // back.
+              enterSessionSuperseded(supersededId, sessionSupersededCwd(supersededId));
+            }
+            break;
+          }
         }
         // A generic error cannot be attributed to a specific rail transition
         // (the frame carries no request id). An error from a superseded resume
@@ -15687,7 +17082,7 @@
           renderQueuedBlocks();
           updateSendButton();
         }
-        addError(msg.text, msg.code);
+        addError(errorTextForHostAge(msg.text), msg.code);
         break;
       case "hostNotice":
         addPlanNotice(msg.text);
@@ -15778,7 +17173,7 @@
             // mean no restore attempt. Both signals have to agree — the host's
             // message count AND a blank view — so a refresh mid-first-turn,
             // where the count still lags at 0, keeps remembering.
-            if (activeEntry?.numMessages === 0 && state.welcomeVisible) {
+            if (activeEntry?.numMessages === 0 && transcriptHasNoTurns()) {
               saveRememberedRemoteSession(null);
             } else saveRememberedRemoteSession({
               id: state.activeSessionId,
@@ -16016,9 +17411,12 @@
   }
   newBtn.onclick = () => beginNewSession();
   fillSessionHeadActions();
-  // Desktop ships the rail mount in the first HTML frame. Paint the skeleton
-  // before catalog frames arrive so the window never starts panel-less.
-  if (desktopLargeLayout()) renderRail();
+  // Desktop and cloud ship the rail mount in the first HTML frame. Paint the
+  // skeleton before catalog frames arrive so the window never starts
+  // panel-less — on a cloud machine that gap is however long the host takes to
+  // wake, and what showed instead was the layout this product had before it
+  // had a rail (owner, 2026-08-31).
+  if (railChromeBeforeCatalog()) renderRail();
   modeBtn.onclick = (e) => { e.stopPropagation(); if (state.busyLocked) return; openModePopover(); };
   gearBtn.onclick = (e) => { e.stopPropagation(); openGearPopover(); };
 
@@ -16342,7 +17740,37 @@
       else if (act === "connectProvider") vscode.postMessage({ type: "runGrokLogin", provider: onbAction.dataset.provider });
       else if (act === "recheckProvider") vscode.postMessage({ type: "recheckConnection", provider: onbAction.dataset.provider });
       else if (act === "retryProvider") vscode.postMessage({ type: "retryProviderSession", provider: onbAction.dataset.provider });
-      else if (act === "addProjectFolder") vscode.postMessage({ type: "addProjectFolder" });
+      // Same message the desk sends. The host, not the client, decides that a
+      // remote request means the headless flow — so there is one capability
+      // here, not two, and nothing new for the policy table to gate.
+      else if (act === "connectRemote") vscode.postMessage({ type: "runGrokLogin", provider: onbAction.dataset.provider });
+      else if (act === "submitDeviceLoginCode") {
+        const root = onbAction.closest(".onb");
+        const input = root && root.querySelector(".onb-code-input");
+        const code = input ? String(input.value || "").trim() : "";
+        if (!code) return;
+        vscode.postMessage({ type: "submitDeviceLoginCode", provider: onbAction.dataset.provider, code: code });
+        // Deliberately NOT disabled here. This message can be dropped: the
+        // relay client's outbox keeps queue releases and authored input across
+        // a reconnect and drops everything else, and the reconnect is not an
+        // edge case in this flow — a phone leaves for the vendor's page to get
+        // the code and comes back on a new socket, which is the ONLY way to
+        // reach this button. Disabling on the click meant a dropped code left a
+        // dead field, a waiting CLI, and no way back but reopening Connect.
+        //
+        // The host echoes `submitted: true` once it has actually written the
+        // code to the CLI, and the card disables the field on that frame. No
+        // acknowledgement, no disable — so tapping Submit again just works.
+      }
+      else if (act === "cancelDeviceLogin") {
+        vscode.postMessage({ type: "cancelDeviceLogin", provider: onbAction.dataset.provider });
+        // Close on the click, not on the host's answer. The person has said
+        // they are done; leaving the dialog up until a frame comes back makes
+        // Cancel feel ignored, and if the answer never comes it stays up over
+        // a flow that is already gone.
+        if (connectWizardProvider() === onbAction.dataset.provider) closeConnectWizard();
+      }
+      else if (act === "addProjectFolder") openAddProjectMenu(onbAction);
       return;
     }
     const onbCopy = e.target.closest(".onb-copy");
@@ -16466,6 +17894,14 @@
     } else if (/^[a-zA-Z]:[\\/]/.test(href) || href.startsWith("\\\\") || !/^[a-z][a-z0-9+.-]*:/i.test(href)) {
       vscode.postMessage({ type: "openFile", path: href });
     }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const input = e.target && e.target.closest && e.target.closest(".onb-code-input");
+    if (!input || input.disabled) return;
+    e.preventDefault();
+    const btn = input.closest(".onb") && input.closest(".onb").querySelector('[data-act="submitDeviceLoginCode"]');
+    if (btn && !btn.disabled) btn.click();
   });
 
   /** Href a user would paste elsewhere, or "" when the link has no external

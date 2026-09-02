@@ -82,10 +82,53 @@ export const HOST_CAPABILITIES = {
   // Edit+save existing project files from a remote. Separate from browse so a
   // host can offer list/read without a write path. OPT-IN field presence.
   editProjectFiles: true,
+  // Whether this host can run an agent's headless sign-in for a remote and
+  // report back the URL and code.
+  //
+  // OPT-IN, and load-bearing rather than tidy. The relay serves the web client,
+  // so the client is always as new as the deploy while the extension is
+  // whatever the user installed. Every host built before this shipped
+  // classifies `runGrokLogin` as `host-local` and DROPS it — no error, no
+  // reply, nothing. A client that offered Connect unconditionally would give
+  // every 3.18.0 user a button that does nothing at all, which is worse than
+  // the dead end it replaced, because a dead end at least tells you where to
+  // go. Field presence, never a version check.
+  remoteAgentSignIn: true,
+  // Same shape, for GitHub in the clone form. Older hosts classify
+  // `setupGithubCli` as `host-local` and drop it silently, so the Sign in
+  // button must not be offered as a working control until this is present.
+  remoteGithubSignIn: true,
+  // Same shape again, for Rewind and Edit on user bubbles. Every host built
+  // before 4.1.0 classifies `rewindSession` / `editLastMessage` /
+  // `uiConfirmAnswer` as host-local and drops them, so a browser client — which
+  // is always as new as the relay deploy — would show two controls that do
+  // nothing at all for every user who has not updated yet. That window is not
+  // hypothetical: the relay ships first, by release-order rule.
+  remoteRewind: true,
 } as const;
+
+/** Device-code GitHub sign-in carried on `projectSetup`. Additive. */
+export type ProjectSetupGithub = {
+  status: "starting" | "waiting" | "done" | "failed";
+  url?: string;
+  code?: string;
+  message?: string;
+};
 
 /** Machine-readable `error.code` for a send abandoned after its userMessage echo. */
 export const INTERRUPTED_SEND_CODE = "interrupted-send" as const;
+
+/**
+ * Machine-readable `error.code` when a remote tab lost a conversation to an
+ * explicit claim from another tab, or when a non-claim resume found that
+ * conversation already held. Additive: older clients ignore `code` and still
+ * see `resumeFailed`.
+ */
+export const SESSION_SUPERSEDED_CODE = "session-superseded" as const;
+
+export type HostErrorCode =
+  | typeof INTERRUPTED_SEND_CODE
+  | typeof SESSION_SUPERSEDED_CODE;
 
 /** Host-kind affordances merged into `initialState.capabilities` at post time. */
 export type HostUiCapabilities = {
@@ -105,6 +148,38 @@ export type HostUiCapabilities = {
    * No create/delete/rename in this pass.
    */
   editProjectFiles?: boolean;
+  /**
+   * Whether this host can run an agent's headless sign-in on a remote's behalf.
+   * OPT-IN: absent/false = the remote empty state falls back to "connect it at
+   * your computer" instead of offering a control an older host would silently
+   * drop. See HOST_CAPABILITIES for why silence is the failure mode.
+   */
+  remoteAgentSignIn?: boolean;
+  /**
+   * Whether this host can run `gh auth login` headlessly for a remote and
+   * report the URL and code in the clone form. OPT-IN: absent/false = the
+   * remote clone form keeps the honest dead-end rather than posting
+   * `setupGithubCli` at a host that would drop it.
+   */
+  remoteGithubSignIn?: boolean;
+  /**
+   * Whether this host accepts Rewind and Edit from a remote. OPT-IN:
+   * absent/false = the browser hides both controls rather than offering
+   * buttons an older host drops in silence. See HOST_CAPABILITIES.
+   */
+  remoteRewind?: boolean;
+  /**
+   * Whether a remote may sign an agent OUT on this host.
+   *
+   * OPT-IN, and set only where the host IS a cloud environment. `logout` is
+   * host-local everywhere else because it revokes a credential every surface on
+   * that machine shares, and a phone must not be able to do that to somebody's
+   * desk. A cloud environment has no other surface — the remote is the only way
+   * in — so a credential you could grant and never revoke would be the worse
+   * answer. Field presence, never a version check: a host that does not send it
+   * keeps the read-only row.
+   */
+  remoteAgentSignOut?: boolean;
   /**
    * Settings → Connectors. OPT-IN: absent/false = hide the nav row and keep
    * the page unreachable. Desktop and VS Code set true; remotes inherit the
@@ -179,6 +254,18 @@ export type HostUiCapabilities = {
    */
   addProjectFolder?: boolean;
   /**
+   * Add project can also MAKE one: a typed name becomes a folder in the host's
+   * project root. OPT-IN — absent/false means the menu offers only the folder
+   * picker, which is what every host before this shipped.
+   */
+  createProject?: boolean;
+  /**
+   * …and clone one: a repository URL becomes a checkout in the same root.
+   * Independent of {@link createProject} so a host can offer one without the
+   * other. OPT-IN; absent/false hides the entry entirely.
+   */
+  cloneProject?: boolean;
+  /**
    * `queueSend` / `queuedSends` carry per-item attachments. OPT-IN: absent/false
    * = the webview posts text-only `queueSend` (and refuses to queue when the
    * composer holds a chip — everything or nothing). Older hosts omit the field
@@ -222,6 +309,68 @@ export type HostMsg =
    *  session swap, so without this the webview keeps a stale true and rebuilds
    *  the hint the user has already acted on. */
   | { type: "moveViewHint"; value: boolean }
+  /**
+   * Facts the empty-state tip pool needs and the client cannot observe itself,
+   * plus the tips the user is done with.
+   *
+   * Everything else the pool reads — connected agents, app purpose, read-aloud,
+   * voice, whether this machine is linked — already reaches the chat client on
+   * its own. Routines and connectors do NOT: only the settings surface asks for
+   * those, so a chat client that has never opened Settings would otherwise
+   * advertise routines to someone running twenty of them. Counts, never
+   * contents: the tip only needs to know whether the number is zero.
+   *
+   * Additive. An older host sends no frame at all, and the client suppresses
+   * the two count-dependent tips rather than reading an absent count as zero.
+   */
+  | {
+      type: "welcomeTips";
+      routineCount: number;
+      connectorCount: number;
+      dismissed: string[];
+      /**
+       * Tips that have already had their turn today, in the HOST's timezone.
+       * Additive: an older host omits it and the pool behaves as it did before
+       * the once-a-day rule existed.
+       */
+      shownToday?: string[];
+    }
+  /**
+   * State of the Add project form: where new projects go, and how the last
+   * attempt went.
+   *
+   * One frame for both ways in (a typed name, a cloned URL) because they are
+   * the same form with a different field, and splitting them would be two
+   * registries to keep in step for no gain.
+   *
+   * `root` is the DISPLAY form (`~/Grok Build`), never a home path — the client
+   * only needs it to show where the folder will land, and a remote has no
+   * business learning the desk's home directory. Nothing here carries the
+   * created path either: the repo catalog delivers that, already filtered to
+   * what the receiving client may reach.
+   */
+  | {
+      type: "projectSetup";
+      root: string;
+      /** In flight — the form disables and says what it is doing. */
+      busy?: "new" | "clone";
+      /** Why the last attempt failed. Absent means nothing has gone wrong. */
+      error?: string;
+      /**
+       * A next step we can take FOR them rather than describe. Only ever set
+       * for github.com, because `gh auth login` cannot help a GitLab failure.
+       */
+      fix?: "install-gh" | "auth-gh";
+      /** The command `install-gh` would run, so the copy can name it. */
+      fixCommand?: string;
+      /** A project was actually made — the form closes on this, not on silence. */
+      done?: boolean;
+      /**
+       * Headless GitHub CLI sign-in, shown only inside the clone form.
+       * Additive: an older client ignores it and renders the form as before.
+       */
+      github?: ProjectSetupGithub;
+    }
   /** Connected agents plus host-observed, view-only version facts. Version
    * fields are additive so an older host/client keeps the connection UI.
    * `needsLogin` is the account that is still configured but answered an
@@ -460,12 +609,58 @@ export type HostMsg =
   // `launched` says the HOST already opened the login terminal, so the panel can
   // show it as done. Without it an automatically opened terminal leaves the
   // button looking untouched, which reads as "press it again".
-  | { type: "onboarding"; state: "connect-agent" | "missing-cli" | "auth-required" | "missing-codex" | "codex-login" | "missing-claude" | "claude-login" | "provider-connected" | "no-project"; platform?: string; reason?: string; provider?: "grok" | "codex" | "claude"; launched?: boolean }
+  // `device` is the headless sign-in, and it is additive on purpose: a remote
+  // gets the same `onboarding` panel it always got, plus a URL and a code when
+  // the host is running a device-code flow for it. A client that predates the
+  // field ignores it and shows the panel exactly as before, which is the right
+  // fallback — it still says which agent needs connecting.
+  //
+  // Only the REMOTE path ever carries it. At a desk the CLI opens the browser
+  // itself and a terminal is the better affordance, so nothing changes there.
+  | {
+      type: "onboarding";
+      state: "connect-agent" | "missing-cli" | "auth-required" | "missing-codex" | "codex-login" | "missing-claude" | "claude-login" | "provider-connected" | "no-project";
+      platform?: string;
+      reason?: string;
+      provider?: "grok" | "codex" | "claude";
+      launched?: boolean;
+      device?: {
+        /** starting: spawned, nothing printed yet. waiting: URL and code are on
+         *  screen and the CLI is polling (or, with needsCode, waiting for a
+         *  paste). done/failed: terminal. unavailable: this provider has no
+         *  flow that works without a terminal. */
+        status: "starting" | "waiting" | "verifying" | "done" | "failed" | "unavailable";
+        url?: string;
+        code?: string;
+        /** Paste-code flow: the person must type a code into the card. Set from
+         *  the plan, not inferred from a missing printed code. Additive. */
+        needsCode?: boolean;
+        /** The paste was written to the CLI; the card can stop offering input. */
+        submitted?: boolean;
+        /** Said to the person, not logged — a failure or an explanation. */
+        message?: string;
+        /**
+         * Shown BEFORE the sign-in starts, when it is likely to fail for a
+         * reason the person can fix in seconds. Codex device-code login is off
+         * by default on every account; telling somebody that after a wait and a
+         * failure is telling them too late.
+         *
+         * Cloud environments only — at a desk the browser flow works and this
+         * setting never comes up.
+         */
+        preflight?: { title?: string; reason: string; steps: string[]; url?: string; continueLabel?: string };
+        /** Said BESIDE the code: the vendor page carries a phishing warning and
+         *  the reader needs to know it is expected before they meet it. */
+        note?: string;
+      };
+    }
   // resumeFailed is additive: a remote resume refusal names the requested id so
   // the browser outbox can fail closed. Older clients ignore the extra field.
   // code is additive too — a harness must not match user-facing `text`.
   // "interrupted-send" is a send abandoned after its userMessage echo.
-  | { type: "error"; text: string; resumeFailed?: { id: string }; code?: typeof INTERRUPTED_SEND_CODE }
+  // "session-superseded" is a tab that lost (or failed to restore) a
+  // conversation another tab now holds — see resumeSession.claim.
+  | { type: "error"; text: string; resumeFailed?: { id: string }; code?: HostErrorCode }
   | { type: "hostNotice"; level: "info" | "warning"; text: string }
   | { type: "xaiNotification"; update?: unknown }
   // Persisted xAI lifecycle (method _x.ai/session/update): subagent spawn/finish
@@ -558,6 +753,13 @@ export type HostMsg =
       selectedCwd: string;
       activeCwd: string;
       canAddProject?: boolean;
+      /**
+       * The other two ways in, on the same channel and for the same reason.
+       * Optional and additive: a rail that never sees them offers the picker
+       * alone, which is what it did before there was anything else.
+       */
+      canCreateProject?: boolean;
+      canCloneProject?: boolean;
       /**
        * The folder the EDITOR has open, which since history started following
        * the rail is no longer the same thing as `selectedCwd`. The VS Code rail
@@ -678,6 +880,49 @@ export type WebviewMsg =
   | { type: "openSettingsSurface"; category?: string }
   /** Close the Grok settings editor tab (Escape / Close on that page). */
   | { type: "closeSettingsSurface" }
+  /**
+   * Retire one empty-state tip, for good, on this machine.
+   *
+   * Sent when the reader either acts on a tip or dismisses it — both mean the
+   * same thing, which is why there is one message and not two. Most tips retire
+   * on their own when the thing they advertise gets set up; this covers the ones
+   * that never would (Plan mode, `@` mentions) and the reader who has decided
+   * twice that they are not interested.
+   */
+  | { type: "dismissWelcomeTip"; id: string }
+  /**
+   * One tip appeared. Recorded against the local day so it does not come round
+   * again before tomorrow — the pool is small, and a line seen three times in
+   * an afternoon has stopped being advice.
+   *
+   * Sent at most once per tip per day by the client, which keeps its own copy
+   * of the list; the host writes only when the day actually changes.
+   */
+  | { type: "welcomeTipShown"; id: string }
+  /**
+   * Make a project folder called `name` inside the host's one project root.
+   *
+   * A NAME, never a path — which is the entire reason this can be reachable
+   * from a phone when `addProjectFolder` never could. The client says what to
+   * call it; the host decides where it goes and refuses anything that resolves
+   * outside the root. See src/project-create.ts.
+   */
+  | { type: "createProject"; name: string }
+  /**
+   * Clone `url` into the same root, under the folder name the URL implies.
+   *
+   * Same containment: a URL is not a destination. Git's own credential helper
+   * does the authenticating — nothing here mints, stores or forwards a token.
+   */
+  | { type: "cloneProject"; url: string }
+  /**
+   * Install or sign in to the GitHub CLI.
+   *
+   * Offered only after a clone failed in a way `gh` would fix. A local webview
+   * still opens a terminal. A remote `auth` runs the headless device-code flow
+   * and reports the URL and code on `projectSetup.github`.
+   */
+  | { type: "setupGithubCli"; action: "install" | "auth" }
   // `panel-right` / `panel-bottom` dock the panel on that edge before revealing;
   // plain `panel` leaves the layout alone (view-move.ts § panelPositionFor).
   //
@@ -725,6 +970,13 @@ export type WebviewMsg =
   | { type: "cancelCodexInstall" }
   | { type: "runInstallCmd" }
   | { type: "runGrokLogin"; provider?: "grok" | "codex" | "claude" }
+  // Stop a headless sign-in the host is running. Only reachable while one is in
+  // flight, and it kills a child process this same user started moments ago.
+  | { type: "cancelDeviceLogin"; provider?: "grok" | "codex" | "claude" }
+  // Paste-code half of a headless sign-in: the person typed the vendor's code
+  // into the card and we write it to the CLI's stdin. Additive — an older host
+  // simply has no handler, and an older client never posts it.
+  | { type: "submitDeviceLoginCode"; provider?: "grok" | "codex" | "claude"; code: string }
   | { type: "logout"; provider?: "grok" | "codex" | "claude" }
   | { type: "checkGrokUpdate" }
   | { type: "updateGrok" }
@@ -760,7 +1012,13 @@ export type WebviewMsg =
   | { type: "setRepoColor"; cwd: string; color: string }
   // cwd is required to reopen a worktree-isolated session (sessions are keyed
   // by cwd on disk). Omitted → host resolves from meta / workspace root.
-  | { type: "resumeSession"; id: string; cwd?: string }
+  //
+  // `claim` is additive: only an explicit user action (rail row, history pick,
+  // pinned row, Continue here) sets it. A reconnect restore MUST omit it —
+  // without that distinction a thawing background tab steals the conversation
+  // back from the tab in the user's hand. Absent/false = today's refusal when
+  // another tab already holds the session.
+  | { type: "resumeSession"; id: string; cwd?: string; claim?: boolean }
   // cwd names the PROJECT the row belongs to, so a client listing several of
   // them (the browser rail) can act on a conversation without first switching
   // to its repo. Optional and additive: omitted → the host authorizes against
@@ -866,8 +1124,11 @@ export type WebviewMsg =
   /** Edit-and-resend (#56): rewind past this (latest) user message and hand its
    *  text back to the composer. `text` is the bubble's own cleaned copy text. */
   | { type: "editLastMessage"; userBubbleIndex: number; text: string; totalUserBubbles?: number }
-  /** Reply to `uiConfirmRequest`. Host-local only: this is the last gate before
-   *  a rewind reverts files, so a remote must never be able to answer one. */
+  /** Reply to `uiConfirmRequest`. Answerable by whichever client was shown the
+   *  dialog, remote included, since 2026-09-01: the confirm moved in-chat in
+   *  2.0.0, so `host-local` here did not buy a more careful check — it meant a
+   *  remote could be shown a dialog it could never answer, leaving the rewind
+   *  pending forever. See remote-policy.ts on rewindSession. */
   | { type: "uiConfirmAnswer"; id: string; ok: boolean }
   // Workflow card controls (P2-10): pause / resume / stop by display name.
   | { type: "workflowControl"; action: "pause" | "resume" | "stop"; displayName: string }
@@ -891,7 +1152,7 @@ export type WebviewMsg =
 // error). The runtime arrays are just the keys, so they can never drift from the
 // union without failing the build.
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
-  initialState: true, moveViewHint: true, providerState: true, mcpServers: true, mcpConnectors: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
+  initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, providerState: true, mcpServers: true, mcpConnectors: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
   initialized: true, cliUpdating: true, session: true, localModels: true, sessionName: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
@@ -914,14 +1175,15 @@ const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   ready: true, remotePreferences: true, send: true, newSession: true, cancel: true, pickModel: true,
   setMode: true, removeChip: true, toggleChip: true, openFile: true, showInFolder: true, openUrl: true,
   openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true,
-  addProjectFolder: true, removeProjectFolder: true,
+  addProjectFolder: true, removeProjectFolder: true, createProject: true, cloneProject: true, setupGithubCli: true,
   openProjectConfig: true, listMcpServers: true, connectMcpConnector: true, disconnectMcpConnector: true,
-  listRoutines: true, saveRoutine: true, deleteRoutine: true, setRoutinePaused: true, runRoutineNow: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, moveView: true,
+  listRoutines: true, saveRoutine: true, deleteRoutine: true, setRoutinePaused: true, runRoutineNow: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, dismissWelcomeTip: true, welcomeTipShown: true, moveView: true,
   listLocalModels: true, addLocalModel: true, editLocalModel: true, removeLocalModel: true,
   setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true,
   setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, summarizeSpeech: true, requestImageFull: true, composerFocus: true,
   dropFile: true, permissionAnswer: true, exitPlanAnswer: true, questionAnswer: true,
   questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, runInstallCmd: true, runGrokLogin: true,
+  cancelDeviceLogin: true, submitDeviceLoginCode: true,
   logout: true, checkGrokUpdate: true, updateGrok: true, recheckConnection: true, refreshProviders: true, retryProviderSession: true,
   listSessions: true, listRepoSessions: true, selectRepo: true, toggleRepoPin: true, toggleSessionPin: true,
   setRepoArchived: true, setRepoColor: true,

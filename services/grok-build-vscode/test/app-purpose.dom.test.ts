@@ -438,7 +438,7 @@ describe("app purpose + session menu (DOM)", () => {
     const advancedNav = [...overlay.querySelectorAll(".settings-nav-item")]
       .find((el) => (el.textContent || "").trim() === "Advanced")!;
     click(h.window, advancedNav);
-    expect(overlay.textContent).toContain("Host config is managed on the desk");
+    expect(overlay.textContent).toContain("Host config is managed on the machine running this workspace");
     expect(overlay.querySelector('[data-id="showThinking"]')).toBeNull();
   });
 });
@@ -698,5 +698,69 @@ describe("continue-in-a-new-chat picker is visible from the session menu", () =>
     expect(body).toContain("gearPopover.hidden = false");
     // No back link: it would return you to a panel you were never in.
     expect(body).not.toContain("popover-back");
+  });
+});
+
+
+/**
+ * The context donut in knowledge work.
+ *
+ * Owner, 2026-09-01: "In the knowledge work mode after clicking donut I would
+ * also hide all details, just x/y and compact conversation?"
+ *
+ * This is not a new rule — the gear already describes the mode as "Hides
+ * worktrees, thinking traces, and tool details", and the breakdown (system
+ * prompt, reasoning overhead, tool definitions, per-turn cost) is exactly that
+ * class. The popover was simply missed when the rule was applied.
+ */
+describe("context popover respects the app purpose", () => {
+  const openDonut = (h: Harness) => {
+    dispatch(h.window, { type: "contextUsage", used: 16017, window: 512000 } as never);
+    dispatch(h.window, {
+      type: "contextUsage",
+      used: 16017,
+      window: 512000,
+      systemPromptTokens: 1039,
+      toolDefinitionsTokens: 812,
+      messageTokens: 12166,
+      freeTokens: 495983,
+    } as never);
+    click(h.window, h.doc.getElementById("donut")!);
+    return h.doc.getElementById("context-popover")!;
+  };
+
+  it("shows the number and Compact, and nothing else, in knowledge work", () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "initialState", appPurpose: "knowledge", capabilities: {} } as never);
+
+    const pop = openDonut(h);
+    const text = pop.textContent || "";
+
+    // VISIBILITY FIRST. The lines that position and reveal this popover are the
+    // last thing the renderer does, so an early return skipped them and the
+    // donut did nothing at all in the default mode — while an assertion on
+    // textContent alone passed happily against the hidden element.
+    expect((pop as HTMLElement).hidden).toBe(false);
+    // What a person writing a document actually asked the donut.
+    expect(text).toContain("Context used");
+    expect(text).toContain("Compact conversation");
+    // The technical account, all of it, absent.
+    expect(text).not.toContain("In this window");
+    expect(text).not.toContain("System");
+    expect(text).not.toContain("Reasoning/overhead");
+    expect(text).not.toContain("Session total");
+  });
+
+  it("still shows the full breakdown in coding mode", () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
+
+    const pop = openDonut(h);
+    const text = pop.textContent || "";
+
+    expect((pop as HTMLElement).hidden).toBe(false);
+    expect(text).toContain("Context used");
+    expect(text).toContain("In this window");
+    expect(text).toContain("System");
   });
 });

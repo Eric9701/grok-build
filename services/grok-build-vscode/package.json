@@ -1,8 +1,8 @@
 {
   "name": "atlas-vscode",
   "displayName": "Atlas for VS Code",
-  "description": "GUI for Atlas CLI (ACP client). Multiple sessions, worktrees, plan mode, images/videos, Mermaid, and LaTeX. Compatible with Atlas enterprise proxy (/atlas/v1). Fair Source (FSL-1.1-MIT).",
-  "version": "3.17.0",
+  "description": "GUI for Atlas CLI (ACP client). Remote Control from your phone, voice control, multiple sessions, images and videos, Mermaid diagrams, and LaTeX. Compatible with Atlas enterprise proxy (/atlas/v1). Fair Source (FSL-1.1-MIT).",
+  "version": "4.1.0",
   "publisher": "PawelHuryn",
   "author": {
     "name": "Paweł Huryn",
@@ -365,11 +365,11 @@
             "cmd"
           ],
           "enumDescriptions": [
-            "PowerShell on Windows (pwsh, then Windows PowerShell 5.1) — matches the standalone Atlas CLI",
-            "Force cmd.exe on Windows (legacy)"
+            "PowerShell on Windows (pwsh, then Windows PowerShell 5.1); the shell $SHELL names on macOS and Linux — matches the standalone Atlas CLI",
+            "Force cmd.exe on Windows, /bin/sh on macOS and Linux"
           ],
           "default": "auto",
-          "markdownDescription": "Which shell runs the agent's commands **on Windows**. `auto` (default) uses PowerShell — `pwsh.exe` if installed, else Windows PowerShell 5.1 — so your PowerShell profile functions and pipelines work like they do in the standalone Atlas CLI (#46). `cmd` forces `cmd.exe` (the pre-1.5.13 behavior) if the PowerShell host causes trouble. **Tip: install PowerShell 7 (`pwsh`)** — the 5.1 fallback rejects `&&` chains and reports every failing command's exit code as 1. No effect on macOS/Linux (always `/bin/sh`)."
+          "markdownDescription": "Which shell runs the agent's commands. `auto` (default) matches the standalone Atlas CLI: PowerShell on Windows — `pwsh.exe` if installed, else Windows PowerShell 5.1 (#46) — and the shell `$SHELL` names on macOS and Linux (typically `/bin/zsh`) instead of `/bin/sh`, which on macOS is bash 3.2 and cannot run a modern sdkman init (#140). The agent's command is also unwrapped from the `bash -lc` envelope Atlas sends, and run as an explicit argument, so your shell cannot hand it straight back to bash. A `$SHELL` that isn't POSIX-compatible (fish, nushell) falls back to `/bin/sh`, because the agent writes POSIX commands. `cmd` forces `cmd.exe` on Windows and `/bin/sh` on macOS/Linux, if matching your shell causes trouble — a profile that prints on startup, or is slow to load. On Windows, changing this switches the shell straight away but the agent is told which dialect to write when a conversation starts, so **start a new conversation** for the change to apply to both halves. **Tip: install PowerShell 7 (`pwsh`)** — the 5.1 fallback rejects `&&` chains and reports every failing command's exit code as 1."
         },
         "atlas.showThinking": {
           "type": "boolean",
@@ -483,6 +483,12 @@
     "desktop-dev": "npm run compile && node scripts/run-desktop.cjs --relay-dev --open-devtools --remote-debugging-port=9333",
     "test:desktop": "npm run compile && vitest run --config vitest.desktop.config.ts",
     "e2e:screens": "npm run compile && node scripts/desk-screens-check.mjs",
+    "e2e:open-timing": "npm run compile && node scripts/open-timing-check.mjs",
+    "e2e:hc-colour": "node scripts/hc-colour-screens.mjs",
+    "e2e:welcome-tip": "node scripts/ide-welcome-tip-screens.mjs",
+    "e2e:gh-unauth": "npm run compile && node scripts/gh-unauth-check.mjs",
+    "marketplace:login": "node scripts/marketplace-session.mjs",
+    "marketplace:publish": "node scripts/marketplace-publish.mjs",
     "e2e:lifecycle-host": "npm run compile && node scripts/lifecycle-host.mjs",
     "smoke:live": "npm run compile && node scripts/live-smoke.mjs",
     "telemetry:probe": "tsc -p . && node scripts/telemetry-probe.cjs",
@@ -495,6 +501,7 @@
     "dist": "npm run compile && electron-builder --publish never",
     "dist:mac": "npm run compile && electron-builder --mac --publish never",
     "dist:win": "npm run compile && electron-builder --win --x64 --publish never",
+    "dist:linux": "npm run compile && electron-builder --linux --x64 --publish never -c.extraMetadata.grokCloudBuild=true",
     "dist:dir": "npm run compile && electron-builder --dir --publish never"
   },
   "devDependencies": {

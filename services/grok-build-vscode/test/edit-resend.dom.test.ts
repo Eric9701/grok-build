@@ -267,6 +267,9 @@ describe("truncateMessages removes only the tail (#56/P2-9)", () => {
 
   it("clears the discarded last-turn usage while keeping the surviving aggregate", () => {
     const { window, doc } = bootWebview();
+    // Usage rows live in the coding-mode half of the context popover; knowledge
+    // work stops at the number and Compact.
+    dispatch(window, { type: "initialState", appPurpose: "coding", capabilities: {} } as never);
     dispatch(window, {
       type: "usage",
       turn: { inputTokens: 300, costUsdTicks: 30_000_000 },
@@ -381,5 +384,57 @@ describe("in-chat confirm round-trip", () => {
     click(window, button(doc, "Cancel"));
     await Promise.resolve();
     expect(posted.filter((m: any) => m.type === "uiConfirmAnswer")).toHaveLength(1);
+  });
+});
+
+/**
+ * The compatibility contract, in the one place this release forgot it.
+ *
+ * The relay serves the web client, so the browser is always as new as the last
+ * deploy while the extension is whatever the user installed — and the release
+ * order makes the relay FIRST. Rewind and Edit are host-local on every host
+ * built before 4.1.0, which drops them without a reply: no error, no refusal,
+ * nothing. Offering the buttons anyway gives every not-yet-updated user two
+ * controls that quietly do nothing, which is worse than not having them.
+ *
+ * The sign-in work got this right (`remoteAgentSignIn`, `remoteGithubSignIn`);
+ * rewind shipped without it. Found by the unsteered review round before 4.1.0.
+ */
+describe("Rewind and Edit are capability-gated for remotes (4.1.0)", () => {
+  const caps = (window: any, capabilities: Record<string, unknown>) =>
+    dispatch(window, { type: "initialState", cwd: "/proj", capabilities } as never);
+
+  it("hides both against a host that never advertises remoteRewind", () => {
+    const { window, doc } = bootWebview({ remote: true });
+    caps(window, {});
+    send(window, "first");
+    send(window, "second");
+
+    const users = userBubbles(doc);
+    expect(users.map((el) => rewindBtn(el).hidden)).toEqual([true, true]);
+    expect(users.map((el) => editBtn(el).hidden)).toEqual([true, true]);
+  });
+
+  it("shows them once the host says it accepts them", () => {
+    const { window, doc } = bootWebview({ remote: true });
+    caps(window, { remoteRewind: true });
+    send(window, "first");
+    send(window, "second");
+
+    const users = userBubbles(doc);
+    // Same complement as at the desk: Rewind on the older, Edit on the tip.
+    expect(users.map((el) => rewindBtn(el).hidden)).toEqual([false, true]);
+    expect(users.map((el) => editBtn(el).hidden)).toEqual([true, false]);
+  });
+
+  it("never gates the desk, which does not go through the relay at all", () => {
+    const { window, doc } = bootWebview();
+    caps(window, {});
+    send(window, "first");
+    send(window, "second");
+
+    const users = userBubbles(doc);
+    expect(users.map((el) => rewindBtn(el).hidden)).toEqual([false, true]);
+    expect(users.map((el) => editBtn(el).hidden)).toEqual([true, false]);
   });
 });

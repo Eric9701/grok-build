@@ -91,13 +91,13 @@
   const CONNECTOR_BLURB_HERE =
     "These apps are available to Atlas, Codex, and Claude. Most open a browser to sign in; GitHub uses a personal access token you paste here. Tokens stay on this machine.";
   const CONNECTOR_BLURB_HERE_REMOTE =
-    "These apps are connected on the desk machine. Sign-in happens there — a phone cannot change which tools an agent has.";
+    "These apps are connected on the machine running this workspace. Sign-in happens there — it cannot be changed from this page.";
   const CONNECTOR_BLURB_GROK =
     "These follow your Atlas account, so they are shared across every Atlas session on every machine.";
   const CONNECTOR_BLURB_LOCAL =
     "Declared in this machine's Atlas config files. Atlas only.";
   const CONNECTOR_BLURB_LOCAL_REMOTE =
-    "Declared in this machine's Atlas config files. Atlas only. These are managed on the desk machine only.";
+    "Declared in this machine's Atlas config files. Atlas only. These are managed on the host machine only.";
   function brandCopy(text) {
     const helpers = (typeof globalThis !== "undefined" && globalThis.GrokWebviewHelpers) || {};
     if (typeof helpers.brandUserFacingText === "function") return helpers.brandUserFacingText(String(text ?? ""));
@@ -158,6 +158,95 @@
   function providerOf(snapshot, id) {
     const list = (snapshot && snapshot.providers) || [];
     return list.find((p) => p && p.id === id) || { id, connected: false };
+  }
+
+  /**
+   * Whether a remote has nothing useful to do with this provider row.
+   *
+   * A remote may CONNECT a provider — `runGrokLogin` runs the CLI's headless
+   * device-code flow and puts the URL and code in the transcript, opening no
+   * terminal on the desk. It may NOT sign one out: `logout` is host-local
+   * because it revokes a credential every surface on that machine shares.
+   *
+   * So the actionable row appears exactly when connecting is the useful thing,
+   * and a healthy connected provider stays a status line.
+   */
+  /**
+   * Whether this host can run an agent's headless sign-in for a remote.
+   *
+   * Field presence, never a version check. The relay serves the web client, so
+   * the client is always as new as the deploy while the extension is whatever
+   * the user installed — and every host built before `remoteAgentSignIn` shipped
+   * classifies `runGrokLogin` as host-local and DROPS it silently. Offering
+   * Connect there would be a button that does nothing, which is worse than the
+   * read-only row it replaced. Same gate `chat.js` puts on the connect panel.
+   */
+  function canSignInFromRemote(env) {
+    return !!(env && env.hostCaps && env.hostCaps.remoteAgentSignIn);
+  }
+
+  function remoteProviderIsSettled(snapshot, id) {
+    const provider = providerOf(snapshot, id);
+    return provider.connected === true && provider.needsLogin !== true;
+  }
+
+  /**
+   * Whether a remote may sign an agent OUT here. Cloud environments only: the
+   * remote is that host's only surface, so a credential it can grant and never
+   * revoke is the worse answer. Everywhere else `logout` is host-local and the
+   * row stays a status line. Field presence, never a version check.
+   */
+  function canSignOutFromRemote(env) {
+    return !!(env && env.hostCaps && env.hostCaps.remoteAgentSignOut);
+  }
+
+  /**
+   * Does this remote row have a button, or is it just a status line?
+   *
+   * Connected and healthy, the useful action is signing OUT; anything else, it
+   * is connecting. Each is gated on its own capability, so a host that offers
+   * one and not the other renders exactly what it can actually do.
+   */
+  /** The host advertises `remoteAgentSignOut` only when it is a hosted cloud
+   *  machine (3.19.7) — capability detection doubling as environment truth,
+   *  used here only to choose words. */
+  function hostIsCloud(env) {
+    return !!(env && env.isRemote && env.hostCaps && env.hostCaps.remoteAgentSignOut);
+  }
+
+  /** A device-code sign-in in flight for this provider, mirrored from the
+   *  host's onboarding frames by the mounting page. */
+  function deviceLoginFlow(env, id) {
+    const flow = env && env.deviceLogin && env.deviceLogin[id];
+    return flow && flow.status ? flow : undefined;
+  }
+
+  /** The ordinary row's description, with a settled flow's outcome folded in. */
+  function providerRemoteDescribe(s, env, id) {
+    const flow = deviceLoginFlow(env, id);
+    if (flow && (flow.status === "failed" || flow.status === "unavailable") && flow.message) {
+      return flow.message;
+    }
+    const provider = providerOf(s, id);
+    const base = providerDescription(provider);
+    // On a cloud machine the three agents are NOT equal offers — Grok is the
+    // native one (owner, 2026-08-31).
+    if (id === "grok" && hostIsCloud(env) && !(provider && provider.connected)) {
+      return "Recommended. " + base;
+    }
+    return base;
+  }
+
+  /** The same test `message` uses to choose between logout and sign-in. */
+  function providerConnectedNow(snapshot, id) {
+    const provider = providerOf(snapshot, id);
+    return !!(provider && provider.connected && provider.needsLogin !== true);
+  }
+
+  function remoteProviderActionable(snapshot, env, id) {
+    return remoteProviderIsSettled(snapshot, id)
+      ? canSignOutFromRemote(env)
+      : canSignInFromRemote(env);
   }
 
   function providerAction(provider) {
@@ -330,7 +419,9 @@
       description: TELEMETRY_COPY,
       kind: "toggle",
       defaultValue: true,
-      visible: (s, env) => !!(env && env.isDesktop && !env.isRemote),
+      // A cloud remote is the machine's only surface, so the toggle belongs
+      // there too; a desk remote still shows the read-only row below.
+      visible: (s, env) => !!(env && ((env.isDesktop && !env.isRemote) || hostIsCloud(env))),
       get: (s) => !s || s.telemetryEnabled !== false,
       message: (value) => ({ type: "setTelemetryEnabled", value }),
     },
@@ -350,7 +441,7 @@
       title: "Anonymous usage stats",
       description: "",
       kind: "status",
-      visible: (s, env) => !!(env && env.isRemote),
+      visible: (s, env) => !!(env && env.isRemote && !hostIsCloud(env)),
       describe: (s) => {
         const known = s && typeof s.telemetryEnabled === "boolean";
         const state = known ? (s.telemetryEnabled ? "On. " : "Off. ") : "";
@@ -364,7 +455,7 @@
       description: THUMBS_COPY,
       kind: "toggle",
       defaultValue: false,
-      visible: (s, env) => !env || !env.isRemote,
+      visible: (s, env) => !env || !env.isRemote || hostIsCloud(env),
       get: (s) => !!(s && s.thumbsFeedback),
       message: (value) => ({ type: "setThumbsFeedback", value }),
     },
@@ -374,7 +465,7 @@
       title: "Thumbs feedback to SpaceXAI",
       description: "",
       kind: "status",
-      visible: (s, env) => !!(env && env.isRemote),
+      visible: (s, env) => !!(env && env.isRemote && !hostIsCloud(env)),
       describe: (s) => {
         const known = s && typeof s.thumbsFeedback === "boolean";
         const state = known ? (s.thumbsFeedback ? "On. " : "Off. ") : "";
@@ -424,7 +515,7 @@
       kind: "status",
       describe: (s) => (s && s.voiceConfigured)
         ? "Voice is ready on this machine."
-        : "Voice is not configured on the desk that is hosting this session.",
+        : "Voice is not configured on the machine hosting this session.",
       visible: (s, env) => !!(env && (env.isRemote || env.isDesktop)),
     },
     {
@@ -484,7 +575,9 @@
       id: "providerGrok",
       category: "providers",
       logo: "grok",
+      provider: "grok",
       title: "Atlas",
+      vendor: "SpaceXAI",
       description: "",
       kind: "action",
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
@@ -501,7 +594,9 @@
       id: "providerCodex",
       category: "providers",
       logo: "codex",
+      provider: "codex",
       title: "Codex",
+      vendor: "OpenAI",
       description: "",
       kind: "action",
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
@@ -518,7 +613,9 @@
       id: "providerClaude",
       category: "providers",
       logo: "claude",
-      title: "Claude",
+      provider: "claude",
+      title: "Claude Code",
+      vendor: "Anthropic",
       description: "",
       kind: "action",
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
@@ -531,35 +628,152 @@
           : { type: "runGrokLogin", provider: "claude" };
       },
     },
+    // Remote provider rows come in a PAIR, and which one shows is the point.
+    // This page rendered status-only for a remote from 3.9.0, when a remote
+    // genuinely could not sign a provider in. `0fa6661` gave it the device-code
+    // flow and moved `runGrokLogin` to `full`, and this page was never told — so
+    // the onboarding card in the transcript was the only way to connect an agent
+    // from a phone or a cloud environment (owner, 2026-08-30).
     {
       id: "providerGrokStatus",
       category: "providers",
       logo: "grok",
+      provider: "grok",
       title: "Atlas",
+      vendor: "SpaceXAI",
       description: "",
       kind: "status",
-      visible: (s, env) => !!(env && env.isRemote && env.providersKnown),
-      describe: (s) => providerDescription(providerOf(s, "grok")),
+      visible: (s, env) => !!(env && env.isRemote && env.providersKnown
+        && !remoteProviderActionable(s, env, "grok")),
+      describe: (s, env) => providerRemoteDescribe(s, env, "grok"),
+    },
+    {
+      id: "providerGrokRemote",
+      category: "providers",
+      logo: "grok",
+      provider: "grok",
+      title: "Grok Build",
+      vendor: "SpaceXAI",
+      description: "",
+      kind: "action",
+      visible: (s, env) => !!(env && env.isRemote && env.providersKnown
+        && remoteProviderActionable(s, env, "grok")),
+      // The flow opens in the connect wizard — one renderer, in a dialog,
+      // which is not subject to the welcome card's refusal to paint over a
+      // conversation. This page stays put behind it, so closing the wizard
+      // returns the reader exactly where they were.
+      keepOpen: (s, env) => !!(env && env.isRemote),
+      // Only for the sign-IN message. This row sends `logout` when the
+      // account is connected, and opening a Connect wizard on a Sign out
+      // click is the opposite of what was asked (review, 2026-08-31).
+      local: (s, env) => (env && env.isRemote && !providerConnectedNow(s, "grok")
+        ? "connectWizard:grok"
+        : ""),
+      describe: (s, env) => providerRemoteDescribe(s, env, "grok"),
+      actionLabel: (s) => providerAction(providerOf(s, "grok")),
+      // Same two messages the desk row sends, reached through the same test.
+      // Which one is offered is decided by visibility above, so this cannot
+      // send `logout` to a host that did not advertise remoteAgentSignOut.
+      message: (s) => {
+        const provider = providerOf(s, "grok");
+        return provider.connected && provider.needsLogin !== true
+          ? { type: "logout", provider: "grok" }
+          : { type: "runGrokLogin", provider: "grok" };
+      },
     },
     {
       id: "providerCodexStatus",
       category: "providers",
       logo: "codex",
+      provider: "codex",
       title: "Codex",
+      vendor: "OpenAI",
       description: "",
       kind: "status",
-      visible: (s, env) => !!(env && env.isRemote && env.providersKnown),
-      describe: (s) => providerDescription(providerOf(s, "codex")),
+      visible: (s, env) => !!(env && env.isRemote && env.providersKnown
+        && !remoteProviderActionable(s, env, "codex")),
+      describe: (s, env) => providerRemoteDescribe(s, env, "codex"),
+    },
+    {
+      id: "providerCodexRemote",
+      category: "providers",
+      logo: "codex",
+      provider: "codex",
+      title: "Codex",
+      vendor: "OpenAI",
+      description: "",
+      kind: "action",
+      visible: (s, env) => !!(env && env.isRemote && env.providersKnown
+        && remoteProviderActionable(s, env, "codex")),
+      // The flow opens in the connect wizard — one renderer, in a dialog,
+      // which is not subject to the welcome card's refusal to paint over a
+      // conversation. This page stays put behind it, so closing the wizard
+      // returns the reader exactly where they were.
+      keepOpen: (s, env) => !!(env && env.isRemote),
+      // Only for the sign-IN message. This row sends `logout` when the
+      // account is connected, and opening a Connect wizard on a Sign out
+      // click is the opposite of what was asked (review, 2026-08-31).
+      local: (s, env) => (env && env.isRemote && !providerConnectedNow(s, "codex")
+        ? "connectWizard:codex"
+        : ""),
+      describe: (s, env) => providerRemoteDescribe(s, env, "codex"),
+      actionLabel: (s) => providerAction(providerOf(s, "codex")),
+      // Same two messages the desk row sends, reached through the same test.
+      // Which one is offered is decided by visibility above, so this cannot
+      // send `logout` to a host that did not advertise remoteAgentSignOut.
+      message: (s) => {
+        const provider = providerOf(s, "codex");
+        return provider.connected && provider.needsLogin !== true
+          ? { type: "logout", provider: "codex" }
+          : { type: "runGrokLogin", provider: "codex" };
+      },
     },
     {
       id: "providerClaudeStatus",
       category: "providers",
       logo: "claude",
-      title: "Claude",
+      provider: "claude",
+      title: "Claude Code",
+      vendor: "Anthropic",
       description: "",
       kind: "status",
-      visible: (s, env) => !!(env && env.isRemote && env.providersKnown),
-      describe: (s) => providerDescription(providerOf(s, "claude")),
+      visible: (s, env) => !!(env && env.isRemote && env.providersKnown
+        && !remoteProviderActionable(s, env, "claude")),
+      describe: (s, env) => providerRemoteDescribe(s, env, "claude"),
+    },
+    {
+      id: "providerClaudeRemote",
+      category: "providers",
+      logo: "claude",
+      provider: "claude",
+      title: "Claude Code",
+      vendor: "Anthropic",
+      description: "",
+      kind: "action",
+      visible: (s, env) => !!(env && env.isRemote && env.providersKnown
+        && remoteProviderActionable(s, env, "claude")),
+      // The flow opens in the connect wizard — one renderer, in a dialog,
+      // which is not subject to the welcome card's refusal to paint over a
+      // conversation. This page stays put behind it, so closing the wizard
+      // returns the reader exactly where they were.
+      keepOpen: (s, env) => !!(env && env.isRemote),
+      // Only for the sign-IN message. This row sends `logout` when the
+      // account is connected, and opening a Connect wizard on a Sign out
+      // click is the opposite of what was asked (review, 2026-08-31).
+      local: (s, env) => (env && env.isRemote && !providerConnectedNow(s, "claude")
+        ? "connectWizard:claude"
+        : ""),
+      describe: (s, env) => providerRemoteDescribe(s, env, "claude"),
+      actionLabel: (s) => providerAction(providerOf(s, "claude")),
+      // Same two messages the desk row sends, reached through the same test.
+      // Which one is offered is decided by visibility above, so this cannot
+      // send `logout` to a host that did not advertise remoteAgentSignOut.
+      message: (s) => {
+        const provider = providerOf(s, "claude");
+        return provider.connected && provider.needsLogin !== true
+          ? { type: "logout", provider: "claude" }
+          : { type: "runGrokLogin", provider: "claude" };
+      },
     },
     {
       id: "continueRemotely",
@@ -724,8 +938,12 @@
       id: "hostConfigRemote",
       category: "advanced",
       title: "Host configuration",
-      description: "Host config is managed on the desk.",
+      description: "",
       kind: "status",
+      // "The desk" was nonsense on a cloud machine — there is no desk.
+      describe: (s, env) => hostIsCloud(env)
+        ? "Host configuration lives on your cloud machine and is not editable from this page."
+        : "Host config is managed on the machine running this workspace.",
       visible: (s, env) => !!(env && env.isRemote),
     },
     {
@@ -1703,6 +1921,31 @@
   // snapshot arriving mid-edit (another window saved something) re-renders the
   // list without throwing away what is half-typed here.
   const ROUTINE_UI = { open: "", draft: null, confirmRemove: "", pendingSave: false };
+
+  /** The provider row waiting on the host, if any. One at a time: it exists to
+   *  stop the second click, so a second pending row would be a contradiction. */
+  const PROVIDER_PENDING = { id: "", label: "", wanted: false, at: 0 };
+  /** Longer than the host's own 30s CLI timeout plus a relay round trip, so in
+   *  every case this covers, the real answer arrives first. */
+  const PROVIDER_PENDING_MS = 45000;
+
+  function clearProviderPending() {
+    PROVIDER_PENDING.id = "";
+    PROVIDER_PENDING.label = "";
+  }
+
+  /** Drop the pending label once the host has answered — or given up. */
+  function reconcileProviderPending(snapshot) {
+    if (!PROVIDER_PENDING.id) return;
+    if (Date.now() - PROVIDER_PENDING.at > PROVIDER_PENDING_MS) { clearProviderPending(); return; }
+    if (providerConnectedNow(snapshot, PROVIDER_PENDING.id) === PROVIDER_PENDING.wanted) {
+      clearProviderPending();
+    }
+  }
+
+  function providerPendingLabel(row) {
+    return row && row.provider && PROVIDER_PENDING.id === row.provider ? PROVIDER_PENDING.label : "";
+  }
   const NEW_ROUTINE = "__new__";
 
   const PROVIDER_LABELS = { grok: "Atlas", codex: "Codex", claude: "Claude" };
@@ -1714,7 +1957,16 @@
    *  composer: a new conversation in a project starts on that project default
    *  provider, and a routine is a new conversation on a timer. */
   function defaultModelFor(models, provider) {
-    return models.find(function (m) { return m.provider === provider; }) || models[0] || null;
+    // Prefer a CONCRETE model. The host now sends each provider's empty-model
+    // sentinel first, so taking models[0] would start every new routine on
+    // "use the agent's default" — the one option the composer never offers, and
+    // the opposite of the parity this is supposed to give.
+    const real = models.filter(function (m) { return !!m.model; });
+    return real.find(function (m) { return m.provider === provider; })
+      || models.find(function (m) { return m.provider === provider; })
+      || real[0]
+      || models[0]
+      || null;
   }
 
   function blankRoutineDraft(snapshot) {
@@ -1905,9 +2157,23 @@
     model.dataset.field = "model";
     // Grouped by provider. A native <select> cannot carry an icon, but an
     // optgroup says the same thing and needs no custom dropdown.
+    // "<Provider> default" is the empty-model sentinel. The composer never
+    // shows it once real models are known, and beside them it is clutter — worse
+    // beside Claude, which has a model literally called "Default". So it is
+    // rendered only when it is the ONLY thing that provider offers, or when this
+    // routine is already saved on it, which keeps an existing one editable
+    // instead of silently re-pointing it at a concrete model.
+    const hasReal = {};
+    for (const m of models) if (m.model) hasReal[m.provider] = true;
+    const shown = models.filter(function (m) {
+      if (m.model) return true;
+      if (!hasReal[m.provider]) return true;
+      return m.provider === draft.provider && !draft.model;
+    });
+
     let group = null;
     let groupProvider = "";
-    for (const m of models) {
+    for (const m of shown) {
       if (m.provider !== groupProvider) {
         groupProvider = m.provider;
         group = document.createElement("optgroup");
@@ -2250,6 +2516,14 @@
     } else {
       name.textContent = rowTitle(row, snapshot, env);
     }
+    // Whose product this is, beside its name — provenance, not identity, so it
+    // does not take the title's weight.
+    if (row.vendor) {
+      const vendor = document.createElement("span");
+      vendor.className = "settings-row-vendor";
+      vendor.textContent = " by " + row.vendor;
+      name.appendChild(vendor);
+    }
     const desc = document.createElement("div");
     desc.className = "settings-row-desc";
     desc.textContent = rowDescription(row, snapshot, env);
@@ -2334,8 +2608,10 @@
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "settings-action";
-      btn.textContent = rowActionLabel(row, snapshot, env);
-      if (!enabled) btn.disabled = true;
+      const pending = providerPendingLabel(row);
+      btn.textContent = pending || rowActionLabel(row, snapshot, env);
+      if (!enabled || pending) btn.disabled = true;
+      if (pending) btn.setAttribute("aria-busy", "true");
       control.appendChild(btn);
     }
 
@@ -2452,7 +2728,10 @@
      *  clients see the answer — `providerState` is mirrored — but must not spawn
      *  the desk's CLIs to get it, which is why the rows there are status-only. */
     function canRefreshProviders() {
-      return !env.isRemote && env.providersKnown === true;
+      if (env.providersKnown !== true) return false;
+      // A cloud machine has no desk to do this for it — see CLOUD_DISPOSITION
+      // in remote-policy.ts, which is what lets the frame through.
+      return !env.isRemote || hostIsCloud(env);
     }
 
     function requestProvidersRefresh() {
@@ -2493,18 +2772,42 @@
     }
 
     function runAction(row) {
-      if (row.local) {
+      // `local` may be a plain name (a purely client-side action) or a
+      // function of the current state, and it no longer swallows the row's
+      // message: Settings → Providers → Connect must BOTH post `runGrokLogin`
+      // and open the wizard that shows what happens next. Returning here sent
+      // the message nowhere and left a dialog with nothing to report.
+      const local = typeof row.local === "function" ? row.local(snapshot, env) : row.local;
+      if (local && !row.message) {
         if (onClose && !opts.standalone) onClose();
-        if (onLocal) onLocal(row.local);
+        if (onLocal) onLocal(local);
         return;
       }
+      if (local && onLocal) onLocal(local);
       if (row.href) {
         openExternalHref(row.href);
         return;
       }
       const message = rowMessage(row, undefined, snapshot);
+      // Sign-out is the one with nothing else to show for it: a sign-in opens
+      // the wizard, and this page sits behind that.
+      let marked = false;
+      if (message && message.type === "logout" && message.provider && env.isRemote) {
+        PROVIDER_PENDING.id = message.provider;
+        PROVIDER_PENDING.label = "Disconnecting…";
+        PROVIDER_PENDING.wanted = false;
+        PROVIDER_PENDING.at = Date.now();
+        marked = true;
+        // The backstop paint. Every normal path clears this from the host's
+        // answer; this is the one where no answer ever comes.
+        setTimeout(() => { reconcileProviderPending(snapshot); paint(); }, PROVIDER_PENDING_MS + 500);
+      }
       if (message) post(message);
-      if (opts.closeOnAction && onClose) onClose();
+      // Nothing else repaints until the host answers — which is the whole
+      // point: the label has to change on the click, not on the reply.
+      if (marked) paint();
+      const keep = typeof row.keepOpen === "function" ? row.keepOpen(snapshot, env) : !!row.keepOpen;
+      if (opts.closeOnAction && !keep && onClose) onClose();
     }
 
     function paintKey() {
@@ -2526,12 +2829,16 @@
         // selected option. Deliberately not title/prompt: those change per
         // keystroke, and repainting would rebuild the input under the caret.
         routineDraft: ROUTINE_UI.draft
-          ? [ROUTINE_UI.draft.unit, ROUTINE_UI.draft.cwd, ROUTINE_UI.draft.provider, ROUTINE_UI.draft.model].join(" ")
+          ? [ROUTINE_UI.draft.unit, ROUTINE_UI.draft.cwd, ROUTINE_UI.draft.provider, ROUTINE_UI.draft.model].join(" ")
           : "",
+        // Which row is waiting on the host: local state that changes a label
+        // and a disabled attribute, so the key has to carry it.
+        providerPending: PROVIDER_PENDING.id + ":" + PROVIDER_PENDING.label,
       });
     }
 
     function paint() {
+      reconcileProviderPending(snapshot);
       const chrome = describeChrome(container);
       ensureCategory();
       maybeCheckAbout();
@@ -3057,7 +3364,7 @@
           const id = btn.dataset.session;
           if (!id) return;
           if (onClose && !opts.standalone) onClose();
-          post({ type: "resumeSession", id, cwd: btn.dataset.cwd || undefined });
+          post({ type: "resumeSession", id, cwd: btn.dataset.cwd || undefined, claim: true });
         });
       });
       body.querySelectorAll(".settings-connector-readonly-input").forEach((box) => {
@@ -3124,6 +3431,11 @@
     }
 
     function onKey(e) {
+      // A dialog stacked above this page owns the keyboard. Both handlers are
+      // on document in capture and this one was registered first, so without
+      // standing down, Escape closed the page underneath the dialog and Tab
+      // pulled focus out of it (review, 2026-08-31).
+      if (document.body && document.body.dataset.modalAbove) return;
       if (e.key === "Escape") {
         e.stopPropagation();
         e.preventDefault();
@@ -3185,6 +3497,10 @@
       update(nextSnapshot, nextEnv) {
         if (nextSnapshot) snapshot = defaultSnapshot({ ...snapshot, ...nextSnapshot });
         if (nextEnv) Object.assign(env, nextEnv);
+        // Before the key: the answer this was waiting for is usually IN this
+        // snapshot, and a stale "Disconnecting…" left in the key would make
+        // the repaint that clears it look like a no-op.
+        reconcileProviderPending(snapshot);
         if (container.firstChild && paintKey() === lastPaintedKey) return;
         if (describeChrome(container).navMenuOpen) {
           paintDeferred = true;

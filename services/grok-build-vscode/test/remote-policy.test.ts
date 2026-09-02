@@ -3,6 +3,8 @@ import {
   INBOUND_DISPOSITION,
   OUTBOUND_DISPOSITION,
   OUTBOUND_PROJECT_AUTH,
+  REMOTE_REQUIRES_BOUND_SESSION,
+  remoteRequiresBoundSession,
   allowFromRemote,
   allowRemoteRepoTarget,
   bracketRemoteSnapshot,
@@ -35,6 +37,16 @@ describe("remote-policy classification tables", () => {
     expect(sorted(Object.keys(INBOUND_DISPOSITION))).toEqual(sorted(WEBVIEW_MESSAGE_TYPES));
   });
 
+  it("classifies every WebviewMsg type for bound-session enforcement", () => {
+    expect(sorted(Object.keys(REMOTE_REQUIRES_BOUND_SESSION))).toEqual(sorted(WEBVIEW_MESSAGE_TYPES));
+    expect(remoteRequiresBoundSession("send")).toBe(true);
+    expect(remoteRequiresBoundSession("permissionAnswer")).toBe(true);
+    expect(remoteRequiresBoundSession("resumeSession")).toBe(false);
+    expect(remoteRequiresBoundSession("newSession")).toBe(false);
+    expect(remoteRequiresBoundSession("selectRepo")).toBe(false);
+    expect(remoteRequiresBoundSession("listSessions")).toBe(false);
+  });
+
   it("classifies every HostMsg type", () => {
     expect(sorted(Object.keys(OUTBOUND_DISPOSITION))).toEqual(sorted(HOST_MESSAGE_TYPES));
   });
@@ -54,7 +66,15 @@ describe("remote-policy classification tables", () => {
     expect(INBOUND_DISPOSITION.permissionAnswer).toBe("full");
     expect(INBOUND_DISPOSITION.exitPlanAnswer).toBe("full");
     expect(INBOUND_DISPOSITION.logout).toBe("host-local");
-    expect(INBOUND_DISPOSITION.runGrokLogin).toBe("host-local");
+    // Moved off host-local on 2026-08-26 when the handler stopped opening a
+    // terminal for a remote and started running the CLI's headless device-code
+    // flow instead. The asymmetry with `logout` directly above is the point:
+    // signing in adds an option using a credential the user obtains themselves
+    // from the vendor, and signing out takes one away from every surface at
+    // once. If a future change makes runGrokLogin spawn a terminal for a remote
+    // again, this line has to go back with it.
+    expect(INBOUND_DISPOSITION.runGrokLogin).toBe("full");
+    expect(INBOUND_DISPOSITION.cancelDeviceLogin).toBe("full");
     expect(INBOUND_DISPOSITION.recheckConnection).toBe("host-local");
     expect(INBOUND_DISPOSITION.retryProviderSession).toBe("propose");
     expect(INBOUND_DISPOSITION.clearAllSessions).toBe("full");
@@ -92,7 +112,13 @@ describe("remote-policy classification tables", () => {
     expect(INBOUND_DISPOSITION.newWorktreeSession).toBe("host-local");
     expect(INBOUND_DISPOSITION.applyWorktree).toBe("host-local");
     expect(INBOUND_DISPOSITION.removeWorktree).toBe("host-local");
-    expect(INBOUND_DISPOSITION.rewindSession).toBe("host-local");
+    // Rewind, edit-and-resend and the confirm that gates them are reachable
+    // from a remote since 2026-09-01. The three move together on purpose: an
+    // admitted rewind whose confirm is refused would hang forever, since
+    // confirmInChat resolves only on an answer.
+    expect(INBOUND_DISPOSITION.rewindSession).toBe("propose");
+    expect(INBOUND_DISPOSITION.editLastMessage).toBe("propose");
+    expect(INBOUND_DISPOSITION.uiConfirmAnswer).toBe("propose");
     // relay account actions manage THIS machine's device token
     expect(INBOUND_DISPOSITION.remoteSignIn).toBe("host-local");
     expect(INBOUND_DISPOSITION.remoteSignOut).toBe("host-local");
@@ -733,12 +759,29 @@ describe("allowFromRemote tier gating", () => {
     }
   });
 
-  it("refuses remote-origin provider logout and login-terminal actions at every tier", () => {
-    for (const type of ["logout", "runGrokLogin"] as const) {
-      expect(INBOUND_DISPOSITION[type]).toBe("host-local");
-      for (const tier of ["read-only", "propose", "full"] as const) {
-        expect(allowFromRemote(type, tier)).toBe(false);
-      }
+  it("refuses a remote-origin provider logout at every tier", () => {
+    // `runGrokLogin` used to be tested alongside this one and no longer belongs
+    // here: a remote may now START a sign-in (see below). Signing out is the
+    // half that stays refused, because it revokes a credential every other
+    // surface is using.
+    expect(INBOUND_DISPOSITION.logout).toBe("host-local");
+    for (const tier of ["read-only", "propose", "full"] as const) {
+      expect(allowFromRemote("logout", tier)).toBe(false);
+    }
+  });
+
+  it("lets a remote start a sign-in, but only at full", () => {
+    expect(allowFromRemote("runGrokLogin", "full")).toBe(true);
+    expect(allowFromRemote("cancelDeviceLogin", "full")).toBe(true);
+    expect(allowFromRemote("submitDeviceLoginCode", "full")).toBe(true);
+    expect(INBOUND_DISPOSITION.submitDeviceLoginCode).toBe("full");
+    expect(allowFromRemote("setupGithubCli", "full")).toBe(true);
+    expect(INBOUND_DISPOSITION.setupGithubCli).toBe("full");
+    for (const tier of ["read-only", "propose"] as const) {
+      expect(allowFromRemote("runGrokLogin", tier)).toBe(false);
+      expect(allowFromRemote("cancelDeviceLogin", tier)).toBe(false);
+      expect(allowFromRemote("submitDeviceLoginCode", tier)).toBe(false);
+      expect(allowFromRemote("setupGithubCli", tier)).toBe(false);
     }
   });
 
@@ -1329,5 +1372,38 @@ describe("capabilities a remote may see", () => {
     capabilitiesForRemote(original);
     // The host keeps serving its LOCAL webview from this same object.
     expect(original).toHaveProperty("showInFolder");
+  });
+});
+
+describe("a cloud environment is its own desk", () => {
+  it("admits logout there, and only there", () => {
+    // host-local means "this acts on the LOCAL machine", and what it protects
+    // is the person sitting at it. A cloud box has no such person — the remote
+    // is its only surface — so a credential that can be granted and never
+    // revoked is the worse answer (cloud-environments.md; owner, 2026-08-30).
+    expect(allowFromRemote("logout", "full")).toBe(false);
+    expect(allowFromRemote("logout", "full", { isCloud: true })).toBe(true);
+    // Tier still applies: the override changes the disposition, not the rank.
+    expect(allowFromRemote("logout", "propose", { isCloud: true })).toBe(false);
+  });
+
+  it("promotes nothing else", () => {
+    // The override table is the whole difference. If something else starts
+    // passing on cloud, it was added here deliberately or it is a leak.
+    const promoted = (Object.keys(INBOUND_DISPOSITION) as (keyof typeof INBOUND_DISPOSITION)[])
+      .filter((type) => !allowFromRemote(type, "full")
+        && allowFromRemote(type, "full", { isCloud: true }));
+    // logout: a cloud user must be able to sign an agent OUT from the only
+    // surface they have. refreshProviders: the promotion that makes a sign-in
+    // stick runs from this frame, and on a cloud machine nobody else can send
+    // it — withholding it made connected accounts read as disconnected after
+    // a refresh (owner, 2026-08-31).
+    // Every entry is here because a cloud machine has no desk to do it from:
+    // signing an agent OUT, re-observing the accounts (the promotion that makes
+    // a sign-in stick), and the two General preferences about this machine
+    // which were otherwise read-only forever (owner, 2026-08-31).
+    expect([...promoted].sort()).toEqual([
+      "logout", "refreshProviders", "setTelemetryEnabled", "setThumbsFeedback",
+    ]);
   });
 });
