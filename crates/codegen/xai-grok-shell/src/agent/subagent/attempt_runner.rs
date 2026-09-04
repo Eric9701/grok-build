@@ -128,28 +128,23 @@ pub(super) async fn run_one_turn_attempt(
     let (result, cancellation_may_hide_usage) = match wait_outcome {
         SubagentWaitOutcome::Cancelled => {
             let counts = signals_snapshot_counts(input.child_handle).await;
-            let may_hide_usage =
-                counts.is_none_or(|(tool_calls, turns)| turns > 0 || tool_calls > 0);
-            let (tool_calls, turns) = counts.unwrap_or((0, 0));
+            let may_hide_usage = counts
+                .as_ref()
+                .is_none_or(|c| c.turns > 0 || c.tool_calls > 0);
+            let counts = counts.unwrap_or_default();
             (
                 SubagentResult {
                     success: false,
                     cancelled: true,
                     error: Some("Subagent was cancelled".to_string()),
-                    ..base_result(
-                        input.request,
-                        input.worktree_path,
-                        tool_calls,
-                        turns,
-                        duration_ms,
-                    )
+                    ..base_result(input.request, input.worktree_path, duration_ms, counts)
                 },
                 may_hide_usage,
             )
         }
         SubagentWaitOutcome::TurnResult(turn_result) => {
             let was_cancelled = input.cancel_token.is_cancelled();
-            let (tool_calls, turns) = match &*turn_result {
+            let counts = match &*turn_result {
                 Ok(Ok(crate::session::commands::PromptTurnOk {
                     turn_snapshot: Some(snapshot),
                     ..
@@ -159,15 +154,14 @@ pub(super) async fn run_one_turn_attempt(
                         snapshot.turn_cached_input_tokens,
                         snapshot.turn_output_tokens,
                     ));
-                    (
-                        snapshot.current.tool_call_count,
-                        snapshot.current.turn_count,
-                    )
+                    child_signal_counts(&snapshot.current)
                 }
                 _ => signals_snapshot_counts(input.child_handle)
                     .await
-                    .unwrap_or((0, 0)),
+                    .unwrap_or_default(),
             };
+            let tool_calls = counts.tool_calls;
+            let turns = counts.turns;
             let final_text = super::handle_request::child_actor_query(
                 "trailing_assistant_report",
                 input
@@ -209,13 +203,7 @@ pub(super) async fn run_one_turn_attempt(
             };
             let folded = super::prompt_turn_result::reduce_prompt_turn_result(
                 super::prompt_turn_result::PromptTurnResultInput {
-                    result: base_result(
-                        input.request,
-                        input.worktree_path,
-                        tool_calls,
-                        turns,
-                        duration_ms,
-                    ),
+                    result: base_result(input.request, input.worktree_path, duration_ms, counts),
                     turn_result: *turn_result,
                     mode: super::prompt_turn_result::PromptTurnResultMode::Initial {
                         requires_structured_output: input
@@ -334,19 +322,18 @@ pub(super) async fn capture_and_fold_one_turn_usage(
 fn base_result(
     request: &SubagentRequest,
     worktree_path: Option<&Path>,
-    tool_calls: u32,
-    turns: u32,
     duration_ms: u64,
+    counts: ChildSignalCounts,
 ) -> SubagentResult {
-    SubagentResult {
+    let mut result = SubagentResult {
         subagent_id: request.id.clone(),
         child_session_id: request.id.clone(),
-        tool_calls,
-        turns,
         duration_ms,
         worktree_path: worktree_path.map(|path| path.to_string_lossy().into_owned()),
         ..Default::default()
-    }
+    };
+    apply_child_signal_counts(&mut result, counts);
+    result
 }
 #[cfg(test)]
 mod initial_child_prompt_readiness_tests {

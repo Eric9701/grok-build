@@ -962,10 +962,8 @@ pub(crate) async fn run_shell_child(
     let report_child_cwd = tracker_child_cwd.clone();
     // Catalog id, matching main-session task_report.model.
     let report_model_id = tracker_model_id.clone();
-    let report_model_routing = crate::agent::models::routing_name_for_task_report(
-        &ctx.available_models,
-        &report_model_id,
-    );
+    let report_model_routing =
+        crate::agent::models::routing_name_for_task_report(&ctx.available_models, &report_model_id);
     let report_prompt = task_prompt_text.clone();
     let initial_child_tokens = xai_chat_state::estimate_conversation_tokens(&forked_conversation);
     let model_entry = crate::agent::config::find_model_by_id(
@@ -1639,11 +1637,12 @@ pub(crate) async fn run_shell_child(
         .as_ref()
         .map(xai_chat_state::UsageTotals::total_tokens)
         .unwrap_or(0);
-    let (tool_calls, turns) = signals_snapshot_counts(&child_handle)
-        .await
-        .unwrap_or((0, 0));
-    result.tool_calls = tool_calls;
-    result.turns = turns;
+    apply_child_signal_counts(
+        &mut result,
+        signals_snapshot_counts(&child_handle)
+            .await
+            .unwrap_or_default(),
+    );
     result.duration_ms = start.elapsed().as_millis() as u64;
     if let Some(trace_gcs_config) = gcs_upload_ctx.upload_method.as_ref().map(|method| {
         crate::session::repo_changes::TraceExportConfig {
@@ -1894,10 +1893,7 @@ pub(crate) async fn run_shell_child(
         );
     } else {
         let (base_url, deployment_key) = match ctx.agent_config.as_ref() {
-            Some(c) => (
-                c.endpoints.proxy_url(),
-                c.endpoints.deployment_key.clone(),
-            ),
+            Some(c) => (c.endpoints.proxy_url(), c.endpoints.deployment_key.clone()),
             None => (String::new(), None),
         };
         let status = if result.success {

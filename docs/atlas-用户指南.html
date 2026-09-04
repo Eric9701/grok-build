@@ -58,6 +58,7 @@ a:hover { text-decoration: underline; }
 }
 #toc a:hover, #toc a.active { color: var(--accent); background: rgba(34,211,238,.06); border-left-color: var(--accent); }
 #toc a.hidden { display: none; }
+#toc .sub a { padding-left: 2.25rem; font-size: .82rem; }
 #main {
   margin-left: 280px; flex: 1; max-width: 900px;
   padding: 2rem 2.5rem 4rem;
@@ -118,38 +119,109 @@ tr:nth-child(even) { background: rgba(255,255,255,.02); }
 <ul id="toc">
 <li class="tier">概述</li>
 <li><a href="#ch-00" data-label="00 atlas 用户指南">00. Atlas 用户指南</a></li>
+<li class="sub"><a href="#ch-00-intro" data-label="00-intro 文档分层">文档分层</a></li>
 <li class="tier">Tier1 必备</li>
 <li><a href="#ch-01" data-label="01 快速入门">01. 快速入门</a></li>
+<li class="sub"><a href="#ch-01-install" data-label="01-install 安装">安装</a></li>
+<li class="sub"><a href="#ch-01-first-launch" data-label="01-first-launch 首次启动">首次启动</a></li>
+<li class="sub"><a href="#ch-01-interaction" data-label="01-interaction 基本交互">基本交互</a></li>
+<li class="sub"><a href="#ch-01-concepts" data-label="01-concepts 核心概念">核心概念</a></li>
+<li class="sub"><a href="#ch-01-launch" data-label="01-launch 常用启动选项">常用启动选项</a></li>
+<li class="sub"><a href="#ch-01-agents-md" data-label="01-agents-md 项目规则 agents.md">项目规则 AGENTS.md</a></li>
 <li><a href="#ch-02" data-label="02 身份验证">02. 身份验证</a></li>
+<li class="sub"><a href="#ch-02-browser" data-label="02-browser 浏览器登录（默认）">浏览器登录（默认）</a></li>
+<li class="sub"><a href="#ch-02-enterprise" data-label="02-enterprise 企业设备码登录">企业设备码登录</a></li>
 <li><a href="#ch-03" data-label="03 键盘快捷键">03. 键盘快捷键</a></li>
+<li class="sub"><a href="#ch-03-modes" data-label="03-modes 输入模式">输入模式</a></li>
+<li class="sub"><a href="#ch-03-nav" data-label="03-nav 导航（scrollback 聚焦）">导航（Scrollback 聚焦）</a></li>
+<li class="sub"><a href="#ch-03-view" data-label="03-view 视图">视图</a></li>
+<li class="sub"><a href="#ch-03-esc" data-label="03-esc esc 行为">Esc 行为</a></li>
+<li class="sub"><a href="#ch-03-agent" data-label="03-agent 代理级">代理级</a></li>
+<li class="sub"><a href="#ch-03-global" data-label="03-global 全局">全局</a></li>
+<li class="sub"><a href="#ch-03-blocking" data-label="03-blocking 阻塞卡片（问题/权限/取消）">阻塞卡片（问题/权限/取消）</a></li>
+<li class="sub"><a href="#ch-03-paste" data-label="03-paste 粘贴与图片">粘贴与图片</a></li>
 <li><a href="#ch-04" data-label="04 斜杠命令">04. 斜杠命令</a></li>
+<li class="sub"><a href="#ch-04-session" data-label="04-session 会话管理">会话管理</a></li>
+<li class="sub"><a href="#ch-04-model" data-label="04-model 模型与模式">模型与模式</a></li>
+<li class="sub"><a href="#ch-04-memory-cmd" data-label="04-memory-cmd 记忆">记忆</a></li>
+<li class="sub"><a href="#ch-04-ext" data-label="04-ext 扩展与其他">扩展与其他</a></li>
 <li><a href="#ch-05" data-label="05 配置">05. 配置</a></li>
+<li class="sub"><a href="#ch-05-precedence" data-label="05-precedence 优先级">优先级</a></li>
+<li class="sub"><a href="#ch-05-config-toml" data-label="05-config-toml config.toml 主要段">config.toml 主要段</a></li>
+<li class="sub"><a href="#ch-05-pager" data-label="05-pager pager.toml">pager.toml</a></li>
+<li class="sub"><a href="#ch-05-env" data-label="05-env 环境变量要点">环境变量要点</a></li>
+<li class="sub"><a href="#ch-05-paths" data-label="05-paths 文件位置">文件位置</a></li>
+<li class="sub"><a href="#ch-05-ui-detail" data-label="05-ui-detail ui 与通知">UI 与通知</a></li>
+<li class="sub"><a href="#ch-05-toolset" data-label="05-toolset 工具与安全策略">工具与安全策略</a></li>
 <li class="tier">Tier2 核心</li>
 <li><a href="#ch-06" data-label="06 主题与外观">06. 主题与外观</a></li>
+<li class="sub"><a href="#ch-06-themes" data-label="06-themes 内置主题">内置主题</a></li>
 <li><a href="#ch-07" data-label="07 mcp 服务器">07. MCP 服务器</a></li>
+<li class="sub"><a href="#ch-07-config" data-label="07-config 配置">配置</a></li>
+<li class="sub"><a href="#ch-07-cli" data-label="07-cli cli 管理">CLI 管理</a></li>
+<li class="sub"><a href="#ch-07-runtime" data-label="07-runtime 运行时">运行时</a></li>
 <li><a href="#ch-08" data-label="08 skills">08. Skills</a></li>
+<li class="sub"><a href="#ch-08-basics" data-label="08-basics 基础">基础</a></li>
 <li><a href="#ch-09" data-label="09 plugins">09. Plugins</a></li>
+<li class="sub"><a href="#ch-09-marketplace" data-label="09-marketplace 市场与安装">市场与安装</a></li>
 <li><a href="#ch-10" data-label="10 hooks">10. Hooks</a></li>
+<li class="sub"><a href="#ch-10-events" data-label="10-events 事件">事件</a></li>
+<li class="sub"><a href="#ch-10-example" data-label="10-example 示例">示例</a></li>
 <li><a href="#ch-11" data-label="11 自定义模型">11. 自定义模型</a></li>
+<li class="sub"><a href="#ch-11-setup" data-label="11-setup 配置">配置</a></li>
+<li class="sub"><a href="#ch-11-managed" data-label="11-managed 企业托管模型（atlas server）">企业托管模型（Atlas Server）</a></li>
 <li><a href="#ch-12" data-label="12 项目规则 agents.md">12. 项目规则 AGENTS.md</a></li>
+<li class="sub"><a href="#ch-12-rules" data-label="12-rules 规则发现">规则发现</a></li>
 <li><a href="#ch-13" data-label="13 memory">13. Memory</a></li>
+<li class="sub"><a href="#ch-13-enable" data-label="13-enable 启用">启用</a></li>
 <li class="tier">Tier3 进阶</li>
 <li><a href="#ch-14" data-label="14 无头模式与脚本">14. 无头模式与脚本</a></li>
+<li class="sub"><a href="#ch-14-basic" data-label="14-basic 基础">基础</a></li>
+<li class="sub"><a href="#ch-14-ci" data-label="14-ci ci/cd 与管道">CI/CD 与管道</a></li>
 <li><a href="#ch-15" data-label="15 agent 模式与 acp">15. Agent 模式与 ACP</a></li>
+<li class="sub"><a href="#ch-15-acp" data-label="15-acp 什么是 acp">什么是 ACP</a></li>
+<li class="sub"><a href="#ch-15-transports" data-label="15-transports 传输方式">传输方式</a></li>
 <li><a href="#ch-16" data-label="16 子代理与人格">16. 子代理与人格</a></li>
+<li class="sub"><a href="#ch-16-subagents" data-label="16-subagents 子代理">子代理</a></li>
 <li><a href="#ch-17" data-label="17 会话管理">17. 会话管理</a></li>
+<li class="sub"><a href="#ch-17-storage" data-label="17-storage 存储与操作">存储与操作</a></li>
 <li><a href="#ch-18" data-label="18 沙箱模式">18. 沙箱模式</a></li>
+<li class="sub"><a href="#ch-18-profiles" data-label="18-profiles 内置 profile">内置 Profile</a></li>
+<li class="sub"><a href="#ch-18-custom" data-label="18-custom 自定义 profile">自定义 Profile</a></li>
 <li><a href="#ch-19" data-label="19 plan 模式">19. Plan 模式</a></li>
+<li class="sub"><a href="#ch-19-plan" data-label="19-plan 计划模式">计划模式</a></li>
 <li><a href="#ch-20" data-label="20 后台任务">20. 后台任务</a></li>
+<li class="sub"><a href="#ch-20-bg" data-label="20-bg 后台与调度">后台与调度</a></li>
 <li><a href="#ch-21" data-label="21 终端支持与排错">21. 终端支持与排错</a></li>
+<li class="sub"><a href="#ch-21-doctor" data-label="21-doctor 诊断">诊断</a></li>
 <li><a href="#ch-22" data-label="22 权限与安全">22. 权限与安全</a></li>
+<li class="sub"><a href="#ch-22-modes" data-label="22-modes 权限模式">权限模式</a></li>
+<li class="sub"><a href="#ch-22-rules" data-label="22-rules 规则">规则</a></li>
 <li><a href="#ch-23" data-label="23 agent dashboard">23. Agent Dashboard</a></li>
+<li class="sub"><a href="#ch-23-dash" data-label="23-dash 仪表盘">仪表盘</a></li>
 <li><a href="#ch-24" data-label="24 外部 opentelemetry">24. 外部 OpenTelemetry</a></li>
+<li class="sub"><a href="#ch-24-otel" data-label="24-otel otel 导出">OTEL 导出</a></li>
 <li><a href="#ch-25" data-label="25 状态栏">25. 状态栏</a></li>
+<li class="sub"><a href="#ch-25-status" data-label="25-status 状态行">状态行</a></li>
 <li class="tier">企业研发</li>
 <li><a href="#ch-26" data-label="26 ask-atlas 与 atlas-sdd">26. ask-atlas 与 atlas-sdd</a></li>
+<li class="sub"><a href="#ch-26-install" data-label="26-install 安装与确认">安装与确认</a></li>
+<li class="sub"><a href="#ch-26-ask-atlas" data-label="26-ask-atlas /ask-atlas（main flow）">/ask-atlas（Main Flow）</a></li>
+<li class="sub"><a href="#ch-26-sdd" data-label="26-sdd atlas-sdd（role executor）">atlas-sdd（Role Executor）</a></li>
+<li class="sub"><a href="#ch-26-nouns" data-label="26-nouns 用户话术怎么映射阶段">用户话术怎么映射阶段</a></li>
+<li class="sub"><a href="#ch-26-recipes" data-label="26-recipes 三种典型用法">三种典型用法</a></li>
+<li class="sub"><a href="#ch-26-troubleshoot" data-label="26-troubleshoot 排错">排错</a></li>
 <li><a href="#ch-27" data-label="27 企业运行时">27. 企业运行时</a></li>
+<li class="sub"><a href="#ch-27-home" data-label="27-home atlas home">Atlas Home</a></li>
+<li class="sub"><a href="#ch-27-vscode" data-label="27-vscode vs code / cursor 扩展">VS Code / Cursor 扩展</a></li>
+<li class="sub"><a href="#ch-27-telemetry" data-label="27-telemetry 遥测与 task report">遥测与 Task Report</a></li>
+<li class="sub"><a href="#ch-27-update" data-label="27-update 更新">更新</a></li>
+<li class="sub"><a href="#ch-27-offline" data-label="27-offline 连不上 atlas-server 时启动">连不上 atlas-server 时启动</a></li>
+<li class="sub"><a href="#ch-27-faq" data-label="27-faq 常见问题">常见问题</a></li>
 <li><a href="#ch-28" data-label="28 配置参考摘要">28. 配置参考摘要</a></li>
+<li class="sub"><a href="#ch-28-layers" data-label="28-layers 配置分层（后者覆盖前者，pin 除外）">配置分层（后者覆盖前者，pin 除外）</a></li>
+<li class="sub"><a href="#ch-28-files" data-label="28-files 三类文件谁写">三类文件谁写</a></li>
+<li class="sub"><a href="#ch-28-hot" data-label="28-hot 常用键速查">常用键速查</a></li>
 </ul>
 </nav>
 <main id="main">
@@ -157,8 +229,6 @@ tr:nth-child(even) { background: rgba(255,255,255,.02); }
 <span class="tier-badge">概述</span>
 <h2>Atlas 用户指南</h2>
 <section id="ch-00-intro">
-<h3>关于本指南</h3>
-<p>本指南基于仓库内英文用户文档 <code>crates/codegen/xai-grok-pager/docs/user-guide/</code>（README + 01–26）整理为中文精编，并补充企业插件与运行时（第 26–28 章）。产品名统一为 <strong>Atlas</strong>，CLI 命令为 <code>atlas</code>，配置目录为 <strong>Atlas Home</strong> <code>~/.atlas/</code>（Windows：<code>%USERPROFILE%\.atlas</code>）。</p>
 <h3>文档分层</h3>
 <table><thead><tr><th>层级</th><th>章节</th><th>内容</th></tr></thead><tbody>
 <tr><td><strong>Tier1 必备</strong></td><td>01–05</td><td>安装、认证、快捷键、斜杠命令、配置</td></tr>
@@ -189,15 +259,9 @@ atlas
 <p><strong>企业/内网（本仓库示例）：</strong></p>
 <pre><code># Windows PowerShell
 irm http://10.218.220.237:22255/atlas/cli/install.ps1 | iex
-# 企业版变体
-irm http://10.218.220.237:22255/atlas/cli/install-enterprise.ps1 | iex
 
 # macOS / Linux / Git Bash
-curl -fsSL http://10.218.220.237:22255/atlas/cli/install.sh | bash
-curl -fsSL http://10.218.220.237:22255/atlas/cli/install-enterprise.sh | bash</code></pre>
-<p><strong>公网安装（对照）：</strong></p>
-<pre><code>curl -fsSL https://x.ai/cli/install.sh | bash
-irm https://x.ai/cli/install.ps1 | iex</code></pre>
+curl -fsSL http://10.218.220.237:22255/atlas/cli/install.sh | bash</code></pre>
 <p>PowerShell 安装器会自动将 <code>%USERPROFILE%\.atlas\bin</code> 加入用户 PATH。验证与更新：</p>
 <pre><code>atlas --version
 atlas update</code></pre>
@@ -207,8 +271,6 @@ atlas update</code></pre>
 <p>运行 <code>atlas</code>。凭据保存在 <code>~/.atlas/auth.json</code> 并自动刷新。</p>
 <ul>
 <li><strong>企业部署</strong>：推荐 <code>atlas login --device-auth</code>（设备码，先在浏览器登录 atlas-server）</li>
-<li><strong>公网默认</strong>：首次可能打开浏览器走 OAuth</li>
-<li><strong>CI / 无浏览器</strong>：设置 <code>XAI_API_KEY</code></li>
 </ul>
 <pre><code>atlas login --device-auth
 export XAI_API_KEY="xai-..."
@@ -287,11 +349,8 @@ atlas -p "Explain this codebase"  # 无头模式</code></pre>
 <h2>身份验证</h2>
 <section id="ch-02-browser">
 <h3>浏览器登录（默认）</h3>
-<p>凭据存于 Atlas Home 的 <code>auth.json</code>（默认 <code>~/.atlas/auth.json</code>），Unix 上权限 <code>0600</code>。MCP OAuth 令牌在 <code>mcp_credentials.json</code>。</p>
-<p>安全建议：全盘加密、勿将 auth 文件复制到共享目录、多用户主机保持 <code>$HOME</code> 私有。</p>
 <p>重新登录：<code>atlas login</code>；登出：<code>atlas logout</code>。</p>
 <table><thead><tr><th>标志</th><th>说明</th></tr></thead><tbody>
-<tr><td><code>--oauth</code></td><td>OAuth（公网默认走 auth.x.ai；企业部署通常改指向 atlas-server）</td></tr>
 <tr><td><code>--device-auth</code>（别名 <code>--device-code</code>）</td><td>设备码流程（无头/远程/<strong>企业推荐</strong>）</td></tr>
 </tbody></table>
 </section>
@@ -305,71 +364,7 @@ atlas -p "Explain this codebase"  # 无头模式</code></pre>
 </ol>
 <ul>
 <li>VS Code / Cursor 未登录引导也走 <code>atlas login --device-auth</code>，不要用裸 <code>atlas login</code>。</li>
-<li>机器码登录要求该用户已在 Admin <strong>开户</strong>（显示名 + 邮箱 + 机器码；UserId = 邮箱 <code>@</code> 前前缀；默认种子密码 <code>atlas123</code>）。</li>
-<li><strong>Startup Session Gate</strong>（默认开）：登出或凭证被清后，<strong>下一次新进程</strong>才要求再登录，不打断已在跑的任务。可在配置里关 <code>require_session_at_startup</code>。</li>
-<li>仅有本地 <code>[model.*]</code> / 托管模型缓存也能对话，<strong>不表示</strong>已走企业登录。</li>
 </ul>
-</section>
-<section id="ch-02-api-key">
-<h3>API Key</h3>
-<pre><code>export XAI_API_KEY="xai-..."
-atlas</code></pre>
-<p>已有交互式会话令牌时，会话令牌优先。需回退 API Key 时先 <code>atlas logout</code> 或删除 auth.json。</p>
-</section>
-<section id="ch-02-oidc">
-<h3>OIDC（企业 SSO）</h3>
-<ol>
-<li>在 IdP 注册 Public Client：Authorization Code + PKCE，重定向 URI <code>http://127.0.0.1/callback</code></li>
-<li>配置 CLI：</li>
-</ol>
-<pre><code># ~/.atlas/config.toml
-[grok_com_config.oidc]
-issuer = "https://acme.okta.com"
-client_id = "0oa1b2c3d4e5f6g7h8i9"
-
-# 或环境变量
-export GROK_OIDC_ISSUER="https://acme.okta.com"
-export GROK_OIDC_CLIENT_ID="0oa1b2c3d4e5f6g7h8i9"
-export GROK_CLI_CHAT_PROXY_BASE_URL="https://atlas-proxy.acme.com/v1"</code></pre>
-<table><thead><tr><th>字段</th><th>默认</th><th>说明</th></tr></thead><tbody>
-<tr><td><code>scopes</code></td><td>openid, profile, email, offline_access, api:access</td><td>offline_access 支持静默刷新</td></tr>
-<tr><td><code>audience</code></td><td>无</td><td>部分 IdP（如 Auth0）必填</td></tr>
-</tbody></table>
-</section>
-<section id="ch-02-external">
-<h3>外部认证提供程序</h3>
-<p>通过外部二进制/脚本委托认证（沙箱 VM、CI、气隙网络）。</p>
-<table><thead><tr><th>流</th><th>内容</th><th>谁看到</th></tr></thead><tbody>
-<tr><td><strong>stdout</strong></td><td>仅 token（或 JSON）</td><td>Atlas 解析并存入 auth.json</td></tr>
-<tr><td><strong>stderr</strong></td><td>登录 URL、状态消息</td><td>用户（TUI 中 URL 可点击）</td></tr>
-</tbody></table>
-<pre><code>[auth]
-auth_provider_command = "/usr/local/bin/my-auth-provider"
-auth_provider_label = "Acme Corp"
-auth_token_ttl = 3600</code></pre>
-<p><code>GROK_AUTH_EXPIRED=1</code> 表示无头刷新（静默，数秒超时）；未设置则为交互式登录（300 秒，stderr 展示给用户）。</p>
-</section>
-<section id="ch-02-precedence">
-<h3>认证优先级</h3>
-<p><strong>每个请求的凭据解析（高→低）：</strong></p>
-<ol>
-<li><code>[model.&lt;name&gt;]</code> 的 <code>api_key</code> / <code>env_key</code></li>
-<li>auth.json 中的会话令牌</li>
-<li><code>XAI_API_KEY</code></li>
-</ol>
-<p><strong>登录流程选择（高→低）：</strong> 外部 auth → 企业 OIDC → SpaceXAI OAuth 浏览器登录。</p>
-</section>
-<section id="ch-02-troubleshoot">
-<h3>排错</h3>
-<pre><code>GROK_LOG_FILE=/tmp/atlas.log RUST_LOG=debug atlas
-RUST_LOG=debug atlas -p "hello" 2&gt; /tmp/atlas.log</code></pre>
-<ul>
-<li><strong>Authentication failed</strong> — <code>atlas logout</code> 后企业环境用 <code>atlas login --device-auth</code></li>
-<li><strong>设备码批准失败</strong> — 先浏览器登录 atlas-server；<code>user_code</code> 与机器码都要填对；确认 Admin 已开户</li>
-<li><strong>OIDC 重定向失败</strong> — 确认 IdP 允许 loopback URI</li>
-<li><strong>外部 provider 未找到</strong> — 检查路径与可执行权限</li>
-</ul>
-</section>
 </article>
 <article class="chapter" id="ch-03">
 <span class="tier-badge">Tier1 必备</span>
@@ -1496,7 +1491,7 @@ api_backend = "chat_completions"
       }
     });
   }, { rootMargin: '-20% 0px -70% 0px' });
-  document.querySelectorAll('.chapter').forEach(el => obs.observe(el));
+  document.querySelectorAll(".chapter, section[id^='ch-']").forEach(el => obs.observe(el));
 })();
 </script>
 </body>

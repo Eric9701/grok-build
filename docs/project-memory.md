@@ -1,6 +1,6 @@
 # 项目记忆
 
-2026-07-22 至 2026-08-24 本工程 Cursor 会话沉淀。**术语**以 CONTEXT 为准；**实现**以代码与手册为准。本文只留反复踩过的约定和易错点。
+2026-07-22 至 2026-09-02 本工程 Cursor 会话沉淀。**术语**以 CONTEXT 为准；**实现**以代码与手册为准。本文只留反复踩过的约定和易错点。**五件套改了什么**写 [docs/changelog](./changelog/README.md)。
 
 | 要做什么 | 去哪 |
 |---|---|
@@ -9,6 +9,7 @@
 | 账号、托管模型、Task Report 名词 | [services/atlas-server/CONTEXT.md](../services/atlas-server/CONTEXT.md) |
 | 遥测开关、构建口令 | [.cursor/rules/atlas-telemetry-ops.mdc](../.cursor/rules/atlas-telemetry-ops.mdc) |
 | ENC / ListModels / 落盘 | [.cursor/rules/atlas-managed-models.mdc](../.cursor/rules/atlas-managed-models.mdc) |
+| 五件套变更记录 | [changelog/README.md](./changelog/README.md) |
 | 安装与基础命令 | [atlas-runtime-安装手册.md](./atlas-runtime-安装手册.md)（§9：断网启动） |
 | 中文用户指南 HTML | [atlas-用户指南.html](./atlas-用户指南.html) |
 | 跨平台编译 | [atlas-编译手册.md](./atlas-编译手册.md) |
@@ -31,6 +32,7 @@
 ## 登录与身份
 
 - 企业登录：`atlas login --device-auth`。默认 OAuth issuer 走企业 atlas-server，不是 `auth.x.ai`。
+- 拉 xAI probe（`probe_xai_proxy.py`）必须用 **官方** Device Login：`python services/atlas-server/scripts/xai_login.py`，凭证写 `services/atlas-server/scripts/auth.json`。不要拿 `~/.atlas/auth.json` 打 `cli-chat-proxy.grok.com`。
 - **Startup Session Gate** 默认开：登出或凭证被清后，**下一次新进程**才要求再登录。
 - 机器码登录：用户须先在 Admin 开户。未开户不能只靠机器码。
 - Admin 建用户：用户名 + 邮箱 + 机器码即可；**UserId = 邮箱 `@` 前前缀**；默认密码 `atlas123`。
@@ -85,6 +87,7 @@
 - ACP 子 agent 若复用同一 `tool call id`，上游会 `400 duplicated`（入口常是 VS Code）。
 - 上游 [grok-build-vscode](https://github.com/Eric9701/grok-build-vscode) 用独立 remote 同步，不要往 `Eric9701/grok-build` 推（会 403）。
 - IDEA 侧：在 grok-build-vscode 上增加 Atlas 后端，与 Claude/Codex 并列。
+- IDEA 默认 Ask + Windows PowerShell：超时/清会话必须走 ACP `cancelled`，不能回 `reject-once`（否则会话里会写成 `User rejected the execution`）。终端宿主用 `powershell.exe -NoProfile -NonInteractive -Command`，不要 `$SHELL`/`-l -c`。
 
 ---
 
@@ -117,7 +120,16 @@
 | 2026-08-12 → 08-23 | [能力与运维](73fbb1a7-df21-4ab0-9c9f-e5d058a2840b) | 登录门控、ENC 缓存、流程打磨、编译手册、MCP、插件发现 |
 | 2026-08-16 → 08-23 | [流程与排障](dee2989c-ad51-4479-8490-3abcafe1c69d) | 评测会话是否走 SDD、架构不强制、重复 tool id、误 commit |
 | 2026-08-21 | [用户指南 HTML](b1660ce9-71e4-4b60-937a-e2bdb2ab04a0) | `docs/atlas-用户指南.html` |
-| 2026-08-21 | [IDEA 扩展](f8a5f924-225c-4836-8505-2a728e8f851a) | grok-build-vscode 增加 Atlas 后端 |
+| 2026-08-21 | [IDEA 扩展](f8a5f924-225c-4836-8505-2a728e8f851a) | jetbrains-cc-gui 增加 Atlas 后端 |
 | 2026-08-23 | [老 glibc 构建](396a5ad5-3ab6-4b8b-a056-a8e75e086652) | CentOS 7 / musl / sqlite-vec |
+| 2026-08-24 | [Token 续期](2f91e8e7-8182-4f37-a5d8-d69e2686c5a2) | refresh 落库，防 Task Report anonymous |
+| 2026-08-26 | [刷新 model](0076d771-ca2e-4b30-9f24-533fea368fe4) | `atlas models refresh` / `/refresh-model` |
+| 2026-08-26 → 09-02 | [工作画像](075a1108-c3dd-4976-850b-286b649c24ab) | `user-work-profile` skill |
+| 2026-08-27 → 09-01 | [工作台与中继](8fe4e3ad-2535-415c-8d7b-68a472203fb6) | atlas-relay-demo |
+| 2026-08-31 | [创建 skill 路径](954e513d-9243-4b31-9bd9-95f584df3127) | `.grok` → `.atlas`；probe bundle |
+| 2026-08-31 → 09-02 | [合并上游](5952b17a-2178-4e04-8f5c-cd0fa0bfda8f) | vscode 4.1.0、jetbrains 0.5.5 |
+| 2026-09-02 | [IDEA 斜杠](acbbd656-b088-4270-9e84-fbd48ae62ca0) | grok/atlas 不用 Claude 内置 `/` |
+| 2026-09-02 | [变更记录](54b536e1-6151-41a6-bccc-39bad21556c3) | `docs/changelog/` |
+| 2026-09-03 | [Case001 权限误拒](5952b17a-2178-4e04-8f5c-cd0fa0bfda8f) | IDEA 默认模式 PowerShell 误报拒绝 |
 
-子 agent 记录不另建索引，结论已折进上表对应主题。
+子 agent 记录不另建索引，结论已折进上表对应主题。产品变更明细见 [changelog](./changelog/README.md)。

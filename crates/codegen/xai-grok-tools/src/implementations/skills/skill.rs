@@ -474,6 +474,26 @@ pub fn extract_skill_body(content: &str) -> String {
     content.to_string()
 }
 
+/// Rewrite bundled authoring-skill paths from upstream `.grok` to Atlas Home.
+///
+/// `/create-skill` and `/create-workflow` are shipped in the remote subagent
+/// bundle and still tell the agent to write `<repo>/.grok/skills` and `~/.grok`.
+/// Apply this on every load so already-extracted copies pick up the Atlas
+/// destinations without waiting for a bundle re-sync.
+pub fn localize_atlas_authoring_paths(skill_name: &str, body: &str) -> String {
+    if skill_name != "create-skill" && skill_name != "create-workflow" {
+        return body.to_string();
+    }
+    body.replace(".grok/skills/", ".atlas/skills/")
+        .replace(".grok/workflows/", ".atlas/workflows/")
+        .replace("~/.grok", "~/.atlas")
+        .replace("Grok home", "Atlas home")
+        .replace("Grok skill", "Atlas skill")
+        .replace("Grok knows when", "Atlas knows when")
+        .replace("Grok will invoke", "Atlas will invoke")
+        .replace("Create a Grok Build workflow", "Create an Atlas workflow")
+}
+
 /// Load skill content from its file, stripping YAML frontmatter.
 ///
 /// Public entrypoint for the shell crate to load skill content at
@@ -484,7 +504,7 @@ pub async fn load_skill_content(skill: &SkillInfo) -> Result<String, String> {
     // Producers strip frontmatter before setting `body`. Re-strip would drop a
     // leading Markdown HR (`---`) and skip link resolution for disk skills.
     if let Some(body) = skill.body.as_ref().filter(|b| !b.is_empty()) {
-        return Ok(body.clone());
+        return Ok(localize_atlas_authoring_paths(&skill.name, body));
     }
     // Synthetic product paths are never on disk; empty body is authoritative.
     if skill.path.contains("://") {
@@ -497,10 +517,11 @@ pub async fn load_skill_content(skill: &SkillInfo) -> Result<String, String> {
     match tokio::fs::read_to_string(path).await {
         Ok(content) => {
             let body = extract_skill_body(&content);
-            Ok(match path.parent() {
+            let body = match path.parent() {
                 Some(skill_dir) => resolve_skill_internal_links(&body, skill_dir),
                 None => body,
-            })
+            };
+            Ok(localize_atlas_authoring_paths(&skill.name, &body))
         }
         Err(e) => Err(format!("Failed to read skill file '{}': {}", skill.path, e)),
     }
@@ -517,6 +538,7 @@ pub async fn load_skill_with_body(skill: &SkillInfo) -> Result<SkillInfo, String
         Some(skill_dir) => resolve_skill_internal_links(&body, skill_dir),
         None => body,
     };
+    let body = localize_atlas_authoring_paths(&skill.name, &body);
     let mut loaded = skill.clone();
     loaded.body = if body.is_empty() { None } else { Some(body) };
     Ok(loaded)
@@ -554,6 +576,56 @@ It has multiple lines."#;
         let content = "Just some content without frontmatter";
         let body = extract_skill_body(content);
         assert_eq!(body, content);
+    }
+
+    #[test]
+    fn localize_create_skill_rewrites_grok_paths() {
+        let body = "\
+Resolve the Grok home directory: otherwise use `~/.grok`.
+Project: `<repo-root>/.grok/skills/<name>/SKILL.md`
+User: `<grok-home>/skills/<name>/SKILL.md`
+Grok knows when to auto-invoke it. Grok will invoke it.";
+        let out = localize_atlas_authoring_paths("create-skill", body);
+        assert!(out.contains(".atlas/skills/"), "{out}");
+        assert!(out.contains("`~/.atlas`"), "{out}");
+        assert!(!out.contains(".grok/skills/"), "{out}");
+        assert!(!out.contains("~/.grok"), "{out}");
+        assert!(out.contains("Atlas home"), "{out}");
+        assert!(out.contains("Atlas knows when"), "{out}");
+        assert!(out.contains("Atlas will invoke"), "{out}");
+        // Idempotent.
+        assert_eq!(out, localize_atlas_authoring_paths("create-skill", &out));
+    }
+
+    #[test]
+    fn localize_create_workflow_rewrites_grok_paths() {
+        let body = "Project: `<repo-root>/.grok/workflows/<name>.rhai`\nUser: `~/.grok/workflows/<name>.rhai`";
+        let out = localize_atlas_authoring_paths("create-workflow", body);
+        assert_eq!(
+            out,
+            "Project: `<repo-root>/.atlas/workflows/<name>.rhai`\nUser: `~/.atlas/workflows/<name>.rhai`"
+        );
+    }
+
+    #[test]
+    fn localize_leaves_other_skills_unchanged() {
+        let body = "Write to `.grok/skills/foo` and `~/.grok`.";
+        assert_eq!(localize_atlas_authoring_paths("commit", body), body);
+    }
+
+    #[tokio::test]
+    async fn load_skill_content_localizes_preloaded_create_skill_body() {
+        let skill = SkillInfo {
+            name: "create-skill".to_string(),
+            path: "chat-product://create-skill".to_string(),
+            body: Some("Save under `.grok/skills/<name>/` or `~/.grok/skills/`.".into()),
+            ..SkillInfo::default()
+        };
+        let loaded = load_skill_content(&skill).await.unwrap();
+        assert_eq!(
+            loaded,
+            "Save under `.atlas/skills/<name>/` or `~/.atlas/skills/`."
+        );
     }
 
     #[tokio::test]

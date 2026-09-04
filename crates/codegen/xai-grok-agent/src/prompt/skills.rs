@@ -48,8 +48,8 @@ pub struct SkillsConfig {
 
 /// List all discovered skills with their metadata.
 ///
-/// Priority order: Local (cwd/.grok/skills, cwd/.agents/skills, cwd/.claude/skills) → Intermediate dirs →
-/// Repo (repo_root/.grok/skills, repo_root/.agents/skills, repo_root/.claude/skills) → User (~/.grok/skills, ~/.agents/skills, ~/.claude/skills)
+/// Priority order: Local (cwd/.atlas/skills, cwd/.grok/skills, cwd/.agents/skills, cwd/.claude/skills) → Intermediate dirs →
+/// Repo (repo_root/.atlas/skills, repo_root/.grok/skills, repo_root/.agents/skills, repo_root/.claude/skills) → User (~/.atlas/skills, ~/.agents/skills, ~/.claude/skills)
 /// → additional paths from `config.paths`
 /// → Server (injected `config.server_skill_dirs`)
 /// → Bundled (injected `config.bundled_skill_dirs` + `~/.grok/bundled`; lowest precedence).
@@ -163,8 +163,10 @@ pub fn collect_skill_config_dirs(
         }
     };
 
-    // Vendor dirs (`.claude`/`.cursor`) are gated by the resolved compat config; `.grok` and `.agents` are always present
-    // When all cells are on, this list equals the historical `[".grok", ".agents", ".claude", ".cursor"]`
+    // Vendor dirs (`.claude`/`.cursor`) are gated by the resolved compat
+    // config; `.atlas`, `.grok`, and `.agents` are always present.
+    // When all cells are on, this list equals
+    // `[".atlas", ".grok", ".agents", ".claude", ".cursor"]`.
     let config_dir_names = compat.skill_config_dirs();
 
     // Priority 1 & 2: Walk from cwd up to the git root.
@@ -250,10 +252,12 @@ fn scope_for_config_dir(dir: &Path, cwd: Option<&Path>, git_root: Option<&Path>)
 
 /// Collect paths into `out`, deduplicating by canonical path.
 ///
-/// Skill/command discovery does **not** consult `.gitignore`.
-/// Auto-discovery only visits known config roots (`.grok`, `.agents`, `.claude`, `.cursor`), which teams often gitignore but still expect to load.
-/// Hiding a skill uses `[skills] ignore` in config, not repo ignore rules.
-/// AGENTS.md discovery still honors gitignore: that is content, not skill roots.
+/// Skill/command discovery does **not** consult `.gitignore`. Auto-discovery
+/// only visits known config roots (`.atlas`, `.grok`, `.agents`, `.claude`,
+/// `.cursor`), which teams often gitignore as local-only config while still
+/// expecting them to load. Hiding a skill uses `[skills] ignore` in config, not
+/// repo ignore rules. AGENTS.md discovery still honors gitignore — that is
+/// content, not skill roots.
 fn collect_discovered_paths(
     paths: impl IntoIterator<Item = PathBuf>,
     scope: SkillScope,
@@ -2359,8 +2363,8 @@ mod tests {
     fn collect_skill_config_dirs_gates_vendor_dirs() {
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path();
-        // Not a git repo, so it falls to the cwd-only branch (no upward walk)
-        for name in [".grok", ".agents", ".claude", ".cursor"] {
+        // Not a git repo → falls to the cwd-only branch (no upward walk).
+        for name in [".atlas", ".grok", ".agents", ".claude", ".cursor"] {
             fs::create_dir_all(cwd.join(name)).unwrap();
         }
 
@@ -2382,6 +2386,7 @@ mod tests {
         );
         assert!(ends_with(&dirs, ".claude"), "claude must remain: {dirs:?}");
         assert!(ends_with(&dirs, ".grok"), "grok must remain: {dirs:?}");
+        assert!(ends_with(&dirs, ".atlas"), "atlas must remain: {dirs:?}");
     }
 
     // ── Same-scope frontmatter-name collisions (copied skill dirs) ──────

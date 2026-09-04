@@ -4,8 +4,37 @@
 
 所有 CLI 命令均在**仓库根目录**执行（含 `Cargo.toml` 的那一层）。
 
----
+## 目录
 
+1. [1. 产物对照](#1-产物对照)
+2. [2. 公共依赖](#2-公共依赖)
+3. [3. Windows（x86_64）](#3-windowsx86_64)
+   - [3.1 环境](#31-环境)
+   - [3.2 编译 CLI](#32-编译-cli)
+   - [3.3 编译 atlas-server（可选）](#33-编译-atlas-server可选)
+4. [4. Linux（x86_64 / aarch64）](#4-linuxx86_64--aarch64)
+   - [4.1 环境](#41-环境)
+   - [4.2 编译 CLI](#42-编译-cli)
+   - [4.3 编译 atlas-server（可选）](#43-编译-atlas-server可选)
+   - [4.4 CentOS 7 / 老 glibc 兼容（musl 静态构建）](#44-centos-7--老-glibc-兼容musl-静态构建)
+     - [现象](#现象)
+     - [原因](#原因)
+     - [构建步骤（在任意较新 Linux 上交叉编即可）](#构建步骤在任意较新-linux-上交叉编即可)
+     - [常见失败：`sqlite-vec` / `u_int8_t`](#常见失败sqlite-vec--u_int8_t)
+     - [发布前自检](#发布前自检)
+     - [与默认 gnu 构建对比](#与默认-gnu-构建对比)
+     - [备选方案](#备选方案)
+     - [发布到 atlas-server](#发布到-atlas-server)
+5. [5. macOS（Apple Silicon / Intel）](#5-macosapple-silicon--intel)
+   - [5.1 环境](#51-环境)
+   - [5.2 编译 CLI（Apple Silicon，推荐）](#52-编译-cliapple-silicon推荐)
+   - [5.3 Intel Mac](#53-intel-mac)
+   - [5.4 编译 atlas-server（可选）](#54-编译-atlas-server可选)
+6. [6. ripgrep 下载失败（macOS / Linux Release）](#6-ripgrep-下载失败macos--linux-release)
+7. [7. 常见问题](#7-常见问题)
+8. [8. 编完之后怎么发布](#8-编完之后怎么发布)
+
+---
 ## 1. 产物对照
 
 | 组件 | 包 / 入口 | 本机产物 | 发布文件名 |

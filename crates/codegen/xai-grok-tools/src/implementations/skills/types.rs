@@ -18,11 +18,11 @@ use strum::AsRefStr;
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum SkillScope {
-    /// cwd/.grok/skills (highest priority)
+    /// cwd/.atlas/skills (highest priority), then cwd/.grok/skills
     Local = 0,
-    /// repo_root/.grok/skills
+    /// repo_root/.atlas/skills, then repo_root/.grok/skills
     Repo = 1,
-    /// ~/.grok/skills
+    /// ~/.atlas/skills (Atlas Home)
     User = 2,
     /// ~/.grok/server-skills (synced from the skill store)
     Server = 3,

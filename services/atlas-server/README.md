@@ -183,13 +183,27 @@ Startup behavior:
 2. Else pack `/v1/bundle/*` from `$ATLAS_GROK_HOME/bundled` (+ user `skills/`)
 3. When `ATLAS_UPSTREAM=1` (default), proxy `/v1/responses` using `$ATLAS_GROK_HOME/auth.json`
 
-Place or refresh probes:
+Place or refresh probes（需 **xAI 官方账号**，不是企业 atlas-server 登录）：
 
 ```powershell
-mkdir download
-# copy probe_* into .\download  OR:
+# 1) Device Login → scripts/auth.json（不覆盖 ~/.atlas）
 $env:HTTPS_PROXY="http://127.0.0.1:7890"
-python scripts/probe_xai_proxy.py   # writes into ATLAS_DOWNLOAD_DIR / ./download
+python scripts/xai_login.py              # 浏览器确认机器码
+python scripts/xai_login.py --status     # 只看摘要
+python scripts/xai_login.py --refresh    # 用 refresh_token 续期
+
+# 2) 拉 probe_* 到 ATLAS_DOWNLOAD_DIR / .\download
+mkdir download
+python scripts/probe_xai_proxy.py
+```
+
+`probe_bundle_archive` 是 **gzip（原始文件名 `bundle.tar`）**，解开是 ustar。登录凭证落在 `scripts/auth.json`（已 gitignore）。
+
+解压后的目录 `probe_bundle_archive/` 改完再打回去：
+
+```powershell
+python scripts/pack_bundle_archive.py
+# 写出 download/probe_bundle_archive ，atlas-server 启动后即用这份
 ```
 
 ## Layout

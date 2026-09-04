@@ -1714,16 +1714,44 @@ async fn await_subagent_turn_or_cancellation(
         turn_result = prompt_rx => SubagentWaitOutcome::TurnResult(Box::new(turn_result)),
     }
 }
+/// Tool / turn / artifact totals taken from a child session's signals.
+///
+/// `artifacts` is the session-lifetime `artifacts_written` list (dedup,
+/// order-preserving), not the last-turn `artifacts_this_turn` delta. A
+/// subagent Task Report covers the whole child run, including follow-up
+/// prompts after the initial attempt.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ChildSignalCounts {
+    tool_calls: u32,
+    turns: u32,
+    artifacts: Vec<String>,
+}
+
+fn child_signal_counts(snapshot: &crate::session::signals::SessionSignals) -> ChildSignalCounts {
+    ChildSignalCounts {
+        tool_calls: snapshot.tool_call_count,
+        turns: snapshot.turn_count,
+        artifacts: snapshot.artifacts_written.clone(),
+    }
+}
+
+fn apply_child_signal_counts(result: &mut SubagentResult, counts: ChildSignalCounts) {
+    result.tool_calls = counts.tool_calls;
+    result.turns = counts.turns;
+    result.artifacts = counts.artifacts;
+}
+
 /// `None` when the signals actor never answered (wedged or dead) — callers
 /// must not mistake the failed read for zero counts.
-async fn signals_snapshot_counts(child_handle: &SessionHandle) -> Option<(u32, u32)> {
+#[tracing::instrument(level = "debug", skip_all)]
+async fn signals_snapshot_counts(child_handle: &SessionHandle) -> Option<ChildSignalCounts> {
     handle_request::child_actor_query(
         "signals_snapshot",
         child_handle.signals_handle.snapshot(),
         None,
     )
     .await
-    .map(|snapshot| (snapshot.tool_call_count, snapshot.turn_count))
+    .map(|snapshot| child_signal_counts(&snapshot))
 }
 fn cancellation_error_message(
     category: Option<xai_grok_session_events::types::CancellationCategory>,

@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Atlas Relay Demo</title>
+  <style>
+    :root {
+      --bg: #0f1216;
+      --panel: #171b21;
+      --line: #2a313c;
+      --text: #e7ecf3;
+      --muted: #8b97a8;
+      --accent: #3d9cf0;
+      --ok: #3dd68c;
+      --warn: #e6b450;
+      --err: #f07178;
+      --user: #2a3a4d;
+      --agent: #1c242e;
+      --tool: #243028;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font: 14px/1.45 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }
+    header h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted);
+      flex: none;
+    }
+    .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+    .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+    select {
+      background: var(--bg);
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 5px 8px;
+      font: inherit;
+      min-width: 180px;
+    }
+    .row {
+      display: flex; gap: 8px; align-items: center;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #12161c;
+    }
+    .row label { color: var(--muted); font-size: 12px; width: 72px; flex: none; }
+    .row.actions { justify-content: flex-end; }
+    .row button { padding: 6px 12px; font-size: 13px; }
+    .row input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font: inherit;
+    }
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .msg {
+      max-width: 860px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user { align-self: flex-end; background: var(--user); }
+    .msg.agent { align-self: flex-start; background: var(--agent); border: 1px solid var(--line); }
+    .msg.sys { align-self: center; color: var(--muted); font-size: 12px; background: transparent; }
+    .msg.err { align-self: center; color: var(--err); font-size: 12px; }
+    .msg.tool { align-self: flex-start; background: var(--tool); color: #b7d5c0; font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
+    .msg .tag { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+    .think { color: var(--muted); font-style: italic; }
+    footer {
+      display: flex; gap: 8px;
+      padding: 12px 16px;
+      border-top: 1px solid var(--line);
+      background: var(--panel);
+    }
+    textarea {
+      flex: 1;
+      min-height: 52px;
+      max-height: 160px;
+      resize: vertical;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font: inherit;
+    }
+    button {
+      background: var(--accent);
+      color: #061018;
+      border: 0;
+      border-radius: 8px;
+      padding: 0 16px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button.ghost {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid var(--line);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="dot" id="agentDot"></span>
+    <h1>Atlas Relay Chat</h1>
+    <select id="agentSel" title="选择要对话的 Agent">
+      <option value="">选择 Agent…</option>
+    </select>
+    <span class="meta" id="status">等待 CLI 出站连接…</span>
+  </header>
+  <div class="row">
+    <label>cwd</label>
+    <input id="cwd" placeholder="该 Agent 机器上的绝对路径，例如 E:\work\mygit\architechure\grok-build" />
+  </div>
+  <div class="row">
+    <label>jobId</label>
+    <input id="jobId" placeholder="派工编号，例如 pay-20260901" />
+  </div>
+  <div class="row">
+    <label>需求 URL</label>
+    <input id="reqUrl" placeholder="https://…/requirements.md" />
+  </div>
+  <div class="row">
+    <label>设计 URL</label>
+    <input id="designUrl" placeholder="https://…/detailed-design.md" />
+  </div>
+  <div class="row">
+    <label>验收 URL</label>
+    <input id="acceptUrl" placeholder="https://…/acceptance.md" />
+  </div>
+  <div class="row actions">
+    <button class="ghost" id="sampleBtn" type="button">填入示例 URL</button>
+    <button id="dispatchBtn" type="button" disabled>开始派工</button>
+  </div>
+  <div id="log"></div>
+  <footer>
+    <button class="ghost" id="cancelBtn" type="button" disabled>停止</button>
+    <textarea id="input" placeholder="先选 Agent（只有一个会自动选），圆点变绿后再输入。Enter 发送，Shift+Enter 换行"></textarea>
+    <button id="sendBtn" type="button" disabled>发送</button>
+  </footer>
+  <script>
+    const logEl = document.getElementById("log");
+    const cwdEl = document.getElementById("cwd");
+    const inputEl = document.getElementById("input");
+    const sendBtn = document.getElementById("sendBtn");
+    const cancelBtn = document.getElementById("cancelBtn");
+    const agentDot = document.getElementById("agentDot");
+    const statusEl = document.getElementById("status");
+    const agentSel = document.getElementById("agentSel");
+    const jobIdEl = document.getElementById("jobId");
+    const reqUrlEl = document.getElementById("reqUrl");
+    const designUrlEl = document.getElementById("designUrl");
+    const acceptUrlEl = document.getElementById("acceptUrl");
+    const sampleBtn = document.getElementById("sampleBtn");
+    const dispatchBtn = document.getElementById("dispatchBtn");
+
+    const urlAgent = (new URLSearchParams(location.search).get("agent") || "").trim();
+    let boundId = urlAgent;
+    let agents = [];
+    let ws;
+    let rpcId = 1;
+    let pending = new Map();
+    const transcripts = {};
+    const sessions = {};
+    let streaming = null;
+    let lastOnline = {};
+    let ackedBound = "";
+    let stolen = false;
+
+    function sessionOf(id) {
+      if (!id) return { sessionId: null, handshake: "idle", busy: false };
+      if (!sessions[id]) sessions[id] = { sessionId: null, handshake: "idle", busy: false };
+      return sessions[id];
+    }
+
+    function cwdKey(id) {
+      return id ? "atlas-relay-cwd." + id : "atlas-relay-cwd";
+    }
+
+    function loadCwd(id) {
+      const specific = id ? localStorage.getItem(cwdKey(id)) : null;
+      if (specific != null) return specific;
+      return localStorage.getItem("atlas-relay-cwd") || "";
+    }
+
+    function saveCwd(id, value) {
+      if (id) localStorage.setItem(cwdKey(id), value);
+      localStorage.setItem("atlas-relay-cwd", value);
+    }
+
+    cwdEl.value = loadCwd(boundId);
+
+    function snapshotLog() {
+      return [...logEl.children].map((el) => ({
+        className: el.className,
+        text: el.textContent
+      }));
+    }
+
+    function restoreLog(items) {
+      logEl.innerHTML = "";
+      streaming = null;
+      for (const item of items || []) {
+        const d = document.createElement("div");
+        d.className = item.className;
+        d.textContent = item.text;
+        logEl.appendChild(d);
+      }
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function saveTranscript() {
+      if (!boundId) return;
+      transcripts[boundId] = snapshotLog();
+    }
+
+    function add(kind, text, extraClass) {
+      const d = document.createElement("div");
+      d.className = "msg " + kind + (extraClass ? " " + extraClass : "");
+      d.textContent = text;
+      logEl.appendChild(d);
+      logEl.scrollTop = logEl.scrollHeight;
+      if (boundId) transcripts[boundId] = snapshotLog();
+      return d;
+    }
+
+    function boundOnline() {
+      if (!boundId) return false;
+      return agents.some((a) => a.id === boundId && a.online);
+    }
+
+    function setStatus() {
+      const sess = sessionOf(boundId);
+      const online = boundOnline();
+      agentDot.classList.toggle("on", online && sess.handshake === "ready");
+      const sessTxt = sess.sessionId ? " · session " + sess.sessionId.slice(0, 8) : "";
+      if (!agents.some((a) => a.online) && !boundId) {
+        statusEl.textContent = "没有在线 Agent — 先启动 atlas agent headless";
+      }       else if (stolen) {
+        statusEl.textContent = boundId + " 已被其他页面占用，请重新选择";
+      } else if (!boundId) {
+        statusEl.textContent = "请选择要对话的 Agent";
+      } else if (!online) {
+        statusEl.textContent = boundId + " 离线 — 保持绑定，等待重连";
+      } else if (sess.handshake !== "ready") {
+        statusEl.textContent = boundId + " 已连接，正在建立 ACP 会话…";
+      } else {
+        statusEl.textContent = "就绪 · " + boundId + sessTxt;
+      }
+      sendBtn.disabled = stolen || !online || sess.handshake !== "ready" || sess.busy;
+      dispatchBtn.disabled = sendBtn.disabled;
+      cancelBtn.disabled = !sess.busy;
+    }
+
+    function rebuildSelect() {
+      const keep = boundId;
+      agentSel.innerHTML = "";
+      const ph = document.createElement("option");
+      ph.value = "";
+      ph.textContent = agents.length ? "选择 Agent…" : "等待 Agent…";
+      agentSel.appendChild(ph);
+      for (const a of agents) {
+        const opt = document.createElement("option");
+        opt.value = a.id;
+        const extra = [a.userId, a.version].filter(Boolean).join(" · ");
+        opt.textContent = a.id + (a.online ? "" : "（离线）") + (extra ? "  " + extra : "");
+        agentSel.appendChild(opt);
+      }
+      agentSel.value = keep && [...agentSel.options].some((o) => o.value === keep) ? keep : "";
+    }
+
+    function rememberAgentInUrl(id) {
+      const u = new URL(location.href);
+      if (id) u.searchParams.set("agent", id);
+      else u.searchParams.delete("agent");
+      history.replaceState(null, "", u);
+    }
+
+    function sendRpc(method, params) {
+      const id = rpcId++;
+      const msg = { jsonrpc: "2.0", id, method, params };
+      ws.send(JSON.stringify(msg));
+      return new Promise((resolve, reject) => {
+        pending.set(id, { resolve, reject });
+      });
+    }
+
+    function requestBind(id, fromUser) {
+      id = (id || "").trim();
+      if (!id) return;
+      stolen = false;
+      if (id !== boundId) {
+        saveTranscript();
+        boundId = id;
+        cwdEl.value = loadCwd(id);
+        restoreLog(transcripts[id] || []);
+        streaming = null;
+      } else {
+        boundId = id;
+      }
+      rememberAgentInUrl(id);
+      rebuildSelect();
+      setStatus();
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          jsonrpc: "2.0",
+          method: "atlas.relay/bind",
+          params: { agentId: id }
+        }));
+      }
+      const sess = sessionOf(id);
+      if (boundOnline() && sess.handshake === "idle") startSession();
+      if (fromUser && !boundOnline()) add("sys", "已选择 " + id + "（离线，等待连接）");
+    }
+
+    function connect() {
+      const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/client";
+      ws = new WebSocket(url);
+      ws.onopen = () => {
+        add("sys", "已连上 relay");
+        if (boundId) requestBind(boundId);
+      };
+      ws.onclose = () => {
+        for (const [, p] of pending) p.reject(new Error("relay 断开"));
+        pending.clear();
+        add("sys", "与 relay 断开，2s 后重连");
+        setTimeout(connect, 2000);
+      };
+      ws.onerror = () => {};
+      ws.onmessage = (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        handle(msg);
+      };
+    }
+
+    async function startSession() {
+      const id = boundId;
+      const sess = sessionOf(id);
+      if (!id || !boundOnline() || sess.handshake !== "idle") return;
+      sess.handshake = "init";
+      setStatus();
+      try {
+        await sendRpc("initialize", {
+          protocolVersion: 1,
+          clientCapabilities: {
+            fs: { readTextFile: false, writeTextFile: false },
+            terminal: false
+          },
+          _meta: {
+            clientIdentifier: "atlas-relay-demo",
+            clientType: "atlas-relay-demo",
+            startupHints: { nonInteractive: true }
+          }
+        });
+        if (boundId !== id) return;
+        const cwd = (cwdEl.value || "").trim() || ".";
+        saveCwd(id, cwdEl.value || "");
+        const res = await sendRpc("session/new", {
+          cwd,
+          mcpServers: [],
+          _meta: { yoloMode: true }
+        });
+        if (boundId !== id) return;
+        sess.sessionId = res.sessionId || (res.session && res.session.id);
+        if (!sess.sessionId) throw new Error("session/new 没有返回 sessionId: " + JSON.stringify(res));
+        sess.handshake = "ready";
+        add("sys", "会话已建立 · " + id + " · cwd = " + cwd);
+      } catch (e) {
+        if (boundId === id) sess.handshake = "idle";
+        add("err", String(e.message || e));
+      }
+      setStatus();
+    }
+
+    function handleStatus(params) {
+      agents = params.agents || [];
+      const serverBound = (params.boundAgentId || "").trim();
+      if (serverBound) {
+        stolen = false;
+        if (serverBound !== boundId) {
+          saveTranscript();
+          boundId = serverBound;
+          cwdEl.value = loadCwd(boundId);
+          restoreLog(transcripts[boundId] || []);
+          rememberAgentInUrl(boundId);
+        }
+        ackedBound = serverBound;
+      } else if (ackedBound && ackedBound === boundId) {
+        add("sys", boundId + " 已被其他页面占用，请重新选择");
+        ackedBound = "";
+        stolen = true;
+      }
+      rebuildSelect();
+
+      const onlineIds = agents.filter((a) => a.online).map((a) => a.id);
+      if (!boundId && !stolen && onlineIds.length === 1) {
+        requestBind(onlineIds[0]);
+        return;
+      }
+
+      const online = boundOnline();
+      const was = lastOnline[boundId];
+      lastOnline[boundId] = online;
+      const sess = sessionOf(boundId);
+      if (boundId && was && !online) {
+        sess.handshake = "idle";
+        sess.sessionId = null;
+        sess.busy = false;
+        add("sys", boundId + " 已离线，绑定保留");
+      }
+      if (boundId && online && sess.handshake === "idle") startSession();
+      setStatus();
+    }
+
+    function handle(msg) {
+      if (msg.method === "atlas.relay/status") {
+        handleStatus(msg.params || {});
+        return;
+      }
+      if (msg.method === "session/request_permission") {
+        autoAllow(msg);
+        return;
+      }
+      if (msg.method === "session/update" || msg.method === "x.ai/session_notification") {
+        onUpdate(msg.params && (msg.params.update || msg.params));
+        return;
+      }
+      if (msg.id != null && pending.has(msg.id)) {
+        const p = pending.get(msg.id);
+        pending.delete(msg.id);
+        if (msg.error) p.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+        else p.resolve(msg.result || {});
+        return;
+      }
+    }
+
+    function autoAllow(msg) {
+      const opts = (msg.params && msg.params.options) || [];
+      const pick = opts.find((o) => o.kind === "allow_once" || o.kind === "allowOnce") || opts[0];
+      const result = pick
+        ? { outcome: { outcome: "selected", optionId: pick.optionId } }
+        : { outcome: { outcome: "cancelled" } };
+      ws.send(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }));
+      const title = (msg.params && msg.params.toolCall && (msg.params.toolCall.title || msg.params.toolCall.kind)) || "工具";
+      add("tool", "已自动允许：" + title);
+    }
+
+    function onUpdate(u) {
+      if (!u) return;
+      const kind = u.sessionUpdate;
+      if (kind === "agent_message_chunk") {
+        const t = (u.content && u.content.text) || "";
+        if (!streaming) streaming = add("agent", "");
+        streaming.textContent += t;
+        if (boundId) transcripts[boundId] = snapshotLog();
+        logEl.scrollTop = logEl.scrollHeight;
+      } else if (kind === "agent_thought_chunk") {
+        const t = (u.content && u.content.text) || "";
+        if (!streaming) streaming = add("agent", "", "think");
+        streaming.textContent += t;
+        if (boundId) transcripts[boundId] = snapshotLog();
+      } else if (kind === "tool_call") {
+        streaming = null;
+        const title = u.title || u.kind || "tool";
+        add("tool", "▶ " + title);
+      } else if (kind === "tool_call_update") {
+        const st = u.status || "";
+        if (st && st !== "pending" && st !== "in_progress") {
+          add("tool", "■ " + (u.title || u.toolCallId || "tool") + " · " + st);
+        }
+      }
+    }
+
+    function lastAgentText() {
+      const nodes = [...logEl.querySelectorAll(".msg.agent")];
+      return nodes.length ? nodes[nodes.length - 1].textContent : "";
+    }
+
+    function extractReport(text) {
+      const i = text.indexOf("{");
+      const j = text.lastIndexOf("}");
+      if (i < 0 || j <= i) return null;
+      try {
+        const obj = JSON.parse(text.slice(i, j + 1));
+        return obj && obj.jobId ? obj : null;
+      } catch {
+        return null;
+      }
+    }
+
+    async function sendPromptText(text) {
+      const sess = sessionOf(boundId);
+      if (!text || sess.handshake !== "ready" || sess.busy) return false;
+      add("user", text);
+      streaming = null;
+      sess.busy = true;
+      setStatus();
+      try {
+        await sendRpc("session/prompt", {
+          sessionId: sess.sessionId,
+          prompt: [{ type: "text", text }]
+        });
+        return true;
+      } catch (e) {
+        add("err", String(e.message || e));
+        return false;
+      } finally {
+        streaming = null;
+        sess.busy = false;
+        setStatus();
+      }
+    }
+
+    async function sendPrompt() {
+      const text = inputEl.value.trim();
+      if (!text) return;
+      inputEl.value = "";
+      await sendPromptText(text);
+      inputEl.focus();
+    }
+
+    function fillSampleUrls() {
+      const base = location.origin + "/sample-docs/";
+      if (!jobIdEl.value.trim()) jobIdEl.value = "demo-" + Date.now().toString(36);
+      reqUrlEl.value = base + "requirements.md";
+      designUrlEl.value = base + "design.md";
+      acceptUrlEl.value = base + "acceptance.md";
+    }
+
+    async function runDispatch() {
+      const sess = sessionOf(boundId);
+      if (sess.handshake !== "ready" || sess.busy || stolen) return;
+      const body = {
+        jobId: jobIdEl.value.trim() || "demo-" + Date.now().toString(36),
+        requirementsUrl: reqUrlEl.value.trim(),
+        designUrl: designUrlEl.value.trim(),
+        acceptanceUrl: acceptUrlEl.value.trim()
+      };
+      jobIdEl.value = body.jobId;
+      let prompts;
+      try {
+        const res = await fetch("/dispatch/prompts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        const raw = await res.text();
+        if (!res.ok) throw new Error(raw || res.statusText);
+        prompts = JSON.parse(raw);
+      } catch (e) {
+        add("err", "派工文案失败：" + (e.message || e));
+        return;
+      }
+      add("sys", "派工 " + prompts.jobId + " · 三轮：落盘 → Role 4 → 回执");
+      if (!await sendPromptText(prompts.drop)) return;
+      if (!await sendPromptText(prompts.execute)) return;
+      if (!await sendPromptText(prompts.report)) return;
+      const report = extractReport(lastAgentText());
+      if (report) {
+        add("sys", "回执 " + (report.status || "?") + " · " + (report.summary || prompts.reportPath));
+      } else {
+        add("sys", "未解析到 JSON 回执，请看 Agent 原文或 " + prompts.reportPath);
+      }
+    }
+
+    function cancelTurn() {
+      const sess = sessionOf(boundId);
+      if (!sess.sessionId || !ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/cancel",
+        params: { sessionId: sess.sessionId }
+      }));
+    }
+
+    sendBtn.onclick = sendPrompt;
+    cancelBtn.onclick = cancelTurn;
+    sampleBtn.onclick = fillSampleUrls;
+    dispatchBtn.onclick = runDispatch;
+    agentSel.addEventListener("change", () => {
+      if (agentSel.value) requestBind(agentSel.value, true);
+    });
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendPrompt();
+      }
+    });
+    cwdEl.addEventListener("change", () => saveCwd(boundId, cwdEl.value));
+
+    setStatus();
+    connect();
+  </script>
+</body>
+</html>

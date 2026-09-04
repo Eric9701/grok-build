@@ -14,5 +14,6 @@ alwaysApply: true
 | 账号、Catalog ID、Task Report、OAuth refresh 落库 | `services/atlas-server/CONTEXT.md`、`docs/project-memory.md` |
 | 遥测门控、构建口令 | `atlas-telemetry-ops` 规则 |
 | 托管模型 ENC | `atlas-managed-models` 规则 |
+| 五件套改了什么 | `docs/changelog/` |
 
 高频：用户级插件在 `~/.atlas/installed-plugins` 且须 `[plugins].enabled`；斜杠列表才是加载结果。项目级 `.atlas/plugins` / `.atlas/skills` 尚未扫描。Linux 老 glibc 用 musl，见编译手册。

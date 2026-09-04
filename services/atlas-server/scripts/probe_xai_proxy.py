@@ -1,16 +1,19 @@
+"""从 xAI cli-chat-proxy 拉取 probe_* 缓存。
+
+凭证来自 xai_login.py 同目录的 auth.json（不要用企业 ~/.atlas）。
+
+    $env:HTTPS_PROXY="http://127.0.0.1:7890"
+    python scripts/xai_login.py
+    python scripts/probe_xai_proxy.py
+"""
+
 import json
 import os
-import sys
 import urllib.request
 
-auth_path = os.environ.get("ATLAS_GROK_HOME", os.path.join(os.path.expanduser("~"), ".grok"))
-auth_path = os.path.join(auth_path, "auth.json")
-auth = json.load(open(auth_path, encoding="utf-8"))
-entry = next(iter(auth.values()))
-token = entry.get("key") or entry.get("access_token")
-if not token:
-    print("NO_TOKEN")
-    sys.exit(1)
+from xai_login import load_access_token
+
+token = load_access_token(refresh=True)
 
 base = "https://cli-chat-proxy.grok.com/v1"
 headers = {
@@ -24,7 +27,7 @@ handlers = []
 if proxy:
     handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
 opener = urllib.request.build_opener(*handlers)
-out_dir = os.environ.get("ATLAS_DOWNLOAD_DIR") or os.path.join(os.getcwd(), "download")
+out_dir = os.environ.get("ATLAS_DOWNLOAD_DIR") or os.path.join(os.getcwd(), "download-new")
 os.makedirs(out_dir, exist_ok=True)
 print("writing probes to", out_dir)
 

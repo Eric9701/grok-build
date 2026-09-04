@@ -225,6 +225,37 @@ fn parent_followup_rejects_impossible_structured_receipt() {
 }
 
 #[test]
+fn followup_fold_keeps_artifacts_collected_on_the_initial_result() {
+    let previous = SubagentResult {
+        success: true,
+        output: Arc::from("initial answer"),
+        artifacts: vec!["src/lib.rs".into(), "docs/note.md".into()],
+        ..Default::default()
+    };
+    let empty_summary = String::new;
+    let max_turns = |_| String::new();
+    let output = reduce_prompt_turn_result(PromptTurnResultInput {
+        result: previous,
+        turn_result: Ok(Ok(prompt_turn_ok(PromptCompletionKind::Completed, None))),
+        mode: PromptTurnResultMode::ParentFollowup,
+        final_text: "follow-up answer".to_string(),
+        was_cancelled: false,
+        summaries: PromptTurnResultSummaries {
+            success: &empty_summary,
+            max_turns: &max_turns,
+            cancelled: &empty_summary,
+        },
+        result_tokens: 0,
+    });
+
+    assert!(output.result.success);
+    assert_eq!(
+        output.result.artifacts,
+        vec!["src/lib.rs".to_string(), "docs/note.md".to_string()]
+    );
+}
+
+#[test]
 fn successful_empty_followup_does_not_reuse_the_initial_output() {
     let previous = SubagentResult {
         success: true,

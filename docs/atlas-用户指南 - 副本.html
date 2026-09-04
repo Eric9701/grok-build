@@ -1,0 +1,1426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas Runtime 用户指南</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0f1419;
+  --bg2: #1a2332;
+  --bg3: #243044;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #22d3ee;
+  --accent2: #38bdf8;
+  --border: #334155;
+  --code-bg: #0c1220;
+  --link: #67e8f9;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: "Noto Sans SC", "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.65;
+  font-size: 15px;
+}
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.layout { display: flex; min-height: 100vh; }
+#sidebar {
+  position: fixed; left: 0; top: 0; bottom: 0; width: 280px;
+  background: var(--bg2); border-right: 1px solid var(--border);
+  overflow-y: auto; z-index: 100; transition: transform .25s;
+}
+#sidebar .brand {
+  padding: 1rem 1.25rem; font-weight: 700; font-size: 1.1rem;
+  color: var(--accent); border-bottom: 1px solid var(--border);
+}
+#search {
+  width: calc(100% - 1.5rem); margin: .75rem; padding: .5rem .75rem;
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); font-size: .9rem;
+}
+#toc { list-style: none; margin: 0; padding: 0 0 2rem; }
+#toc li { margin: 0; }
+#toc .tier {
+  padding: .6rem 1.25rem .25rem; font-size: .7rem; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--muted); font-weight: 600;
+}
+#toc a {
+  display: block; padding: .35rem 1.25rem .35rem 1.5rem;
+  color: var(--muted); font-size: .88rem; border-left: 2px solid transparent;
+}
+#toc a:hover, #toc a.active { color: var(--accent); background: rgba(34,211,238,.06); border-left-color: var(--accent); }
+#toc a.hidden { display: none; }
+#main {
+  margin-left: 280px; flex: 1; max-width: 900px;
+  padding: 2rem 2.5rem 4rem;
+}
+.menu-btn {
+  display: none; position: fixed; top: .75rem; left: .75rem; z-index: 200;
+  background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+  padding: .4rem .7rem; border-radius: 6px; cursor: pointer;
+}
+.chapter { margin-bottom: 3rem; padding-top: 1rem; }
+.chapter > h2 {
+  font-size: 1.75rem; color: var(--accent); margin: 0 0 .5rem;
+  padding-bottom: .5rem; border-bottom: 1px solid var(--border);
+}
+.tier-badge {
+  display: inline-block; font-size: .75rem; background: var(--bg3);
+  color: var(--accent2); padding: .15rem .5rem; border-radius: 4px; margin-bottom: 1rem;
+}
+section { margin: 1.5rem 0; }
+section h3 { color: var(--accent2); font-size: 1.15rem; margin: 1.25rem 0 .5rem; }
+section h4 { color: var(--muted); font-size: 1rem; margin: 1rem 0 .4rem; }
+p { margin: .6rem 0; }
+ul, ol { padding-left: 1.4rem; }
+li { margin: .25rem 0; }
+pre {
+  background: var(--code-bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 1rem 1.1rem; overflow-x: auto;
+  font-size: .82rem; line-height: 1.5; margin: .75rem 0;
+}
+code {
+  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-size: .88em;
+}
+:not(pre) > code {
+  background: var(--code-bg); padding: .12rem .35rem; border-radius: 4px;
+  border: 1px solid var(--border);
+}
+table {
+  width: 100%; border-collapse: collapse; margin: .75rem 0; font-size: .88rem;
+}
+th, td { border: 1px solid var(--border); padding: .45rem .65rem; text-align: left; }
+th { background: var(--bg3); color: var(--accent); }
+tr:nth-child(even) { background: rgba(255,255,255,.02); }
+@media (max-width: 768px) {
+  #sidebar { transform: translateX(-100%); }
+  #sidebar.open { transform: translateX(0); }
+  #main { margin-left: 0; padding: 3rem 1rem 2rem; }
+  .menu-btn { display: block; }
+}
+</style>
+</head>
+<body>
+<button class="menu-btn" id="menuBtn" aria-label="菜单">☰</button>
+<div class="layout">
+<nav id="sidebar">
+<div class="brand">Atlas 用户指南</div>
+<input type="search" id="search" placeholder="搜索章节…" autocomplete="off">
+<ul id="toc">
+<li class="tier">概述</li>
+<li><a href="#ch-00" data-label="00 atlas 用户指南">00. Atlas 用户指南</a></li>
+<li class="tier">Tier1 必备</li>
+<li><a href="#ch-01" data-label="01 快速入门">01. 快速入门</a></li>
+<li><a href="#ch-02" data-label="02 身份验证">02. 身份验证</a></li>
+<li><a href="#ch-03" data-label="03 键盘快捷键">03. 键盘快捷键</a></li>
+<li><a href="#ch-04" data-label="04 斜杠命令">04. 斜杠命令</a></li>
+<li><a href="#ch-05" data-label="05 配置">05. 配置</a></li>
+<li class="tier">Tier2 核心</li>
+<li><a href="#ch-06" data-label="06 主题与外观">06. 主题与外观</a></li>
+<li><a href="#ch-07" data-label="07 mcp 服务器">07. MCP 服务器</a></li>
+<li><a href="#ch-08" data-label="08 skills">08. Skills</a></li>
+<li><a href="#ch-09" data-label="09 plugins">09. Plugins</a></li>
+<li><a href="#ch-10" data-label="10 hooks">10. Hooks</a></li>
+<li><a href="#ch-11" data-label="11 自定义模型">11. 自定义模型</a></li>
+<li><a href="#ch-12" data-label="12 项目规则 agents.md">12. 项目规则 AGENTS.md</a></li>
+<li><a href="#ch-13" data-label="13 memory">13. Memory</a></li>
+<li class="tier">Tier3 进阶</li>
+<li><a href="#ch-14" data-label="14 无头模式与脚本">14. 无头模式与脚本</a></li>
+<li><a href="#ch-15" data-label="15 agent 模式与 acp">15. Agent 模式与 ACP</a></li>
+<li><a href="#ch-16" data-label="16 子代理与人格">16. 子代理与人格</a></li>
+<li><a href="#ch-17" data-label="17 会话管理">17. 会话管理</a></li>
+<li><a href="#ch-18" data-label="18 沙箱模式">18. 沙箱模式</a></li>
+<li><a href="#ch-19" data-label="19 plan 模式">19. Plan 模式</a></li>
+<li><a href="#ch-20" data-label="20 后台任务">20. 后台任务</a></li>
+<li><a href="#ch-21" data-label="21 终端支持与排错">21. 终端支持与排错</a></li>
+<li><a href="#ch-22" data-label="22 权限与安全">22. 权限与安全</a></li>
+<li><a href="#ch-23" data-label="23 agent dashboard">23. Agent Dashboard</a></li>
+<li><a href="#ch-24" data-label="24 外部 opentelemetry">24. 外部 OpenTelemetry</a></li>
+<li><a href="#ch-25" data-label="25 状态栏">25. 状态栏</a></li>
+<li class="tier">企业研发</li>
+<li><a href="#ch-26" data-label="26 ask-atlas 与 atlas-sdd">26. ask-atlas 与 atlas-sdd</a></li>
+<li><a href="#ch-27" data-label="27 企业运行时">27. 企业运行时</a></li>
+<li><a href="#ch-28" data-label="28 配置参考摘要">28. 配置参考摘要</a></li>
+</ul>
+</nav>
+<main id="main">
+<article class="chapter" id="ch-00">
+<span class="tier-badge">概述</span>
+<h2>Atlas 用户指南</h2>
+<section id="ch-00-intro">
+<h3>文档分层</h3>
+<table><thead><tr><th>层级</th><th>章节</th><th>内容</th></tr></thead><tbody>
+<tr><td><strong>Tier1 必备</strong></td><td>01–05</td><td>安装、认证、快捷键、斜杠命令、配置</td></tr>
+<tr><td><strong>Tier2 核心</strong></td><td>06–13</td><td>主题、MCP、Skills、Plugins、Hooks、模型、AGENTS.md、Memory</td></tr>
+<tr><td><strong>Tier3 进阶</strong></td><td>14–25</td><td>无头、ACP、子代理、会话、沙箱、Plan、后台、终端、权限、Dashboard、OTEL、状态栏</td></tr>
+<tr><td><strong>企业研发</strong></td><td>26–28</td><td><code>/ask-atlas</code> / SDD、企业运行时（登录/模型/遥测/扩展）、配置分层摘要</td></tr>
+</tbody></table>
+<h3>快速开始</h3>
+<pre><code># 安装（内网示例）
+irm http://10.218.220.237:22255/atlas/cli/install.ps1 | iex   # Windows
+curl -fsSL http://10.218.220.237:22255/atlas/cli/install.sh | bash  # Unix
+
+# 登录
+atlas login --device-auth
+
+# 启动后常用
+atlas
+/ask-atlas 修一下登录偶发 401</code></pre>
+<p>企业安装一般会带上 <code>atlas-skills</code>（含 <code>/ask-atlas</code>）与 <code>atlas-sdd</code>。用法见 <a href="#ch-26">第 26 章</a>。</p>
+</section>
+</article>
+<article class="chapter" id="ch-01">
+<span class="tier-badge">Tier1 必备</span>
+<h2>快速入门</h2>
+<section id="ch-01-install">
+<h3>安装</h3>
+<p>Atlas 是终端 AI 编程助手，以全屏 TUI 运行，可理解代码库、执行命令、编辑文件、搜索网络并管理任务。支持交互式 TUI、无头脚本模式，以及通过 ACP 集成到编辑器。</p>
+<p><strong>企业/内网（本仓库示例）：</strong></p>
+<pre><code># Windows PowerShell
+irm http://10.218.220.237:22255/atlas/cli/install.ps1 | iex
+
+# macOS / Linux / Git Bash
+curl -fsSL http://10.218.220.237:22255/atlas/cli/install.sh | bash</code></pre>
+<p>PowerShell 安装器会自动将 <code>%USERPROFILE%\.atlas\bin</code> 加入用户 PATH。验证与更新：</p>
+<pre><code>atlas --version
+atlas update</code></pre>
+</section>
+<section id="ch-01-first-launch">
+<h3>首次启动</h3>
+<p>运行 <code>atlas</code>。凭据保存在 <code>~/.atlas/auth.json</code> 并自动刷新。</p>
+<ul>
+<li><strong>企业部署</strong>：推荐 <code>atlas login --device-auth</code>（设备码，先在浏览器登录 atlas-server）</li>
+</ul>
+<pre><code>atlas login --device-auth
+export XAI_API_KEY="xai-..."
+atlas</code></pre>
+</section>
+<section id="ch-01-interaction">
+<h3>基本交互</h3>
+<p>TUI 两大区域：</p>
+<ul>
+<li><strong>Scrollback（回滚区）</strong> — 对话历史、工具调用、文件编辑等</li>
+<li><strong>Prompt（输入区）</strong> — 底部输入，<code>Enter</code> 发送</li>
+</ul>
+<p><code>Tab</code> 在 prompt 与 scrollback 间切换。运行中 <code>Esc</code> 可取消回合（fullscreen vim 模式例外）；空闲时连按两次 <code>Esc</code>（800ms 内）可清空输入或打开 rewind。</p>
+<h4>@ 文件引用</h4>
+<pre><code>@src/main.rs              # 附加文件
+@src/main.rs:10-50        # 附加行范围
+@src/                     # 浏览目录
+@!.github                 # 搜索隐藏文件（前缀 !）</code></pre>
+<h4>权限</h4>
+<p>默认执行命令或编辑文件前会询问。可 <code>Ctrl+O</code> 切换 always-approve、启动时 <code>--yolo</code>，或输入 <code>/always-approve</code>。</p>
+</section>
+<section id="ch-01-concepts">
+<h3>核心概念</h3>
+<h4>会话（Session）</h4>
+<p>每次对话即一个会话，自动保存到 <code>~/.atlas/sessions/</code>。</p>
+<ul>
+<li>新会话：<code>Ctrl+N</code> 或 <code>/new</code></li>
+<li>恢复：<code>/resume</code> 或 <code>atlas --resume &lt;ID&gt;</code></li>
+<li>继续最近：<code>atlas -c</code></li>
+</ul>
+<h4>内置工具</h4>
+<table><thead><tr><th>工具</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>read_file</code> / <code>search_replace</code></td><td>读写与精确编辑</td></tr>
+<tr><td><code>grep</code></td><td>代码库正则搜索（ripgrep）</td></tr>
+<tr><td><code>list_dir</code></td><td>列目录</td></tr>
+<tr><td><code>run_terminal_command</code></td><td>执行 shell</td></tr>
+<tr><td><code>web_search</code> / <code>web_fetch</code></td><td>网络搜索与抓取</td></tr>
+<tr><td><code>todo_write</code></td><td>任务列表</td></tr>
+<tr><td><code>spawn_subagent</code></td><td>并行子代理</td></tr>
+<tr><td><code>memory_search</code></td><td>跨会话记忆搜索</td></tr>
+</tbody></table>
+<p>可通过 <a href="#ch-07">MCP 服务器</a> 扩展 GitHub、数据库等集成。</p>
+</section>
+<section id="ch-01-launch">
+<h3>常用启动选项</h3>
+<pre><code>atlas "fix the failing auth test"          # 带初始 prompt
+atlas --worktree=feat "refactor module X"  # 新 git worktree
+atlas -w --ref main "implement feature"     # 基于指定分支
+atlas --cwd ~/projects/my-app
+atlas --rules "Always use TypeScript."
+atlas --yolo
+atlas -m atlas-build
+atlas --resume &lt;session-id&gt;
+atlas -c
+atlas --minimal    # 实验性 scrollback-native 模式
+atlas --fullscreen # 标准全屏 TUI
+atlas -p "Explain this codebase"  # 无头模式</code></pre>
+<h4>无头输出格式</h4>
+<table><thead><tr><th>格式</th><th>标志</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>plain</code></td><td>默认</td><td>人类可读文本</td></tr>
+<tr><td><code>json</code></td><td><code>--output-format json</code></td><td>含 text、stopReason、sessionId</td></tr>
+<tr><td><code>streaming-json</code></td><td><code>--output-format streaming-json</code></td><td>NDJSON 事件流</td></tr>
+</tbody></table>
+<pre><code>atlas -p "Review changes" --output-format json --yolo | jq -r '.text'</code></pre>
+</section>
+<section id="ch-01-agents-md">
+<h3>项目规则 AGENTS.md</h3>
+<pre><code>~/.atlas/AGENTS.md           # 全局规则
+&lt;repo-root&gt;/AGENTS.md       # 仓库级
+&lt;cwd&gt;/AGENTS.md             # 目录级（优先级最高）</code></pre>
+<p>更深目录的文件优先；亦兼容 <code>CLAUDE.md</code>。</p>
+</section>
+</article>
+<article class="chapter" id="ch-02">
+<span class="tier-badge">Tier1 必备</span>
+<h2>身份验证</h2>
+<section id="ch-02-browser">
+<h3>浏览器登录（默认）</h3>
+<p>重新登录：<code>atlas login</code>；登出：<code>atlas logout</code>。</p>
+<table><thead><tr><th>标志</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>--device-auth</code>（别名 <code>--device-code</code>）</td><td>设备码流程（无头/远程/<strong>企业推荐</strong>）</td></tr>
+</tbody></table>
+</section>
+<section id="ch-02-enterprise">
+<h3>企业设备码登录</h3>
+<pre><code>atlas login --device-auth</code></pre>
+<ol>
+<li>终端打印 URL 与 <code>user_code</code></li>
+<li>浏览器先登录企业 atlas-server，再填入设备码与账号<strong>机器码</strong></li>
+<li>CLI 轮询至批准；refresh 落服务端 MySQL，重启 atlas-server 一般不丢会话</li>
+</ol>
+<ul>
+<li>VS Code / Cursor 未登录引导也走 <code>atlas login --device-auth</code>，不要用裸 <code>atlas login</code>。</li>
+</ul>
+</article>
+<article class="chapter" id="ch-03">
+<span class="tier-badge">Tier1 必备</span>
+<h2>键盘快捷键</h2>
+<section id="ch-03-modes">
+<h3>输入模式</h3>
+<p><strong>Simple（默认）</strong>：方向键导航，任意字母键聚焦 prompt。</p>
+<p><strong>Vim</strong>：在 <code>[ui] vim_mode = true</code> 或 <code>/vim-mode</code> 启用；<code>j/k</code> 导航，<code>h/l</code> 折叠。</p>
+</section>
+<section id="ch-03-nav">
+<h3>导航（Scrollback 聚焦）</h3>
+<table><thead><tr><th>键</th><th>替代</th><th>动作</th></tr></thead><tbody>
+<tr><td><code>j</code></td><td><code>Down</code></td><td>下一条</td></tr>
+<tr><td><code>k</code></td><td><code>Up</code></td><td>上一条</td></tr>
+<tr><td><code>⇧L</code></td><td><code>Shift+Right</code></td><td>下一 turn</td></tr>
+<tr><td><code>⇧H</code></td><td><code>Shift+Left</code></td><td>上一 turn</td></tr>
+<tr><td><code>g</code> / <code>⇧G</code></td><td></td><td>顶/底</td></tr>
+<tr><td><code>Ctrl+U/D</code></td><td></td><td>半页滚动</td></tr>
+<tr><td><code>PageUp/Down</code></td><td></td><td>整页滚动</td></tr>
+</tbody></table>
+</section>
+<section id="ch-03-view">
+<h3>视图</h3>
+<table><thead><tr><th>键</th><th>替代</th><th>动作</th></tr></thead><tbody>
+<tr><td><code>h</code></td><td><code>Left</code></td><td>折叠</td></tr>
+<tr><td><code>l</code></td><td><code>Right</code></td><td>展开</td></tr>
+<tr><td><code>e</code></td><td></td><td>切换折叠</td></tr>
+<tr><td><code>⇧E</code></td><td></td><td>全部展开/折叠</td></tr>
+<tr><td><code>y</code> / <code>⇧Y</code></td><td></td><td>复制内容/元数据</td></tr>
+<tr><td><code>Enter</code></td><td></td><td>全屏查看</td></tr>
+</tbody></table>
+</section>
+<section id="ch-03-esc">
+<h3>Esc 行为</h3>
+<table><thead><tr><th>状态</th><th>效果</th></tr></thead><tbody>
+<tr><td>运行中（默认模式）</td><td><code>Esc</code> 立即取消（保留草稿）</td></tr>
+<tr><td>运行中（fullscreen vim）</td><td><code>Esc</code> 无操作；用 <code>Ctrl+C</code></td></tr>
+<tr><td>空闲 + 非空 prompt</td><td>800ms 内双 <code>Esc</code> 清空并<strong>暂存</strong>草稿（<code>Ctrl+S</code> 可恢复，含图片）</td></tr>
+<tr><td>空闲 + 空 prompt + 有消息</td><td>双 <code>Esc</code> 打开 rewind</td></tr>
+</tbody></table>
+</section>
+<section id="ch-03-agent">
+<h3>代理级</h3>
+<table><thead><tr><th>键</th><th>动作</th></tr></thead><tbody>
+<tr><td><code>Ctrl+P</code> / <code>?</code></td><td>命令面板</td></tr>
+<tr><td><code>Ctrl+M</code></td><td>模型选择（prompt 聚焦时切换多行）</td></tr>
+<tr><td><code>Ctrl+O</code></td><td>切换 always-approve</td></tr>
+<tr><td><code>Ctrl+S</code> / <code>Alt+S</code></td><td>暂存 / 弹出输入草稿（空 composer 恢复最近一次；发送后自动还原）</td></tr>
+<tr><td><code>F3</code></td><td>会话选择器（欢迎页与会话内均可；等同 <code>/resume</code>）</td></tr>
+<tr><td><code>Ctrl+G</code></td><td>minimal 下用外部编辑器改<strong>现有</strong>草稿（全屏用命令面板或 <code>/edit-prompt</code>）</td></tr>
+<tr><td><code>Ctrl+B</code></td><td>前台命令转后台</td></tr>
+<tr><td><code>Shift+Tab</code></td><td>循环模式 Normal→Plan→Auto（功能开启时）→Always-approve</td></tr>
+<tr><td><code>↑</code>（空 prompt）</td><td>有排队则聚焦队列末行；否则浏览本会话 prompt 历史</td></tr>
+<tr><td><code>!</code></td><td>Shell 模式</td></tr>
+</tbody></table>
+<p>运行中发送：<code>Ctrl+Enter</code>（VS Code 族用 <code>Ctrl+L</code>）立即发送并取消当前 turn。</p>
+</section>
+<section id="ch-03-global">
+<h3>全局</h3>
+<table><thead><tr><th>键</th><th>动作</th><th>确认</th></tr></thead><tbody>
+<tr><td><code>Ctrl+N</code></td><td>新会话</td><td>是（1s 内连按）</td></tr>
+<tr><td><code>Ctrl+\</code></td><td>Agent Dashboard</td><td>否</td></tr>
+<tr><td><code>Ctrl+Q</code> / <code>Ctrl+D</code></td><td>退出</td><td>是</td></tr>
+</tbody></table>
+<p>VS Code 族终端：<code>Ctrl+Q</code> 被宿主捕获，退出仅用 <code>Ctrl+D</code>；半页下滚为 <code>Shift+D</code>；插话用 <code>Ctrl+L</code>。</p>
+</section>
+<section id="ch-03-blocking">
+<h3>阻塞卡片（问题/权限/取消）</h3>
+<p>三种阻塞界面共享键盘契约：<code>Tab</code>/<code>Shift+Tab</code> 在卡片内循环，不跳出；<code>Esc</code> 逐级退出。</p>
+<h4>权限提示</h4>
+<table><thead><tr><th>键</th><th>动作</th></tr></thead><tbody>
+<tr><td>↑/↓, j/k</td><td>选项间移动</td></tr>
+<tr><td>1–9</td><td>直接选择</td></tr>
+<tr><td>←/→</td><td>调整「始终允许」范围</td></tr>
+<tr><td>e</td><td>手动编辑 always 模式</td></tr>
+<tr><td>Ctrl+O</td><td>开启 always-approve</td></tr>
+<tr><td>Esc</td><td>将焦点暂存到 scrollback（Tab 返回）</td></tr>
+</tbody></table>
+<h4>Dashboard 快捷键</h4>
+<table><thead><tr><th>键</th><th>动作</th></tr></thead><tbody>
+<tr><td>Enter</td><td>打开/回复/派发</td></tr>
+<tr><td>Ctrl+/</td><td>搜索过滤</td></tr>
+<tr><td>Ctrl+X</td><td>取消 turn；2s 内连按永久删除</td></tr>
+<tr><td>Esc</td><td>关闭 peek，不结束会话</td></tr>
+<tr><td>Shift+Tab</td><td>权限循环含 Auto（功能开启时）</td></tr>
+</tbody></table>
+</section>
+<section id="ch-03-paste">
+<h3>粘贴与图片</h3>
+<table><thead><tr><th>平台</th><th>截图/图片粘贴</th></tr></thead><tbody>
+<tr><td>macOS / Linux</td><td><code>Ctrl+V</code> 或 <code>Cmd+V</code></td></tr>
+<tr><td>Windows</td><td><code>Alt+V</code>（Atlas 专用，绕过 WT 文本拦截）</td></tr>
+</tbody></table>
+<p>非图片文件插入绝对路径文本。Linux 中键粘贴 PRIMARY 选择（X11/XWayland）。</p>
+</section>
+</article>
+<article class="chapter" id="ch-04">
+<span class="tier-badge">Tier1 必备</span>
+<h2>斜杠命令</h2>
+<section id="ch-04-session">
+<h3>会话管理</h3>
+<table><thead><tr><th>命令</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>/new</code> (<code>/clear</code>)</td><td>新会话</td></tr>
+<tr><td><code>/resume</code></td><td>打开会话选择器</td></tr>
+<tr><td><code>/dashboard</code></td><td>Agent Dashboard（minimal 下隐藏）</td></tr>
+<tr><td><code>/compact [context]</code></td><td>压缩上下文（85% 自动触发可配置）</td></tr>
+<tr><td><code>/context</code></td><td>上下文窗口占用明细</td></tr>
+<tr><td><code>/session-info</code> (<code>/status</code>)</td><td>会话详情</td></tr>
+<tr><td><code>/fork</code></td><td>分支会话</td></tr>
+<tr><td><code>/rewind</code> (<code>/undo</code>)</td><td>回滚到早期 turn</td></tr>
+<tr><td><code>/copy [N] [path]</code></td><td>复制最近回复的<strong>源 markdown</strong>（非渲染文本）；数字取倒数第 N 条，路径则写入文件（SSH 下更有用）</td></tr>
+<tr><td><code>/export</code></td><td>导出对话</td></tr>
+<tr><td><code>/rename</code> / <code>/title</code></td><td>重命名会话</td></tr>
+<tr><td><code>/delete</code></td><td>删除当前会话</td></tr>
+<tr><td><code>/home</code> (<code>/welcome</code>)</td><td>返回欢迎页</td></tr>
+<tr><td><code>/quit</code> (<code>/exit</code>)</td><td>退出</td></tr>
+</tbody></table>
+</section>
+<section id="ch-04-model">
+<h3>模型与模式</h3>
+<table><thead><tr><th>命令</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>/model &lt;name&gt;</code> (<code>/m</code>)</td><td>切换模型</td></tr>
+<tr><td><code>/effort &lt;level&gt;</code></td><td>推理强度 low/medium/high/xhigh；<code>/new</code> / <code>/clear</code> 后仍保留上次选择</td></tr>
+<tr><td><code>/always-approve</code> / <code>/auto</code></td><td>权限模式切换；<code>/auto</code> 仅在 Auto 功能开启时出现</td></tr>
+<tr><td><code>/multiline</code> (<code>/ml</code>)</td><td>多行输入</td></tr>
+<tr><td><code>/history</code></td><td>模糊搜索本会话 prompt 历史，Enter/Tab 填回输入框</td></tr>
+<tr><td><code>/compact-mode</code></td><td>紧凑显示（少留白）</td></tr>
+<tr><td><code>/vim-mode</code></td><td>Vim scrollback 导航</td></tr>
+<tr><td><code>/edit-prompt</code></td><td>用外部编辑器写草稿（<code>$VISUAL</code> → <code>$EDITOR</code> → <code>vi</code>）；斜杠本身会清空输入，改现有草稿请用命令面板或 minimal 下 <code>Ctrl+G</code></td></tr>
+<tr><td><code>/minimal</code> / <code>/fullscreen</code> (<code>/full</code>)</td><td><strong>进程内</strong>切换渲染模式，不重启；进行中回复、草稿、队列、权限模式会保留。默认用 <code>[ui] screen_mode</code>。异常终端可设 <code>GROK_SCREEN_MODE_SWITCH=exec</code> 恢复旧的重启行为</td></tr>
+<tr><td><code>/plan [desc]</code></td><td>进入 Plan 模式</td></tr>
+<tr><td><code>/view-plan</code></td><td>预览当前计划</td></tr>
+<tr><td><code>/timestamps</code></td><td>开关消息时间戳</td></tr>
+</tbody></table>
+</section>
+<section id="ch-04-memory-cmd">
+<h3>记忆</h3>
+<table><thead><tr><th>命令</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>/memory</code> (<code>/mem</code>)</td><td>浏览/管理记忆；<code>on</code>/<code>off</code> 切换</td></tr>
+<tr><td><code>/flush</code></td><td>立即保存会话知识到记忆</td></tr>
+<tr><td><code>/dream</code></td><td>记忆整合</td></tr>
+<tr><td><code>/remember &lt;note&gt;</code></td><td>立即写入一条记忆</td></tr>
+</tbody></table>
+</section>
+<section id="ch-04-ext">
+<h3>扩展与其他</h3>
+<table><thead><tr><th>命令</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>/hooks</code> / <code>/plugins</code> (<code>/plugin</code>) / <code>/marketplace</code> / <code>/skills</code> / <code>/mcps</code></td><td>扩展模态框各标签</td></tr>
+<tr><td><code>/config-agents</code> (<code>/agents</code>)</td><td>代理定义（含插件提供的 agent，非 Dashboard）</td></tr>
+<tr><td><code>/personas</code></td><td>人格管理</td></tr>
+<tr><td><code>/ask-atlas</code></td><td>企业主流程路由器（atlas-skills）；见 <a href="#ch-26">第 26 章</a></td></tr>
+<tr><td><code>/atlas-sdd</code> (<code>/sdd</code>)</td><td>企业 SDD 角色入口（atlas-sdd 插件）；见 <a href="#ch-26">第 26 章</a></td></tr>
+<tr><td><code>/goal</code></td><td>自主目标</td></tr>
+<tr><td><code>/deep-research &lt;query&gt;</code></td><td>后台深度研究；进度看 <code>/workflow runs</code></td></tr>
+<tr><td><code>/workflow [name]</code></td><td>启动已保存工作流或管理运行；空格后可补全名称及 <code>runs</code>/<code>pause</code>/<code>resume</code>/<code>stop</code>/<code>save</code>。支持 <code>--agent-budget N</code>、<code>--effort LEVEL</code></td></tr>
+<tr><td><code>/workflow runs</code></td><td>全屏打开运行看板（阶段、agent 花名册、进度）；minimal / 非 TUI 打印文本一览。详情里 <code>p</code> 暂停、<code>r</code> 恢复、<code>x</code> 停止、<code>s</code> 保存脚本</td></tr>
+<tr><td><code>/workflows</code></td><td>扩展模态框的工作流目录（内置 / 项目 <code>.atlas/workflows</code> / 用户 <code>~/.atlas/workflows</code>），只浏览不启动</td></tr>
+<tr><td><code>/loop [interval] &lt;prompt&gt;</code></td><td>定时循环任务</td></tr>
+<tr><td><code>/theme</code> (<code>/t</code>)</td><td>主题（仅 fullscreen）</td></tr>
+<tr><td><code>/settings</code> (<code>/config</code>)</td><td>设置模态框</td></tr>
+<tr><td><code>/doctor</code></td><td>终端/剪贴板/沙箱诊断；<code>/doctor fix</code> 列出可自动修复项</td></tr>
+<tr><td><code>/login</code> / <code>/logout</code></td><td>登录/登出</td></tr>
+<tr><td><code>/usage</code> (<code>/cost</code>)</td><td>用量/计费</td></tr>
+<tr><td><code>/privacy</code></td><td>编码数据保留与训练设置</td></tr>
+<tr><td><code>/docs</code> / <code>/tutorial</code></td><td>内置文档与教程</td></tr>
+<tr><td><code>/release-notes</code> (<code>/changelog</code>)</td><td>当前版本发行说明</td></tr>
+<tr><td><code>/import-claude</code></td><td>从 <code>~/.claude</code> 导入权限、环境变量、MCP、hooks、路径</td></tr>
+<tr><td><code>/feedback [message]</code></td><td>反馈（Enter 发送；可粘贴图片；团队账号可能不出现 trace 同意卡）</td></tr>
+<tr><td><code>/btw</code></td><td>旁路提问不中断当前任务；回复到达后仍会走完等待</td></tr>
+<tr><td><code>/imagine</code> / <code>/imagine-video</code></td><td>图像/视频生成</td></tr>
+</tbody></table>
+<p>启用且 <code>user-invocable: true</code> 的 Skill 亦显示为斜杠命令；与内置重名时内置占 <code>/name</code>，Skill 用 <code>/plugin:name</code> 或 <code>/local:name</code>。菜单按固定顺序排列，并带 builtin / skill / plugin 标记。</p>
+<p><strong>按渲染模式隐藏：</strong>仅 fullscreen — <code>/find</code>、<code>/jump</code>、<code>/timeline</code>、<code>/theme</code>、<code>/tutorial</code>、<code>/dashboard</code>；仅 minimal — <code>/expand</code>。<code>/workflow runs</code> 在 minimal 下降级为文本，不拒绝。</p>
+</section>
+</article>
+<article class="chapter" id="ch-05">
+<span class="tier-badge">Tier1 必备</span>
+<h2>配置</h2>
+<section id="ch-05-precedence">
+<h3>优先级</h3>
+<p>（高→低）CLI 标志 → 环境变量 → requirements.toml/MDM → GROK_CONFIG 覆盖层 → config.toml → managed_config.toml → 内置默认。</p>
+<p><code>GROK_CONFIG</code> 为 JSON 深度合并覆盖层，受 allowlist 限制，不能提权。</p>
+<pre><code>GROK_CONFIG='{"models": {"default_reasoning_effort": "high"}}' atlas agent stdio</code></pre>
+</section>
+<section id="ch-05-config-toml">
+<h3>config.toml 主要段</h3>
+<pre><code>[cli]
+auto_update = true
+
+[models]
+default = "grok-4.5"
+web_search = "grok-4.5"
+extra_headers = { "X-Request-Tags" = "team=example" }
+temperature = 0.7
+max_completion_tokens = 8192
+
+[ui]
+simple_mode = true          # prompt 编辑：readline vs vim
+vim_mode = false            # scrollback vim 键
+follow_up_behavior = "queue"  # 或 "steer"
+screen_mode = "fullscreen"  # 或 "minimal"
+default_selected_permission = "always_allow_all_sessions"
+remember_tool_approvals = true
+show_thinking_blocks = true
+page_flip_on_send = true
+
+[features]
+telemetry = false
+lsp_tools = false
+codebase_indexing = true
+remote_fetch = true
+
+[session]
+auto_compact_threshold_percent = 85
+
+[tools]
+respect_gitignore = false
+
+[auth]
+auth_provider_command = "/path/to/auth"
+[grok_com_config.oidc]
+issuer = "https://idp.example.com"
+client_id = "..."
+
+[model.my-model]
+model = "model-id"
+base_url = "https://api.example.com/v1"
+api_key = "sk-..."
+
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+
+[memory]
+enabled = false
+
+[subagents]
+enabled = true
+
+[workflows]
+enabled = true
+
+[skills]
+paths = ["~/my-team-skills"]
+disabled = ["wip-skill"]
+
+[compat.cursor]
+skills = true
+mcps = true
+
+[telemetry]
+otel_enabled = true
+trace_upload = false</code></pre>
+</section>
+<section id="ch-05-pager">
+<h3>pager.toml</h3>
+<p>控制 TUI 外观：<code>[scrollback.layout]</code>、<code>[scrollback.blocks.*]</code>、<code>[prompt]</code>、<code>[terminal] alt_screen</code>、<code>[animation]</code>。</p>
+<pre><code>[terminal]
+alt_screen = "auto"   # auto | always | never
+
+[scrollback.scroll]
+respect_manual_folds = false  # true 时手动折叠在流式更新中保持</code></pre>
+</section>
+<section id="ch-05-env">
+<h3>环境变量要点</h3>
+<table><thead><tr><th>变量</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>XAI_API_KEY</code></td><td>API 密钥</td></tr>
+<tr><td><code>GROK_HOME</code></td><td>配置目录（默认 ~/.atlas）</td></tr>
+<tr><td><code>GROK_MEMORY</code></td><td>记忆开关 1/0</td></tr>
+<tr><td><code>GROK_SUBAGENTS</code></td><td>子代理 1/0</td></tr>
+<tr><td><code>GROK_SANDBOX</code></td><td>沙箱 profile</td></tr>
+<tr><td><code>GROK_TELEMETRY_ENABLED</code></td><td>遥测主开关</td></tr>
+<tr><td><code>GROK_EXTERNAL_OTEL</code></td><td>外部 OTEL</td></tr>
+<tr><td><code>GROK_DEFAULT_SELECTED_PERMISSION</code></td><td>无头默认权限选项</td></tr>
+<tr><td><code>RUST_LOG</code> / <code>GROK_LOG_FILE</code></td><td>日志</td></tr>
+</tbody></table>
+</section>
+<section id="ch-05-paths">
+<h3>文件位置</h3>
+<table><thead><tr><th>路径</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>~/.atlas/config.toml</code></td><td>主配置（Atlas Home）</td></tr>
+<tr><td><code>~/.atlas/pager.toml</code></td><td>外观</td></tr>
+<tr><td><code>~/.atlas/auth.json</code></td><td>认证凭据</td></tr>
+<tr><td><code>~/.atlas/sessions/</code></td><td>会话持久化</td></tr>
+<tr><td><code>~/.atlas/memory/</code></td><td>跨会话记忆</td></tr>
+<tr><td><code>~/.atlas/installed-plugins/</code></td><td>用户级插件快照</td></tr>
+<tr><td><code>.atlas/config.toml</code></td><td>项目 MCP / 插件 / 权限（贡献面有限）</td></tr>
+<tr><td><code>managed_config.toml</code> / <code>requirements.toml</code></td><td>舰队默认与管理员 pin；见 <a href="#ch-28">第 28 章</a></td></tr>
+</tbody></table>
+</section>
+<section id="ch-05-ui-detail">
+<h3>UI 与通知</h3>
+<h4>default_selected_permission</h4>
+<table><thead><tr><th>值</th><th>首次提示预选行</th></tr></thead><tbody>
+<tr><td><code>always_allow_all_sessions</code></td><td>始终允许（所有会话）</td></tr>
+<tr><td><code>allow_command_always</code></td><td>始终允许此命令</td></tr>
+<tr><td><code>allow_once</code></td><td>是（一次）</td></tr>
+<tr><td><code>reject</code></td><td>拒绝</td></tr>
+</tbody></table>
+<h4>滚动与通知</h4>
+<pre><code>[ui]
+scroll_speed = 50          # 1-100，50=1.0x
+scroll_mode = "auto"       # auto|wheel|trackpad
+invert_scroll = false
+
+[ui.notifications]
+method = "auto"            # auto|osc9|osc99|osc777|bel|none
+condition = "unfocused"    # unfocused|always|never
+events = ["turn_complete", "approval_required"]
+sleep_prevention = true
+progress_bar = true</code></pre>
+<h4>企业部署示例</h4>
+<pre><code>[cli]
+auto_update = false
+[auth]
+auth_provider_command = "/usr/local/bin/company-auth"
+[features]
+telemetry = false</code></pre>
+</section>
+<section id="ch-05-toolset">
+<h3>工具与安全策略</h3>
+<pre><code>[toolset.bash]
+timeout_secs = 120.0
+output_byte_limit = 20000
+
+[toolset.web_fetch]
+allow_local = false        # 默认关，防 SSRF
+
+[toolset.web_search]
+allowed_domains = ["docs.x.ai", "arxiv.org"]
+# excluded_domains 与 allowed_domains 互斥
+
+[shell_environment_policy]
+# 限制工具子进程继承的环境变量</code></pre>
+</section>
+</article>
+<article class="chapter" id="ch-06">
+<span class="tier-badge">Tier2 核心</span>
+<h2>主题与外观</h2>
+<section id="ch-06-themes">
+<h3>内置主题</h3>
+<table><thead><tr><th>主题</th><th>别名</th><th>需 Truecolor</th></tr></thead><tbody>
+<tr><td>GrokNight（默认暗色）</td><td>groknight, dark</td><td>否</td></tr>
+<tr><td>GrokDay</td><td>light, day</td><td>否</td></tr>
+<tr><td>TokyoNight</td><td>tokyo-night</td><td>是</td></tr>
+<tr><td>RosePineMoon</td><td>rosepine</td><td>是</td></tr>
+<tr><td>OscuraMidnight</td><td>oscura</td><td>是</td></tr>
+</tbody></table>
+<p><code>/theme</code> 或 <code>[ui] theme = "auto"</code> 跟随系统外观。<strong>Minimal 模式</strong>使用终端原生 16 色，忽略主题设置。</p>
+</section>
+</article>
+<article class="chapter" id="ch-07">
+<span class="tier-badge">Tier2 核心</span>
+<h2>MCP 服务器</h2>
+<section id="ch-07-config">
+<h3>配置</h3>
+<pre><code>[mcp_servers.my-server]
+command = "/path/to/server"
+args = ["--flag"]
+env = { API_KEY = "sk-..." }
+enabled = true
+startup_timeout_sec = 30
+tool_timeout_sec = 6000
+
+[mcp_servers.remote]
+url = "https://mcp.example.com/api"
+headers = { Authorization = "Bearer ${TOKEN}" }</code></pre>
+<p>工具命名：<code>server__tool</code>。大结果默认截断 20000 字节，可用 <code>[mcp] max_output_bytes</code> 或 <code>GROK_MAX_MCP_OUTPUT_BYTES</code> 调整。</p>
+</section>
+<section id="ch-07-cli">
+<h3>CLI 管理</h3>
+<pre><code>atlas mcp list
+atlas mcp add filesystem -- npx -y @modelcontextprotocol/server-filesystem /path
+atlas mcp add --transport http sentry https://mcp.sentry.dev/mcp
+atlas mcp add remote https://mcp.example.com/api   # http(s) URL 自动推断 HTTP 传输
+atlas mcp remove github
+atlas mcp enable/disable github
+atlas mcp doctor</code></pre>
+<p>项目级：<code>.atlas/config.toml</code>，优先级 cwd &gt; repo-root &gt; user。合并与发现按<strong>服务器名</strong>，不按 URL。stdio MCP 在后台启动，不堵住会话。</p>
+<p>远程 HTTP/SSE 默认带 <code>User-Agent: grok-cli/&lt;version&gt;</code>；<code>headers</code> 里写合法 <code>User-Agent</code> 可覆盖。MCP 可弹出 elicitation（等人确认）。</p>
+</section>
+<section id="ch-07-runtime">
+<h3>运行时</h3>
+<p><code>/mcps</code> 模态框：<code>Space</code> 启停、<code>r</code> 刷新、<code>i</code> OAuth、<code>a</code> 添加、<code>x</code> 删除。</p>
+<p>内置工具 <code>search_tool</code> / <code>use_tool</code> 用于发现与调用 MCP 工具。</p>
+<p>兼容加载：config.toml &gt; Claude &gt; Cursor &gt; .mcp.json。</p>
+</section>
+</article>
+<article class="chapter" id="ch-08">
+<span class="tier-badge">Tier2 核心</span>
+<h2>Skills</h2>
+<section id="ch-08-basics">
+<h3>基础</h3>
+<p>Skill 为含 <code>SKILL.md</code> 的可复用指令包。发现路径（高→低，同名去重）：</p>
+<table><thead><tr><th>位置</th><th>范围</th></tr></thead><tbody>
+<tr><td><code>./.atlas/skills/</code>、<code>./.atlas/commands/</code></td><td>当前目录（最高）</td></tr>
+<tr><td><code>&lt;repo&gt;/.atlas/skills/</code></td><td>仓库</td></tr>
+<tr><td><code>~/.atlas/skills/</code></td><td>用户 Native Skill</td></tr>
+<tr><td><code>~/.claude/skills/</code> 等兼容目录</td><td>默认扫描（可关）</td></tr>
+</tbody></table>
+<p><strong>Plugin Skill</strong>（marketplace 插件包内 <code>skills/</code>）只在插件 <strong>enabled</strong> 时进入斜杠，落在 <code>~/.atlas/installed-plugins/</code>，<strong>不会</strong>复制进 <code>~/.atlas/skills</code>。因此「磁盘只看到 Claude 用户目录」不代表插件技能未加载——看斜杠是否有 <code>/ask-atlas</code>。</p>
+<p>企业侧注意：部分版本项目级 <code>.atlas/plugins</code> / <code>.atlas/skills</code> 尚未完全对齐扫描；以会话内 <code>/</code> 列表为准。VS Code / Desktop <strong>自己不扫</strong> skills，斜杠来自 ACP <code>availableCommands</code>。</p>
+<pre><code>---
+name: commit
+description: 按 conventional commits 创建提交。用户要 commit 时使用。
+user-invocable: true
+---
+# Git Commit Skill
+1. git diff --staged
+2. 撰写 message
+3. git commit</code></pre>
+<p>运行：<code>/commit fix typo</code>；重名时用 <code>/local:commit</code> 或 <code>/插件名:commit</code>。</p>
+<p><code>/create-skill</code> 交互式创建；<code>atlas inspect</code> 查看已加载 skills。</p>
+<pre><code>[skills]
+paths = ["~/my-team-skills"]
+ignore = ["~/my-team-skills/wip"]
+disabled = ["wip-skill"]</code></pre>
+</section>
+</article>
+<article class="chapter" id="ch-09">
+<span class="tier-badge">Tier2 核心</span>
+<h2>Plugins</h2>
+<section id="ch-09-marketplace">
+<h3>市场与安装</h3>
+<p>插件打包 skills、斜杠命令、agents、hooks、MCP。两步：先 <strong>add marketplace</strong>（只浏览），再 <strong>install</strong> 并信任。</p>
+<pre><code># 企业 marketplace 示例
+atlas plugin marketplace add https://gitlab.imyai.cn/zhangyufeng/atlas-plugins.git
+atlas plugin install atlas-sdd --trust
+atlas plugin install atlas-skills --trust
+
+atlas plugin marketplace list
+atlas plugin marketplace update
+atlas plugin list
+atlas plugin update atlas-skills
+atlas plugin enable/disable &lt;name&gt;</code></pre>
+<p>用户级安装落在 <strong>Installed Plugin Snapshot</strong>：<code>~/.atlas/installed-plugins/</code>（由 <code>registry.json</code> 登记），不是 <code>~/.atlas/plugins/</code>。</p>
+<p>插件默认关闭；须写入 <code>[plugins].enabled</code>（或 install --trust）后才进斜杠。hooks/MCP/LSP 需信任后才激活。</p>
+<pre><code>[plugins]
+enabled = ["atlas-skills", "atlas-sdd"]
+paths = ["~/my-plugins"]
+disabled = ["noisy-plugin"]</code></pre>
+<p><code>/plugins</code>（别名 <code>/plugin</code>）打开扩展模态框；按 <code>r</code> 重载。插件 agent 出现在 <code>/agents</code>。新装后<strong>新开会话</strong>或重载才看到完整技能正文。</p>
+<p>多源 marketplace 未扫全时安装可能拒绝解析：显式 <code>atlas-sdd@&lt;qualifier&gt;</code>，或保证源可扫。</p>
+</section>
+</article>
+<article class="chapter" id="ch-10">
+<span class="tier-badge">Tier2 核心</span>
+<h2>Hooks</h2>
+<section id="ch-10-events">
+<h3>事件</h3>
+<table><thead><tr><th>事件</th><th>时机</th><th>可阻塞</th></tr></thead><tbody>
+<tr><td>SessionStart/End</td><td>会话起止</td><td>否</td></tr>
+<tr><td>UserPromptSubmit</td><td>提交 prompt</td><td>否</td></tr>
+<tr><td>PreToolUse</td><td>工具执行前</td><td><strong>是</strong></td></tr>
+<tr><td>PostToolUse</td><td>工具成功后</td><td>否</td></tr>
+<tr><td>Stop</td><td>turn 正常结束</td><td><strong>是</strong></td></tr>
+<tr><td>StopCancelled</td><td>用户中断/权限拒绝</td><td>否</td></tr>
+<tr><td>SubagentStart/Stop</td><td>子代理</td><td>Stop 可阻塞</td></tr>
+<tr><td>PreCompact/PostCompact</td><td>压缩前后</td><td>否</td></tr>
+</tbody></table>
+<p>位置：<code>~/.atlas/hooks/*.json</code>、项目 <code>.atlas/hooks/</code>、config.toml、插件。项目 hooks 需 <strong>folder trust</strong>（<code>/hooks-trust</code> 或 <code>--trust</code>）。</p>
+</section>
+<section id="ch-10-example">
+<h3>示例</h3>
+<pre><code>// ~/.atlas/hooks/block-rm.json
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "Bash",
+      "hooks": [{
+        "type": "command",
+        "command": "jq -e '.tool_input.command | test("rm -rf /") | not'"
+      }]
+    }]
+  }
+}</code></pre>
+<p><strong>Stop 决策控制</strong>：Stop hook 可返回 decision=block 并附带 reason，迫使 agent 继续工作（如测试未通过）。</p>
+<p>亦支持 HTTP callback：<code>{"type":"http","url":"https://hooks.internal/audit"}</code>。</p>
+<p>Cursor 兼容：接受 camelCase 事件名，<code>~/.cursor/hooks.json</code> 可直接加载。</p>
+</section>
+</article>
+<article class="chapter" id="ch-11">
+<span class="tier-badge">Tier2 核心</span>
+<h2>自定义模型</h2>
+<section id="ch-11-setup">
+<h3>配置</h3>
+<pre><code>atlas models                    # 列出模型
+atlas -m atlas-build -p "Hi"
+/model atlas-build
+
+[model.my-model]
+model = "model-id"
+base_url = "https://api.example.com/v1"
+api_key = "sk-..."
+api_backend = "chat_completions"  # 或 responses | messages
+context_window = 128000
+env_key = ["ANTHROPIC_AUTH_TOKEN"]</code></pre>
+<p>凭据优先级：api_key → env_key → 会话令牌 → XAI_API_KEY。</p>
+</section>
+<section id="ch-11-managed">
+<h3>企业托管模型（Atlas Server）</h3>
+<p>Admin 为账号做 <strong>Direct Assignment</strong> 和/或加入条线分组的 <strong>Group Assignment</strong>；有效集合非空时进入 <strong>Managed Catalog Mode</strong>，<code>GET /atlas/v1/models</code> 只返回托管条目。</p>
+<table><thead><tr><th>概念</th><th>含义</th></tr></thead><tbody>
+<tr><td><strong>Catalog ID</strong></td><td>选择器 / <code>[model.&lt;id&gt;]</code> 的键；Task Report 字段 <code>model</code></td></tr>
+<tr><td><strong>Routing Name</strong></td><td>上游采样名 <code>model.model</code>；Task Report <code>modelRouting</code>（明文）</td></tr>
+</tbody></table>
+<ul>
+<li>下发时 <code>id</code> / <code>model</code> / <code>api_key</code> 均为 <code>ENC(...)</code>；客户端落盘：Catalog ID 明文，Routing Name 与 <code>api_key</code> 保持 At-Rest ENC，<code>managed = true</code>。</li>
+<li>无 <code>managed</code> 的用户手写 <code>[model.*]</code> <strong>不被同步覆盖</strong>；取消分配后删除托管段。</li>
+<li>合并优先级：本地 <code>[model.*]</code>（含托管落盘）&gt; prefetch &gt; builtin。</li>
+<li><code>/model</code> 选择器通常只读内存 catalog，不因此打网；会请求 <code>/models</code> 的时机：启动预取缓存未命中、鉴权变化、ETag 变化、Online 刷新。</li>
+<li>改 Admin 分配后不会立刻推送；最多等缓存窗口，或重登 / Online 刷新。</li>
+</ul>
+</section>
+</article>
+<article class="chapter" id="ch-12">
+<span class="tier-badge">Tier2 核心</span>
+<h2>项目规则 AGENTS.md</h2>
+<section id="ch-12-rules">
+<h3>规则发现</h3>
+<p>支持文件名：AGENTS.md、CLAUDE.md、AGENT.md 等；亦扫描 <code>.atlas/rules/*.md</code>。</p>
+<p>从 repo 根到 cwd 累积加载，<strong>更深目录优先</strong>。被 .gitignore 忽略的顶层规则文件跳过。</p>
+<pre><code>atlas --rules "Always use TypeScript."
+atlas --system-prompt-override "..."  # 完全替换系统 prompt</code></pre>
+<p><code>atlas inspect</code> 查看已加载规则与 token 估算。</p>
+</section>
+</article>
+<article class="chapter" id="ch-13">
+<span class="tier-badge">Tier2 核心</span>
+<h2>Memory</h2>
+<section id="ch-13-enable">
+<h3>启用</h3>
+<pre><code>export GROK_MEMORY=1
+# 或 config.toml [memory] enabled = true
+atlas --experimental-memory
+/memory on|off</code></pre>
+<p>存储：<code>~/.atlas/memory/MEMORY.md</code>（全局）、<code>&lt;project-slug&gt;-&lt;hash&gt;/</code>（项目）。SQLite FTS5 + 可选 vec0 向量搜索。</p>
+<pre><code>[memory.search]
+max_results = 6
+min_score = 0.7
+[memory.initial_injection]
+enabled = true
+min_score = 0.9</code></pre>
+<p><code>/flush</code> LLM 摘要写入；<code>/dream</code> 整合主题；<code>/remember</code> 即时笔记；会话结束自动元数据摘要（可 <code>session.save_on_end = false</code> 关闭）。</p>
+<p>搜索为混合检索：FTS 关键词 + 可选 embedding 语义相似度。</p>
+</section>
+</article>
+<article class="chapter" id="ch-14">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>无头模式与脚本</h2>
+<section id="ch-14-basic">
+<h3>基础</h3>
+<pre><code>atlas -p "Your prompt"
+atlas -p "Review" --output-format json --yolo
+atlas -p "Explain" --tools "read_file,grep,list_dir"
+atlas -p "Fix" --disallowed-tools "Agent,web_search"
+atlas -p "Run tests" --max-turns 5 --permission-mode bypassPermissions
+atlas --allow 'Bash(npm test*)' --deny 'Bash(rm -rf*)' -p "..."</code></pre>
+<table><thead><tr><th>标志</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>-p</code></td><td>单次 prompt（无头）</td></tr>
+<tr><td><code>-r/-c</code></td><td>恢复/继续会话</td></tr>
+<tr><td><code>--output-format</code></td><td>plain/json/streaming-json/streaming-messages-json</td></tr>
+<tr><td><code>--tools</code> / <code>--disallowed-tools</code></td><td>工具白/黑名单（仅无头）</td></tr>
+<tr><td><code>--max-turns</code></td><td>最大 agent 轮数</td></tr>
+<tr><td><code>--effort</code></td><td>推理强度 none|low|medium|high|xhigh</td></tr>
+<tr><td><code>--sandbox</code></td><td>沙箱 profile</td></tr>
+<tr><td><code>--prompt-file</code> / <code>--prompt-json</code></td><td>从文件/JSON 读 prompt</td></tr>
+<tr><td><code>--verbatim</code></td><td>原样发送 prompt</td></tr>
+</tbody></table>
+<p>权限规则语法：<code>Bash(pattern)</code>、<code>Edit(path)</code>、<code>Read(**)</code>、<code>WebFetch(domain:*)</code> 等。路径规则中 <code>*</code> 单层，<code>**</code> 递归。</p>
+</section>
+<section id="ch-14-ci">
+<h3>CI/CD 与管道</h3>
+<pre><code># GitHub Actions 示例
+- run: |
+    atlas -p "Review PR diff for security issues" \
+      --output-format json --yolo \
+      --disallowed-tools "run_terminal_cmd" \
+      | jq -r '.text' &gt; review.md
+
+# 流式处理
+atlas -p "Analyze logs" --output-format streaming-json | while read line; do
+  echo "$line" | jq .
+done
+
+# 指定会话 UUID 新建
+atlas -s "$(uuidgen)" -p "One-shot task"</code></pre>
+<p>无头模式默认 <code>RUST_LOG=off</code>，仅输出答案；调试：<code>RUST_LOG=error atlas -p "..." 2&gt;log</code>。</p>
+<p><code>--disallowed-tools Agent(explore,plan)</code> 可阻止特定子代理类型。</p>
+</section>
+</article>
+<article class="chapter" id="ch-15">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>Agent 模式与 ACP</h2>
+<section id="ch-15-acp">
+<h3>什么是 ACP</h3>
+<p><a href="https://agentclientprotocol.com" target="_blank" rel="noopener">Agent Client Protocol</a> 用 JSON-RPC 让 IDE / SDK / 自定义客户端与编码 Agent 通信。一次性提问并退出请用 <code>atlas -p</code>（见 <a href="#ch-14">无头模式</a>）。</p>
+<p>覆盖能力：会话创建/加载/恢复、prompt 与流式回复、工具调用更新、推理流、非 always-approve 时的权限提示。</p>
+</section>
+<section id="ch-15-transports">
+<h3>传输方式</h3>
+<pre><code># stdio（本地 / 多数 SDK / VS Code 扩展）
+atlas agent --always-approve stdio
+
+# WebSocket 服务（跨客户端保活）
+atlas agent --always-approve serve --bind 127.0.0.1:2419 --secret &lt;token&gt;
+
+# 通用选项在 mode 名之前
+atlas agent --always-approve --model atlas-build stdio</code></pre>
+<table><thead><tr><th>标志</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>-m / --model</code></td><td>模型 ID</td></tr>
+<tr><td><code>--always-approve</code> / <code>--yolo</code></td><td>跳过交互权限提示（deny 规则与 hooks 仍生效）</td></tr>
+<tr><td><code>--reauth</code></td><td>启动前重新认证</td></tr>
+<tr><td><code>--agent-profile</code></td><td>从文件加载 agent profile</td></tr>
+<tr><td><code>--leader</code> / <code>--no-leader</code></td><td>共享 leader 或强制本地；沙箱非 <code>off</code> 时拒绝 leader</td></tr>
+</tbody></table>
+<p>亦可在 <code>session/new</code> 的 <code>_meta.yoloMode</code> 按会话开启 always-approve。省略 <code>--secret</code> 时启动打印生成令牌，或设 <code>GROK_AGENT_SECRET</code>。</p>
+<p><code>GROK_CONFIG</code> 可用于 harness 注入软设置。VS Code / Cursor 的 Atlas 扩展通过 ACP 拉起同一套 CLI。</p>
+</section>
+</article>
+<article class="chapter" id="ch-16">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>子代理与人格</h2>
+<section id="ch-16-subagents">
+<h3>子代理</h3>
+<p>内置类型：<code>general-purpose</code>、<code>explore</code>（只读调研）、<code>plan</code>（规划不写文件）。</p>
+<pre><code>[subagents]
+enabled = true
+[subagents.models]
+explore = "grok-build"
+[subagents.personas.researcher]
+instructions = "深入调研，引用文件路径"</code></pre>
+<p>人格（Persona）为子代理行为叠加层；代理（Agent）定义整会话模型/工具/系统 prompt。管理：<code>/config-agents</code>、<code>/personas</code>。</p>
+<p>MCP 继承：<code>mcpInheritance</code> 可设 all/none/named/except。</p>
+</section>
+</article>
+<article class="chapter" id="ch-17">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>会话管理</h2>
+<section id="ch-17-storage">
+<h3>存储与操作</h3>
+<pre><code>~/.atlas/sessions/&lt;encoded-cwd&gt;/&lt;session-id&gt;/
+  summary.json
+  updates.jsonl      # 权威对话日志
+  chat_history.jsonl
+  plan.json
+  rewind_points.jsonl
+  subagents/</code></pre>
+<p>标题自动生成，<code>/rename</code> 手动命名优先；<code>/rename --auto</code> 恢复自动。</p>
+<p><code>/compact</code> 手动压缩；达 85% 自动 compact（可配置）。<code>/rewind</code> 丢弃后续 turn。</p>
+<p>CLI：<code>atlas --resume &lt;id|title&gt;</code>、<code>atlas -c</code>、<code>atlas -s &lt;uuid&gt;</code> 新建指定 ID。</p>
+</section>
+</article>
+<article class="chapter" id="ch-18">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>沙箱模式</h2>
+<section id="ch-18-profiles">
+<h3>内置 Profile</h3>
+<p>默认关闭。启用后由 OS 内核原语限制进程生命周期内的文件系统与网络（Linux Landlock、macOS Seatbelt）。</p>
+<pre><code>atlas --sandbox workspace   # 推荐日常开发
+atlas --sandbox read-only
+atlas --sandbox strict
+atlas --sandbox project     # 自定义名（见下）</code></pre>
+<table><thead><tr><th>Profile</th><th>读</th><th>写</th><th>子进程网络</th><th>场景</th></tr></thead><tbody>
+<tr><td>off（默认）</td><td>无限制</td><td>无限制</td><td>允许</td><td>无沙箱</td></tr>
+<tr><td>workspace</td><td>全局</td><td>CWD + ~/.atlas + /tmp</td><td>允许</td><td>日常开发</td></tr>
+<tr><td>devbox</td><td>全局</td><td>顶层目录除 /data</td><td>允许</td><td>一次性开发 VM</td></tr>
+<tr><td>read-only</td><td>全局</td><td>~/.atlas + /tmp</td><td>仅 Linux 阻止</td><td>探索/评审</td></tr>
+<tr><td>strict</td><td>CWD+系统路径</td><td>CWD + ~/.atlas + /tmp</td><td>仅 Linux 阻止</td><td>不信任代码</td></tr>
+</tbody></table>
+<p><code>workspace</code> / <code>read-only</code> / <code>strict</code> 下，全局 hooks 目录（<code>~/.atlas/hooks/</code> 等）内核级写拒绝但仍可读。</p>
+</section>
+<section id="ch-18-custom">
+<h3>自定义 Profile</h3>
+<pre><code># ~/.atlas/sandbox.toml 或 .atlas/sandbox.toml
+[profiles.project]
+extends = "workspace"
+restrict_network = true
+read_only = ["/data"]
+read_write = ["/tmp/scratch"]
+deny = ["/data/shared-secrets", "**/.env", "**/*.pem"]</code></pre>
+<p>勿与内置名冲突；<code>--sandbox devbox</code> 始终用内置。用户与项目同名冲突时以用户文件为准并警告，可用 <code>/doctor</code> 排查。</p>
+</section>
+</article>
+<article class="chapter" id="ch-19">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>Plan 模式</h2>
+<section id="ch-19-plan">
+<h3>计划模式</h3>
+<p>只读探索 + 写 <code>plan.md</code>（会话目录内），其他文件编辑被拒绝。</p>
+<p>进入：<code>/plan [描述]</code>、<code>Shift+Tab</code> 切到 Plan、或 agent 调用 <code>enter_plan_mode</code>。</p>
+<p>完成后 <code>exit_plan_mode</code> 打开审批 UI：<code>a</code> 批准实施、<code>s</code> 请求修改、<code>c</code> 行注释。</p>
+<p>适用：架构歧义大的任务；不适用：单行修复等明确工作。</p>
+</section>
+</article>
+<article class="chapter" id="ch-20">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>后台任务</h2>
+<section id="ch-20-bg">
+<h3>后台与调度</h3>
+<p><code>run_terminal_command</code> 设 <code>background: true</code> 获 task_id；用 <code>get_command_or_subagent_output</code> 取输出。</p>
+<p>TUI 中 <code>Ctrl+B</code> 将前台命令转后台。</p>
+<pre><code>/loop 30m check deploy status
+/loop check status every hour</code></pre>
+<p><code>monitor</code> 工具、`wait_commands_or_subagents`、`kill_command_or_subagent` 管理多任务。循环任务最短 60s，7 天过期。</p>
+</section>
+</article>
+<article class="chapter" id="ch-21">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>终端支持与排错</h2>
+<section id="ch-21-doctor">
+<h3>诊断</h3>
+<pre><code>/doctor
+atlas doctor
+atlas doctor --json
+/doctor fix tmux-clipboard</code></pre>
+<p>检查：终端品牌、truecolor、Kitty 键盘协议、剪贴板 OSC 52、tmux 透传、通知、沙箱冲突。</p>
+<p><strong>WezTerm</strong>：需 <code>enable_kitty_keyboard = true</code> 才能用 <code>Ctrl+Enter</code> 插话。</p>
+<p><strong>Windows 图片粘贴</strong>：用 <code>Alt+V</code>（非 Ctrl+V）。</p>
+<p><strong>Linux</strong>：Ctrl+V 读 CLIPBOARD；中键读 PRIMARY。</p>
+</section>
+</article>
+<article class="chapter" id="ch-22">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>权限与安全</h2>
+<section id="ch-22-modes">
+<h3>权限模式</h3>
+<table><thead><tr><th>模式</th><th>说明</th><th>场景</th></tr></thead><tbody>
+<tr><td>default (ask)</td><td>危险操作需确认</td><td>日常交互</td></tr>
+<tr><td>auto</td><td>分类器自动批准安全工具</td><td>少打扰</td></tr>
+<tr><td>bypassPermissions (always-approve)</td><td>跳过普通提示</td><td>CI/ACP</td></tr>
+<tr><td>acceptEdits</td><td>编辑免 prompt</td><td>本地编码</td></tr>
+</tbody></table>
+<p>设置：<code>Shift+Tab</code>（含 Auto）、<code>Ctrl+O</code>、<code>/always-approve</code>、<code>--yolo</code>、<code>[ui] permission_mode</code>、<code>.claude/settings.json</code> defaultMode。交互 TUI 默认偏 Auto（功能开启时）。</p>
+</section>
+<section id="ch-22-rules">
+<h3>规则</h3>
+<p>在 <code>~/.atlas/config.toml</code> 或 <code>.atlas/config.toml</code>：</p>
+<pre><code>[[permission]]
+tool = "Bash"
+action = "deny"
+pattern = "rm -rf *"
+
+[[permission]]
+tool = "Edit"
+action = "allow"
+pattern = "src/**"</code></pre>
+<p>合并优先级：<strong>deny &gt; ask &gt; allow</strong>。多文件 permission 规则合并，非覆盖。</p>
+<h4>规则匹配参考</h4>
+<table><thead><tr><th>前缀</th><th>控制对象</th></tr></thead><tbody>
+<tr><td><code>Bash(...)</code></td><td>Shell 命令（* 含空格）</td></tr>
+<tr><td><code>Edit(...)</code> / <code>Write(...)</code></td><td>文件编辑/写入路径</td></tr>
+<tr><td><code>Read(...)</code> / <code>Grep(...)</code></td><td>读/搜索路径</td></tr>
+<tr><td><code>WebFetch(...)</code></td><td>URL 或 domain:host</td></tr>
+<tr><td><code>MCPTool(...)</code></td><td>MCP 工具调用</td></tr>
+</tbody></table>
+<p>CLI：<code>--allow 'Bash(npm test*)'</code>、<code>--deny 'Edit(**/.env)'</code>。Claude 兼容：<code>.claude/settings.json</code> 中 permissions。</p>
+<p>项目 <code>.atlas/config.toml</code> / <code>.claude/settings.json</code> 的权限规则受 <strong>folder trust</strong> 门控：未信任的仓库会跳过这些规则并弹出信任询问。已记住的交互授权在 Atlas Home <code>sessions/&lt;编码后的项目根&gt;/permission.toml</code>；删文件即重置该项目授权。</p>
+<p>沙箱（<a href="#ch-18">第 18 章</a>）提供 OS 级 FS/网络隔离，与 permission 模式互补。</p>
+</section>
+</article>
+<article class="chapter" id="ch-23">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>Agent Dashboard</h2>
+<section id="ch-23-dash">
+<h3>仪表盘</h3>
+<p>打开：<code>Ctrl+\</code>、<code>/dashboard</code>、<code>atlas dashboard</code>。列出本 pager 进程内所有顶层会话。</p>
+<table><thead><tr><th>键</th><th>动作</th></tr></thead><tbody>
+<tr><td>↑/↓, j/k</td><td>选择行（打开 peek）</td></tr>
+<tr><td>Enter</td><td>打开/回复/派发</td></tr>
+<tr><td>Ctrl+S</td><td>回复并 attach</td></tr>
+<tr><td>Ctrl+R</td><td>重命名</td></tr>
+<tr><td>Ctrl+T</td><td>固定/取消固定</td></tr>
+<tr><td>Ctrl+X</td><td>取消 turn / 连按删除</td></tr>
+<tr><td>Ctrl+G</td><td>按状态/目录分组</td></tr>
+<tr><td>Esc</td><td>关闭 peek / 模态，不结束会话</td></tr>
+</tbody></table>
+<p>非 <code>/config-agents</code>（代理定义）亦非 <code>/resume</code>（磁盘历史）。minimal 下隐藏。</p>
+</section>
+</article>
+<article class="chapter" id="ch-24">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>外部 OpenTelemetry</h2>
+<section id="ch-24-otel">
+<h3>OTEL 导出</h3>
+<pre><code>export GROK_EXTERNAL_OTEL=1
+export OTEL_METRICS_EXPORTER=otlp
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://collector.corp:4318
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer &lt;token&gt;"</code></pre>
+<p>与内部遥测独立：默认无内容（无 prompt/代码/路径）；可选 <code>otel_log_user_prompts</code> 等门控。</p>
+<table><thead><tr><th>设置</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>GROK_TELEMETRY_ENABLED</code></td><td>产品分析主开关</td></tr>
+<tr><td><code>GROK_TELEMETRY_TRACE_UPLOAD</code></td><td>会话 trace 上传</td></tr>
+<tr><td><code>/privacy</code></td><td>编码数据保留与训练</td></tr>
+<tr><td><code>GROK_EXTERNAL_OTEL</code></td><td>外部 OTEL（本指南）</td></tr>
+</tbody></table>
+<p>尽量停止上报：<code>telemetry_enabled=false</code> + <code>trace_upload_enabled=false</code> + <code>GROK_DISABLE_TASK_REPORT=1</code>。</p>
+</section>
+</article>
+<article class="chapter" id="ch-25">
+<span class="tier-badge">Tier3 进阶</span>
+<h2>状态栏</h2>
+<section id="ch-25-status">
+<h3>状态行</h3>
+<p>全屏 pager 底部可选一行（默认关闭），位于快捷键栏之上。会话状态变化或 turn 运行时刷新；可用 <code>refresh_interval</code> 在空闲时轮询脚本。</p>
+<pre><code>[ui.status_line]
+type = "builtin"    # builtin | command | disabled（默认）
+items = ["cwd", "model", "context"]
+# command = "~/.atlas/statusline.sh"
+# refresh_interval = 300   # 秒；仅 command 模式</code></pre>
+<table><thead><tr><th>item</th><th>显示</th></tr></thead><tbody>
+<tr><td>cwd</td><td>当前目录 basename</td></tr>
+<tr><td>model</td><td>模型显示名</td></tr>
+<tr><td>context</td><td>上下文占用 %（接近自动 compact 阈值时变琥珀色）</td></tr>
+<tr><td>cost</td><td>会话费用（&lt;$0.005 隐藏）</td></tr>
+<tr><td>turn-timer</td><td>当前 turn 耗时（满 1 秒起）</td></tr>
+<tr><td>session-name</td><td>会话名</td></tr>
+</tbody></table>
+<p><code>type=command</code> 时 stdin 接收 JSON（cwd、session_id、model、context_window、workspace.branch 等）。仅全屏 pager 显示；minimal 用终端标题。</p>
+</section>
+</article>
+
+<article class="chapter" id="ch-26">
+<span class="tier-badge">企业研发</span>
+<h2>ask-atlas 与 atlas-sdd</h2>
+<p>企业侧把研发技能拆成两个 marketplace 插件（Light Coupling，互不合并包体）：</p>
+<table><thead><tr><th>插件</th><th>职责</th><th>入口</th></tr></thead><tbody>
+<tr><td><code>atlas-skills</code></td><td><strong>Main Flow</strong>：想法 → 交付的主干技能包</td><td><code>/ask-atlas</code></td></tr>
+<tr><td><code>atlas-sdd</code></td><td><strong>Role Executor</strong>：按阶段执行企业规范（<code>spec/</code>）</td><td><code>/atlas-sdd</code>、<code>/1-requirement-analyst</code> 等</td></tr>
+</tbody></table>
+<p><code>/ask-atlas</code> 是唯一主流程路由器；SDD 角色<strong>不是</strong>第二条主干。阶段交接走仓库内 <strong>Documents Contract</strong>（<code>documents/…</code>）。</p>
+
+<section id="ch-26-install">
+<h3>安装与确认</h3>
+<p>企业安装脚本一般已 best-effort 安装两插件。手工补装或更新：</p>
+<pre><code>atlas plugin marketplace add https://gitlab.imyai.cn/zhangyufeng/atlas-plugins.git
+atlas plugin install atlas-sdd --trust
+atlas plugin install atlas-skills --trust
+
+atlas plugin marketplace update
+atlas plugin update atlas-sdd
+atlas plugin update atlas-skills
+atlas plugin list</code></pre>
+<ul>
+<li>装好后须<strong>新开一个 CLI / 编辑器会话</strong>，斜杠列表才会带上新技能。</li>
+<li>斜杠出现 <code>/ask-atlas</code> ⇒ <code>atlas-skills</code> 已加载；出现需求分析等角色命令 ⇒ <code>atlas-sdd</code> 已加载。</li>
+<li>只升其中一个时，看 <code>~/.atlas/installed-plugins/registry.json</code> 的版本，不要只看源码 <code>plugin.json</code>。</li>
+<li>跳过安装：环境变量 <code>GROK_SKIP_ATLAS_SDD=1</code> / <code>GROK_SKIP_ATLAS_SKILLS=1</code>。</li>
+</ul>
+</section>
+
+<section id="ch-26-ask-atlas">
+<h3>/ask-atlas（Main Flow）</h3>
+<p>在项目根目录启动 <code>atlas</code>（或 VS Code / Cursor 侧边栏），输入 <code>/ask-atlas</code> 并描述意图。它会按情况选技能或企业阶段，而不是立刻写代码。</p>
+<h4>主流程：想法 → 交付</h4>
+<ol>
+<li><strong><code>/grill-with-docs</code></strong> — 在工作目录里拷问，沉淀 <code>CONTEXT.md</code> / ADR（无工作目录时用 <code>/grill-me</code>）。</li>
+<li><strong>能否在对话里说清？</strong> 需要可运行答案时，经 <code>/handoff</code> 进 <code>/prototype</code>，再 handoff 回来。</li>
+<li><strong>是否跨多会话？</strong>
+  <ul>
+  <li>是 → <code>/to-spec</code> → <code>/to-tickets</code> → 每个票据单独 <code>/implement</code>（票据间 <code>/clear</code>）</li>
+  <li>否 → 同会话直接 <code>/implement</code></li>
+  </ul>
+</li>
+</ol>
+<p><code>/implement</code> 内部按 <code>/tdd</code> 红绿切片，收尾跑 <code>/code-review</code>（Standards + Spec 双轴）。单独用 <code>/tdd</code> / <code>/code-review</code> 也可。</p>
+<p>拷问 → 出票尽量保持<strong>同一上下文窗口</strong>，不要过早 <code>/compact</code>；每个 <code>/implement</code> 再开干净上下文。</p>
+<h4>汇入主流程的入口</h4>
+<table><thead><tr><th>场景</th><th>技能</th></tr></thead><tbody>
+<tr><td>堆积的缺陷 / 外来需求</td><td><code>/triage</code>（不要 triage <code>/to-tickets</code> 已产出的票）</td></tr>
+<tr><td>难复现 / 间歇 / 回归</td><td><code>/diagnosing-bugs</code>（先有变红的复现命令再改）</td></tr>
+<tr><td>超大、方向不清的工程</td><td><code>/wayfinder</code>（出决策图，再并入 <code>/to-spec</code>，不要直接 implement）</td></tr>
+<tr><td>空闲时改善可维护性</td><td><code>/improve-codebase-architecture</code></td></tr>
+</tbody></table>
+<h4>常用斜杠一览</h4>
+<table><thead><tr><th>命令</th><th>用途</th></tr></thead><tbody>
+<tr><td><code>/ask-atlas</code></td><td>路由器：按意图选技能或企业阶段</td></tr>
+<tr><td><code>/grill-with-docs</code></td><td>拷问并留下 CONTEXT / ADR</td></tr>
+<tr><td><code>/tdd</code></td><td>先红后绿实现一个行为</td></tr>
+<tr><td><code>/implement</code></td><td>按说明/票据实现（内走 tdd，收尾 code-review）</td></tr>
+<tr><td><code>/diagnosing-bugs</code></td><td>硬缺陷诊断</td></tr>
+<tr><td><code>/code-review</code></td><td>相对基点做 Standards + Spec 评审</td></tr>
+<tr><td><code>/to-spec</code> / <code>/to-tickets</code></td><td>多会话大功能：规格 → 票据</td></tr>
+</tbody></table>
+</section>
+
+<section id="ch-26-sdd">
+<h3>atlas-sdd（Role Executor）</h3>
+<p>按企业 SDD <strong>阶段</strong>执行，遵循插件内 <code>spec/</code>（Enterprise Spec Baseline）；项目可用 <code>.atlas/</code> / <code>documents/</code> 做 Project Override。</p>
+<table><thead><tr><th>角色</th><th>斜杠（阶段）</th><th>产物目录</th><th>默认链？</th></tr></thead><tbody>
+<tr><td>Role 1 需求分析</td><td><code>/1-requirement-analyst</code></td><td><code>documents/requirements-analyst/</code></td><td>是</td></tr>
+<tr><td>Role 2 架构设计</td><td><code>/2-architect-design</code></td><td><code>documents/architecture-design/</code></td><td><strong>否</strong>（Side Ramp）</td></tr>
+<tr><td>Role 3 详细设计</td><td><code>/3-program-design</code></td><td><code>documents/detailed-design/</code></td><td>是</td></tr>
+<tr><td>Role 4 实现</td><td><code>/4-software-engineer</code></td><td>代码（红绿切片）</td><td>是</td></tr>
+<tr><td>Role 6 测试</td><td><code>/6-qa-engineer</code></td><td><code>documents/test-cases/</code></td><td>enterprise-strict 收尾必有</td></tr>
+<tr><td>Role 7 运维</td><td>（ops 相关）</td><td>运维文档目录</td><td>Side Ramp</td></tr>
+<tr><td>Role 8 数据</td><td>（data/ETL 相关）</td><td>数据文档目录</td><td>Side Ramp</td></tr>
+</tbody></table>
+<p>亦可用 <code>/atlas-sdd</code>（别名 <code>/sdd</code>）选择角色。阶段命令只映射阶段；<strong>未拷问时不要用它们跳过</strong> <code>/grill-with-docs</code>。</p>
+<h4>默认门禁顺序</h4>
+<pre><code>Grill（父会话 /grill-with-docs）
+  → Role 1 需求
+  →（可选）Role 2 架构 —— 仅当你明确说「架构 / 架构设计」
+  → Role 3 详细设计
+  → Role 4 实现（内部 /tdd，不要整包 /implement）
+  → Close：父会话 /code-review
+       + enterprise-strict 时 Role 6 写测试用例</code></pre>
+<p><strong>合规模式</strong>（业务仓配置）：</p>
+<ul>
+<li><code>standard</code>（默认）— 已有等价详细设计时可不必强制整条角色链</li>
+<li><code>enterprise-strict</code> — 拷问后强制 <strong>1→3→4→6</strong>；Role 2 仍可选</li>
+</ul>
+</section>
+
+<section id="ch-26-nouns">
+<h3>用户话术怎么映射阶段</h3>
+<p><code>/ask-atlas</code> 里的名词表示<strong>当前阶段</strong>，不是「直接召唤会写那种文件的单个角色」：</p>
+<table><thead><tr><th>你说</th><th>打开的阶段</th></tr></thead><tbody>
+<tr><td>需求文档</td><td>Role 1</td></tr>
+<tr><td>设计文档 / 详细设计</td><td>Role 3（不是 Role 2）</td></tr>
+<tr><td>架构 / 架构设计</td><td>可选 Role 2</td></tr>
+<tr><td>实现代码</td><td>Role 4（须已有详细设计）</td></tr>
+</tbody></table>
+<p>Role 1 <strong>不再做第二轮拷问</strong>；缺口回到父会话继续 grill。Role 3 前若无架构文档，会问你指定路径或确认跳过，<strong>不会</strong>因此自动拉起 Role 2。</p>
+</section>
+
+<section id="ch-26-recipes">
+<h3>三种典型用法</h3>
+<h4>1. 修 bug</h4>
+<pre><code>/ask-atlas 登录后偶发 401
+→ /diagnosing-bugs（或直接 /tdd）
+→ /code-review</code></pre>
+<p>不跑需求分析 / 架构角色。</p>
+<h4>2. 小功能（一个会话能说清）</h4>
+<pre><code>必要时 /grill-with-docs
+→ /implement 或 /tdd
+→ /code-review</code></pre>
+<h4>3. 要企业需求/设计文档再实现</h4>
+<pre><code>/ask-atlas …出需求文档
+→ 按提示先 /grill-with-docs（父会话多轮）
+→ Role 1 → documents/requirements-analyst/
+→ 「设计文档」→ Role 3（可引用已有架构；无则跳过 Role 2）
+→ 「实现代码」→ Role 4（红绿）
+→ 父会话 /code-review
+→（strict）Role 6 → documents/test-cases/</code></pre>
+</section>
+
+<section id="ch-26-troubleshoot">
+<h3>排错</h3>
+<table><thead><tr><th>现象</th><th>处理</th></tr></thead><tbody>
+<tr><td><code>/ask-atlas</code> 没有或像旧版</td><td><code>atlas plugin list</code> 是否有 <code>atlas-skills</code>；<code>plugin update</code> 后<strong>新开会话</strong></td></tr>
+<tr><td>没有企业角色命令</td><td>安装并 <code>--trust</code> <code>atlas-sdd</code></td></tr>
+<tr><td>多源 marketplace 装不上</td><td>显式 <code>atlas-sdd@&lt;qualifier&gt;</code>，或保证 marketplace 源可扫</td></tr>
+<tr><td>插件有了但斜杠仍旧</td><td>新开终端 / 编辑器会话；确认 <code>[plugins].enabled</code> 未关</td></tr>
+</tbody></table>
+<p>更细的安装步骤见仓库 <code>docs/atlas-runtime-安装手册.md</code>；流程语义见 <code>CONTEXT.md</code> 与 ADR 0001–0004。企业登录 / 模型 / 遥测见 <a href="#ch-27">第 27 章</a>。</p>
+</section>
+</article>
+
+<article class="chapter" id="ch-27">
+<span class="tier-badge">企业研发</span>
+<h2>企业运行时</h2>
+<p>本章汇总企业部署日常会碰到的家目录、登录门控、编辑器、遥测与 FAQ。术语权威：<code>docs/CONTEXT-runtime.md</code>、<code>services/atlas-server/CONTEXT.md</code>。</p>
+
+<section id="ch-27-home">
+<h3>Atlas Home</h3>
+<p>用户态根目录由 <code>GROK_HOME</code> 解析，默认 <code>~/.atlas</code>（Windows：<code>%USERPROFILE%\.atlas</code>）。配置、会话、安装登记都落在这里——不要再把 <code>~/.grok</code> 当当前家目录。</p>
+<table><thead><tr><th>路径</th><th>用途</th></tr></thead><tbody>
+<tr><td><code>config.toml</code></td><td>主配置；<code>/settings</code> 写入此处</td></tr>
+<tr><td><code>auth.json</code></td><td>登录凭据</td></tr>
+<tr><td><code>sessions/</code></td><td>会话持久化</td></tr>
+<tr><td><code>installed-plugins/</code></td><td>用户级插件快照 + <code>registry.json</code></td></tr>
+<tr><td><code>skills/</code></td><td>Native Skill（插件技能不在这里）</td></tr>
+<tr><td><code>bin/</code></td><td>安装器放入的 <code>atlas</code> / <code>atlas.exe</code></td></tr>
+</tbody></table>
+</section>
+
+<section id="ch-27-vscode">
+<h3>VS Code / Cursor 扩展</h3>
+<p>扩展是 CLI 的图形前端，必须先装好 <code>atlas</code> 并能登录。企业 VSIX 示例：</p>
+<pre><code>Invoke-WebRequest -Uri http://10.218.220.237:8888/atlas/atlas-vscode-3.1.0.vsix -OutFile atlas-vscode-3.1.0.vsix
+code --install-extension .\atlas-vscode-3.1.0.vsix --force
+cursor --install-extension .\atlas-vscode-3.1.0.vsix --force</code></pre>
+<ul>
+<li>扩展通过 ACP spawn <code>atlas agent stdio</code>，自己不扫 plugins/skills。</li>
+<li>侧边栏 UI：<code>+</code> 新会话、底部 Agent / Plan / Auto accept（不是斜杠）。</li>
+<li>起不来或一直要登录：终端先跑通 <code>atlas login --device-auth</code>；检查设置里的 <code>atlas.cliPath</code>。</li>
+<li>Desktop 更新与 CLI 同一企业通道（如 <code>22255/atlas</code>），不是独立 8888。</li>
+</ul>
+</section>
+
+<section id="ch-27-telemetry">
+<h3>遥测与 Task Report</h3>
+<table><thead><tr><th>开关</th><th>作用</th></tr></thead><tbody>
+<tr><td><code>telemetry_enabled</code> / <code>GROK_TELEMETRY_ENABLED</code></td><td>signals / events 等产品遥测</td></tr>
+<tr><td><code>trace_upload_enabled</code> / <code>GROK_TELEMETRY_TRACE_UPLOAD</code></td><td><strong>只</strong>关会话 trace 产物上传（GCS/S3/proxy），不是总开关</td></tr>
+<tr><td><code>GROK_DISABLE_TASK_REPORT=1</code></td><td>关闭 Task Report（默认开；主会话 / plan / 子 agent 都会报）</td></tr>
+<tr><td><code>GROK_EXTERNAL_OTEL</code></td><td>客户侧 OTEL 导出（见 <a href="#ch-24">第 24 章</a>）</td></tr>
+</tbody></table>
+<p>尽量全停：<code>telemetry_enabled=false</code> + <code>trace_upload_enabled=false</code> + <code>GROK_DISABLE_TASK_REPORT=1</code>。</p>
+<p>Admin 页：<code>/atlas/admin/task-reports</code>。排行按 Catalog ID；明细含 Model / Routing。</p>
+</section>
+
+<section id="ch-27-update">
+<h3>更新</h3>
+<pre><code># CLI：指向企业 /atlas/cli 时启动会检查通道；也可重跑安装脚本
+atlas update
+
+# 插件
+atlas plugin marketplace update
+atlas plugin update atlas-sdd
+atlas plugin update atlas-skills
+
+# 扩展：装新 VSIX --force，或内网市场发版</code></pre>
+</section>
+
+<section id="ch-27-offline">
+<h3>连不上 atlas-server 时启动</h3>
+<p>代理不可达时，设备码登录、托管模型、远程 settings、自动更新都会失败。本地对话须<strong>同时</strong>关掉两道门，并配置本地/BYOK 模型。权威步骤见 <code>docs/atlas-runtime-安装手册.md</code> §9。</p>
+<pre><code># ~/.atlas/config.toml
+[auth]
+require_session_at_startup = false   # 也可 GROK_REQUIRE_SESSION_AT_STARTUP=0
+
+[features]
+remote_fetch = false                 # 无环境变量；跳过 /settings 与远程 /models
+# 否则 bootstrap 卡 ~40s：Couldn't start … loading your account settings</code></pre>
+<pre><code>[model.local]
+model = "qwen2.5-coder"
+base_url = "http://127.0.0.1:11434/v1"
+api_key = "ollama"
+api_backend = "chat_completions"
+
+# atlas -m local</code></pre>
+<p>恢复内网后：改回 <code>remote_fetch</code>（默认 true）→ <code>atlas login --device-auth</code> → <code>/refresh-model</code>。</p>
+</section>
+
+<section id="ch-27-faq">
+<h3>常见问题</h3>
+<table><thead><tr><th>现象</th><th>处理</th></tr></thead><tbody>
+<tr><td><code>atlas</code> 不是命令</td><td>新开终端；确认 <code>~/.atlas/bin</code> 在 PATH，或设 <code>atlas.cliPath</code></td></tr>
+<tr><td>安装提示该平台尚不可用</td><td>atlas-server 尚未发布对应 <code>grok-{ver}-{os}-{arch}</code></td></tr>
+<tr><td>扩展侧边栏起不来 / 一直要登录</td><td>终端 <code>atlas login --device-auth</code>；检查 <code>atlas.cliPath</code></td></tr>
+<tr><td><code>/ask-atlas</code> 没有或像旧版</td><td><code>plugin list</code> 有 <code>atlas-skills</code>；update 后<strong>新开会话</strong></td></tr>
+<tr><td>没有企业角色命令</td><td>安装并 trust <code>atlas-sdd</code></td></tr>
+<tr><td>模型列表不对 / 无托管模型</td><td>Admin 分配；等缓存或重登 / <code>/refresh-model</code></td></tr>
+<tr><td>设备码批准失败</td><td>先浏览器登录；user_code 与机器码正确；已开户</td></tr>
+<tr><td><code>startup timed out</code> / loading account settings</td><td>设 <code>[features] remote_fetch = false</code> + 本地模型；见上文「连不上」</td></tr>
+<tr><td>只关了 session 门控仍卡 ~40s</td><td>还须 <code>remote_fetch = false</code>（无 env 可替代）</td></tr>
+<tr><td>MCP 内存暴涨</td><td>避免多份 <code>command = "npx"</code> 写进用户全局；工程级 MCP 写项目配置</td></tr>
+<tr><td>Linux 老 glibc 跑不起来</td><td>官方 x86_64 应用 musl 包；见 <code>docs/atlas-编译手册.md</code></td></tr>
+</tbody></table>
+</section>
+</article>
+
+<article class="chapter" id="ch-28">
+<span class="tier-badge">企业研发</span>
+<h2>配置参考摘要</h2>
+<p>对应上游 <code>26-config-reference.md</code>（CLI 启动也会解压到 Atlas Home 文档树）。概念说明仍见 <a href="#ch-05">第 5 章</a>；完整字段表以英文源或本机解压副本为准。下文路径统一写 Atlas Home（默认 <code>~/.atlas</code>）。</p>
+
+<section id="ch-28-layers">
+<h3>配置分层（后者覆盖前者，pin 除外）</h3>
+<ol>
+<li>编译默认值</li>
+<li><code>/etc/atlas/managed_config.toml</code> 或 <code>$GROK_HOME/managed_config.toml</code>（舰队默认；用户文件可覆盖标为 user 的项）</li>
+<li><code>$GROK_HOME/config.toml</code>（个人；<code>/settings</code> 写这里）</li>
+<li>项目 <code>.atlas/config.toml</code>：通常只贡献 <code>[mcp_servers]</code>、<code>[plugins]</code>、<code>[permission]</code>、<code>[mcp] max_output_bytes</code></li>
+<li><code>GROK_CONFIG</code>（内联 JSON）或 <code>GROK_CONFIG_PATH</code>（白名单键）</li>
+<li><code>requirements.toml</code>（管理员层；标 <code>pin</code> 的键不可被用户/环境/CLI 覆盖）</li>
+<li><code>GROK_*</code> 环境变量</li>
+<li>CLI 标志（如 <code>--model</code>、<code>--sandbox</code>、<code>--yolo</code>）</li>
+</ol>
+<p>排查生效值：<code>atlas inspect</code> 或 <code>atlas inspect --json</code>。</p>
+</section>
+
+<section id="ch-28-files">
+<h3>三类文件谁写</h3>
+<table><thead><tr><th>文件</th><th>谁写</th><th>用途</th></tr></thead><tbody>
+<tr><td><code>config.toml</code></td><td>开发者</td><td>个人默认，可随时改</td></tr>
+<tr><td><code>managed_config.toml</code></td><td>部署/控制台</td><td>舰队起点，用户可覆盖</td></tr>
+<tr><td><code>requirements.toml</code></td><td>管理员（可签名）</td><td>强制策略；<code>pin</code> 键锁死</td></tr>
+</tbody></table>
+</section>
+
+<section id="ch-28-hot">
+<h3>常用键速查</h3>
+<table><thead><tr><th>键 / 段</th><th>说明</th></tr></thead><tbody>
+<tr><td><code>[ui] vim_mode</code> / <code>screen_mode</code> / <code>permission_mode</code></td><td>Vim、默认全屏/minimal、权限模式</td></tr>
+<tr><td><code>[model.&lt;id&gt;]</code></td><td>自定义或托管落盘模型</td></tr>
+<tr><td><code>[mcp_servers.*]</code></td><td>MCP</td></tr>
+<tr><td><code>[plugins] enabled</code></td><td>启用的用户级插件名</td></tr>
+<tr><td><code>[memory] enabled</code></td><td>跨会话记忆</td></tr>
+<tr><td><code>[features] telemetry</code> / <code>[telemetry] trace_upload</code></td><td>遥测门控</td></tr>
+<tr><td><code>[features] remote_fetch</code></td><td>是否拉远程 settings /models（断网须 <code>false</code>；无 env）</td></tr>
+<tr><td><code>[cli] channel</code> / <code>auto_update</code></td><td>更新通道（企业常配合 atlas-server <code>/cli</code>）</td></tr>
+<tr><td><code>auth.disable_api_key_auth</code>（可 pin）</td><td>禁止 API Key，只走部署 IdP</td></tr>
+<tr><td><code>[auth] require_session_at_startup</code></td><td>启动登录门控（默认开；断网可 <code>false</code>）</td></tr>
+</tbody></table>
+<p>外观细节在 <code>pager.toml</code>（见 <a href="#ch-06">主题</a>）。完整字段列表见源文档 <code>crates/.../user-guide/26-config-reference.md</code>。</p>
+</section>
+</article>
+</main>
+</div>
+<script>
+(function(){
+  const sidebar = document.getElementById('sidebar');
+  const search = document.getElementById('search');
+  const links = document.querySelectorAll('#toc a[data-label]');
+  document.getElementById('menuBtn').addEventListener('click', () => sidebar.classList.toggle('open'));
+  search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    links.forEach(a => {
+      const show = !q || a.dataset.label.includes(q);
+      a.classList.toggle('hidden', !show);
+    });
+  });
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        document.querySelectorAll('#toc a').forEach(a => a.classList.remove('active'));
+        const id = e.target.id;
+        const link = document.querySelector('#toc a[href="#' + id + '"]');
+        if (link) link.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  document.querySelectorAll('.chapter').forEach(el => obs.observe(el));
+})();
+</script>
+</body>
+</html>

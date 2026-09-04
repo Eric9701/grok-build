@@ -91,7 +91,7 @@ fn command_needs_pre_sandbox_policy_heal(command: Option<&Command>) -> bool {
         None
         | Some(Command::Agent(_))
         | Some(Command::Dashboard)
-        | Some(Command::Models)
+        | Some(Command::Models(_))
         | Some(Command::Worktree(_)) => true,
         Some(
             Command::Inspect { .. }

@@ -20,9 +20,9 @@ pub const MAX_SKILL_WALK_DEPTH: usize = 5;
 
 /// Subdirectory names that contain skill definitions.
 ///
-/// `skills` is the standard layout (`.grok/skills/`, `.claude/skills/`,
-/// `.cursor/skills/`). The product-specific `skills-cursor/` layout is no
-/// longer scanned — it pulled vendor default skills into Grok Build sessions.
+/// `skills` is the standard layout (`.atlas/skills/`, `.grok/skills/`,
+/// `.claude/skills/`, `.cursor/skills/`). The product-specific `skills-cursor/`
+/// layout is no longer scanned — it pulled vendor default skills into sessions.
 const SKILL_SUBDIRS: &[&str] = &["skills"];
 
 /// Cursor ships these default skills in `~/.cursor/skills-cursor/`
@@ -825,13 +825,13 @@ pub fn parse_skill_files(skill_files: Vec<(PathBuf, SkillScope)>) -> Vec<SkillIn
 /// directories not found at startup.
 ///
 /// For each path in `file_paths`, walks from `dirname(path)` upward toward
-/// `cwd` (exclusive). At each directory, checks for `.grok/skills/`,
-/// `.agents/skills/`, and (gated on `compat.claude.skills`) `.claude/skills/`.
-/// Skips already-checked dirs.
+/// `cwd` (exclusive). At each directory, checks for `.atlas/skills/`,
+/// `.grok/skills/`, `.agents/skills/`, and (gated on `compat.claude.skills`)
+/// `.claude/skills/`. Skips already-checked dirs.
 ///
 /// Skill/command roots are **not** filtered by `.gitignore`. Discovery only
-/// visits known config roots (`.grok`, `.agents`, `.claude`, …); those are
-/// local harness config (often intentionally gitignored), not tree content.
+/// visits known config roots (`.atlas`, `.grok`, `.agents`, `.claude`, …); those
+/// are local harness config (often intentionally gitignored), not tree content.
 /// Contrast with AGENTS.md discovery, which still respects gitignore. Use
 /// `[skills] ignore` to hide a path. Compat loaders likewise load project
 /// `.claude/commands` even when ignored.
@@ -849,12 +849,13 @@ pub fn discover_skills_for_paths(
     already_checked: &mut HashSet<PathBuf>,
     compat: CompatConfig,
 ) -> Vec<SkillInfo> {
-    // `.grok` and `.agents` are always scanned; `.claude` is gated on the
-    // claude-vendor skills cell. (`.cursor` is excluded here by design — see fn docs.)
-    let mut config_dir_names: Vec<&str> = vec![".grok", ".agents"];
-    if compat.claude.skills {
-        config_dir_names.push(".claude");
-    }
+    // Native dirs plus gated `.claude`. (`.cursor` is excluded here by design
+    // — see fn docs.)
+    let config_dir_names: Vec<&str> = compat
+        .skill_config_dirs()
+        .into_iter()
+        .filter(|name| *name != ".cursor")
+        .collect();
 
     let mut skill_files: Vec<(PathBuf, SkillScope)> = Vec::new();
     let mut seen_canonical_paths = HashSet::new();

@@ -5,6 +5,9 @@
 *~
 /download/
 /downloads/
+/probe_bundle_archive/
+/scripts/auth.json
+/scripts/auth.json.*.tmp
 /releases/*
 !/releases/.gitkeep
 atlas-server.toml*

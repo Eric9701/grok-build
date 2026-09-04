@@ -39,6 +39,32 @@ fn cancellation_makes_an_otherwise_complete_usage_snapshot_incomplete() {
     assert!(!usage_is_incomplete(false, false));
     assert!(usage_is_incomplete(true, false));
 }
+#[test]
+fn child_signal_counts_copy_session_artifacts_for_task_report() {
+    let snapshot = crate::session::signals::SessionSignals {
+        tool_call_count: 4,
+        turn_count: 2,
+        artifacts_written: vec!["src/lib.rs".into(), "docs/note.md".into()],
+        ..Default::default()
+    };
+    let counts = child_signal_counts(&snapshot);
+    assert_eq!(
+        counts,
+        ChildSignalCounts {
+            tool_calls: 4,
+            turns: 2,
+            artifacts: vec!["src/lib.rs".into(), "docs/note.md".into()],
+        }
+    );
+    let mut result = SubagentResult::default();
+    apply_child_signal_counts(&mut result, counts);
+    assert_eq!(result.tool_calls, 4);
+    assert_eq!(result.turns, 2);
+    assert_eq!(
+        result.artifacts,
+        vec!["src/lib.rs".to_string(), "docs/note.md".to_string()]
+    );
+}
 #[tokio::test]
 async fn usage_ack_precedes_terminal_presentation() {
     let mut ctx = ctx_with_toggle(HashMap::new());

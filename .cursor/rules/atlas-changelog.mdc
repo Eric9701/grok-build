@@ -1,0 +1,10 @@
+---
+description: 改完五件套必须写入 docs/changelog
+alwaysApply: true
+---
+
+# Atlas 变更记录
+
+改完 **atlas-cli / atlas-plugin / grok-build-vscode / jetbrains-cc-gui / atlas-server** 后，把条目插到对应 `docs/changelog/<产品>.md` **文首**（最新在上）。记法见 [docs/changelog/README.md](../../docs/changelog/README.md)。
+
+只记用户可感知或后会话会踩的行为。分析而未改代码也写一行，状态标「分析未改」。不记纯 merge、格式化、看日志。

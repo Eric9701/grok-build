@@ -369,7 +369,7 @@ fn discovery_change_for_path(path: &Path) -> Option<DiscoveryChange> {
 }
 
 /// Known vendor config root basenames; kept in sync with `collect_skill_config_dirs`.
-const VENDOR_CONFIG_ROOT_NAMES: &[&str] = &[".grok", ".agents", ".claude", ".cursor"];
+const VENDOR_CONFIG_ROOT_NAMES: &[&str] = &[".atlas", ".grok", ".agents", ".claude", ".cursor"];
 
 /// Vendor roots (by name or `grok_home`) must use scoped watches; they can contain large non-skill trees (`worktrees/`, etc.).
 fn is_vendor_config_root(dir: &Path, grok_home: &Path) -> bool {
@@ -406,9 +406,12 @@ fn vendor_skill_refresh_dirs(config_dir: &Path) -> [(PathBuf, RecursiveMode); 3]
 }
 
 fn project_grok_refresh_dirs(project_root: &Path) -> Vec<(PathBuf, RecursiveMode)> {
-    let project_grok = project_root.join(".grok");
-    let mut dirs = vec![(project_grok.clone(), RecursiveMode::NonRecursive)];
-    dirs.extend(vendor_skill_refresh_dirs(&project_grok));
+    let mut dirs = Vec::new();
+    for name in [".atlas", ".grok"] {
+        let root = project_root.join(name);
+        dirs.push((root.clone(), RecursiveMode::NonRecursive));
+        dirs.extend(vendor_skill_refresh_dirs(&root));
+    }
     dirs
 }
 
@@ -515,7 +518,7 @@ fn plan_skills_watch_targets(
     }
 }
 
-/// Watches project `.grok` skills/commands/workflows for mid-session discovery.
+/// Watches project `.atlas` / `.grok` skills/commands/workflows for mid-session discovery.
 ///
 /// After a [`DiscoveryChange`], call [`Self::refresh_new_dirs`] so newly created seed dirs get watches attached.
 pub(crate) struct ProjectDiscoveryWatcher {
@@ -527,17 +530,19 @@ pub(crate) struct ProjectDiscoveryWatcher {
 impl ProjectDiscoveryWatcher {
     pub(crate) fn start(cwd: &Path) -> Option<(Self, mpsc::UnboundedReceiver<DiscoveryChange>)> {
         let project_root = crate::session::workflow::registry::project_root(cwd);
+        let project_atlas = project_root.join(".atlas");
         let project_grok = project_root.join(".grok");
         let (tx, rx) = mpsc::unbounded_channel();
-        let project_grok_for_events = project_grok.clone();
+        let atlas_for_events = project_atlas.clone();
+        let grok_for_events = project_grok.clone();
         let mut debouncer =
             new_filtered_debouncer(SKILLS_DEBOUNCE, move |res: DebounceEventResult| {
                 let Ok(events) = res else { return };
                 let mut change = None;
-                for event in events
-                    .iter()
-                    .filter(|event| event.path.starts_with(&project_grok_for_events))
-                {
+                for event in events.iter().filter(|event| {
+                    event.path.starts_with(&atlas_for_events)
+                        || event.path.starts_with(&grok_for_events)
+                }) {
                     let next = discovery_change_for_path(&event.path)
                         .unwrap_or(DiscoveryChange::Workflows);
                     if next == DiscoveryChange::Skills {
@@ -553,7 +558,9 @@ impl ProjectDiscoveryWatcher {
             .map_err(|error| tracing::warn!(%error, "failed to create project workflow watcher"))
             .ok()?;
 
-        let initial = if project_grok.is_dir() {
+        let initial = if project_atlas.is_dir() {
+            project_atlas.clone()
+        } else if project_grok.is_dir() {
             project_grok.clone()
         } else {
             project_root.clone()
@@ -564,6 +571,16 @@ impl ProjectDiscoveryWatcher {
         {
             log_watch_error(&error, "failed to watch project workflow parent");
             return None;
+        }
+        // Also watch the project root whenever the preferred `.atlas` dir is
+        // still missing, so the first create-skill write is observed.
+        if initial != project_root
+            && !project_atlas.is_dir()
+            && let Err(error) = debouncer
+                .watcher()
+                .watch(&project_root, RecursiveMode::NonRecursive)
+        {
+            log_watch_error(&error, "failed to watch project root for .atlas create");
         }
         let refresh_dirs = project_grok_refresh_dirs(&project_root);
         let mut refreshed_dirs = HashSet::from([initial]);
@@ -777,20 +794,15 @@ mod tests {
     #[test]
     fn project_grok_refresh_dirs_matches_vendor_layout() {
         let project = Path::new("/tmp/repo");
+        let atlas = project.join(".atlas");
         let grok = project.join(".grok");
         let dirs = project_grok_refresh_dirs(project);
 
-        assert_eq!(dirs.len(), 4);
-        assert_eq!(dirs[0], (grok.clone(), RecursiveMode::NonRecursive));
-        assert_eq!(
-            &dirs[1..],
-            [
-                (grok.join("skills"), RecursiveMode::Recursive),
-                (grok.join("commands"), RecursiveMode::NonRecursive),
-                (grok.join("workflows"), RecursiveMode::NonRecursive),
-            ]
-        );
-        assert_eq!(dirs[1..], vendor_skill_refresh_dirs(&grok));
+        assert_eq!(dirs.len(), 8);
+        assert_eq!(dirs[0], (atlas.clone(), RecursiveMode::NonRecursive));
+        assert_eq!(&dirs[1..4], vendor_skill_refresh_dirs(&atlas).as_slice());
+        assert_eq!(dirs[4], (grok.clone(), RecursiveMode::NonRecursive));
+        assert_eq!(&dirs[5..], vendor_skill_refresh_dirs(&grok).as_slice());
     }
 
     #[test]
@@ -933,7 +945,7 @@ mod tests {
                 .into_iter()
                 .chain(vendor_skill_refresh_dirs(&project_grok))
                 .collect();
-        for name in [".agents", ".cursor"] {
+        for name in [".atlas", ".agents", ".cursor"] {
             let root = project.join(name);
             expected_refresh.push((root.clone(), RecursiveMode::NonRecursive));
             expected_refresh.extend(vendor_skill_refresh_dirs(&root));
@@ -1057,7 +1069,7 @@ mod tests {
         assert_eq!(plan.project_parent_watch.as_deref(), Some(project));
 
         let mut expected = vendor_skill_refresh_dirs(&project_claude).to_vec();
-        for name in [".grok", ".agents", ".cursor"] {
+        for name in [".atlas", ".grok", ".agents", ".cursor"] {
             let root = project.join(name);
             expected.push((root.clone(), RecursiveMode::NonRecursive));
             expected.extend(vendor_skill_refresh_dirs(&root));
@@ -1091,7 +1103,7 @@ mod tests {
                 .refresh_dirs
                 .contains(&(project_grok.clone(), RecursiveMode::NonRecursive))
         );
-        for name in [".agents", ".claude", ".cursor"] {
+        for name in [".atlas", ".agents", ".claude", ".cursor"] {
             let root = project.join(name);
             assert!(
                 plan.refresh_dirs

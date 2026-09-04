@@ -4248,7 +4248,6 @@ Only continue if you trust this code.`,
           "warning",
           "Editing a sent message needs a newer Atlas CLI. Update via Settings → About.",
         );
-        );
       }
       // If the wire's user-facing list no longer matches what the user sees, the
       // bubble->point map can't be trusted — refuse instead of reverting a turn
@@ -4262,7 +4261,6 @@ Only continue if you trust this code.`,
           "warning",
           "Atlas's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
         );
-        );
       }
       const target = resolveEditRewindTarget(points, userBubbleIndex);
       if (!target) {
@@ -4274,7 +4272,6 @@ Only continue if you trust this code.`,
           requester,
           "info",
           "Atlas has no restore point for that message, so it can't be rolled back. Its text is back in the composer.",
-        );
         );
       }
 
@@ -4301,7 +4298,6 @@ Only continue if you trust this code.`,
           requester,
           "warning",
           "Editing a sent message needs a newer Atlas CLI. Update via Settings → About.",
-        );
         );
       }
       if (!result.success) {
@@ -4426,7 +4422,6 @@ Only continue if you trust this code.`,
           "warning",
           "Rewind needs a newer Atlas CLI. Update via Settings → About.",
         );
-        );
       }
 
       // If the wire's user-facing list no longer matches what the user sees, the
@@ -4440,7 +4435,6 @@ Only continue if you trust this code.`,
           requester,
           "warning",
           "Atlas's restore points no longer line up with this conversation, so rewinding could remove the wrong turn. Reload the window and try again.",
-        );
         );
       }
       let target: ReturnType<typeof resolveUserBubbleRewind> = null;
@@ -4523,7 +4517,6 @@ Only continue if you trust this code.`,
           requester,
           "warning",
           "Rewind needs a newer Atlas CLI. Update via Settings → About.",
-        );
         );
       }
       if (!result.success) {

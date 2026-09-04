@@ -268,6 +268,7 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         description: "Refresh the model catalog from the remote server",
         argument_hint: None,
         aliases: &["refresh-models"],
+        model_authored_eligibility: ModelAuthoredEligibility::Denied,
         gate: BuiltinGate::AlwaysOn,
         workflow_projection: WorkflowProjection::None,
         resolve: |_args| BuiltinAction::RefreshModels,
