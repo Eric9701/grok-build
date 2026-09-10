@@ -120,6 +120,9 @@ mod tests {
             "working_directory": "/tmp/test",
             "current_date": "2025-01-15",
             "memory_enabled": false,
+            "memory_v2_enabled": false,
+            "memory_global_path": "",
+            "memory_workspace_path": "",
             "is_non_interactive": false,
             "system_prompt_label": crate::prompt::context::DEFAULT_SYSTEM_PROMPT_LABEL,
         })
@@ -428,6 +431,25 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_memory_v2_renders_filesystem_instructions_and_roots() {
+        let mut placeholders = default_placeholders();
+        placeholders["memory_v2_enabled"] = serde_json::json!(true);
+        placeholders["memory_global_path"] = serde_json::json!("/home/test/.grok/memory-v2/global");
+        placeholders["memory_workspace_path"] =
+            serde_json::json!("/home/test/.grok/memory-v2/workspaces/project");
+
+        let prompt = render_base(&default_renderer(), &placeholders);
+        assert!(prompt.contains("<memory>"));
+        assert!(prompt.contains("/home/test/.grok/memory-v2/global"));
+        assert!(prompt.contains("/home/test/.grok/memory-v2/workspaces/project"));
+        assert!(prompt.contains("topics/"));
+        assert!(prompt.contains("observations/_inbox/"));
+        assert!(prompt.contains("NEVER edit it directly"));
+        assert!(prompt.contains("do not automatically search"));
+        assert!(!prompt.contains("memory_save"));
+    }
+
     // ── Web search disabled ─────────────────────────────────────────
 
     // ── Apply-patch template rendering ───────────────────────────────────
@@ -511,11 +533,8 @@ mod tests {
         assert_eq!(a, b, "Subagent template rendering must be deterministic");
     }
 
-    // ── Task completion discipline ─────────────────────────────────
-    //
-    // The `<task_completion_discipline>` block was removed from both base and subagent templates
-    // These tests pin the deletion so the block doesn't accidentally come back
-    // They also keep the runtime TodoGate from firing reminders that reference a non-existent block
+    // The `<task_completion_discipline>` block was removed from both templates.
+    // These tests pin the deletion so it does not come back, and so TodoGate does not remind about a missing block.
 
     #[test]
     fn task_completion_discipline_block_is_not_rendered() {
@@ -556,10 +575,9 @@ mod tests {
         assert_template_size_under(&prompt, "subagent");
     }
 
-    // ── Guard invariant ─────────────────────────────────────────────
     // Every `${{ tools.by_kind.X }}` must sit inside a `${%- if ... %}` whose condition requires X.
-    // The condition must contain `tools.by_kind.X` at a word boundary, with no top-level ` or `
-    // If violated, X could render as empty string at runtime
+    // The condition must contain `tools.by_kind.X` at a word boundary, with no top-level ` or `.
+    // If violated, X could render as an empty string at runtime.
 
     fn word_bounded(hay: &str, needle: &str) -> bool {
         let mut s = 0;
@@ -648,9 +666,10 @@ mod tests {
     // The static guard test above is the authoritative check; this one catches syntax drift
 
     // ── is_non_interactive gating ──────────────────────────────────
-    // Headless / SDK / stdio / ACP (including the VS Code plugin) still
-    // need Atlas path guidance, so `<user_guide>` stays in both modes.
-    // The header still switches interactive vs autonomous.
+    // Headless / SDK / stdio sessions have no human typing into a TUI prompt.
+    // Human-only tips are suppressed there, while Atlas path guidance in
+    // `<user_guide>` stays in both modes because ACP / VS Code still need it.
+    // The header switches between interactive and autonomous wording.
 
     #[test]
     fn interactive_renders_shell_prefix_tip_and_user_guide() {

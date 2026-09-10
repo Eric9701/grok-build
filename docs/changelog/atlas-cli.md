@@ -4,6 +4,13 @@
 
 ## 2026-09
 
+### 2026-09-10 — 合并上游 origin/main
+
+- **状态**：已落地
+- **会话**：[合并上游](5952b17a-2178-4e04-8f5c-cd0fa0bfda8f)
+- 合入上游 Synced from monorepo：auth 抽到 `xai-grok-login`、folder trust、TUI 等。
+- 保留 Atlas overlay：家目录 `~/.atlas`、`atlas` 品牌、企业 Device Auth 默认、Startup Session Gate、托管模型 ENC（`ring`）、Task Report 默认开。
+
 ### 2026-09-02 — 建立本变更记录
 
 - **状态**：文档

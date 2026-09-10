@@ -131,5 +131,6 @@
 | 2026-09-02 | [IDEA 斜杠](acbbd656-b088-4270-9e84-fbd48ae62ca0) | grok/atlas 不用 Claude 内置 `/` |
 | 2026-09-02 | [变更记录](54b536e1-6151-41a6-bccc-39bad21556c3) | `docs/changelog/` |
 | 2026-09-03 | [Case001 权限误拒](5952b17a-2178-4e04-8f5c-cd0fa0bfda8f) | IDEA 默认模式 PowerShell 误报拒绝 |
+| 2026-09-10 | [合并 origin/main](5952b17a-2178-4e04-8f5c-cd0fa0bfda8f) | CLI overlay 保留；auth → xai-grok-login |
 
 子 agent 记录不另建索引，结论已折进上表对应主题。产品变更明细见 [changelog](./changelog/README.md)。
