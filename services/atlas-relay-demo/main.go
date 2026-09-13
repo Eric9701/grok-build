@@ -11,10 +11,18 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
+	"strings"
 )
 
 //go:embed web/index.html
 var chatHTML []byte
+
+//go:embed web/slash.js
+var slashJS []byte
+
+//go:embed web/md.js
+var mdJS []byte
 
 //go:embed web/sample-docs
 var sampleDocs embed.FS
@@ -46,8 +54,19 @@ func serveWS(h *hub, r role) http.HandlerFunc {
 }
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:2420", "listen address")
+	addr := flag.String("addr", "", "listen host:port (default: this machine's LAN IPv4:2420)")
 	flag.Parse()
+
+	listen := strings.TrimSpace(*addr)
+	lanIP := detectLANIPv4()
+	if listen == "" {
+		picked, err := defaultListenAddr()
+		if err != nil {
+			log.Fatal(err)
+		}
+		listen = picked
+	}
+	public := advertiseAddr(listen, lanIP)
 
 	h := newHub()
 	mux := http.NewServeMux()
@@ -65,6 +84,14 @@ func main() {
 	}
 	mux.Handle("/sample-docs/", http.StripPrefix("/sample-docs/", http.FileServer(http.FS(sampleRoot))))
 	mux.HandleFunc("/dispatch/prompts", serveDispatchPrompts)
+	mux.HandleFunc("/slash.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		_, _ = w.Write(slashJS)
+	})
+	mux.HandleFunc("/md.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		_, _ = w.Write(mdJS)
+	})
 	mux.HandleFunc("/ws", serveWS(h, roleAgent))
 	mux.HandleFunc("/ws/agent", serveWS(h, roleAgent))
 	mux.HandleFunc("/ws/client", serveWS(h, roleClient))
@@ -79,15 +106,23 @@ func main() {
 
 	fmt.Fprintf(os.Stderr, `
 Atlas relay demo  http://%s/build
+listen %s
 
 CLI（出站，建议带身份）:
-  atlas agent --always-approve headless ^
-    --grok-ws-url "ws://%s/ws?agent_id=laptop-a" ^
-    --grok-ws-origin http://%s
+%s
 
 浏览器打开 /build，可在顶栏选择 Agent。不要改 atlas-server。
 
-`, *addr, *addr, *addr)
+`, public, listen, cliExample(public))
 
-	log.Fatal(http.ListenAndServe(*addr, mux))
+	log.Fatal(http.ListenAndServe(listen, mux))
+}
+
+func cliExample(addr string) string {
+	url := fmt.Sprintf("ws://%s/ws?agent_id=laptop-a", addr)
+	origin := "http://" + addr
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf("  atlas agent --always-approve headless ^\n    --grok-ws-url %q ^\n    --grok-ws-origin %s", url, origin)
+	}
+	return fmt.Sprintf("  atlas agent --always-approve headless \\\n    --grok-ws-url %q \\\n    --grok-ws-origin %s", url, origin)
 }

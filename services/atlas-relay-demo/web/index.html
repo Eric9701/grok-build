@@ -18,6 +18,7 @@
       --user: #2a3a4d;
       --agent: #1c242e;
       --tool: #243028;
+      --pick: #24364a;
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; }
@@ -86,6 +87,53 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .msg.md { white-space: normal; }
+    .msg.md p { margin: 0 0 .55em; }
+    .msg.md p:last-child { margin-bottom: 0; }
+    .msg.md h1, .msg.md h2, .msg.md h3, .msg.md h4, .msg.md h5, .msg.md h6 {
+      margin: .2em 0 .45em;
+      line-height: 1.25;
+      font-weight: 650;
+    }
+    .msg.md h1 { font-size: 1.25em; }
+    .msg.md h2 { font-size: 1.12em; }
+    .msg.md h3, .msg.md h4 { font-size: 1.05em; }
+    .msg.md ul, .msg.md ol { margin: .35em 0 .55em; padding-left: 1.35em; }
+    .msg.md li { margin: .15em 0; }
+    .msg.md li input { margin-right: 6px; vertical-align: middle; }
+    .msg.md pre {
+      background: #0c1016;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      overflow-x: auto;
+      margin: .45em 0;
+      font: 12px/1.45 ui-monospace, Consolas, monospace;
+    }
+    .msg.md code {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 12px;
+      background: #0c1016;
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+    .msg.md pre code { background: none; padding: 0; }
+    .msg.md blockquote {
+      margin: .4em 0;
+      padding: 2px 0 2px 12px;
+      border-left: 3px solid var(--line);
+      color: var(--muted);
+    }
+    .msg.md table { border-collapse: collapse; margin: .5em 0; max-width: 100%; }
+    .msg.md th, .msg.md td {
+      border: 1px solid var(--line);
+      padding: 4px 8px;
+      text-align: left;
+    }
+    .msg.md th { background: #12161c; }
+    .msg.md a { color: var(--accent); }
+    .msg.md img { max-width: 100%; border-radius: 6px; }
+    .msg.md hr { border: 0; border-top: 1px solid var(--line); margin: .7em 0; }
     .msg.user { align-self: flex-end; background: var(--user); }
     .msg.agent { align-self: flex-start; background: var(--agent); border: 1px solid var(--line); }
     .msg.sys { align-self: center; color: var(--muted); font-size: 12px; background: transparent; }
@@ -94,6 +142,7 @@
     .msg .tag { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
     .think { color: var(--muted); font-style: italic; }
     footer {
+      position: relative;
       display: flex; gap: 8px;
       padding: 12px 16px;
       border-top: 1px solid var(--line);
@@ -125,6 +174,105 @@
       background: transparent;
       color: var(--muted);
       border: 1px solid var(--line);
+    }
+    button.ghost.active {
+      color: var(--text);
+      border-color: var(--accent);
+    }
+    .slash-menu {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: calc(100% - 4px);
+      max-height: 280px;
+      overflow-y: auto;
+      background: #141920;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      box-shadow: 0 -8px 24px rgba(0, 0, 0, .35);
+      padding: 6px;
+      display: none;
+      z-index: 15;
+    }
+    .slash-menu.open { display: block; }
+    .slash-item, .cmd-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .slash-item:hover, .slash-item.on, .cmd-item:hover {
+      background: var(--pick);
+    }
+    .slash-item .name, .cmd-item .name {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 13px;
+    }
+    .slash-item .desc, .cmd-item .desc {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .badge {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 0 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .03em;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      vertical-align: middle;
+    }
+    .badge.skill { color: #8fd4b8; border-color: #2f5a48; }
+    .badge.flow { color: #e6c27a; border-color: #5a4a28; }
+    .badge.page { color: var(--accent); border-color: #2a4c6a; }
+    #cmdPanel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(420px, 100%);
+      background: var(--panel);
+      border-left: 1px solid var(--line);
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      transform: translateX(100%);
+      transition: transform .16s ease;
+    }
+    #cmdPanel.open { transform: translateX(0); }
+    .cmd-head, .cmd-tabs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .cmd-head strong { font-size: 14px; }
+    .cmd-head .meta { margin-left: auto; }
+    .cmd-tabs { padding-top: 8px; padding-bottom: 8px; }
+    .cmd-tabs button { padding: 5px 10px; font-size: 12px; }
+    #cmdFilter {
+      margin: 10px 14px 0;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font: inherit;
+    }
+    #cmdList {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 8px 16px;
+    }
+    .cmd-empty, .cmd-hint {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 12px 14px;
     }
   </style>
 </head>
@@ -162,17 +310,45 @@
     <button id="dispatchBtn" type="button" disabled>开始派工</button>
   </div>
   <div id="log"></div>
+  <aside id="cmdPanel" aria-hidden="true">
+    <div class="cmd-head">
+      <strong>斜杠命令</strong>
+      <span class="meta" id="cmdCount"></span>
+      <button class="ghost" id="cmdClose" type="button">关闭</button>
+    </div>
+    <div class="cmd-tabs">
+      <button class="ghost active" id="tabAll" type="button">全部</button>
+      <button class="ghost" id="tabSkill" type="button">技能</button>
+      <button class="ghost" id="tabBuiltin" type="button">内置</button>
+    </div>
+    <input id="cmdFilter" placeholder="筛选名称、说明或插件" />
+    <div id="cmdList"></div>
+    <p class="cmd-hint">点一项填入输入框，再 Enter 发给本机 Agent。TUI 的 /skills 不会弹窗，本页用 ACP 目录代替。</p>
+  </aside>
   <footer>
+    <div id="slashMenu" class="slash-menu" role="listbox" aria-label="斜杠命令"></div>
     <button class="ghost" id="cancelBtn" type="button" disabled>停止</button>
-    <textarea id="input" placeholder="先选 Agent（只有一个会自动选），圆点变绿后再输入。Enter 发送，Shift+Enter 换行"></textarea>
+    <button class="ghost" id="cmdBtn" type="button">命令</button>
+    <textarea id="input" placeholder="就绪后输入 / 可补全。/skills 打开技能面板。Enter 发送，Shift+Enter 换行"></textarea>
     <button id="sendBtn" type="button" disabled>发送</button>
   </footer>
+  <script src="/md.js"></script>
+  <script src="/slash.js"></script>
   <script>
+    const S = window.AtlasSlash;
+    const MD = window.AtlasMD;
+    const CLIENT_SKILLS = {
+      name: "skills",
+      description: "浏览本会话已加载的技能与斜杠（本页面板，不发给 Agent）",
+      _meta: { clientOnly: true }
+    };
+
     const logEl = document.getElementById("log");
     const cwdEl = document.getElementById("cwd");
     const inputEl = document.getElementById("input");
     const sendBtn = document.getElementById("sendBtn");
     const cancelBtn = document.getElementById("cancelBtn");
+    const cmdBtn = document.getElementById("cmdBtn");
     const agentDot = document.getElementById("agentDot");
     const statusEl = document.getElementById("status");
     const agentSel = document.getElementById("agentSel");
@@ -182,6 +358,15 @@
     const acceptUrlEl = document.getElementById("acceptUrl");
     const sampleBtn = document.getElementById("sampleBtn");
     const dispatchBtn = document.getElementById("dispatchBtn");
+    const slashMenu = document.getElementById("slashMenu");
+    const cmdPanel = document.getElementById("cmdPanel");
+    const cmdList = document.getElementById("cmdList");
+    const cmdFilter = document.getElementById("cmdFilter");
+    const cmdCount = document.getElementById("cmdCount");
+    const cmdClose = document.getElementById("cmdClose");
+    const tabAll = document.getElementById("tabAll");
+    const tabSkill = document.getElementById("tabSkill");
+    const tabBuiltin = document.getElementById("tabBuiltin");
 
     const urlAgent = (new URLSearchParams(location.search).get("agent") || "").trim();
     let boundId = urlAgent;
@@ -195,11 +380,26 @@
     let lastOnline = {};
     let ackedBound = "";
     let stolen = false;
+    let slashHits = [];
+    let slashIndex = 0;
+    let slashQuery = "";
+    let cmdTab = "all";
+    let cmdOpen = false;
 
     function sessionOf(id) {
-      if (!id) return { sessionId: null, handshake: "idle", busy: false };
-      if (!sessions[id]) sessions[id] = { sessionId: null, handshake: "idle", busy: false };
+      if (!id) return { sessionId: null, handshake: "idle", busy: false, commands: [], commandSourceRank: 0 };
+      if (!sessions[id]) {
+        sessions[id] = { sessionId: null, handshake: "idle", busy: false, commands: [], commandSourceRank: 0 };
+      }
       return sessions[id];
+    }
+
+    function resetSession(sess) {
+      sess.handshake = "idle";
+      sess.sessionId = null;
+      sess.busy = false;
+      sess.commands = [];
+      sess.commandSourceRank = 0;
     }
 
     function cwdKey(id) {
@@ -222,7 +422,7 @@
     function snapshotLog() {
       return [...logEl.children].map((el) => ({
         className: el.className,
-        text: el.textContent
+        text: el.dataset.raw != null ? el.dataset.raw : el.textContent
       }));
     }
 
@@ -232,7 +432,7 @@
       for (const item of items || []) {
         const d = document.createElement("div");
         d.className = item.className;
-        d.textContent = item.text;
+        paintMsg(d, item.text || "");
         logEl.appendChild(d);
       }
       logEl.scrollTop = logEl.scrollHeight;
@@ -243,10 +443,34 @@
       transcripts[boundId] = snapshotLog();
     }
 
+    function shouldRenderMd(el) {
+      if (!MD || !el) return false;
+      if (el.classList.contains("think") || el.classList.contains("sys") ||
+          el.classList.contains("err") || el.classList.contains("tool")) {
+        return false;
+      }
+      return el.classList.contains("agent") || el.classList.contains("user");
+    }
+
+    function paintMsg(el, text) {
+      el.dataset.raw = text;
+      if (shouldRenderMd(el)) {
+        el.classList.add("md");
+        el.innerHTML = MD.render(text);
+      } else {
+        el.classList.remove("md");
+        el.textContent = text;
+      }
+    }
+
+    function appendMsg(el, chunk) {
+      paintMsg(el, (el.dataset.raw || "") + chunk);
+    }
+
     function add(kind, text, extraClass) {
       const d = document.createElement("div");
       d.className = "msg " + kind + (extraClass ? " " + extraClass : "");
-      d.textContent = text;
+      paintMsg(d, text);
       logEl.appendChild(d);
       logEl.scrollTop = logEl.scrollHeight;
       if (boundId) transcripts[boundId] = snapshotLog();
@@ -258,6 +482,48 @@
       return agents.some((a) => a.id === boundId && a.online);
     }
 
+    const cmdMeta = S.cmdMeta;
+    const isClientOnly = S.isClientOnly;
+    const isSkill = S.isSkill;
+    const kindOf = S.kindOf;
+    const hintOf = S.hintOf;
+
+    function kindLabel(kind) {
+      return { page: "本页", skill: "技能", flow: "工作流", builtin: "内置" }[kind] || "";
+    }
+
+    function applyCommands(id, raw, source) {
+      if (!id) return;
+      const sess = sessionOf(id);
+      const next = S.sanitizeCommands(raw);
+      if (!S.shouldReplaceCatalog(sess.commandSourceRank || 0, (sess.commands || []).length, source, next.length)) {
+        return;
+      }
+      sess.commands = next;
+      sess.commandSourceRank = Math.max(sess.commandSourceRank || 0, S.SOURCE_RANK[source] || 0);
+      refreshSlashUi();
+      setStatus();
+    }
+
+    function advertisedCommands() {
+      return sessionOf(boundId).commands || [];
+    }
+
+    function menuCommands() {
+      return [CLIENT_SKILLS].concat(advertisedCommands());
+    }
+
+    const getSlashQuery = S.getSlashQuery;
+    const filterCommands = S.filterCommands;
+    const applySlashPick = S.applySlashPick;
+
+    function commandCountText(sess) {
+      const cmds = sess.commands || [];
+      if (!cmds.length) return "";
+      const skills = cmds.filter(isSkill).length;
+      return " · " + skills + " 技能 / " + cmds.length + " 命令";
+    }
+
     function setStatus() {
       const sess = sessionOf(boundId);
       const online = boundOnline();
@@ -265,7 +531,7 @@
       const sessTxt = sess.sessionId ? " · session " + sess.sessionId.slice(0, 8) : "";
       if (!agents.some((a) => a.online) && !boundId) {
         statusEl.textContent = "没有在线 Agent — 先启动 atlas agent headless";
-      }       else if (stolen) {
+      } else if (stolen) {
         statusEl.textContent = boundId + " 已被其他页面占用，请重新选择";
       } else if (!boundId) {
         statusEl.textContent = "请选择要对话的 Agent";
@@ -274,11 +540,155 @@
       } else if (sess.handshake !== "ready") {
         statusEl.textContent = boundId + " 已连接，正在建立 ACP 会话…";
       } else {
-        statusEl.textContent = "就绪 · " + boundId + sessTxt;
+        statusEl.textContent = "就绪 · " + boundId + sessTxt + commandCountText(sess);
       }
       sendBtn.disabled = stolen || !online || sess.handshake !== "ready" || sess.busy;
       dispatchBtn.disabled = sendBtn.disabled;
       cancelBtn.disabled = !sess.busy;
+      cmdBtn.disabled = stolen || !boundId;
+    }
+
+    function renderCmdRow(cmd) {
+      const kind = kindOf(cmd);
+      const wrap = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "name";
+      name.appendChild(document.createTextNode("/" + cmd.name));
+      const badge = document.createElement("span");
+      badge.className = "badge " + kind;
+      badge.textContent = kindLabel(kind);
+      name.appendChild(badge);
+      const plugin = cmdMeta(cmd).pluginName;
+      if (plugin) {
+        const extra = document.createElement("span");
+        extra.className = "badge";
+        extra.textContent = plugin;
+        name.appendChild(extra);
+      }
+      const desc = document.createElement("div");
+      desc.className = "desc";
+      const hint = hintOf(cmd);
+      desc.textContent = [cmd.description || "", hint ? "参数 " + hint : ""].filter(Boolean).join(" · ");
+      wrap.appendChild(name);
+      if (desc.textContent) wrap.appendChild(desc);
+      return wrap;
+    }
+
+    function hideSlashMenu() {
+      slashMenu.classList.remove("open");
+      slashHits = [];
+      slashIndex = 0;
+      slashQuery = "";
+      slashMenu.innerHTML = "";
+    }
+
+    function renderSlashMenu() {
+      const caret = inputEl.selectionStart || 0;
+      const hit = getSlashQuery(inputEl.value, caret);
+      if (!hit) {
+        hideSlashMenu();
+        return;
+      }
+      if (hit.query !== slashQuery) {
+        slashQuery = hit.query;
+        slashIndex = 0;
+      }
+      slashHits = filterCommands(menuCommands(), hit.query).slice(0, 16);
+      if (!slashHits.length) {
+        hideSlashMenu();
+        return;
+      }
+      if (slashIndex >= slashHits.length) slashIndex = 0;
+      slashMenu.innerHTML = "";
+      slashHits.forEach((cmd, i) => {
+        const row = renderCmdRow(cmd);
+        row.className = "slash-item" + (i === slashIndex ? " on" : "");
+        row.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          pickSlash(cmd);
+        });
+        slashMenu.appendChild(row);
+      });
+      slashMenu.classList.add("open");
+    }
+
+    function refreshSlashUi() {
+      if (slashMenu.classList.contains("open")) renderSlashMenu();
+      if (cmdOpen) renderCmdPanel();
+    }
+
+    function pickSlash(cmd) {
+      if (isClientOnly(cmd) || cmd.name === "skills") {
+        hideSlashMenu();
+        openCmdPanel("skill");
+        return;
+      }
+      const next = applySlashPick(inputEl.value, inputEl.selectionStart || 0, cmd.name);
+      inputEl.value = next.text;
+      hideSlashMenu();
+      inputEl.focus();
+      inputEl.setSelectionRange(next.caret, next.caret);
+    }
+
+    function renderCmdPanel() {
+      const q = cmdFilter.value.trim();
+      let items = advertisedCommands();
+      if (cmdTab === "skill") items = items.filter(isSkill);
+      else if (cmdTab === "builtin") items = items.filter((c) => kindOf(c) === "builtin");
+      items = filterCommands(items, q);
+      cmdCount.textContent = items.length + " / " + advertisedCommands().length;
+      tabAll.classList.toggle("active", cmdTab === "all");
+      tabSkill.classList.toggle("active", cmdTab === "skill");
+      tabBuiltin.classList.toggle("active", cmdTab === "builtin");
+      cmdList.innerHTML = "";
+      if (!advertisedCommands().length) {
+        const empty = document.createElement("p");
+        empty.className = "cmd-empty";
+        empty.textContent = sessionOf(boundId).handshake === "ready"
+          ? "会话已建立，但还没有收到斜杠目录。等 Agent 推 available_commands_update，或检查插件是否 enabled、cwd 是否为业务仓根。"
+          : "先选 Agent 并等到圆点变绿。目录来自本机 CLI，Relay 不扫磁盘。";
+        cmdList.appendChild(empty);
+        return;
+      }
+      if (!items.length) {
+        const empty = document.createElement("p");
+        empty.className = "cmd-empty";
+        empty.textContent = "没有匹配的命令";
+        cmdList.appendChild(empty);
+        return;
+      }
+      for (const cmd of items) {
+        const row = renderCmdRow(cmd);
+        row.className = "cmd-item";
+        row.addEventListener("click", () => {
+          inputEl.value = "/" + cmd.name + (hintOf(cmd) ? " " : "");
+          closeCmdPanel();
+          inputEl.focus();
+          const pos = inputEl.value.length;
+          inputEl.setSelectionRange(pos, pos);
+        });
+        cmdList.appendChild(row);
+      }
+    }
+
+    function openCmdPanel(tab) {
+      cmdTab = tab || cmdTab || "all";
+      cmdOpen = true;
+      cmdPanel.classList.add("open");
+      cmdPanel.setAttribute("aria-hidden", "false");
+      renderCmdPanel();
+      cmdFilter.focus();
+    }
+
+    function closeCmdPanel() {
+      cmdOpen = false;
+      cmdPanel.classList.remove("open");
+      cmdPanel.setAttribute("aria-hidden", "true");
+    }
+
+    function toggleCmdPanel() {
+      if (cmdOpen) closeCmdPanel();
+      else openCmdPanel(cmdTab);
     }
 
     function rebuildSelect() {
@@ -324,6 +734,8 @@
         cwdEl.value = loadCwd(id);
         restoreLog(transcripts[id] || []);
         streaming = null;
+        hideSlashMenu();
+        if (cmdOpen) renderCmdPanel();
       } else {
         boundId = id;
       }
@@ -363,6 +775,21 @@
       };
     }
 
+    async function pullCommandList(id, cwd) {
+      const sess = sessionOf(id);
+      if (!sess.sessionId) return;
+      try {
+        const listed = await sendRpc("x.ai/commands/list", {
+          sessionId: sess.sessionId,
+          cwd
+        });
+        if (boundId !== id) return;
+        applyCommands(id, listed.commands || [], "list");
+      } catch {
+        // ACU 会再推一次；ext 方法不可用时保持 initialize 的 builtin 列表
+      }
+    }
+
     async function startSession() {
       const id = boundId;
       const sess = sessionOf(id);
@@ -370,7 +797,7 @@
       sess.handshake = "init";
       setStatus();
       try {
-        await sendRpc("initialize", {
+        const init = await sendRpc("initialize", {
           protocolVersion: 1,
           clientCapabilities: {
             fs: { readTextFile: false, writeTextFile: false },
@@ -383,6 +810,8 @@
           }
         });
         if (boundId !== id) return;
+        const initMeta = (init && (init._meta || init.meta)) || {};
+        applyCommands(id, initMeta.availableCommands || [], "initialize");
         const cwd = (cwdEl.value || "").trim() || ".";
         saveCwd(id, cwdEl.value || "");
         const res = await sendRpc("session/new", {
@@ -395,6 +824,7 @@
         if (!sess.sessionId) throw new Error("session/new 没有返回 sessionId: " + JSON.stringify(res));
         sess.handshake = "ready";
         add("sys", "会话已建立 · " + id + " · cwd = " + cwd);
+        pullCommandList(id, cwd);
       } catch (e) {
         if (boundId === id) sess.handshake = "idle";
         add("err", String(e.message || e));
@@ -413,6 +843,7 @@
           cwdEl.value = loadCwd(boundId);
           restoreLog(transcripts[boundId] || []);
           rememberAgentInUrl(boundId);
+          hideSlashMenu();
         }
         ackedBound = serverBound;
       } else if (ackedBound && ackedBound === boundId) {
@@ -433,13 +864,13 @@
       lastOnline[boundId] = online;
       const sess = sessionOf(boundId);
       if (boundId && was && !online) {
-        sess.handshake = "idle";
-        sess.sessionId = null;
-        sess.busy = false;
+        resetSession(sess);
+        hideSlashMenu();
         add("sys", boundId + " 已离线，绑定保留");
       }
       if (boundId && online && sess.handshake === "idle") startSession();
       setStatus();
+      if (cmdOpen) renderCmdPanel();
     }
 
     function handle(msg) {
@@ -478,16 +909,20 @@
     function onUpdate(u) {
       if (!u) return;
       const kind = u.sessionUpdate;
+      if (kind === "available_commands_update") {
+        applyCommands(boundId, u.availableCommands || u.available_commands || [], "acu");
+        return;
+      }
       if (kind === "agent_message_chunk") {
         const t = (u.content && u.content.text) || "";
         if (!streaming) streaming = add("agent", "");
-        streaming.textContent += t;
+        appendMsg(streaming, t);
         if (boundId) transcripts[boundId] = snapshotLog();
         logEl.scrollTop = logEl.scrollHeight;
       } else if (kind === "agent_thought_chunk") {
         const t = (u.content && u.content.text) || "";
         if (!streaming) streaming = add("agent", "", "think");
-        streaming.textContent += t;
+        appendMsg(streaming, t);
         if (boundId) transcripts[boundId] = snapshotLog();
       } else if (kind === "tool_call") {
         streaming = null;
@@ -503,7 +938,9 @@
 
     function lastAgentText() {
       const nodes = [...logEl.querySelectorAll(".msg.agent")];
-      return nodes.length ? nodes[nodes.length - 1].textContent : "";
+      if (!nodes.length) return "";
+      const el = nodes[nodes.length - 1];
+      return el.dataset.raw || el.textContent;
     }
 
     function extractReport(text) {
@@ -518,12 +955,15 @@
       }
     }
 
+    const isSkillsBrowse = S.isSkillsBrowse;
+
     async function sendPromptText(text) {
       const sess = sessionOf(boundId);
       if (!text || sess.handshake !== "ready" || sess.busy) return false;
       add("user", text);
       streaming = null;
       sess.busy = true;
+      hideSlashMenu();
       setStatus();
       try {
         await sendRpc("session/prompt", {
@@ -544,7 +984,14 @@
     async function sendPrompt() {
       const text = inputEl.value.trim();
       if (!text) return;
+      if (isSkillsBrowse(text)) {
+        inputEl.value = "";
+        hideSlashMenu();
+        openCmdPanel("skill");
+        return;
+      }
       inputEl.value = "";
+      hideSlashMenu();
       await sendPromptText(text);
       inputEl.focus();
     }
@@ -605,15 +1052,51 @@
 
     sendBtn.onclick = sendPrompt;
     cancelBtn.onclick = cancelTurn;
+    cmdBtn.onclick = toggleCmdPanel;
+    cmdClose.onclick = closeCmdPanel;
     sampleBtn.onclick = fillSampleUrls;
     dispatchBtn.onclick = runDispatch;
+    tabAll.onclick = () => { cmdTab = "all"; renderCmdPanel(); };
+    tabSkill.onclick = () => { cmdTab = "skill"; renderCmdPanel(); };
+    tabBuiltin.onclick = () => { cmdTab = "builtin"; renderCmdPanel(); };
+    cmdFilter.addEventListener("input", renderCmdPanel);
     agentSel.addEventListener("change", () => {
       if (agentSel.value) requestBind(agentSel.value, true);
     });
+    inputEl.addEventListener("input", renderSlashMenu);
+    inputEl.addEventListener("click", renderSlashMenu);
     inputEl.addEventListener("keydown", (e) => {
+      const open = slashMenu.classList.contains("open");
+      if (open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        if (!slashHits.length) return;
+        slashIndex = (slashIndex + (e.key === "ArrowDown" ? 1 : slashHits.length - 1)) % slashHits.length;
+        renderSlashMenu();
+        return;
+      }
+      if (open && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))) {
+        e.preventDefault();
+        if (slashHits[slashIndex]) pickSlash(slashHits[slashIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        if (open) {
+          e.preventDefault();
+          hideSlashMenu();
+        } else if (cmdOpen) {
+          e.preventDefault();
+          closeCmdPanel();
+        }
+        return;
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         sendPrompt();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && cmdOpen && document.activeElement !== inputEl) {
+        closeCmdPanel();
       }
     });
     cwdEl.addEventListener("change", () => saveCwd(boundId, cwdEl.value));

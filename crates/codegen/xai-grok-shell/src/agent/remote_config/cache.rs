@@ -40,6 +40,9 @@ pub(crate) struct ModelsCache {
     pub(crate) identity: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) etag: Option<String>,
+    /// Managed catalogs keep routing names and API keys encrypted at rest.
+    #[serde(default)]
+    pub(crate) managed: bool,
     pub(crate) models: IndexMap<String, ModelEntry>,
 }
 
@@ -77,7 +80,7 @@ impl ModelsCacheManager {
     fn try_load_fresh(&self, scope: &ModelsCacheScope) -> Result<CacheResult, CacheLoadError> {
         let data =
             read_capped(&self.path, MODELS_CACHE_MAX_BYTES).ok_or(CacheLoadError::NotFound)?;
-        let cache: ModelsCache =
+        let mut cache: ModelsCache =
             serde_json::from_slice(&data).map_err(|_| CacheLoadError::ParseFailed)?;
         if cache.grok_version.as_deref() != Some(xai_grok_version::VERSION) {
             return Err(CacheLoadError::VersionMismatch);
@@ -93,6 +96,17 @@ impl ModelsCacheManager {
         }
         if !is_fresh(cache.renewed_at.unwrap_or(cache.fetched_at), self.ttl) {
             return Err(CacheLoadError::Stale);
+        }
+        if cache.managed {
+            if !at_rest_enc_valid(&cache.models)
+                || decrypt_at_rest_fields(&mut cache.models).is_err()
+            {
+                self.invalidate();
+                return Err(CacheLoadError::ParseFailed);
+            }
+        } else if has_plaintext_api_key(&cache.models) {
+            self.invalidate();
+            return Err(CacheLoadError::ParseFailed);
         }
         tracing::debug!(count = cache.models.len(), "loaded models from disk cache");
         Ok(CacheResult {
@@ -111,6 +125,17 @@ impl ModelsCacheManager {
         scope: &ModelsCacheScope,
         fetched_at: DateTime<Utc>,
     ) {
+        self.persist_catalog(models, etag, scope, fetched_at, false);
+    }
+
+    pub(crate) fn persist_catalog(
+        &self,
+        models: &IndexMap<String, ModelEntry>,
+        etag: Option<&str>,
+        scope: &ModelsCacheScope,
+        fetched_at: DateTime<Utc>,
+        managed: bool,
+    ) {
         let _guard = WRITE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         if self
             .disk_fetched_at(scope)
@@ -127,6 +152,7 @@ impl ModelsCacheManager {
             origin: Some(scope.origin.clone()),
             identity: Some(scope.identity.clone()),
             etag: etag.map(|s| s.to_string()),
+            managed,
             models: models.clone(),
         };
         self.atomic_write(&cache);
@@ -193,4 +219,36 @@ impl ModelsCacheManager {
         };
         write_atomic(&self.path, self.ttl, &json, false);
     }
+}
+
+fn has_plaintext_api_key(models: &IndexMap<String, ModelEntry>) -> bool {
+    models.values().any(|entry| {
+        entry.api_key.as_deref().is_some_and(|key| {
+            !key.trim().is_empty() && !crate::util::model_secret::is_enc(key)
+        })
+    })
+}
+
+fn at_rest_enc_valid(models: &IndexMap<String, ModelEntry>) -> bool {
+    models.values().all(|entry| {
+        crate::util::model_secret::is_enc(&entry.info.model)
+            && entry
+                .api_key
+                .as_deref()
+                .map(crate::util::model_secret::is_enc)
+                .unwrap_or(true)
+    })
+}
+
+fn decrypt_at_rest_fields(models: &mut IndexMap<String, ModelEntry>) -> Result<(), String> {
+    for entry in models.values_mut() {
+        entry.info.model =
+            crate::util::model_secret::require_decrypt_managed(&entry.info.model, "model")?;
+        if let Some(key) = entry.api_key.as_deref() {
+            entry.api_key = Some(crate::util::model_secret::require_decrypt_managed(
+                key, "api_key",
+            )?);
+        }
+    }
+    Ok(())
 }

@@ -55,3 +55,15 @@ _Avoid_: 再跑 Role 1/2/3；用完整 `/implement` 代替 Role 4
 **Execution Report**:
 派工第三轮写出的机器可读回执（`documents/execution-report-<jobId>.json`），是完成与否的依据。
 _Avoid_: 把 Task Report 当验收回执
+
+**Command Catalog**:
+Bound Agent 经 ACP 下发的斜杠列表。来源是 `available_commands_update`，会话建立后也会拉 `x.ai/commands/list`。
+_Avoid_: 以为 Relay 自己扫 `~/.atlas/skills`；用 TUI `/skills` 弹窗
+
+**Slash Menu**:
+聊天页在输入 `/` 时按 Command Catalog 补全；点「命令」或输入 `/skills` 打开本页面板。选中的 `/name` 仍走 `session/prompt`。
+_Avoid_: 在 Relay 里实现 pager 本地 command（`/model`、`/theme` 等）
+
+**Chat Markdown**:
+Agent / 用户气泡用本页 `md.js` 渲染；思考、系统、工具行保持纯文本。
+_Avoid_: 把 Agent 原文当 HTML 插入；外链 CDN 渲染器

@@ -4,6 +4,31 @@
 
 ## 2026-09
 
+### 2026-09-13 — 会话记忆回填
+
+- **状态**：文档
+- **会话**：[会话记忆](57e9ab26-cafd-4fb7-bd67-a823e1b5cd61)
+- 把 09-03 起未入库会话折进 `docs/project-memory.md`：429 归类、两条 relay、Leader / agent-host、合入 overlay 要点。
+
+### 2026-09-11 — Leader 与 agent-host
+
+- **状态**：分析未改
+- **会话**：[合并上游](5952b17a-2178-4e04-8f5c-cd0fa0bfda8f)
+- agent-host 是上游进程拆分（UI 与 Agent 不在同一进程），不是企业产品名。日常仍用 TUI / stdio / headless。
+- Leader 可走 ACP `--grok-ws-url`，不能走 bot-relay。给 relay-demo 当盒子时不要加 `--relay-on-demand`。
+
+### 2026-09-05 — Bot-relay 不是 CLI relay
+
+- **状态**：文档
+- **会话**：[Bot 协议](6ccf75f6-0232-4bd8-b8a1-05191470efbb)
+- 整理 [docs/bot-relay-协议.md](../bot-relay-协议.md)。ACP-over-WS 可独立的是 Hub + stdio↔WS，不是 `headless` + grok.com 会话。
+
+### 2026-09-03 — 429 与 overloaded 不是同一条路
+
+- **状态**：分析未改
+- **会话**：[429 策略](1abaf4ee-4818-4837-a401-a134ebc6c693)
+- HTTP 429 当限流：采样器最多再打 1 次；主会话不排队；子 agent 可等最多 8 次 / 150s。正文写 overloaded 也不会改走 529 过载重试。
+
 ### 2026-09-10 — 合并上游 origin/main
 
 - **状态**：已落地

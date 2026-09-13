@@ -10,6 +10,7 @@
 - [atlas-runtime 安装与使用手册](./docs/atlas-runtime-安装手册.md) — CLI、VS Code 扩展与基础命令
 - [Atlas 编译手册](./docs/atlas-编译手册.md) — Windows / Linux musl / macOS
 - [Atlas Relay Demo](./services/atlas-relay-demo/CONTEXT.md) — 出站中继里 Agent / Client / 身份 的用法
+- [Bot-Relay 协议](./docs/bot-relay-协议.md) — Grok Bot ↔ Computer Hub 的 `bot.*`；不是 CLI `--grok-ws-url`
 
 ## Relationships
 
@@ -19,3 +20,4 @@
 - **Atlas Server Access → CLI / VS Code**: clients call `/atlas/v1/models`; Effective Model Set is computed server-side
 - **Atlas Relay Demo → Atlas Server Access**: 无关；demo 不验 JWT、不进 atlas-server
 - **Atlas Relay Demo → Atlas Runtime**: CLI 仍用现有 `headless --grok-ws-url`；身份靠 URL `agent_id`，不改 CLI
+- **Bot-Relay → Atlas Relay Demo / CLI headless**：无关；线协议不同（`bot.*` vs ACP JSON-RPC）
