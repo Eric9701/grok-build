@@ -7,7 +7,8 @@
 use std::path::Path;
 
 use crate::implementations::skills::skill::{
-    SkillOutput, extract_skill_body, format_skill_name, localize_atlas_authoring_paths,
+    SkillOutput, cap_skill_body, extract_skill_body, format_skill_name,
+    localize_atlas_authoring_paths,
 };
 use crate::implementations::skills::types::SkillInfo;
 use crate::types::requirements::{Expr, ToolRequirement};
@@ -106,9 +107,9 @@ fn find_skill<'a>(name: &str, skills: &'a [SkillInfo]) -> FindSkillResult<'a> {
         .iter()
         .filter(|s| s.enabled && s.name == name)
         .collect();
-    match matches.len() {
-        0 => FindSkillResult::NotFound,
-        1 => FindSkillResult::Found(matches[0]),
+    match matches.as_slice() {
+        [] => FindSkillResult::NotFound,
+        [skill] => FindSkillResult::Found(skill),
         _ => {
             let qualified: Vec<String> = matches.iter().map(|s| format_skill_name(s)).collect();
             FindSkillResult::Ambiguous(qualified)
@@ -297,7 +298,7 @@ impl xai_tool_runtime::Tool for SkillTool {
         };
 
         // ── Load the skill content ───────────────────────────────────
-        let content = match load_skill_content(&skill).await {
+        let mut content = match load_skill_content(&skill).await {
             Ok(c) => c,
             Err(e) => {
                 return Ok(SkillOutput {
@@ -309,6 +310,13 @@ impl xai_tool_runtime::Tool for SkillTool {
                 });
             }
         };
+        if cap_skill_body(&mut content) {
+            tracing::info!(
+                skill = %skill.name,
+                path = %skill.path,
+                "skill body truncated at read cap"
+            );
+        }
 
         // ── List bundled files (up to 10) ────────────────────────────
         let files = list_skill_files(&skill, 10).await;

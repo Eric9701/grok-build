@@ -492,7 +492,7 @@ pub(crate) fn version_from_versioned_binary_name(name: &str, bin_prefix: &str) -
         .iter()
         .position(|p| PLATFORM_OS.contains(p))
         .unwrap_or(parts.len());
-    let ver_str = parts[..platform_start].join("-");
+    let ver_str = parts.get(..platform_start).unwrap_or(&[]).join("-");
     semver::Version::parse(&ver_str).ok()?;
     Some(ver_str)
 }
