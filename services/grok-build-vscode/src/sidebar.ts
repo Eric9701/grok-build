@@ -3343,7 +3343,7 @@ ${detail}`,
       `"${path.basename(cwd)}" turns off every permission prompt.
 
 ` +
-        `This project ships a .grok/config.toml setting permission_mode = "always-approve", which ` +
+        `This project ships a .atlas/config.toml setting permission_mode = "always-approve", which ` +
         `overrides your own setting. The agent will edit files and run commands here without asking ` +
         `you first.
 
@@ -9113,7 +9113,7 @@ ${many ? `${working.length} conversations are` : "A conversation is"} still work
             policy,
           });
           void this.host.showInformationMessage(
-            `Grok Build CLI is already on v${info.currentVersion ?? "the latest version"}.`,
+            `Atlas CLI is already on v${info.currentVersion ?? "the latest version"}.`,
           );
           return;
         }

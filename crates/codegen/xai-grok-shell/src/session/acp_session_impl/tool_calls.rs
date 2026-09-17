@@ -66,6 +66,27 @@ fn extract_artifact_path(raw_arguments: &str) -> Option<String> {
         .find_map(|k| parsed.get(*k).and_then(|p| p.as_str()))
         .map(str::to_owned)
 }
+
+fn record_successful_artifacts(
+    signals: &crate::session::signals::SessionSignalsHandle,
+    tool_name: &str,
+    raw_arguments: &str,
+    output: &ToolsToolOutput,
+) {
+    if !is_artifact_tool(tool_name) {
+        return;
+    }
+    let adds = crate::task_report::artifact_line_adds_from_output(output);
+    if adds.is_empty() {
+        if let Some(path) = extract_artifact_path(raw_arguments) {
+            signals.record_artifact_written(path, 0);
+        }
+        return;
+    }
+    for (path, lines) in adds {
+        signals.record_artifact_written(path, lines);
+    }
+}
 /// An MCP tool that returned an error result routes to `PostToolUseFailure`
 /// instead of `PostToolUse`. Built-in logical errors (a non-zero
 /// `run_terminal_command` exit, a file-not-found) stay on `PostToolUse`.
@@ -1053,6 +1074,14 @@ impl SessionActor {
             };
             let tool_loop = match result {
                 Ok(tool_result) => {
+                    if !tool_result.output.is_error() {
+                        record_successful_artifacts(
+                            &self.signals_handle(),
+                            &prepared.tool_name,
+                            &prepared.raw_arguments,
+                            &tool_result.output,
+                        );
+                    }
                     let effective_tool_name = tool_result
                         .effective_tool_name
                         .clone()
@@ -1239,12 +1268,6 @@ impl SessionActor {
                     error_message: ext_error_message,
                 },
             );
-            if matches!(tool_outcome, crate::session::events::ToolOutcome::Success)
-                && is_artifact_tool(&prepared.tool_name)
-                && let Some(path) = extract_artifact_path(&prepared.raw_arguments)
-            {
-                self.signals_handle().record_artifact_written(path);
-            }
             if let Some(artifact) = compaction_artifact_read(&prepared.parsed_args) {
                 xai_grok_telemetry::event_span!(
                     "compaction.segment_read",

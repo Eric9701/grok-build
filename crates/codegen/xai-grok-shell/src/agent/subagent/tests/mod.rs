@@ -75,6 +75,7 @@ fn child_signal_counts_copy_session_artifacts_for_task_report() {
             tool_calls: 4,
             turns: 2,
             artifacts: vec!["src/lib.rs".into(), "docs/note.md".into()],
+            artifact_lines: Default::default(),
         }
     );
     let mut result = SubagentResult::default();

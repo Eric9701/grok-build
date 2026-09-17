@@ -100,6 +100,7 @@ func (m *MySQLStore) Migrate() error {
 			tokens_used BIGINT UNSIGNED NOT NULL DEFAULT 0,
 			artifacts JSON NULL,
 			artifact_count INT UNSIGNED NOT NULL DEFAULT 0,
+			code_lines_added BIGINT UNSIGNED NOT NULL DEFAULT 0,
 			cwd VARCHAR(1024) NULL,
 			worktree_path VARCHAR(1024) NULL,
 			error TEXT NULL,
@@ -150,6 +151,9 @@ func (m *MySQLStore) Migrate() error {
 	if err := m.migrateTaskReportModelRouting(); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	if err := m.migrateTaskReportCodeLinesAdded(); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
 	if err := m.migrateRefreshTokens(); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
@@ -170,6 +174,18 @@ func (m *MySQLStore) migrateTaskReportClientVersion() error {
 
 func (m *MySQLStore) migrateTaskReportModelRouting() error {
 	_, err := m.db.Exec(`ALTER TABLE task_reports ADD COLUMN model_routing VARCHAR(128) NULL`)
+	if err == nil {
+		return nil
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "duplicate column") || strings.Contains(msg, "1060") {
+		return nil
+	}
+	return err
+}
+
+func (m *MySQLStore) migrateTaskReportCodeLinesAdded() error {
+	_, err := m.db.Exec(`ALTER TABLE task_reports ADD COLUMN code_lines_added BIGINT UNSIGNED NOT NULL DEFAULT 0`)
 	if err == nil {
 		return nil
 	}

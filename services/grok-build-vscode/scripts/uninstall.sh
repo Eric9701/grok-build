@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Uninstall the Grok VS Code extension on macOS / Linux / WSL.
+# Uninstall the Atlas VS Code extension on macOS / Linux / WSL.
 # Usage:  ./scripts/uninstall.sh [cli]
 #   [cli] — a code-compatible CLI name or path to uninstall from (e.g. code-insiders,
 #           cursor, antigravity-ide, /path/to/code); also settable via CODE_CLI=…

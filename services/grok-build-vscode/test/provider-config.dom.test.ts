@@ -76,7 +76,7 @@ function latest(h: Harness, type: string): Posted {
   return message!;
 }
 
-async function read(h: Harness, provider = "grok", relPath = ".grok/config.toml") {
+async function read(h: Harness, provider = "grok", relPath = ".atlas/config.toml") {
   if (provider !== "grok") {
     const row = [...h.doc.querySelectorAll("#provider-config-panel .gfp-row")].find((el) => el.textContent?.includes("~/" + relPath));
     expect(row).toBeTruthy();
@@ -110,7 +110,7 @@ describe.each(surfaces)("provider config files on %s", (surface) => {
     click(h.window, configs.querySelector("summary")!);
     expect(configs.getAttribute("open")).not.toBeNull();
     expect([...configs.querySelectorAll(".settings-row-desc")].map((el) => el.textContent)).toEqual([
-      "~/.grok/config.toml", "~/.codex/config.toml", "~/.claude/settings.json",
+      "~/.atlas/config.toml", "~/.codex/config.toml", "~/.claude/settings.json",
     ]);
     click(h.window, root.querySelector('[data-category="advanced"]')!);
     expect(!!root.querySelector('[data-id="openGlobalConfig"]')).toBe(surface === "vscode" || surface === "desktop");
@@ -141,18 +141,18 @@ describe.each(surfaces)("provider config files on %s", (surface) => {
     const editor = panel.querySelector("textarea")!;
     editor.value = "edited = true\n";
     editor.dispatchEvent(new (h.window as any).Event("input", { bubbles: true }));
-    expect(button(h, "Restart current Grok session", panel).disabled).toBe(true);
+    expect(button(h, "Restart current Atlas session", panel).disabled).toBe(true);
     click(h.window, button(h, "Save", panel));
     await settle();
     const save = latest(h, "writeProviderConfig");
     expect(save).toEqual({ type: "writeProviderConfig", provider: "grok", text: "edited = true\n",
-      stamp: { mtimeMs: 1, size: 16 }, expectedAbsPath: "/home/user/.grok/config.toml", requestId: expect.any(String) });
-    dispatch(h.window, { type: "providerConfigWriteResult", provider: "grok", relPath: ".grok/config.toml", requestId: save.requestId,
+      stamp: { mtimeMs: 1, size: 16 }, expectedAbsPath: "/home/user/.atlas/config.toml", requestId: expect.any(String) });
+    dispatch(h.window, { type: "providerConfigWriteResult", provider: "grok", relPath: ".atlas/config.toml", requestId: save.requestId,
       ok: true, stamp: { mtimeMs: 2, size: 14 } });
     await settle();
     expect(h.posted.some((m) => m.type === "restartProviderSession")).toBe(false);
-    expect(button(h, "Restart current Grok session", panel).disabled).toBe(false);
-    click(h.window, button(h, "Restart current Grok session", panel));
+    expect(button(h, "Restart current Atlas session", panel).disabled).toBe(false);
+    click(h.window, button(h, "Restart current Atlas session", panel));
     expect(latest(h, "restartProviderSession")).toEqual({ type: "restartProviderSession", provider: "grok", sessionId: "session-1" });
     expect(panel.hidden).toBe(true); // Show the conversation's restart progress/errors.
     h.window.happyDOM.abort();
@@ -214,7 +214,7 @@ describe("config editor decisions", () => {
   });
 
   it.each([
-    ["grok", ".grok/config.toml", "# Grok global configuration\n"],
+    ["grok", ".atlas/config.toml", "# Atlas global configuration\n"],
     ["codex", ".codex/config.toml", ""],
     ["claude", ".claude/settings.json", "{}"],
   ].flatMap(([provider, relPath, stub]) => [true, false].map((withPath) => ({ provider, relPath, stub, withPath }))))(
@@ -261,7 +261,7 @@ describe("config editor decisions", () => {
     h.window.happyDOM.abort();
   });
 
-  it.each([ ["grok", ".grok/config.toml", "Grok"], ["codex", ".codex/config.toml", "Codex"], ["claude", ".claude/settings.json", "Claude"] ])(
+  it.each([ ["grok", ".atlas/config.toml", "Atlas"], ["codex", ".codex/config.toml", "Codex"], ["claude", ".claude/settings.json", "Claude"] ])(
     "only offers restart for the current idle %s conversation", async (provider, relPath, name) => {
       const h = boot("desktop", { editProjectFiles: true, editProviderConfigFiles: true });
       session(h, provider, "same-session");
@@ -290,7 +290,7 @@ describe("config editor decisions", () => {
     click(h.window, button(h, "Save"));
     await settle();
     const request = latest(h, "writeProviderConfig");
-    const response = { type: "providerConfigWriteResult", requestId: request.requestId, relPath: ".grok/config.toml", ok: false, reason: "changed" };
+    const response = { type: "providerConfigWriteResult", requestId: request.requestId, relPath: ".atlas/config.toml", ok: false, reason: "changed" };
     dispatch(h.window, { ...response, provider: "codex" });
     await settle();
     expect(h.doc.getElementById("provider-config-panel")?.textContent).not.toContain("File changed on disk");

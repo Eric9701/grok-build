@@ -2,10 +2,49 @@
 //!
 //! Used for both subagent completion and primary-session turn completion.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::auth::{AuthManager, GrokAuth};
-use crate::remote::{TaskReport, post_task_report};
+use crate::remote::{ArtifactLineAdd, TaskReport, post_task_report};
+use xai_grok_tools::types::output::{ApplyPatchOutput, SearchReplaceOutput, ToolOutput};
+
+/// Convert a per-path inserted-line map into the Task Report payload.
+pub(crate) fn artifact_line_adds_payload(map: &HashMap<String, u64>) -> Vec<ArtifactLineAdd> {
+    let mut out: Vec<ArtifactLineAdd> = map
+        .iter()
+        .filter(|(_, n)| **n > 0)
+        .map(|(path, lines_added)| ArtifactLineAdd {
+            path: path.clone(),
+            lines_added: *lines_added,
+        })
+        .collect();
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+/// Inserted-line counts from a successful write/edit/apply_patch tool output.
+///
+/// Prefers the `edit.lines` counts stored on the tool output (computed once
+/// at apply time). Falls back to `line_diff` only when the producer omitted them.
+pub(crate) fn artifact_line_adds_from_output(output: &ToolOutput) -> Vec<(String, u64)> {
+    match output {
+        ToolOutput::SearchReplace(SearchReplaceOutput::EditsApplied(applied)) => {
+            vec![(
+                applied.absolute_path.to_string_lossy().into_owned(),
+                applied.inserted_line_count(),
+            )]
+        }
+        ToolOutput::ApplyPatch(ApplyPatchOutput::Success { files, .. }) => files
+            .iter()
+            .map(|f| {
+                let dest = f.move_to.as_ref().unwrap_or(&f.path);
+                (dest.to_string_lossy().into_owned(), f.inserted_line_count())
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
 
 /// Fill Report User and Client Version on a Task Report from the live session.
 ///
@@ -133,6 +172,7 @@ pub(crate) fn spawn_task_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote::ArtifactLineAdd;
 
     fn blank_report() -> TaskReport {
         TaskReport {
@@ -152,6 +192,7 @@ mod tests {
             tokens_used: 0,
             artifacts: vec![],
             artifact_count: 0,
+            artifact_lines_added: vec![],
             cwd: None,
             worktree_path: None,
             error: None,
@@ -214,5 +255,121 @@ mod tests {
         assert_eq!(v["modelRouting"], "qwen3.8-max");
         assert!(v.get("model_routing").is_none());
     }
-}
 
+    #[test]
+    fn artifact_line_adds_accumulate_and_omit_zeros() {
+        let mut map = HashMap::new();
+        map.insert("src/lib.rs".into(), 10);
+        map.insert("src/lib.rs".into(), 10); // HashMap last write, not accumulate
+        map.insert("docs/note.md".into(), 0);
+        map.insert("src/main.rs".into(), 3);
+        let got = artifact_line_adds_payload(&map);
+        assert_eq!(
+            got,
+            vec![
+                ArtifactLineAdd {
+                    path: "src/lib.rs".into(),
+                    lines_added: 10,
+                },
+                ArtifactLineAdd {
+                    path: "src/main.rs".into(),
+                    lines_added: 3,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn search_replace_output_counts_inserted_lines() {
+        use xai_grok_tools::types::output::{
+            SearchReplaceEditContextInformation, SearchReplaceEditDetail, SearchReplaceEditsApplied,
+        };
+        let output = ToolOutput::SearchReplace(SearchReplaceOutput::EditsApplied(
+            SearchReplaceEditsApplied {
+                old_string: "a\n".into(),
+                new_string: "a\nb\nc\n".into(),
+                tool_output_for_prompt: String::new(),
+                tool_output_for_prompt_concise: None,
+                absolute_path: std::path::PathBuf::from("src/lib.rs"),
+                edits: SearchReplaceEditContextInformation {
+                    details: vec![SearchReplaceEditDetail {
+                        old_string: "a\n".into(),
+                        old_line: 1,
+                        new_string: "a\nb\nc\n".into(),
+                        new_line: 1,
+                        context_before: String::new(),
+                        context_after: String::new(),
+                        line_prefix: String::new(),
+                    }],
+                },
+                patch: None,
+                unicode_normalized: false,
+                lines_added: None,
+                lines_removed: None,
+            },
+        ));
+        let got = artifact_line_adds_from_output(&output);
+        assert_eq!(got, vec![("src/lib.rs".into(), 2)]);
+    }
+
+    #[test]
+    fn search_replace_reuses_stored_edit_lines_without_details() {
+        use xai_grok_tools::types::output::{
+            SearchReplaceEditContextInformation, SearchReplaceEditsApplied,
+        };
+        let output = ToolOutput::SearchReplace(SearchReplaceOutput::EditsApplied(
+            SearchReplaceEditsApplied {
+                old_string: String::new(),
+                new_string: String::new(),
+                tool_output_for_prompt: String::new(),
+                tool_output_for_prompt_concise: None,
+                absolute_path: std::path::PathBuf::from("src/lib.rs"),
+                edits: SearchReplaceEditContextInformation { details: vec![] },
+                patch: None,
+                unicode_normalized: false,
+                lines_added: Some(7),
+                lines_removed: Some(1),
+            },
+        ));
+        let got = artifact_line_adds_from_output(&output);
+        assert_eq!(got, vec![("src/lib.rs".into(), 7)]);
+    }
+
+    #[test]
+    fn apply_patch_new_file_counts_all_lines() {
+        use xai_grok_tools::types::output::ApplyPatchFileResult;
+        let output = ToolOutput::ApplyPatch(ApplyPatchOutput::Success {
+            files: vec![ApplyPatchFileResult {
+                path: std::path::PathBuf::from("src/new.rs"),
+                action: "added".into(),
+                old_text: None,
+                new_text: "fn a() {}\nfn b() {}\n".into(),
+                move_to: None,
+                lines_added: None,
+                lines_removed: None,
+            }],
+            tool_output_for_prompt: String::new(),
+        });
+        let got = artifact_line_adds_from_output(&output);
+        assert_eq!(got, vec![("src/new.rs".into(), 2)]);
+    }
+
+    #[test]
+    fn apply_patch_reuses_stored_edit_lines() {
+        use xai_grok_tools::types::output::ApplyPatchFileResult;
+        let output = ToolOutput::ApplyPatch(ApplyPatchOutput::Success {
+            files: vec![ApplyPatchFileResult {
+                path: std::path::PathBuf::from("src/new.rs"),
+                action: "added".into(),
+                old_text: None,
+                new_text: String::new(),
+                move_to: None,
+                lines_added: Some(4),
+                lines_removed: Some(0),
+            }],
+            tool_output_for_prompt: String::new(),
+        });
+        let got = artifact_line_adds_from_output(&output);
+        assert_eq!(got, vec![("src/new.rs".into(), 4)]);
+    }
+}

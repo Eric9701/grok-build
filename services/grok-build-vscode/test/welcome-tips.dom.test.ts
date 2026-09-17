@@ -79,7 +79,7 @@ describe("empty-state advice", () => {
     const h = bootWebview({ ready: false });
     settle(h);
     expect(tipEl(h)).toBeTruthy();
-    expect(tipText(h)).toContain("Grok isn");
+    expect(tipText(h)).toContain("Atlas isn");
     expect(action(h)?.textContent).toBe("Connect Codex or Claude Code");
   });
 

@@ -78,6 +78,7 @@
 - Admin：`/atlas/admin/task-reports`；明细可弹详情；按人排行可按 token / 任务数排。只改 `web` 即可动该页。
 - Agent 展示去掉上游 `grok-` 前缀：`grok-build-plan` 显示为 `build-plan`；库内仍存原文。鼠标悬停可看原值。
 - 主会话与子 agent 都会报 artifacts；口径是成功的 `write` / `edit` / `apply_patch`。纯 bash 改文件两边都不记。
+- Task Report **代码新增行**（`codeLinesAdded`）只累加 `kind=code` 的 Insert 行；文档不计；同文件多次编辑累加。计数来自工具里已算过的 `edit.lines`，上报时不再差分。旧报告为 0。见 [ADR 0004](../services/atlas-server/docs/adr/0004-task-report-code-lines-added.md)。
 - Task Report **不是**派工验收回执。回执是仓库里的 `documents/execution-report-<jobId>.json`（或 ACP 对话里抄回的 JSON）。CLI **没有**上传业务文档/测试报告的命令。
 
 ---
@@ -209,6 +210,7 @@ Relay Demo 运维：
 | 2026-09-10 | [登录冲突](ad8b8766-e90d-4542-8a33-d5c8217d6910) | auth → xai-grok-login |
 | 2026-09-11 | [Relay Demo Linux](5952b17a-2178-4e04-8f5c-cd0fa0bfda8f) | musl 无关；`CGO_ENABLED=0`；LAN IP |
 | 2026-09-12 | [Relay 斜杠与 MD](b34f81f3-7ffc-409c-b31d-96b84cf24a65) | Command Catalog + `md.js` |
+| 2026-09-15 | [代码新增行](f4655f99-7132-406e-a676-0a06ba292453) | Task Report `codeLinesAdded` |
 | 2026-09-13 | [会话记忆](57e9ab26-cafd-4fb7-bd67-a823e1b5cd61) | 本文回填 |
 
 子 agent 记录不另建索引，结论已折进上表对应主题。产品变更明细见 [changelog](./changelog/README.md)。

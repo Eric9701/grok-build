@@ -1,6 +1,6 @@
 /**
  * Phase clock for opening a conversation. One in-memory summary line per open
- * on the Grok output channel — no store, no telemetry.
+ * on the Atlas output channel — no store, no telemetry.
  *
  * The costs, in order: `resolve` (everything the CALLER spent before
  * `startSession` — reservation, workspace queue, cwd resolution, the

@@ -2026,12 +2026,12 @@ pub(crate) async fn run_shell_child(
         .as_ref()
         .map(xai_chat_state::UsageTotals::total_tokens)
         .unwrap_or(0);
-    apply_child_signal_counts(
-        &mut result,
-        signals_snapshot_counts(&child_handle)
-            .await
-            .unwrap_or_default(),
-    );
+    let counts = signals_snapshot_counts(&child_handle)
+        .await
+        .unwrap_or_default();
+    let artifact_lines_added =
+        crate::task_report::artifact_line_adds_payload(&counts.artifact_lines);
+    apply_child_signal_counts(&mut result, counts);
     result.duration_ms = start.elapsed().as_millis() as u64;
     if let Some(trace_gcs_config) = gcs_upload_ctx.upload_method.as_ref().map(|method| {
         crate::session::repo_changes::TraceExportConfig {
@@ -2324,6 +2324,7 @@ pub(crate) async fn run_shell_child(
             tokens_used: result.tokens_used,
             artifact_count: result.artifacts.len(),
             artifacts: result.artifacts.clone(),
+            artifact_lines_added,
             cwd: (!report_child_cwd.is_empty()).then(|| report_child_cwd.clone()),
             worktree_path: result.worktree_path.clone(),
             error: result.error.clone(),

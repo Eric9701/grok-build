@@ -7,7 +7,7 @@
       const known = s => !!(s && s.voiceBackendState);
       api.ROWS.splice(api.ROWS.findIndex(row => row.id === "voiceSendPhrase"), 0, {
         id: "voiceBackend", category: "voice", title: "Transcription backend", kind: "select",
-        description: "Auto prefers OpenAI for Codex and xAI for Grok or Claude, using the other when its credential is available. A change applies to the next recording.",
+        description: "Auto prefers OpenAI for Codex and xAI for Atlas or Claude, using the other when its credential is available. A change applies to the next recording.",
         options: [{ value: "auto", label: "Auto" }, { value: "xai", label: "xAI" }, { value: "openai", label: "OpenAI" }],
         defaultValue: "auto", visible: known,
         get: s => s.voiceBackendState.preference,
@@ -16,7 +16,7 @@
         id: "voiceBackendAvailability", category: "voice", title: "Transcription credentials", kind: "status",
         visible: known,
         describe: s => "OpenAI: " + (s.voiceBackendState.hasOpenAi ? "key available" : "needs an API key")
-          + ". xAI: " + (s.voiceBackendState.hasXai ? "credential available" : "needs a key or Grok sign-in")
+          + ". xAI: " + (s.voiceBackendState.hasXai ? "credential available" : "needs a key or Atlas sign-in")
           + ". Codex / ChatGPT sign-in does not include transcription API access. OpenAI API usage is billed separately.",
       }, {
         id: "configureOpenAiVoice", category: "voice", title: "OpenAI voice API key", kind: "action",
@@ -368,6 +368,7 @@
   function brandUserFacingText(text) {
     return String(text)
       .replace(/SuperGrok/g, "\0SUPERGROK\0")
+      .replace(/Grok-Build-Desktop/g, "\0GROKBUILDDESKTOP\0")
       .replace(/\bGrok Build Desktop\b/gi, "Atlas Desktop")
       .replace(/\bGrok Build CLI\b/gi, "Atlas CLI")
       .replace(/\bGrok Build\b/gi, "Atlas")
@@ -375,8 +376,11 @@
       .replace(/\bGrok\.com\b/gi, "Atlas")
       .replace(/\bGrok\b/g, "Atlas")
       .replace(/`grok logout`/g, "`atlas logout`")
+      .replace(/`grok login`/g, "`atlas login`")
+      .replace(/~\/\.grok\b/g, "~/.atlas")
       .replace(/\bA Atlas\b/g, "An Atlas")
       .replace(/\ba Atlas\b/g, "an Atlas")
+      .replace(/\0GROKBUILDDESKTOP\0/g, "Grok-Build-Desktop")
       .replace(/\0SUPERGROK\0/g, "SuperGrok");
   }
 
@@ -1984,7 +1988,7 @@
   const WELCOME_TIPS = [
     {
       id: "providers",
-      copy: "Grok isn’t your only agent. {Connect Codex or Claude Code} and pick one per conversation.",
+      copy: "Atlas isn’t your only agent. {Connect Codex or Claude Code} and pick one per conversation.",
       target: "settings:providers",
       // Was requiresLocalSurface, on the rule that a remote may not sign an
       // agent in. It can since 3.19.x, and on a cloud machine this is the
@@ -2032,7 +2036,7 @@
     },
     {
       id: "readAloud",
-      copy: "Grok can read its replies out loud — turn it on in {Voice settings}.",
+      copy: "Atlas can read its replies out loud — turn it on in {Voice settings}.",
       target: "settings:voice",
       requiresLocalSurface: false,
       eligible: (f) => !f.readRepliesAloud,

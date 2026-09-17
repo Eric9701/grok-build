@@ -25,7 +25,8 @@ pub use chat_models_client::{
 };
 pub(crate) use client::DEFAULT_CONTEXT_WINDOW;
 pub use client::{
-    BackendClient, BackendError, FetchModelsResult, FetchedBundle, SettingsFetch, TaskReport,
+    BackendClient, BackendError, FetchModelsResult, FetchedBundle, SettingsFetch, ArtifactLineAdd,
+    TaskReport,
     fetch_bundle, fetch_settings_blocking, fetch_subagent_bundle, post_task_report, share_url,
 };
 pub use conversations_client::{

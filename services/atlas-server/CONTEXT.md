@@ -52,6 +52,10 @@ _Avoid_: Catalog ID, ENC form of the slug, `id`
 A per-task usage record the client posts after a main-session turn or subagent finishes. Attributed by Report User and Client Version carried in the report body. Identifies the model by Catalog ID (`model`) and Routing Name (`modelRouting`).
 _Avoid_: Trace, session signal, telemetry event
 
+**Code Lines Added**:
+Inserted lines on Task Report artifacts whose kind is `code`, summed per task (`codeLinesAdded`) and in Admin rollups. Counts `edit.lines` Insert only (not deleted, not net, not `doc`/`other`). Same file edited twice accumulates. Historical reports without the field are 0.
+_Avoid_: Net LOC, document lines, hunk-tracker accepted lines, bash-written files; re-running Myers `line_diff` at report time when `edit.lines` already ran
+
 **Report User**:
 The user identity on a Task Report: `userId` and `email` from the report body. Not derived from the access token.
 _Avoid_: JWT subject, Bearer user, x-userid

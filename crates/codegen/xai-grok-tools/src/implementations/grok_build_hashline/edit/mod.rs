@@ -173,16 +173,21 @@ fn to_search_replace(
             } else {
                 format!("{}\n\n{}", applied.warnings.join("\n"), applied.snippet,)
             };
-            SearchReplaceOutput::EditsApplied(SearchReplaceEditsApplied {
-                old_string: old_content.to_owned(),
-                new_string: new_text.to_owned(),
-                tool_output_for_prompt: snippet_with_warnings,
-                tool_output_for_prompt_concise: None,
-                absolute_path: applied.absolute_path,
-                edits: SearchReplaceEditContextInformation { details },
-                patch: None,
-                unicode_normalized: false,
-            })
+            SearchReplaceOutput::EditsApplied(
+                SearchReplaceEditsApplied {
+                    old_string: old_content.to_owned(),
+                    new_string: new_text.to_owned(),
+                    tool_output_for_prompt: snippet_with_warnings,
+                    tool_output_for_prompt_concise: None,
+                    absolute_path: applied.absolute_path,
+                    edits: SearchReplaceEditContextInformation { details },
+                    patch: None,
+                    unicode_normalized: false,
+                    lines_added: None,
+                    lines_removed: None,
+                }
+                .with_edit_lines(),
+            )
         }
         HashlineEditOutput::Error(err) => {
             let mut msg = err.message;

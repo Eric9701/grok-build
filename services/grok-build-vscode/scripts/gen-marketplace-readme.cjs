@@ -19,7 +19,7 @@ const root = path.resolve(__dirname, "..");
 
 const header = `# Atlas for VS Code (Community)
 
-[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](https://github.com/phuryn/grok-build-vscode/blob/main/LICENSE) ![Agents](https://img.shields.io/badge/Agents-Grok%20Build%20%C2%B7%20Codex%20%C2%B7%20Claude%20Code-000000) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Cursor](https://badgen.net/badge/Cursor/Extension/007ACC)](https://cursor.com) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
+[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](https://github.com/phuryn/grok-build-vscode/blob/main/LICENSE) ![Agents](https://img.shields.io/badge/Agents-Atlas%20%C2%B7%20Codex%20%C2%B7%20Claude%20Code-000000) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Cursor](https://badgen.net/badge/Cursor/Extension/007ACC)](https://cursor.com) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
 
 > **GUI for Atlas CLI (incl. Atlas 4.6)** — not affiliated with or endorsed by SpaceXAI (formerly xAI). *Atlas* and *xAI* are trademarks of xAI; this project uses those names only to describe what it's compatible with.
 
@@ -27,7 +27,7 @@ The GUI for **Atlas CLI** (incl. **Atlas 4.6**), right in your editor — with *
 
 No manual setup: the extension **walks you through installing the \`atlas\` CLI and signing in** — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key** — right from the sidebar, one click per step.
 
-![Atlas in the VS Code sidebar, running Grok](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/grok_4.5.png)
+![Atlas in the VS Code sidebar, running Atlas](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/grok_4.5.png)
 
 ![Generated image rendered inline from /imagine](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/imagine.webp)
 
@@ -126,7 +126,7 @@ function buildMarketplaceReadme(githubReadme) {
   body = body.replace(/\n### VS Code \/ Cursor extension\n\n/m, "\n");
   body = body.replace(
     /1\. \*\*Open\*\* Grok — in VS Code: `Ctrl\/Cmd\+;` \(Secondary Side Bar by default\); in Desktop: launch the app and add a project folder\./,
-    "1. **Open** the Grok view (`Ctrl/Cmd+;`, or **Grok: Open** from the command palette) — it lives in the Secondary Side Bar by default.",
+    "1. **Open** the Atlas view (`Ctrl/Cmd+;`, or **Atlas: Open** from the command palette) — it lives in the Secondary Side Bar by default.",
   );
   body = body.replace(
     /preview an edit \(native diff in VS Code; in-app viewer on Desktop\)/,

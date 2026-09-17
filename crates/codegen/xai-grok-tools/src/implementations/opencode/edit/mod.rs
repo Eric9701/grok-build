@@ -351,7 +351,10 @@ async fn handle_new_file_creation(
             edits: SearchReplaceEditContextInformation { details: edits },
             patch: None,
             unicode_normalized: false,
-        },
+            lines_added: None,
+            lines_removed: None,
+        }
+        .with_edit_lines(),
     ))
 }
 
@@ -499,7 +502,10 @@ async fn handle_replacement(
             edits: SearchReplaceEditContextInformation { details: edits },
             patch: None,
             unicode_normalized: false,
-        },
+            lines_added: None,
+            lines_removed: None,
+        }
+        .with_edit_lines(),
     ))
 }
 

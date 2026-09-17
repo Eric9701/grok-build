@@ -1777,6 +1777,7 @@ struct ChildSignalCounts {
     tool_calls: u32,
     turns: u32,
     artifacts: Vec<String>,
+    artifact_lines: std::collections::HashMap<String, u64>,
 }
 
 fn child_signal_counts(snapshot: &crate::session::signals::SessionSignals) -> ChildSignalCounts {
@@ -1784,6 +1785,7 @@ fn child_signal_counts(snapshot: &crate::session::signals::SessionSignals) -> Ch
         tool_calls: snapshot.tool_call_count,
         turns: snapshot.turn_count,
         artifacts: snapshot.artifacts_written.clone(),
+        artifact_lines: snapshot.artifact_lines_added.clone(),
     }
 }
 

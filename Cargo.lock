@@ -14560,6 +14560,7 @@ dependencies = [
  "regex",
  "reqwest 0.12.24",
  "reqwest-middleware 0.4.2",
+ "ring",
  "rustls",
  "semver",
  "serde",

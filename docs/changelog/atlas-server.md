@@ -4,6 +4,21 @@
 
 ## 2026-09
 
+### 2026-09-15 — Task Report 行数口径对齐 edit.lines
+
+- **状态**：文档
+- **会话**：[代码新增行](f4655f99-7132-406e-a676-0a06ba292453)
+- ADR 0004：代码新增行与 CLI `edit.lines` 同一计数；上报侧不再二次差分。服务端求和未改。
+
+### 2026-09-15 — Task Report 代码新增行
+
+- **状态**：已落地
+- **会话**：[代码新增行](f4655f99-7132-406e-a676-0a06ba292453)
+- **ADR**：[0004](../../services/atlas-server/docs/adr/0004-task-report-code-lines-added.md)
+- 按现有 `kind=code` 对 CLI 上报的 Insert 行求和，字段 `codeLinesAdded` / 列 `code_lines_added`。文档与 other 不计。旧报告为 0。
+- Admin `/atlas/admin/task-reports` 整体卡、按人/Agent/Model 排行、单笔详情增加「代码新增行」。
+- 与 [atlas-cli](./atlas-cli.md) 配套。
+
 ### 2026-09-02 — 建立本变更记录
 
 - **状态**：文档

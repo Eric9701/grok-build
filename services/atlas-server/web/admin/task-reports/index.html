@@ -676,7 +676,7 @@
       if (!artifacts || !artifacts.length) return `<p class="empty" style="padding:0">暂无产物</p>`;
       return `<ul class="artifact-list">` + artifacts.map((a) => `
         <li>
-          <div><span class="mono">${esc(a.kind || "artifact")}</span></div>
+          <div><span class="mono">${esc(a.kind || "artifact")}</span>${a.linesAdded ? ` · +${fmt(a.linesAdded)} 行` : ""}</div>
           <div title="${esc(a.path || "")}">${esc(a.path || "—")}</div>
         </li>
       `).join("") + `</ul>`;
@@ -717,6 +717,7 @@
                 <dt>Turns</dt><dd>${field(fmt(report.turns))}</dd>
                 <dt>Tokens</dt><dd>${field(fmt(report.tokensUsed))}</dd>
                 <dt>产物数</dt><dd>${field(fmt(report.artifactCount))}</dd>
+                <dt>代码新增行</dt><dd>${field(fmt(report.codeLinesAdded))}</dd>
                 <dt>客户端版本</dt><dd class="mono">${field(report.clientVersion)}</dd>
                 <dt>客户端 IP</dt><dd class="mono">${field(report.clientIp)}</dd>
                 <dt>Subagent ID</dt><dd class="mono">${field(report.subagentId)}</dd>
@@ -775,6 +776,7 @@
         ["失败", s.failedCount, "tone-err"],
         ["取消", s.cancelledCount, "tone-warn"],
         ["产物", s.totalArtifacts, ""],
+        ["代码新增行", s.totalCodeLinesAdded, ""],
         ["Tokens", s.totalTokens, ""],
         ["用户数", s.uniqueUsers, ""],
         ["模型数", s.uniqueModels, ""],
@@ -826,6 +828,7 @@
           <td class="num">${fmt(u.count)}</td>
           <td class="num">${fmt(u.successCount)}</td>
           <td class="num">${fmt(u.artifactCount)}</td>
+          <td class="num">${fmt(u.codeLinesAdded)}</td>
           <td class="num">${fmt(u.tokensUsed)}</td>
         </tr>`).join("");
       $("usersTable").innerHTML = `
@@ -834,7 +837,7 @@
             <thead><tr>
               <th>#</th><th>用户</th>
               <th class="sortable ${usersSortKey === "count" ? "active" : ""}" data-sort="count">任务${sortInd("count")}</th>
-              <th>成功</th><th>产物</th>
+              <th>成功</th><th>产物</th><th>代码行</th>
               <th class="sortable ${usersSortKey === "tokensUsed" ? "active" : ""}" data-sort="tokensUsed">Tokens${sortInd("tokensUsed")}</th>
             </tr></thead>
             <tbody>${rows}</tbody>
@@ -877,12 +880,13 @@
           </td>
           <td class="num">${fmt(a.count)}</td>
           <td class="num">${fmt(a.artifactCount)}</td>
+          <td class="num">${fmt(a.codeLinesAdded)}</td>
           <td class="num">${fmt(a.tokensUsed)}</td>
         </tr>`;
       }).join("");
       el.innerHTML = `
         <table>
-          <thead><tr><th>Agent</th><th>任务</th><th>产物</th><th>Tokens</th></tr></thead>
+          <thead><tr><th>Agent</th><th>任务</th><th>产物</th><th>代码行</th><th>Tokens</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
     }
@@ -907,12 +911,13 @@
           </td>
           <td class="num">${fmt(a.count)}</td>
           <td class="num">${fmt(a.artifactCount)}</td>
+          <td class="num">${fmt(a.codeLinesAdded)}</td>
           <td class="num">${fmt(a.tokensUsed)}</td>
         </tr>`;
       }).join("");
       el.innerHTML = `
         <table>
-          <thead><tr><th>Model</th><th>任务</th><th>产物</th><th>Tokens</th></tr></thead>
+          <thead><tr><th>Model</th><th>任务</th><th>产物</th><th>代码行</th><th>Tokens</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`;
     }
@@ -935,6 +940,7 @@
           <td class="truncate" title="${esc(routing)}"><span class="mono">${esc(routing)}</span></td>
           <td>${statusBadge(r.status, r.success)}</td>
           <td class="num">${fmt(r.artifactCount)}</td>
+          <td class="num">${fmt(r.codeLinesAdded)}</td>
           <td class="truncate" title="${esc(arts)}">${esc(arts || "—")}</td>
           <td class="num">${fmtDuration(r.durationMs)}</td>
           <td class="mono">${esc(r.clientVersion || "—")}</td>
@@ -944,7 +950,7 @@
       $("userReportsTable").innerHTML = `
         <table>
           <thead><tr>
-            <th>任务</th><th>Agent</th><th>Model</th><th>Routing</th><th>状态</th><th>产物</th><th>路径</th><th>耗时</th><th>版本</th><th>时间</th>
+            <th>任务</th><th>Agent</th><th>Model</th><th>Routing</th><th>状态</th><th>产物</th><th>代码行</th><th>路径</th><th>耗时</th><th>版本</th><th>时间</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>`;

@@ -22,15 +22,15 @@ CLI 在 **子代理任务结束** 时 `POST /atlas/v1/task-reports`。`userId` /
 
 `from`/`to` 为闭区间 `YYYY-MM-DD`，按服务端本地 `DATE(created_at)` 过滤。两者都省略 = **当天**。`from=all` / `to=all` / `date=all` = 不限日期。旧参 `date=` 等于 `from=to`。
 
-整体 `summary`：`totalTasks` `successCount` `failedCount` `cancelledCount` `totalArtifacts` `totalTokens` `uniqueUsers` `uniqueModels`。
+整体 `summary`：`totalTasks` `successCount` `failedCount` `cancelledCount` `totalArtifacts` `totalCodeLinesAdded` `totalTokens` `uniqueUsers` `uniqueModels`。
 
-`users[]`：`userId` `email` `count` `successCount` `artifactCount` `tokensUsed`。
+`users[]`：`userId` `email` `count` `successCount` `artifactCount` `codeLinesAdded` `tokensUsed`。
 
-`agents[]`：`subagentType` `count` `artifactCount` `tokensUsed`。
+`agents[]`：`subagentType` `count` `artifactCount` `codeLinesAdded` `tokensUsed`。
 
-`models[]`：`model` `count` `artifactCount` `tokensUsed`。空 model 显示为 `(unknown)`。
+`models[]`：`model` `count` `artifactCount` `codeLinesAdded` `tokensUsed`。空 model 显示为 `(unknown)`。
 
-明细常用字段：`description` `subagentType` `model` `modelRouting` `status` `success` `durationMs` `toolCalls` `turns` `tokensUsed` `artifacts[]` `{path,kind}` `artifactCount` `cwd` `worktreePath` `startedAt` `completedAt` `clientVersion` `createdAt`。`kind` ∈ `code` | `doc` | `other`。
+明细常用字段：`description` `subagentType` `model` `modelRouting` `status` `success` `durationMs` `toolCalls` `turns` `tokensUsed` `artifacts[]` `{path,kind,linesAdded}` `artifactCount` `codeLinesAdded` `cwd` `worktreePath` `startedAt` `completedAt` `clientVersion` `createdAt`。`kind` ∈ `code` | `doc` | `other`。`codeLinesAdded` 只累加 `kind=code` 的 Insert 行（同文件多次编辑累加）；旧报告为 0。
 
 个人明细默认 `limit=50`，合法范围 1–500。定量用 aggregate，定性用 description 样本。
 

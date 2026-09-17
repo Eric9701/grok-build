@@ -2512,32 +2512,35 @@ impl SessionActor {
             return;
         }
 
-        let (status, success, error, mut artifacts, tokens_used) = match result {
+        let (status, success, error, mut artifacts, artifact_lines_added, tokens_used) = match result {
             Ok(TurnOutcome::Completed { .. }) | Ok(TurnOutcome::StationarityEnded) => {
-                let arts = self.signals_handle().take_artifacts_this_turn().await;
-                ("completed", true, None, arts, 0)
+                let snap = self.signals_handle().take_artifacts_this_turn().await;
+                ("completed", true, None, snap.paths, snap.lines_added, 0)
             }
             Ok(TurnOutcome::Cancelled { .. }) => {
-                let arts = self.signals_handle().take_artifacts_this_turn().await;
-                ("cancelled", false, None, arts, 0)
+                let snap = self.signals_handle().take_artifacts_this_turn().await;
+                ("cancelled", false, None, snap.paths, snap.lines_added, 0)
             }
             Ok(TurnOutcome::MaxTurnsReached { limit }) => {
-                let arts = self.signals_handle().take_artifacts_this_turn().await;
+                let snap = self.signals_handle().take_artifacts_this_turn().await;
                 (
                     "cancelled",
                     false,
                     Some(format!("max turns reached ({limit})")),
-                    arts,
+                    snap.paths,
+                    snap.lines_added,
                     0,
                 )
             }
             Err(err) => {
-                let arts = self.signals_handle().take_artifacts_this_turn().await;
-                ("error", false, Some(err.to_string()), arts, 0)
+                let snap = self.signals_handle().take_artifacts_this_turn().await;
+                ("error", false, Some(err.to_string()), snap.paths, snap.lines_added, 0)
             }
         };
         artifacts.sort();
         artifacts.dedup();
+        let artifact_lines_added =
+            crate::task_report::artifact_line_adds_payload(&artifact_lines_added);
 
         let endpoints = crate::agent::config::EndpointsConfig::from_effective_config();
         let base_url = endpoints.proxy_url();
@@ -2582,6 +2585,7 @@ impl SessionActor {
             tokens_used,
             artifact_count: artifacts.len(),
             artifacts,
+            artifact_lines_added,
             cwd: (!cwd.is_empty()).then_some(cwd),
             worktree_path: None,
             error,

@@ -1,4 +1,4 @@
-# Uninstall the Grok VS Code extension on Windows.
+# Uninstall the Atlas VS Code extension on Windows.
 # Usage:  pwsh scripts\uninstall.ps1 [-Cli name-or-path]
 #   -Cli - a code-compatible CLI to uninstall from (e.g. code-insiders, cursor,
 #          antigravity, C:\path\to\code.cmd); also settable via $env:CODE_CLI.

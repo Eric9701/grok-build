@@ -119,13 +119,18 @@
     if (typeof helpers.brandUserFacingText === "function") return helpers.brandUserFacingText(String(text ?? ""));
     return String(text ?? "")
       .replace(/SuperGrok/g, "\0SUPERGROK\0")
+      .replace(/Grok-Build-Desktop/g, "\0GROKBUILDDESKTOP\0")
       .replace(/\bGrok Build Desktop\b/gi, "Atlas Desktop")
       .replace(/\bGrok Build CLI\b/gi, "Atlas CLI")
       .replace(/\bGrok Build\b/gi, "Atlas")
       .replace(/\bGrok CLI\b/gi, "Atlas CLI")
       .replace(/\bGrok\b/g, "Atlas")
+      .replace(/`grok logout`/g, "`atlas logout`")
+      .replace(/`grok login`/g, "`atlas login`")
+      .replace(/~\/\.grok\b/g, "~/.atlas")
       .replace(/\bA Atlas\b/g, "An Atlas")
       .replace(/\ba Atlas\b/g, "an Atlas")
+      .replace(/\0GROKBUILDDESKTOP\0/g, "Grok-Build-Desktop")
       .replace(/\0SUPERGROK\0/g, "SuperGrok");
   }
   const ICON_EXTERNAL_LINK =
@@ -1056,7 +1061,7 @@
       id: "providerConfigFiles",
       category: "providers",
       title: "Provider config files",
-      description: "~/.grok/config.toml · ~/.codex/config.toml · ~/.claude/settings.json",
+      description: "~/.atlas/config.toml · ~/.codex/config.toml · ~/.claude/settings.json",
       kind: "providerConfigs",
       visible: (s, env) => !!(env && env.hostCaps && env.hostCaps.editProviderConfigFiles && env.hostCaps.editProjectFiles),
     },
@@ -2946,7 +2951,7 @@
       el.className = "settings-row settings-provider-configs";
       el.dataset.id = row.id;
       el.innerHTML = `<summary class="settings-row-title">Provider config files</summary>` +
-        [["grok", "Grok", "~/.grok/config.toml"], ["codex", "Codex", "~/.codex/config.toml"], ["claude", "Claude", "~/.claude/settings.json"]]
+        [["grok", "Atlas", "~/.atlas/config.toml"], ["codex", "Codex", "~/.codex/config.toml"], ["claude", "Claude", "~/.claude/settings.json"]]
           .map(([provider, name, path]) => `<div class="settings-provider-config"><div class="settings-row-copy"><div class="settings-row-title">${name}</div><div class="settings-row-desc">${path}</div></div><button type="button" class="settings-action" data-provider="${provider}" aria-label="Open ${path}">Open</button></div>`).join("");
       return el;
     }

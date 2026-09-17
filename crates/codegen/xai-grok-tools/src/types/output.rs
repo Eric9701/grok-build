@@ -16,6 +16,18 @@ pub fn line_diff(old: &str, new: &str) -> (i64, i64) {
     }
     (added, removed)
 }
+
+/// Sum of [`line_diff`] over search-replace hunk details (same as `edit.lines`).
+pub fn edit_lines_from_details(details: &[SearchReplaceEditDetail]) -> (i64, i64) {
+    let mut added = 0i64;
+    let mut removed = 0i64;
+    for detail in details {
+        let (a, r) = line_diff(&detail.old_string, &detail.new_string);
+        added += a;
+        removed += r;
+    }
+    (added, removed)
+}
 /// Wrapper for [`ToolOutput::Text`] so it can round-trip through
 /// `#[serde(tag = "type")]` (internally-tagged enums require struct/map
 /// payloads, not bare primitives).
@@ -300,6 +312,12 @@ pub struct SearchReplaceEditsApplied {
     /// (exact byte match failed, but normalized match succeeded).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub unicode_normalized: bool,
+    /// Insert count from the `edit.lines` span. In-process only (not in tool JSON).
+    #[serde(skip)]
+    pub lines_added: Option<i64>,
+    /// Delete count from the `edit.lines` span. In-process only (not in tool JSON).
+    #[serde(skip)]
+    pub lines_removed: Option<i64>,
 }
 /// Contains the edit details present as a struct
 #[derive(Debug, Default, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -351,7 +369,36 @@ pub struct ApplyPatchFileResult {
     /// Destination path (only for moves).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub move_to: Option<PathBuf>,
+    /// Insert count from [`line_diff`] (`edit.lines`). In-process only (not in tool JSON).
+    #[serde(skip)]
+    pub lines_added: Option<i64>,
+    /// Delete count from [`line_diff`] (`edit.lines`). In-process only (not in tool JSON).
+    #[serde(skip)]
+    pub lines_removed: Option<i64>,
 }
+
+impl ApplyPatchFileResult {
+    /// Record [`line_diff`] counts once (same numbers as `edit.lines`).
+    pub fn with_edit_lines(mut self) -> Self {
+        let old = self.old_text.as_deref().unwrap_or("");
+        let (added, removed) = line_diff(old, &self.new_text);
+        self.lines_added = Some(added);
+        self.lines_removed = Some(removed);
+        self
+    }
+
+    /// Inserted-line count for Task Report. Prefers stored `edit.lines`; otherwise diffs texts.
+    pub fn inserted_line_count(&self) -> u64 {
+        match self.lines_added {
+            Some(n) => n.max(0) as u64,
+            None => {
+                let old = self.old_text.as_deref().unwrap_or("");
+                line_diff(old, &self.new_text).0.max(0) as u64
+            }
+        }
+    }
+}
+
 /// Output of the `apply_patch` tool.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ApplyPatchOutput {
@@ -1212,6 +1259,29 @@ impl xai_tool_runtime::ToolOutput for ToolOutput {
     }
 }
 impl SearchReplaceEditsApplied {
+    /// Fill `lines_added` / `lines_removed` from hunk details once (same as `edit.lines`).
+    pub fn ensure_edit_lines(&mut self) {
+        if self.lines_added.is_some() {
+            return;
+        }
+        let (added, removed) = edit_lines_from_details(&self.edits.details);
+        self.lines_added = Some(added);
+        self.lines_removed = Some(removed);
+    }
+
+    pub fn with_edit_lines(mut self) -> Self {
+        self.ensure_edit_lines();
+        self
+    }
+
+    /// Inserted-line count for Task Report. Prefers stored `edit.lines`; otherwise diffs details.
+    pub fn inserted_line_count(&self) -> u64 {
+        match self.lines_added {
+            Some(n) => n.max(0) as u64,
+            None => edit_lines_from_details(&self.edits.details).0.max(0) as u64,
+        }
+    }
+
     /// Where the client's diff lands in the file. `None` for creations (no
     /// line to point at) and when `replace_all` touched several matches,
     /// since the card renders one snippet.
@@ -1881,6 +1951,8 @@ mod tests {
                     old_text: Some("old".into()),
                     new_text: "new".into(),
                     move_to: None,
+                    lines_added: None,
+                    lines_removed: None,
                 }],
                 tool_output_for_prompt: "Updated /repo/src/main.rs".into(),
             }
@@ -2884,8 +2956,61 @@ mod tests {
             },
             patch: None,
             unicode_normalized: false,
+            lines_added: None,
+            lines_removed: None,
         }
     }
+
+    #[test]
+    fn inserted_line_count_reuses_stored_edit_lines() {
+        let mut applied = sample_edits_applied(&[1]);
+        applied.lines_added = Some(9);
+        applied.lines_removed = Some(2);
+        applied.edits.details.clear();
+        assert_eq!(applied.inserted_line_count(), 9);
+    }
+
+    #[test]
+    fn inserted_line_count_falls_back_to_hunk_diff() {
+        let applied = SearchReplaceEditsApplied {
+            old_string: "a\n".into(),
+            new_string: "a\nb\n".into(),
+            tool_output_for_prompt: String::new(),
+            tool_output_for_prompt_concise: None,
+            absolute_path: PathBuf::from("a.rs"),
+            edits: SearchReplaceEditContextInformation {
+                details: vec![SearchReplaceEditDetail {
+                    old_string: "a\n".into(),
+                    old_line: 1,
+                    new_string: "a\nb\n".into(),
+                    new_line: 1,
+                    context_before: String::new(),
+                    context_after: String::new(),
+                    line_prefix: String::new(),
+                }],
+            },
+            patch: None,
+            unicode_normalized: false,
+            lines_added: None,
+            lines_removed: None,
+        };
+        assert_eq!(applied.inserted_line_count(), 1);
+    }
+
+    #[test]
+    fn apply_patch_inserted_line_count_reuses_stored() {
+        let file = ApplyPatchFileResult {
+            path: PathBuf::from("a.rs"),
+            action: "added".into(),
+            old_text: None,
+            new_text: String::new(),
+            move_to: None,
+            lines_added: Some(5),
+            lines_removed: Some(0),
+        };
+        assert_eq!(file.inserted_line_count(), 5);
+    }
+
     /// Every applied edit settles the card through the empty success shell;
     /// only a single-match edit of an existing file also carries the anchor.
     fn assert_applied_edit_frame(

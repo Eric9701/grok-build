@@ -212,6 +212,8 @@ impl xai_tool_runtime::Tool for WriteTool {
                 edits: SearchReplaceEditContextInformation { details: edits },
                 patch: None,
                 unicode_normalized: false,
+                lines_added: Some(lines_added),
+                lines_removed: Some(lines_removed),
             },
         ))
     }

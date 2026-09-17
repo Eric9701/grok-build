@@ -928,7 +928,7 @@ export type HostMsg =
   | { type: "expandDiffCard"; value: boolean }
   // On-demand audit: expand (open:true) / collapse (open:false) EVERY tool group
   // and command IN/OUT box in the focused session at once. Ephemeral (not
-  // persisted) — the Command Palette "Grok: Expand/Collapse All Tool Details".
+  // persisted) — the Command Palette "Atlas: Expand/Collapse All Tool Details".
   | { type: "setAllToolDetails"; open: boolean }
   // Move keyboard focus into the composer input (#43) — posted after Send
   // Selection / Send File / @-mention so the user can type a prompt right away.

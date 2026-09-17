@@ -371,7 +371,7 @@ export function createVsCodeHost(
         // Timed per step. Moving a webview view makes VS Code dispose and
         // rebuild it, so this is one of the few user actions that can visibly
         // stall — and which of the three steps costs it is not guessable from
-        // the outside. `Grok: Show Logs` after a move answers it.
+        // the outside. `Atlas: Show Logs` after a move answers it.
         const started = Date.now();
         const lap = (step: string) => {
           output.appendLine(`[move] ${step} ${Date.now() - started}ms`);

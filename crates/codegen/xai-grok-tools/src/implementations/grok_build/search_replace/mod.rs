@@ -211,7 +211,7 @@ pub(crate) async fn run_search_replace(
             .map(|p| p.0.include_user_edit_hint)
             .unwrap_or(true);
     }
-    let result = if input.old_string.is_empty() {
+    let mut result = if input.old_string.is_empty() {
         handle_new_file_creation(
             &input,
             resources.clone(),
@@ -243,18 +243,13 @@ pub(crate) async fn run_search_replace(
         )
         .await?
     };
-    if let SearchReplaceOutput::EditsApplied(applied) = &result {
-        let (mut added, mut removed) = (0i64, 0i64);
-        for detail in &applied.edits.details {
-            let (a, r) = crate::types::output::line_diff(&detail.old_string, &detail.new_string);
-            added += a;
-            removed += r;
-        }
+    if let SearchReplaceOutput::EditsApplied(applied) = &mut result {
+        applied.ensure_edit_lines();
         tracing::info_span!(
             "edit.lines",
             tool_name = "search_replace",
-            lines_added = added,
-            lines_removed = removed
+            lines_added = applied.lines_added.unwrap_or(0),
+            lines_removed = applied.lines_removed.unwrap_or(0)
         )
         .in_scope(|| {});
     }
@@ -403,6 +398,8 @@ async fn handle_new_file_creation(
             edits: SearchReplaceEditContextInformation { details: edits },
             patch: None,
             unicode_normalized: false,
+            lines_added: None,
+            lines_removed: None,
         },
     ))
 }
@@ -775,6 +772,8 @@ async fn handle_replacement(
             edits: SearchReplaceEditContextInformation { details: edits },
             patch: None,
             unicode_normalized: used_normalized_fallback,
+            lines_added: None,
+            lines_removed: None,
         },
     ))
 }

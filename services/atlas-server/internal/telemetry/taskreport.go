@@ -47,30 +47,31 @@ func resolveReportRange(fromRaw, toRaw, dateRaw string) (from, to string, err er
 // taskReportPayload is the JSON body the CLI POSTs to /v1/task-reports.
 // Field names mirror the CLI `TaskReport` (camelCase).
 type taskReportPayload struct {
-	SubagentID      string   `json:"subagentId"`
-	ParentSessionID string   `json:"parentSessionId"`
-	ChildSessionID  string   `json:"childSessionId"`
-	SubagentType    string   `json:"subagentType"`
-	Model           string   `json:"model"`
-	ModelRouting    string   `json:"modelRouting"`
-	Description     string   `json:"description"`
-	Prompt          string   `json:"prompt"`
-	Status          string   `json:"status"`
-	Success         bool     `json:"success"`
-	DurationMs      uint64   `json:"durationMs"`
-	ToolCalls       uint32   `json:"toolCalls"`
-	Turns           uint32   `json:"turns"`
-	TokensUsed      uint64   `json:"tokensUsed"`
-	Artifacts       []string `json:"artifacts"`
-	ArtifactCount   int      `json:"artifactCount"`
-	Cwd             string   `json:"cwd"`
-	WorktreePath    string   `json:"worktreePath"`
-	Error           string   `json:"error"`
-	StartedAt       string   `json:"startedAt"`
-	CompletedAt     string   `json:"completedAt"`
-	UserID          string   `json:"userId"`
-	Email           string   `json:"email"`
-	ClientVersion   string   `json:"clientVersion"`
+	SubagentID         string                  `json:"subagentId"`
+	ParentSessionID    string                  `json:"parentSessionId"`
+	ChildSessionID     string                  `json:"childSessionId"`
+	SubagentType       string                  `json:"subagentType"`
+	Model              string                  `json:"model"`
+	ModelRouting       string                  `json:"modelRouting"`
+	Description        string                  `json:"description"`
+	Prompt             string                  `json:"prompt"`
+	Status             string                  `json:"status"`
+	Success            bool                    `json:"success"`
+	DurationMs         uint64                  `json:"durationMs"`
+	ToolCalls          uint32                  `json:"toolCalls"`
+	Turns              uint32                  `json:"turns"`
+	TokensUsed         uint64                  `json:"tokensUsed"`
+	Artifacts          []string                `json:"artifacts"`
+	ArtifactLinesAdded []store.ArtifactLineAdd `json:"artifactLinesAdded"`
+	ArtifactCount      int                     `json:"artifactCount"`
+	Cwd                string                  `json:"cwd"`
+	WorktreePath       string                  `json:"worktreePath"`
+	Error              string                  `json:"error"`
+	StartedAt          string                  `json:"startedAt"`
+	CompletedAt        string                  `json:"completedAt"`
+	UserID             string                  `json:"userId"`
+	Email              string                  `json:"email"`
+	ClientVersion      string                  `json:"clientVersion"`
 }
 
 // TaskReports stores a per-subagent-task report attributed to the user.
@@ -133,6 +134,7 @@ func (h *Handler) TaskReports(w http.ResponseWriter, r *http.Request) {
 		ClientIP:        clientIP(r),
 		ClientVersion:   strings.TrimSpace(p.ClientVersion),
 	}
+	rec.Artifacts, rec.CodeLinesAdded = store.ApplyArtifactLines(rec.Artifacts, p.ArtifactLinesAdded)
 	if rec.ArtifactCount == 0 {
 		rec.ArtifactCount = len(rec.Artifacts)
 	}
@@ -263,6 +265,7 @@ func (h *Handler) ListTaskReports(w http.ResponseWriter, r *http.Request) {
 		TokensUsed      uint64           `json:"tokensUsed"`
 		Artifacts       []store.Artifact `json:"artifacts"`
 		ArtifactCount   int              `json:"artifactCount"`
+		CodeLinesAdded  uint64           `json:"codeLinesAdded"`
 		Cwd             string           `json:"cwd,omitempty"`
 		WorktreePath    string           `json:"worktreePath,omitempty"`
 		Error           string           `json:"error,omitempty"`
@@ -299,6 +302,7 @@ func (h *Handler) ListTaskReports(w http.ResponseWriter, r *http.Request) {
 			TokensUsed:      row.TokensUsed,
 			Artifacts:       artifacts,
 			ArtifactCount:   row.ArtifactCount,
+			CodeLinesAdded:  row.CodeLinesAdded,
 			Cwd:             row.Cwd,
 			WorktreePath:    row.WorktreePath,
 			Error:           row.Error,

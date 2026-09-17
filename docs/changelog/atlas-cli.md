@@ -4,6 +4,25 @@
 
 ## 2026-09
 
+### 2026-09-15 — 合入 origin/main
+
+- **状态**：已落地
+- **会话**：[代码新增行](f4655f99-7132-406e-a676-0a06ba292453)
+- 合入上游 `Synced from monorepo`。overlay 保留 `~/.atlas`、`atlas`、企业安装名、托管 `managed`、企业 `GROK_CLI_BASE_URL`；接上游 `reasoning_summary`、skill 正文 cap、`LeaderDoorCli`。
+
+### 2026-09-15 — Task Report 复用 edit.lines
+
+- **状态**：已落地
+- **会话**：[代码新增行](f4655f99-7132-406e-a676-0a06ba292453)
+- `write` / `edit` / `apply_patch` 把已有的 `edit.lines` Insert 计数写进工具输出；Task Report 只读该字段，不再二次 Myers。无计数时仍按 hunk/全文差分兜底。
+
+### 2026-09-15 — Task Report 统计代码新增行
+
+- **状态**：已落地
+- **会话**：[代码新增行](f4655f99-7132-406e-a676-0a06ba292453)
+- 成功的 `write` / `edit` / `apply_patch` 上报每路径 Insert 行（`artifactLinesAdded`）。同文件多次编辑累加。bash 改文件仍不计。
+- 与 [atlas-server](./atlas-server.md) 的 `codeLinesAdded` 配套。
+
 ### 2026-09-13 — 会话记忆回填
 
 - **状态**：文档

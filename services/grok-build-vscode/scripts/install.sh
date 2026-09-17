@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the Grok VS Code extension on macOS / Linux / WSL.
+# Install the Atlas VS Code extension on macOS / Linux / WSL.
 # Usage:  ./scripts/install.sh [path/to/file.vsix] [cli] [--all] [--prod]
 #   [cli]  — a code-compatible CLI name or path to install into (e.g. code-insiders,
 #            cursor, antigravity-ide, /path/to/code); also settable via CODE_CLI=…
@@ -256,7 +256,7 @@ else
     install_to "$code"
 fi
 echo
-echo "Done. Reload the IDE window (Ctrl+Shift+P -> 'Developer: Reload Window') and click the Grok icon."
+echo "Done. Reload the IDE window (Ctrl+Shift+P -> 'Developer: Reload Window') and click the Atlas icon."
 if [ -z "$cli_override" ] && [ -z "$all_mode" ]; then
     hint_other_clis "$code"
 fi

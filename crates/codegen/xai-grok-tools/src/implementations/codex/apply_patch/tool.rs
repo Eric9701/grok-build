@@ -444,13 +444,18 @@ impl xai_tool_runtime::Tool for ApplyPatchTool {
                         is_new_file: true,
                     });
 
-                    file_results.push(ApplyPatchFileResult {
-                        path: path.clone(),
-                        action: "added".to_string(),
-                        old_text: None,
-                        new_text: content.clone(),
-                        move_to: None,
-                    });
+                    file_results.push(
+                        ApplyPatchFileResult {
+                            path: path.clone(),
+                            action: "added".to_string(),
+                            old_text: None,
+                            new_text: content.clone(),
+                            move_to: None,
+                            lines_added: None,
+                            lines_removed: None,
+                        }
+                        .with_edit_lines(),
+                    );
                 }
                 FileChange::Delete {
                     path,
@@ -471,13 +476,18 @@ impl xai_tool_runtime::Tool for ApplyPatchTool {
                         is_new_file: false,
                     });
 
-                    file_results.push(ApplyPatchFileResult {
-                        path: path.clone(),
-                        action: "deleted".to_string(),
-                        old_text: Some(original_content.clone()),
-                        new_text: String::new(),
-                        move_to: None,
-                    });
+                    file_results.push(
+                        ApplyPatchFileResult {
+                            path: path.clone(),
+                            action: "deleted".to_string(),
+                            old_text: Some(original_content.clone()),
+                            new_text: String::new(),
+                            move_to: None,
+                            lines_added: None,
+                            lines_removed: None,
+                        }
+                        .with_edit_lines(),
+                    );
                 }
                 FileChange::Update {
                     path,
@@ -508,13 +518,18 @@ impl xai_tool_runtime::Tool for ApplyPatchTool {
                         is_new_file: false,
                     });
 
-                    file_results.push(ApplyPatchFileResult {
-                        path: path.clone(),
-                        action: "modified".to_string(),
-                        old_text: Some(original_content.clone()),
-                        new_text: new_content.clone(),
-                        move_to: None,
-                    });
+                    file_results.push(
+                        ApplyPatchFileResult {
+                            path: path.clone(),
+                            action: "modified".to_string(),
+                            old_text: Some(original_content.clone()),
+                            new_text: new_content.clone(),
+                            move_to: None,
+                            lines_added: None,
+                            lines_removed: None,
+                        }
+                        .with_edit_lines(),
+                    );
                 }
                 FileChange::Move {
                     source_path,
@@ -556,19 +571,38 @@ impl xai_tool_runtime::Tool for ApplyPatchTool {
                         is_new_file: false,
                     });
 
-                    file_results.push(ApplyPatchFileResult {
-                        path: source_path.clone(),
-                        action: "moved".to_string(),
-                        old_text: Some(original_content.clone()),
-                        new_text: new_content.clone(),
-                        move_to: Some(dest_path.clone()),
-                    });
+                    file_results.push(
+                        ApplyPatchFileResult {
+                            path: source_path.clone(),
+                            action: "moved".to_string(),
+                            old_text: Some(original_content.clone()),
+                            new_text: new_content.clone(),
+                            move_to: Some(dest_path.clone()),
+                            lines_added: None,
+                            lines_removed: None,
+                        }
+                        .with_edit_lines(),
+                    );
                 }
             }
         }
 
         // ── Phase 4: Build summary ───────────────────────────────
         let tool_output_for_prompt = build_summary(&file_results);
+
+        let (lines_added, lines_removed) = file_results.iter().fold((0i64, 0i64), |acc, f| {
+            (
+                acc.0 + f.lines_added.unwrap_or(0),
+                acc.1 + f.lines_removed.unwrap_or(0),
+            )
+        });
+        tracing::info_span!(
+            "edit.lines",
+            tool_name = "apply_patch",
+            lines_added = lines_added,
+            lines_removed = lines_removed
+        )
+        .in_scope(|| {});
 
         Ok(ApplyPatchOutput::Success {
             files: file_results,

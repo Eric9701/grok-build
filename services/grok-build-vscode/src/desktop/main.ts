@@ -755,7 +755,7 @@ async function createApp(): Promise<void> {
       const res = await net.fetch(DESKTOP_RELEASES_API_URL, {
         headers: {
           Accept: "application/vnd.github+json",
-          "User-Agent": `Grok-Build-Desktop/${appVersion}`,
+          "User-Agent": `Atlas-Desktop/${appVersion}`,
         },
       });
       if (!res.ok) return null;

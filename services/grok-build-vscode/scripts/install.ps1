@@ -1,4 +1,4 @@
-# Install the Grok VS Code extension on Windows.
+# Install the Atlas VS Code extension on Windows.
 # Usage:  pwsh scripts\install.ps1 [-VsixPath path\to.vsix] [-Cli name-or-path] [-All] [-Prod]
 #   -Cli  - a code-compatible CLI to install into (e.g. code-insiders, cursor,
 #           antigravity, C:\path\to\code.cmd); also settable via $env:CODE_CLI.
@@ -235,7 +235,7 @@ Write-Host "  Relay: $relayLabel" -ForegroundColor Cyan
 Write-Host "  Installed into: $($installed -join ', ')" -ForegroundColor Green
 if ($failed) { Write-Host "  FAILED: $($failed -join ', ')" -ForegroundColor Red }
 Write-Host ""
-Write-Host "Reload the IDE window (Ctrl+Shift+P -> 'Developer: Reload Window') and click the Grok icon."
+Write-Host "Reload the IDE window (Ctrl+Shift+P -> 'Developer: Reload Window') and click the Atlas icon."
 
 if (-not $Cli -and -not $All) {
     $chosen = [System.IO.Path]::GetFileNameWithoutExtension($targets[0])

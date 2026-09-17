@@ -116,6 +116,7 @@ CREATE TABLE IF NOT EXISTS task_reports (
     tokens_used       BIGINT UNSIGNED NOT NULL DEFAULT 0,
     artifacts         JSON            NULL COMMENT 'Array of {path, kind} produced files',
     artifact_count    INT UNSIGNED    NOT NULL DEFAULT 0,
+    code_lines_added  BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Inserted lines on kind=code artifacts',
     cwd               VARCHAR(1024)   NULL,
     worktree_path     VARCHAR(1024)   NULL,
     error             TEXT            NULL,

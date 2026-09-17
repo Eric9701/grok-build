@@ -628,12 +628,12 @@ export interface Host {
   /** Reveal a host-resolved filesystem path in the host's file manager. */
   showInFolder(fsPath: string): Thenable<void>;
   /**
-   * Open the user's global Grok config.toml (`~/.grok/config.toml` / GROK_HOME).
+   * Open the user's global Atlas config.toml (`~/.atlas/config.toml` / GROK_HOME).
    * Host resolves and may create a stub; no renderer path is involved.
    */
   openGlobalConfig(): Thenable<void>;
   /**
-   * Open the project-local `.grok/config.toml` under `projectCwd` (session /
+   * Open the project-local `.atlas/config.toml` under `projectCwd` (session /
    * workspace cwd from the host). Host resolves and may create a stub.
    */
   openProjectConfig(projectCwd: string): Thenable<void>;

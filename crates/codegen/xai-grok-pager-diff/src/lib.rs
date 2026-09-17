@@ -1046,6 +1046,8 @@ mod tests {
             },
             patch: None,
             unicode_normalized: false,
+            lines_added: None,
+            lines_removed: None,
         };
 
         // Wrap in ToolOutput::SearchReplace to match the production rawOutput format

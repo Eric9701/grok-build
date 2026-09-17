@@ -212,6 +212,8 @@ mod tests {
             old_text: None,
             new_text: String::new(),
             move_to: move_to.map(PathBuf::from),
+            lines_added: None,
+            lines_removed: None,
         }
     }
 

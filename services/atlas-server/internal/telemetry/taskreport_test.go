@@ -59,6 +59,7 @@ func (f *fakeReportStore) AggregateTaskReportsByAgent(userID string, fromDay, to
 		}
 		a.Count++
 		a.ArtifactCount += r.ArtifactCount
+		a.CodeLinesAdded += r.CodeLinesAdded
 		a.TokensUsed += r.TokensUsed
 	}
 	var out []store.AgentAggregate
@@ -85,6 +86,7 @@ func (f *fakeReportStore) AggregateTaskReportsByModel(userID string, fromDay, to
 		}
 		a.Count++
 		a.ArtifactCount += r.ArtifactCount
+		a.CodeLinesAdded += r.CodeLinesAdded
 		a.TokensUsed += r.TokensUsed
 	}
 	var out []store.ModelAggregate
@@ -106,6 +108,7 @@ func (f *fakeReportStore) AggregateTaskReportsOverall(fromDay, toDay string) (st
 		}
 		s.TotalTasks++
 		s.TotalArtifacts += r.ArtifactCount
+		s.TotalCodeLinesAdded += r.CodeLinesAdded
 		s.TotalTokens += r.TokensUsed
 		if r.Success {
 			s.SuccessCount++
@@ -127,6 +130,7 @@ func (f *fakeReportStore) AggregateTaskReportsOverall(fromDay, toDay string) (st
 		}
 		a.Count++
 		a.ArtifactCount += r.ArtifactCount
+		a.CodeLinesAdded += r.CodeLinesAdded
 		a.TokensUsed += r.TokensUsed
 
 		modelKey := strings.TrimSpace(r.Model)
@@ -140,6 +144,7 @@ func (f *fakeReportStore) AggregateTaskReportsOverall(fromDay, toDay string) (st
 		}
 		ma.Count++
 		ma.ArtifactCount += r.ArtifactCount
+		ma.CodeLinesAdded += r.CodeLinesAdded
 		ma.TokensUsed += r.TokensUsed
 	}
 	s.UniqueUsers = len(users)
@@ -177,6 +182,7 @@ func (f *fakeReportStore) AggregateTaskReportsByUser(limit int, fromDay, toDay s
 			u.SuccessCount++
 		}
 		u.ArtifactCount += r.ArtifactCount
+		u.CodeLinesAdded += r.CodeLinesAdded
 		u.TokensUsed += r.TokensUsed
 	}
 	var out []store.UserAggregate
@@ -212,6 +218,11 @@ func TestTaskReportsRoundTrip(t *testing.T) {
 		"turns":3,
 		"tokensUsed":4096,
 		"artifacts":["documents/design.md","services/pay/main.go","assets/logo.bin"],
+		"artifactLinesAdded":[
+			{"path":"documents/design.md","linesAdded":40},
+			{"path":"services/pay/main.go","linesAdded":12},
+			{"path":"services/pay/main.go","linesAdded":3}
+		],
 		"artifactCount":3,
 		"cwd":"/repo",
 		"startedAt":"2026-07-22T10:00:00Z",
@@ -248,6 +259,9 @@ func TestTaskReportsRoundTrip(t *testing.T) {
 	}
 	if got.ArtifactCount != 3 || len(got.Artifacts) != 3 {
 		t.Fatalf("artifact count = %d / %d, want 3", got.ArtifactCount, len(got.Artifacts))
+	}
+	if got.CodeLinesAdded != 15 {
+		t.Fatalf("CodeLinesAdded = %d, want 15 (go file 12+3; markdown excluded)", got.CodeLinesAdded)
 	}
 	wantKind := map[string]string{
 		"documents/design.md":  "doc",
@@ -380,6 +394,30 @@ func TestClassifyArtifacts(t *testing.T) {
 	})
 	if len(got) != 3 {
 		t.Fatalf("len = %d, want 3 (blank dropped)", len(got))
+	}
+}
+
+func TestApplyArtifactLinesCountsCodeInsertsOnly(t *testing.T) {
+	arts := store.ClassifyArtifacts([]string{
+		"src/lib.rs",
+		"docs/note.md",
+		"assets/logo.bin",
+	})
+	got, code := store.ApplyArtifactLines(arts, []store.ArtifactLineAdd{
+		{Path: "src/lib.rs", LinesAdded: 10},
+		{Path: "src/lib.rs", LinesAdded: 4},
+		{Path: "docs/note.md", LinesAdded: 20},
+		{Path: "assets/logo.bin", LinesAdded: 3},
+	})
+	if code != 14 {
+		t.Fatalf("code lines = %d, want 14 (docs/other excluded, same path accumulated)", code)
+	}
+	byPath := map[string]uint64{}
+	for _, a := range got {
+		byPath[a.Path] = a.LinesAdded
+	}
+	if byPath["src/lib.rs"] != 14 || byPath["docs/note.md"] != 20 {
+		t.Fatalf("per-path lines = %+v", byPath)
 	}
 }
 

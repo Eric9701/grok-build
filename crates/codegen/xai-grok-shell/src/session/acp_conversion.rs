@@ -1224,6 +1224,8 @@ mod tests {
                 edits: SearchReplaceEditContextInformation::default(),
                 patch: None,
                 unicode_normalized: false,
+                lines_added: None,
+                lines_removed: None,
             },
         ));
         let update = acp_tool_update(&output, "call-1", Some(&rw), None).unwrap();

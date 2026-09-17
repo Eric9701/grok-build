@@ -50,7 +50,7 @@ export const BODY = `
       <div id="attachments" class="attachments"></div>
       <div class="composer-input-wrap">
         <div id="input-highlight" class="input-highlight" aria-hidden="true" dir="auto"></div>
-        <textarea id="input" placeholder="Ask Grok..." rows="2" dir="auto"></textarea>
+        <textarea id="input" placeholder="Ask Atlas…" rows="2" dir="auto"></textarea>
       </div>
       <div class="composer-toolbar">
         <div class="toolbar-left">

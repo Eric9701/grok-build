@@ -420,7 +420,7 @@ describe("grok explicit CLI update", () => {
     expect(host.post).not.toHaveBeenCalledWith({ type: "cliUpdating" });
     expect(host.focused.activeSessionId).toBe("grok-thread");
     expect(host.host.showInformationMessage).toHaveBeenCalledWith(
-      "Grok Build CLI is already on v1.4.2.",
+      "Atlas CLI is already on v1.4.2.",
     );
     // The stale row that offered the button is corrected in the same breath, on
     // both surfaces — otherwise the only way to learn is to press it again.

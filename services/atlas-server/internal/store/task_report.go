@@ -9,8 +9,15 @@ import (
 
 // Artifact is a single file produced by a subagent task, classified by kind.
 type Artifact struct {
-	Path string `json:"path"`
-	Kind string `json:"kind"` // "code" | "doc" | "other"
+	Path       string `json:"path"`
+	Kind       string `json:"kind"` // "code" | "doc" | "other"
+	LinesAdded uint64 `json:"linesAdded,omitempty"`
+}
+
+// ArtifactLineAdd is the per-path inserted-line total posted by the CLI.
+type ArtifactLineAdd struct {
+	Path       string `json:"path"`
+	LinesAdded uint64 `json:"linesAdded"`
 }
 
 // TaskReportRecord is one per-subagent-task report: what task ran, which agent
@@ -36,6 +43,7 @@ type TaskReportRecord struct {
 	TokensUsed      uint64
 	Artifacts       []Artifact
 	ArtifactCount   int
+	CodeLinesAdded  uint64
 	Cwd             string
 	WorktreePath    string
 	Error           string
@@ -48,40 +56,44 @@ type TaskReportRecord struct {
 
 // AgentAggregate is a per-agent rollup of task reports.
 type AgentAggregate struct {
-	SubagentType  string `json:"subagentType"`
-	Count         int    `json:"count"`
-	ArtifactCount int    `json:"artifactCount"`
-	TokensUsed    uint64 `json:"tokensUsed"`
+	SubagentType   string `json:"subagentType"`
+	Count          int    `json:"count"`
+	ArtifactCount  int    `json:"artifactCount"`
+	CodeLinesAdded uint64 `json:"codeLinesAdded"`
+	TokensUsed     uint64 `json:"tokensUsed"`
 }
 
 // ModelAggregate is a per-model rollup of task reports.
 type ModelAggregate struct {
-	Model         string `json:"model"`
-	Count         int    `json:"count"`
-	ArtifactCount int    `json:"artifactCount"`
-	TokensUsed    uint64 `json:"tokensUsed"`
+	Model          string `json:"model"`
+	Count          int    `json:"count"`
+	ArtifactCount  int    `json:"artifactCount"`
+	CodeLinesAdded uint64 `json:"codeLinesAdded"`
+	TokensUsed     uint64 `json:"tokensUsed"`
 }
 
 // TaskReportSummary is a cross-user totals rollup.
 type TaskReportSummary struct {
-	TotalTasks     int    `json:"totalTasks"`
-	SuccessCount   int    `json:"successCount"`
-	FailedCount    int    `json:"failedCount"`
-	CancelledCount int    `json:"cancelledCount"`
-	TotalArtifacts int    `json:"totalArtifacts"`
-	TotalTokens    uint64 `json:"totalTokens"`
-	UniqueUsers    int    `json:"uniqueUsers"`
-	UniqueModels   int    `json:"uniqueModels"`
+	TotalTasks          int    `json:"totalTasks"`
+	SuccessCount        int    `json:"successCount"`
+	FailedCount         int    `json:"failedCount"`
+	CancelledCount      int    `json:"cancelledCount"`
+	TotalArtifacts      int    `json:"totalArtifacts"`
+	TotalCodeLinesAdded uint64 `json:"totalCodeLinesAdded"`
+	TotalTokens         uint64 `json:"totalTokens"`
+	UniqueUsers         int    `json:"uniqueUsers"`
+	UniqueModels        int    `json:"uniqueModels"`
 }
 
 // UserAggregate is a per-user rollup of task reports.
 type UserAggregate struct {
-	UserID        string `json:"userId"`
-	Email         string `json:"email"`
-	Count         int    `json:"count"`
-	SuccessCount  int    `json:"successCount"`
-	ArtifactCount int    `json:"artifactCount"`
-	TokensUsed    uint64 `json:"tokensUsed"`
+	UserID         string `json:"userId"`
+	Email          string `json:"email"`
+	Count          int    `json:"count"`
+	SuccessCount   int    `json:"successCount"`
+	ArtifactCount  int    `json:"artifactCount"`
+	CodeLinesAdded uint64 `json:"codeLinesAdded"`
+	TokensUsed     uint64 `json:"tokensUsed"`
 }
 
 // TaskReportStore persists per-subagent-task reports.
@@ -144,6 +156,45 @@ func ClassifyArtifacts(paths []string) []Artifact {
 	return out
 }
 
+// ApplyArtifactLines attaches per-path inserted-line totals and returns the
+// sum for artifacts whose kind is "code". Multiple entries for the same path
+// are accumulated.
+func ApplyArtifactLines(artifacts []Artifact, lines []ArtifactLineAdd) ([]Artifact, uint64) {
+	byPath := make(map[string]uint64, len(lines))
+	order := make([]string, 0, len(lines))
+	for _, l := range lines {
+		p := strings.TrimSpace(l.Path)
+		if p == "" {
+			continue
+		}
+		if _, ok := byPath[p]; !ok {
+			order = append(order, p)
+		}
+		byPath[p] += l.LinesAdded
+	}
+	seen := make(map[string]struct{}, len(artifacts))
+	var code uint64
+	for i := range artifacts {
+		n := byPath[artifacts[i].Path]
+		artifacts[i].LinesAdded = n
+		seen[artifacts[i].Path] = struct{}{}
+		if artifacts[i].Kind == "code" {
+			code += n
+		}
+	}
+	for _, p := range order {
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		a := Artifact{Path: p, Kind: classifyArtifact(p), LinesAdded: byPath[p]}
+		artifacts = append(artifacts, a)
+		if a.Kind == "code" {
+			code += a.LinesAdded
+		}
+	}
+	return artifacts, code
+}
+
 func classifyArtifact(p string) string {
 	lower := strings.ToLower(filepathToSlash(p))
 	if strings.Contains(lower, "documents/") || strings.HasPrefix(lower, "docs/") ||
@@ -179,9 +230,9 @@ func (m *MySQLStore) InsertTaskReport(r TaskReportRecord) (int64, error) {
 		`INSERT INTO task_reports
 			(user_id, email, team_id, subagent_id, parent_session_id, child_session_id,
 			 subagent_type, model, model_routing, description, prompt, status, success, duration_ms,
-			 tool_calls, turns, tokens_used, artifacts, artifact_count, cwd, worktree_path,
+			 tool_calls, turns, tokens_used, artifacts, artifact_count, code_lines_added, cwd, worktree_path,
 			 error, started_at, completed_at, client_ip, client_version)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nullIfEmpty(r.UserID),
 		nullIfEmpty(r.Email),
 		nullIfEmpty(r.TeamID),
@@ -201,6 +252,7 @@ func (m *MySQLStore) InsertTaskReport(r TaskReportRecord) (int64, error) {
 		r.TokensUsed,
 		string(artifactsJSON),
 		r.ArtifactCount,
+		r.CodeLinesAdded,
 		nullIfEmpty(r.Cwd),
 		nullIfEmpty(r.WorktreePath),
 		nullIfEmpty(r.Error),
@@ -228,7 +280,7 @@ func (m *MySQLStore) ListTaskReportsByUser(userID string, limit int, fromDay, to
 		        IFNULL(subagent_id,''), IFNULL(parent_session_id,''), IFNULL(child_session_id,''),
 		        subagent_type, IFNULL(model,''), IFNULL(model_routing,''), IFNULL(description,''), IFNULL(prompt,''),
 		        status, success, duration_ms, tool_calls, turns, tokens_used,
-		        IFNULL(artifacts,'[]'), artifact_count, IFNULL(cwd,''), IFNULL(worktree_path,''),
+		        IFNULL(artifacts,'[]'), artifact_count, IFNULL(code_lines_added,0), IFNULL(cwd,''), IFNULL(worktree_path,''),
 		        IFNULL(error,''), IFNULL(started_at,''), IFNULL(completed_at,''),
 		        IFNULL(client_ip,''), IFNULL(client_version,''), created_at
 		 FROM task_reports
@@ -252,7 +304,7 @@ func (m *MySQLStore) ListTaskReportsByUser(userID string, limit int, fromDay, to
 			&r.SubagentID, &r.ParentSessionID, &r.ChildSessionID,
 			&r.SubagentType, &r.Model, &r.ModelRouting, &r.Description, &r.Prompt,
 			&r.Status, &r.Success, &r.DurationMs, &r.ToolCalls, &r.Turns, &r.TokensUsed,
-			&artifactsJSON, &r.ArtifactCount, &r.Cwd, &r.WorktreePath,
+			&artifactsJSON, &r.ArtifactCount, &r.CodeLinesAdded, &r.Cwd, &r.WorktreePath,
 			&r.Error, &r.StartedAt, &r.CompletedAt,
 			&r.ClientIP, &r.ClientVersion, &r.CreatedAt,
 		); err != nil {
@@ -272,7 +324,7 @@ func (m *MySQLStore) AggregateTaskReportsByAgent(userID string, fromDay, toDay s
 	if err != nil {
 		return nil, err
 	}
-	q := `SELECT subagent_type, COUNT(*), IFNULL(SUM(artifact_count),0), IFNULL(SUM(tokens_used),0)
+	q := `SELECT subagent_type, COUNT(*), IFNULL(SUM(artifact_count),0), IFNULL(SUM(code_lines_added),0), IFNULL(SUM(tokens_used),0)
 		 FROM task_reports
 		 WHERE user_id = ?` + dateClause + `
 		 GROUP BY subagent_type ORDER BY COUNT(*) DESC`
@@ -287,7 +339,7 @@ func (m *MySQLStore) AggregateTaskReportsByAgent(userID string, fromDay, toDay s
 	var out []AgentAggregate
 	for rows.Next() {
 		var a AgentAggregate
-		if err := rows.Scan(&a.SubagentType, &a.Count, &a.ArtifactCount, &a.TokensUsed); err != nil {
+		if err := rows.Scan(&a.SubagentType, &a.Count, &a.ArtifactCount, &a.CodeLinesAdded, &a.TokensUsed); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -302,7 +354,7 @@ func (m *MySQLStore) AggregateTaskReportsByModel(userID string, fromDay, toDay s
 		return nil, err
 	}
 	q := `SELECT IFNULL(NULLIF(TRIM(model), ''), '(unknown)'),
-		        COUNT(*), IFNULL(SUM(artifact_count),0), IFNULL(SUM(tokens_used),0)
+		        COUNT(*), IFNULL(SUM(artifact_count),0), IFNULL(SUM(code_lines_added),0), IFNULL(SUM(tokens_used),0)
 		 FROM task_reports
 		 WHERE user_id = ?` + dateClause + `
 		 GROUP BY IFNULL(NULLIF(TRIM(model), ''), '(unknown)')
@@ -318,7 +370,7 @@ func (m *MySQLStore) AggregateTaskReportsByModel(userID string, fromDay, toDay s
 	var out []ModelAggregate
 	for rows.Next() {
 		var a ModelAggregate
-		if err := rows.Scan(&a.Model, &a.Count, &a.ArtifactCount, &a.TokensUsed); err != nil {
+		if err := rows.Scan(&a.Model, &a.Count, &a.ArtifactCount, &a.CodeLinesAdded, &a.TokensUsed); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -341,6 +393,7 @@ func (m *MySQLStore) AggregateTaskReportsOverall(fromDay, toDay string) (TaskRep
 			IFNULL(SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END), 0),
 			IFNULL(SUM(CASE WHEN success = 0 AND status <> 'cancelled' THEN 1 ELSE 0 END), 0),
 			IFNULL(SUM(artifact_count), 0),
+			IFNULL(SUM(code_lines_added), 0),
 			IFNULL(SUM(tokens_used), 0),
 			COUNT(DISTINCT user_id),
 			COUNT(DISTINCT NULLIF(TRIM(model), ''))
@@ -352,6 +405,7 @@ func (m *MySQLStore) AggregateTaskReportsOverall(fromDay, toDay string) (TaskRep
 		&s.CancelledCount,
 		&s.FailedCount,
 		&s.TotalArtifacts,
+		&s.TotalCodeLinesAdded,
 		&s.TotalTokens,
 		&s.UniqueUsers,
 		&s.UniqueModels,
@@ -361,7 +415,7 @@ func (m *MySQLStore) AggregateTaskReportsOverall(fromDay, toDay string) (TaskRep
 	}
 
 	rows, err := m.db.Query(
-		`SELECT subagent_type, COUNT(*), IFNULL(SUM(artifact_count),0), IFNULL(SUM(tokens_used),0)
+		`SELECT subagent_type, COUNT(*), IFNULL(SUM(artifact_count),0), IFNULL(SUM(code_lines_added),0), IFNULL(SUM(tokens_used),0)
 		 FROM task_reports`+where+`
 		 GROUP BY subagent_type
 		 ORDER BY COUNT(*) DESC`,
@@ -373,7 +427,7 @@ func (m *MySQLStore) AggregateTaskReportsOverall(fromDay, toDay string) (TaskRep
 	var agents []AgentAggregate
 	for rows.Next() {
 		var a AgentAggregate
-		if err := rows.Scan(&a.SubagentType, &a.Count, &a.ArtifactCount, &a.TokensUsed); err != nil {
+		if err := rows.Scan(&a.SubagentType, &a.Count, &a.ArtifactCount, &a.CodeLinesAdded, &a.TokensUsed); err != nil {
 			rows.Close()
 			return TaskReportSummary{}, nil, nil, err
 		}
@@ -387,7 +441,7 @@ func (m *MySQLStore) AggregateTaskReportsOverall(fromDay, toDay string) (TaskRep
 
 	modelRows, err := m.db.Query(
 		`SELECT IFNULL(NULLIF(TRIM(model), ''), '(unknown)'),
-		        COUNT(*), IFNULL(SUM(artifact_count),0), IFNULL(SUM(tokens_used),0)
+		        COUNT(*), IFNULL(SUM(artifact_count),0), IFNULL(SUM(code_lines_added),0), IFNULL(SUM(tokens_used),0)
 		 FROM task_reports`+where+`
 		 GROUP BY IFNULL(NULLIF(TRIM(model), ''), '(unknown)')
 		 ORDER BY COUNT(*) DESC`,
@@ -401,7 +455,7 @@ func (m *MySQLStore) AggregateTaskReportsOverall(fromDay, toDay string) (TaskRep
 	var models []ModelAggregate
 	for modelRows.Next() {
 		var a ModelAggregate
-		if err := modelRows.Scan(&a.Model, &a.Count, &a.ArtifactCount, &a.TokensUsed); err != nil {
+		if err := modelRows.Scan(&a.Model, &a.Count, &a.ArtifactCount, &a.CodeLinesAdded, &a.TokensUsed); err != nil {
 			return TaskReportSummary{}, nil, nil, err
 		}
 		models = append(models, a)
@@ -424,6 +478,7 @@ func (m *MySQLStore) AggregateTaskReportsByUser(limit int, fromDay, toDay string
 			COUNT(*),
 			IFNULL(SUM(success), 0),
 			IFNULL(SUM(artifact_count), 0),
+			IFNULL(SUM(code_lines_added), 0),
 			IFNULL(SUM(tokens_used), 0)
 		 FROM task_reports` + where + `
 		 GROUP BY user_id ORDER BY COUNT(*) DESC LIMIT ?`
@@ -439,7 +494,7 @@ func (m *MySQLStore) AggregateTaskReportsByUser(limit int, fromDay, toDay string
 	for rows.Next() {
 		var u UserAggregate
 		if err := rows.Scan(
-			&u.UserID, &u.Email, &u.Count, &u.SuccessCount, &u.ArtifactCount, &u.TokensUsed,
+			&u.UserID, &u.Email, &u.Count, &u.SuccessCount, &u.ArtifactCount, &u.CodeLinesAdded, &u.TokensUsed,
 		); err != nil {
 			return nil, err
 		}

@@ -13,7 +13,7 @@ const PROVIDER_CONFIG_STUBS = { grok: GLOBAL_CONFIG_STUB, codex: "", claude: "{}
 
 /** No caller-supplied paths or home overrides: these are the entire surface. */
 export const PROVIDER_CONFIG_FILES = {
-  grok: ".grok/config.toml",
+  grok: ".atlas/config.toml",
   codex: ".codex/config.toml",
   claude: ".claude/settings.json",
 } as const;

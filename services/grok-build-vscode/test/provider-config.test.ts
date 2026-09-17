@@ -28,7 +28,7 @@ function fixture(provider: string = "grok") {
 
 describe("provider config file roots", () => {
   it("allows exactly the three provider identities, never paths or object properties", () => {
-    expect(PROVIDER_CONFIG_FILES).toEqual({ grok: ".grok/config.toml", codex: ".codex/config.toml", claude: ".claude/settings.json" });
+    expect(PROVIDER_CONFIG_FILES).toEqual({ grok: ".atlas/config.toml", codex: ".codex/config.toml", claude: ".claude/settings.json" });
     for (const provider of ["auth.json", "../auth.json", "grok/../auth.json", ".grok/config.toml", "__proto__", "constructor", "toString", "Grok", "", null, {}]) {
       expect(resolveProviderConfigFile(provider).ok).toBe(false);
     }
@@ -37,7 +37,7 @@ describe("provider config file roots", () => {
     expect(resolveProviderConfigFile("codex", { CODEX_HOME: "/elsewhere/codex", HOME: "/home/x" }, "linux"))
       .toMatchObject({ root: { filePath: "/elsewhere/codex/config.toml" }, configPath: ".codex/config.toml" });
     expect(resolveProviderConfigFile("grok", { GROK_HOME: "/elsewhere/grok", HOME: "/home/x" }, "linux"))
-      .toMatchObject({ root: { filePath: "/elsewhere/grok/config.toml" }, configPath: ".grok/config.toml" });
+      .toMatchObject({ root: { filePath: "/elsewhere/grok/config.toml" }, configPath: ".atlas/config.toml" });
     // And the label stays the table's spelling, because it is the correlation
     // key both halves match on — it must not move with somebody's environment.
     expect(resolveProviderConfigFile("claude", { HOME: "/home/x" }, "linux"))

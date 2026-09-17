@@ -19502,7 +19502,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // These are display entries, not filesystem listings; messages carry only a
   // provider id and the host owns the closed path allowlist.
   const PROVIDER_CONFIG_ENTRIES = [
-    { provider: "grok", name: "Grok", relPath: ".grok/config.toml" },
+    { provider: "grok", name: "Atlas", relPath: ".atlas/config.toml" },
     { provider: "codex", name: "Codex", relPath: ".codex/config.toml" },
     { provider: "claude", name: "Claude", relPath: ".claude/settings.json" },
   ];

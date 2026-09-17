@@ -12,6 +12,12 @@ describe("brandUserFacingText", () => {
     expect(brandUserFacingText("The model 'grok-build' requires a Grok subscription.")).toBe(
       "The model 'grok-build' requires an Atlas subscription.",
     );
+    expect(brandUserFacingText("Run `grok login` or add api_key to ~/.grok/config.toml.")).toBe(
+      "Run `atlas login` or add api_key to ~/.atlas/config.toml.",
+    );
+    expect(brandUserFacingText("Grok-Build-Desktop-4.6.0-win-x64.exe")).toBe(
+      "Grok-Build-Desktop-4.6.0-win-x64.exe",
+    );
   });
 });
 

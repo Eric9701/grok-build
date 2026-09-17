@@ -231,7 +231,7 @@ describe("provider config host dispatch", () => {
     await sidebar.onMessage({ type: "readProviderConfig", provider, requestId: "read-1", cwd: fixture.home, relPath: "auth.json" }, "remote", "phone");
     const read = sidebar.sendRemoteRequester.mock.calls[0][1];
     expect(read).toMatchObject({ type: "providerConfigContent", provider, requestId: "read-1", ok: true,
-      text: "original = true\n", relPath: `.${provider}/${name}`, absPath: path.join(fixture.home, providerConfigDir(provider), name) });
+      text: "original = true\n", relPath: `${providerConfigDir(provider)}/${name}`, absPath: path.join(fixture.home, providerConfigDir(provider), name) });
     expect(sidebar.post).not.toHaveBeenCalled();
     expect(sidebar.postLocal).not.toHaveBeenCalled();
     const write = { type: "writeProviderConfig", provider, requestId: "write-1", relPath: "../auth.json",

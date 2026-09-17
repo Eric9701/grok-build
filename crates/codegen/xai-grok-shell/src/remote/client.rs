@@ -119,9 +119,14 @@ pub async fn fetch_subagent_bundle(
     );
     Ok(bundle)
 }
-/// A structured per-subagent-task report: what task ran, which agent handled
-/// it, and what artifacts it produced. Sent to the backend `POST
-/// /v1/task-reports` endpoint on subagent completion for usage analytics.
+/// Per-path inserted-line total for a Task Report. The server classifies
+/// the path and only adds `kind=code` into `codeLinesAdded`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactLineAdd {
+    pub path: String,
+    pub lines_added: u64,
+}
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskReport {
@@ -151,6 +156,9 @@ pub struct TaskReport {
     /// Paths of files the subagent wrote or edited.
     pub artifacts: Vec<String>,
     pub artifact_count: usize,
+    /// Per-path inserted-line totals (all kinds). The server sums `kind=code`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifact_lines_added: Vec<ArtifactLineAdd>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

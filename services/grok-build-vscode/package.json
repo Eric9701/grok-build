@@ -342,7 +342,7 @@
             "xhigh"
           ],
           "enumDescriptions": [
-            "CLI default (no flag passed to grok agent stdio)",
+            "CLI default (no flag passed to atlas agent stdio)",
             "None — no extra reasoning",
             "Minimal — least reasoning",
             "Low — fast, lightweight reasoning",
@@ -351,7 +351,7 @@
             "Extra high — deepest reasoning, slowest"
           ],
           "default": "",
-          "description": "Reasoning effort passed as --reasoning-effort to grok agent stdio. Values match the grok CLI's accepted set (none, minimal, low, medium, high, xhigh). Applies live on recent CLIs (grok 0.2.101+); older CLIs, and resetting to the model default, restart the session."
+          "description": "Reasoning effort passed as --reasoning-effort to atlas agent stdio. Values match the Atlas CLI's accepted set (none, minimal, low, medium, high, xhigh). Applies live on recent CLIs (atlas 0.2.101+); older CLIs, and resetting to the model default, restart the session."
         },
         "atlas.useCtrlEnterToSend": {
           "type": "boolean",

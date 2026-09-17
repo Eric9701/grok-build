@@ -6,6 +6,7 @@
 export function brandUserFacingText(text: string): string {
   return String(text)
     .replace(/SuperGrok/g, "\0SUPERGROK\0")
+    .replace(/Grok-Build-Desktop/g, "\0GROKBUILDDESKTOP\0")
     .replace(/\bGrok Build Desktop\b/gi, "Atlas Desktop")
     .replace(/\bGrok Build CLI\b/gi, "Atlas CLI")
     .replace(/\bGrok Build\b/gi, "Atlas")
@@ -13,8 +14,11 @@ export function brandUserFacingText(text: string): string {
     .replace(/\bGrok\.com\b/gi, "Atlas")
     .replace(/\bGrok\b/g, "Atlas")
     .replace(/`grok logout`/g, "`atlas logout`")
+    .replace(/`grok login`/g, "`atlas login`")
+    .replace(/~\/\.grok\b/g, "~/.atlas")
     .replace(/\bA Atlas\b/g, "An Atlas")
     .replace(/\ba Atlas\b/g, "an Atlas")
+    .replace(/\0GROKBUILDDESKTOP\0/g, "Grok-Build-Desktop")
     .replace(/\0SUPERGROK\0/g, "SuperGrok");
 }
 
