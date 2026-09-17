@@ -428,15 +428,25 @@ describe("voice control: API-key setup hint", () => {
       .toContain("Providers");
   });
 
-  it("host guidance for a missing Grok account is an information prompt, not an error", () => {
-    expect(sidebarSrc).toContain("Voice needs Atlas connected. It uses the same xAI account for speech-to-text.");
-    expect(sidebarSrc).toMatch(/showInformationMessage\(\s*"Voice needs Atlas connected/);
+  it("host guidance for a missing voice credential is an information prompt, not an error", () => {
     const setup = sidebarSrc.slice(
       sidebarSrc.indexOf("private async promptVoiceKeySetup"),
       sidebarSrc.indexOf("private rejectVoiceStart"),
     );
-    expect(setup).toContain('showInformationMessage');
-    expect(setup).not.toMatch(/showErrorMessage\(\s*"Voice needs Atlas/);
+    expect(setup).toContain("Voice needs a credential for the selected backend");
+    expect(setup).toMatch(/showInformationMessage\(\s*"Voice needs a credential/);
+    expect(setup).toContain("showInformationMessage");
+    expect(setup).not.toMatch(/showErrorMessage\(\s*"Voice needs/);
+  });
+
+  it("host setup guidance accepts either vendor and explains API access", () => {
+    const setup = sidebarSrc.slice(sidebarSrc.indexOf("private async promptVoiceKeySetup"), sidebarSrc.indexOf("private rejectVoiceStart"));
+    expect(setup).toContain("showInformationMessage");
+    expect(setup).toContain("OPENAI_API_KEY");
+    expect(setup).toContain("xAI key / Atlas sign-in");
+    expect(setup).toContain("do not include transcription API access");
+    expect(setup).not.toContain("runGrokLogin");
+    expect(setup).toMatch(/atlas\.voice/);
   });
 
   it("still starts when a dedicated key is configured even if Grok is disconnected", () => {

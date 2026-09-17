@@ -15,7 +15,7 @@ describe("remote session claim (client)", () => {
     const restored = bootWebview({
       remote: true,
       beforeScripts: (w) => {
-        w.sessionStorage.setItem("grok.remote.tabSession:default", JSON.stringify(remembered));
+        w.sessionStorage.setItem("atlas.remote.tabSession:default", JSON.stringify(remembered));
       },
     });
     dispatch(restored.window, { type: "initialState", cwd: "/work/repo" });

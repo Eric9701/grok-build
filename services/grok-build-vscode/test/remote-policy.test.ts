@@ -9,6 +9,7 @@ import {
   allowRemoteRepoTarget,
   bracketRemoteSnapshot,
   mayDeliverRemoteHostMsg,
+  repoSessionsMessageForRemote,
   routinesMessageForRemote,
   repoScopeFor,
   sessionForRequest,
@@ -31,6 +32,10 @@ import { pathsEqual } from "../src/worktree";
 const sorted = (a: readonly string[]) => [...a].sort();
 
 describe("remote-policy classification tables", () => {
+  it.each(["questionResolved", "uiConfirmResolved"] as const)("mirrors %s within the owning session scope", (type) => {
+    expect(OUTBOUND_DISPOSITION[type]).toBe("mirror");
+    expect(OUTBOUND_PROJECT_AUTH[type]).toBe("scope");
+  });
   // tsc already forces this via Record<Union["type"], …>; the runtime assert
   // guards the compiled-JS path the same way protocol.test.ts does.
   it("classifies every WebviewMsg type (no drift behind the protocol)", () => {
@@ -279,6 +284,39 @@ describe("mayDeliverRemoteHostMsg (outbound project authorization)", () => {
     ).toBe(true);
   });
 
+  it("filters an unauthorized repoSessions row instead of dropping authorized rows", () => {
+    const mixed = {
+      type: "repoSessions",
+      cwd: open[0],
+      entries: [
+        { id: "ordinary", cwd: open[0], title: "Ordinary" },
+        { id: "worktree", cwd: "/tmp/worktree", title: "Worktree" },
+      ],
+      dots: { ordinary: "working", worktree: "needs-you" },
+      total: 2,
+    } as Extract<HostMsg, { type: "repoSessions" }>;
+
+    // The raw mixed frame still fails closed; the outbound rewriter makes the
+    // authorized subset pass the same gate.
+    expect(mayDeliverRemoteHostMsg(mixed, open, undefined, same)).toBe(false);
+    const filtered = repoSessionsMessageForRemote(mixed, open, same);
+    expect(filtered.entries.map((entry) => entry.id)).toEqual(["ordinary"]);
+    expect(filtered.dots).toEqual({ ordinary: "working" });
+    expect(filtered.total).toBe(1);
+    expect(mayDeliverRemoteHostMsg(filtered, open, undefined, same)).toBe(true);
+  });
+
+  it("allows a coarse empty repoSessions refusal to answer an unauthorized request", () => {
+    expect(mayDeliverRemoteHostMsg({
+      type: "repoSessions",
+      cwd: closed,
+      entries: [],
+      dots: {},
+      total: 0,
+      error: "project-unavailable",
+    }, open, undefined, same)).toBe(true);
+  });
+
   describe("the routines frame", () => {
     // Same class of bug as the `message-cwd` one above, mirrored: `entries` was
     // hardcoded to sessions/pinnedSessions and returned [] for anything else,
@@ -335,15 +373,10 @@ describe("mayDeliverRemoteHostMsg (outbound project authorization)", () => {
     });
 
     describe("routinesMessageForRemote", () => {
-      // The desk offers archived projects in the picker on purpose (archiving
-      // hides a project from the RAIL, and a routine is not the rail), while
-      // `remoteAuthorizedCwds` excludes them on purpose (archiving revokes
-      // remote access). Both rules are right; composed without a filter they
-      // meant one archived project anywhere blanked the whole page on a phone.
       it("drops what a connection may not reach instead of dropping the page", () => {
         const full = frame(
           [routine(open[0]), routine(closed)],
-          [{ cwd: open[0], label: "open" }, { cwd: closed, label: "archived" }],
+          [{ cwd: open[0], label: "open" }, { cwd: closed, label: "removed" }],
         ) as Extract<HostMsg, { type: "routines" }>;
 
         expect(mayDeliverRemoteHostMsg(full, open, undefined, same)).toBe(false);
@@ -367,8 +400,8 @@ describe("mayDeliverRemoteHostMsg (outbound project authorization)", () => {
         expect(trimmed.models).toEqual(clean.models);
       });
 
-      // Repoint a routine from A to B, then archive A. The entry now passes
-// under B while a RETAINED run still names A — so the routine's own cwd
+      // Repoint a routine from A to B, then remove A. The entry now passes
+      // under B while a RETAINED run still names A — so the routine's own cwd
       // does not vouch for its history, and filtering only the top level sends
       // a revoked project's path and session id across the wire.
       const withRun = (routineCwd: string, runCwd: string) => {
@@ -435,7 +468,7 @@ describe("mayDeliverRemoteHostMsg (outbound project authorization)", () => {
       });
 
       it("yields an empty page rather than nothing when NOTHING is reachable", () => {
-        const none = frame([routine(closed)], [{ cwd: closed, label: "archived" }]) as Extract<
+        const none = frame([routine(closed)], [{ cwd: closed, label: "removed" }]) as Extract<
           HostMsg,
           { type: "routines" }
         >;
@@ -736,9 +769,16 @@ describe("allowFromRemote tier gating", () => {
     }
   });
 
-  it("refuses remote connector connect/disconnect at every tier but mirrors the list", () => {
-    expect(INBOUND_DISPOSITION.connectMcpConnector).toBe("host-local");
-    expect(INBOUND_DISPOSITION.disconnectMcpConnector).toBe("host-local");
+  it("allows connector changes at full and mirrors workspace OAuth frames for every tab without project scope", () => {
+    expect(INBOUND_DISPOSITION.connectMcpConnector).toBe("full");
+    expect(INBOUND_DISPOSITION.disconnectMcpConnector).toBe("full");
+    expect(OUTBOUND_DISPOSITION.mcpConnectorAuthorization).toBe("mirror");
+    expect(OUTBOUND_PROJECT_AUTH.mcpConnectorAuthorization).toBe("none");
+    const frame: HostMsg = { type: "mcpConnectorAuthorization", id: "notion", attemptId: "attempt-1", status: "waiting", url: "https://vendor.example/authorize" };
+    expect(mayDeliverRemoteHostMsg(frame, [], undefined, pathsEqual)).toBe(true);
+    expect(transformHostMsgForRemote(frame)).toEqual(frame);
+    expect(transformHostMsgForRemote({ type: "mcpConnectors", connectors: [], remoteConnect: true }))
+      .toEqual({ type: "mcpConnectors", connectors: [], remoteConnect: true });
     expect(OUTBOUND_DISPOSITION.mcpConnectors).toBe("mirror");
     expect(OUTBOUND_DISPOSITION.mcpServers).toBe("allowlist");
     expect(OUTBOUND_PROJECT_AUTH.mcpServers).toBe(OUTBOUND_PROJECT_AUTH.mcpConnectors);
@@ -748,14 +788,14 @@ describe("allowFromRemote tier gating", () => {
     expect(allowFromRemote("listMcpServers", "full")).toBe(true);
     for (const type of ["connectMcpConnector", "disconnectMcpConnector"] as const) {
       for (const tier of ["read-only", "propose", "full"] as const) {
-        expect(allowFromRemote(type, tier)).toBe(false);
+        expect(allowFromRemote(type, tier)).toBe(tier === "full");
       }
     }
   });
 
-  it("a remote cannot set, read, or clear a connector key even at full", () => {
+  it("a remote may write or clear a connector key at full", () => {
     for (const type of ["connectMcpConnector", "disconnectMcpConnector"] as const) {
-      expect(allowFromRemote(type, "full")).toBe(false);
+      expect(allowFromRemote(type, "full")).toBe(true);
     }
   });
 
@@ -1373,6 +1413,31 @@ describe("capabilities a remote may see", () => {
     // The host keeps serving its LOCAL webview from this same object.
     expect(original).toHaveProperty("showInFolder");
   });
+
+  it("withholds removing a project from a remote driving a DESK", () => {
+    // A phone must not rearrange the projects on somebody's laptop. Drawing
+    // the control there is the bug this whole change is about: it rendered,
+    // posted, and was dropped in silence.
+    const caps = { removeProjectFolder: true, uploadFile: true } as unknown as
+      Parameters<typeof capabilitiesForRemote>[0];
+    const seen = capabilitiesForRemote(caps) as Record<string, unknown>;
+    expect(seen).not.toHaveProperty("removeProjectFolder");
+    expect(seen.uploadFile).toBe(true);
+  });
+
+  it("withholds it on a CLOUD machine too, because Hide there is one-way", () => {
+    // The tempting argument is that a cloud remote is the only user, so it may
+    // as well close a folder. Authority was never the problem. RECOVERY is:
+    // Add project on a phone is Create and Clone, importing an existing folder
+    // needs a picker no remote has, and Create refuses a destination that is
+    // already on disk. A hidden project would be gone from every surface that
+    // person has, under a dialog promising it could be brought back.
+    const caps = { removeProjectFolder: true, uploadFile: true } as unknown as
+      Parameters<typeof capabilitiesForRemote>[0];
+    const seen = capabilitiesForRemote(caps) as Record<string, unknown>;
+    expect(seen).not.toHaveProperty("removeProjectFolder");
+    expect(seen.uploadFile).toBe(true);
+  });
 });
 
 describe("a cloud environment is its own desk", () => {
@@ -1402,8 +1467,31 @@ describe("a cloud environment is its own desk", () => {
     // signing an agent OUT, re-observing the accounts (the promotion that makes
     // a sign-in stick), and the two General preferences about this machine
     // which were otherwise read-only forever (owner, 2026-08-31).
+    // removeProjectFolder joined these during 4.1.2 and was taken back out
+    // before release. "The remote is the only user" establishes AUTHORITY and
+    // says nothing about whether the act can be undone: on a cloud machine Add
+    // project is Create and Clone only, importing an existing folder needs a
+    // native picker no remote has, and Create refuses a destination that
+    // already exists — so Hide there was one-way, under a confirmation that
+    // promised otherwise. Reversible put-away is the archive feature, not a
+    // disposition override.
+    // githubLoginWithToken was briefly promoted here and is deliberately NOT:
+    // it is plainly `full`, because a remote that could inject a token can
+    // already `send` and answer `permissionAnswer` on that machine, so the
+    // promotion protected nothing and removed the paste path from a phone
+    // driving a desk.
     expect([...promoted].sort()).toEqual([
-      "logout", "refreshProviders", "setTelemetryEnabled", "setThumbsFeedback",
+      "githubSignOut", "logout", "refreshProviders", "setTelemetryEnabled", "setThumbsFeedback",
     ]);
+  });
+});
+
+
+describe("the diff-card preference belongs to each device", () => {
+  it("keeps both directions host-local and needs no remote session binding", () => {
+    expect(INBOUND_DISPOSITION.setExpandDiffCard).toBe(INBOUND_DISPOSITION.setPromptNav);
+    expect(REMOTE_REQUIRES_BOUND_SESSION.setExpandDiffCard).toBe(false);
+    expect(OUTBOUND_DISPOSITION.expandDiffCard).toBe("host-local");
+    expect(transformHostMsgForRemote({ type: "expandDiffCard", value: true })).toBeNull();
   });
 });

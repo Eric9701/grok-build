@@ -13,6 +13,8 @@ export function brandUserFacingText(text: string): string {
     .replace(/\bGrok\.com\b/gi, "Atlas")
     .replace(/\bGrok\b/g, "Atlas")
     .replace(/`grok logout`/g, "`atlas logout`")
+    .replace(/\bA Atlas\b/g, "An Atlas")
+    .replace(/\ba Atlas\b/g, "an Atlas")
     .replace(/\0SUPERGROK\0/g, "SuperGrok");
 }
 

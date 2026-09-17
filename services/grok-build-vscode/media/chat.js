@@ -1,5 +1,102 @@
 (function () {
   const vscode = acquireVsCodeApi();
+  const hostWait = window.GrokHostWait.get();
+  const pendingPreferences = new Map();
+  let sendWait = null;
+  const queuedWaits = new Set();
+
+  function preferenceSpec(message) {
+    const fields = {
+      setAppPurpose: ["appPurpose", "this app to " + (message.value === "coding" ? "Coding" : "Knowledge work")],
+      setVoiceSendPhrase: ["voiceSendPhrase", "the voice send phrase to “" + message.value + "”"],
+      setVoiceKeyterms: ["voiceKeyterms", "voice keyterms to “" + (Array.isArray(message.value) ? message.value.join(", ") : "") + "”"],
+      setVoiceBackend: ["voiceBackend", "the transcription backend to “" + message.value + "”"],
+      setTelemetryEnabled: ["telemetryEnabled", "anonymous analytics to " + (message.value ? "on" : "off")],
+      setThumbsFeedback: ["thumbsFeedback", "feedback buttons to " + (message.value ? "on" : "off")],
+    };
+    if (fields[message.type]) {
+      const [field, target] = fields[message.type];
+      return { key: field, field, value: message.value, target };
+    }
+    if (message.type === "setRepoColor" || message.type === "setRepoArchived") {
+      const field = message.type === "setRepoColor" ? "color" : "archived";
+      const target = field === "archived"
+        ? message.cwd + " to " + (message.archived ? "Archived" : "Projects")
+        : "the colour of " + message.cwd + " to " + (message.color || "none");
+      return { key: field + ":" + message.cwd, field, value: message[field], target };
+    }
+    if (message.type === "setRoutinePaused") {
+      return { key: "routine:" + message.id, field: "paused", value: message.paused, target: "routine " + message.id + " to " + (message.paused ? "paused" : "active") };
+    }
+    // Mode, model and effort have execution-time side effects. Never retain them.
+    return null;
+  }
+
+  function postPreference(message) {
+    const spec = preferenceSpec(message);
+    if (!hostWait.snapshot() || !spec) return false;
+    const previous = pendingPreferences.get(spec.key);
+    if (previous) previous.op.cancel();
+    const pending = { ...spec, message: { ...message }, sent: false, uncertain: false };
+    pending.op = hostWait.begin({ label: "Setting " + spec.target, success: "Set " + spec.target + ".", failure: "Couldn't set " + spec.target + "." });
+    pendingPreferences.set(spec.key, pending);
+    if (hostWait.available()) {
+      pending.sent = true;
+      vscode.postMessage(pending.message);
+    } else {
+      // A harmless existing read wakes the host. The setter stays here until
+      // restore completes; sending it into a known drop is not delivery.
+      vscode.postMessage({ type: "listSessions" });
+    }
+    return true;
+  }
+
+  function observePreferences(msg) {
+    if (!hostWait.snapshot()) return;
+    for (const pending of pendingPreferences.values()) {
+      if (msg.type === "hostLink") {
+        if (!msg.link.reachable && pending.sent) pending.uncertain = true;
+        if (msg.link.reachable && msg.link.restored && !pending.sent) {
+          pending.sent = true;
+          vscode.postMessage(pending.message);
+        }
+        continue;
+      }
+      if (!hostWait.snapshot().reachable) continue;
+      let value;
+      if (msg.type === "initialState") value = msg[pending.field];
+      if (msg.type === pending.field) value = msg.value;
+      if (msg.type === "voiceConfigured") {
+        if (pending.field === "voiceSendPhrase") value = msg.sendPhrase;
+        if (pending.field === "voiceKeyterms") value = msg.keyterms;
+        if (pending.field === "voiceBackend") value = msg.backendState && msg.backendState.preference;
+      }
+      if (msg.type === "repos" && pending.message.cwd) {
+        const repo = (msg.entries || []).find((entry) => sameCwd(entry.cwd, pending.message.cwd));
+        if (repo) value = repo[pending.field];
+      }
+      if (msg.type === "routines" && pending.message.id) {
+        const routine = (msg.entries || []).find((entry) => entry.id === pending.message.id);
+        if (routine) value = routine.paused;
+        if (msg.error && msg.errorId === pending.message.id) {
+          pending.op.fail(msg.error, () => postPreference(pending.message));
+          continue;
+        }
+      }
+      if (value === undefined) continue;
+      if (JSON.stringify(value) === JSON.stringify(pending.value)) {
+        pendingPreferences.delete(pending.key);
+        pending.op.succeed();
+      } else if (pending.sent && pending.uncertain) {
+        // A write may have landed before its answer vanished. The desk's newer
+        // value wins until the person explicitly asks to change it again.
+        pending.op.fail("The machine has a different value. Your change is not confirmed.", () => {
+          postPreference(pending.message);
+          refreshSettingsOverlay();
+        });
+      }
+    }
+  }
   const CHAT_SCRIPT_URL = document.currentScript?.src || window.location.href;
   // True in the relay's browser client (its chat.html shim sets the flag before
   // loading this file); always false inside the VS Code webview. Gates the
@@ -19,6 +116,18 @@
   const CLIENT_FONT_SCALE_MIN = 0.8;
   const CLIENT_FONT_SCALE_MAX = 1.6;
   const CLIENT_FONT_SCALE_STEP = 0.1;
+  /**
+   * Experimental "Previous prompt" control (#150), off by default.
+   *
+   * Stored per CLIENT, not on the host, and so needs no wire message, no policy
+   * row and no host config: it changes nothing but this renderer's chrome, and
+   * a phone and a desk can reasonably disagree about whether they want it. Same
+   * shape as the client-owned font scale, and the reason it works on remote for
+   * free - every display-preference setter is host-local, so a remote could not
+   * have sent one anyway.
+   */
+  const EXPAND_DIFF_CARD_KEY = "atlas.remote.expandDiffCard";
+  const PROMPT_NAV_KEY = IS_REMOTE ? "atlas.remote.promptNav" : "atlas.promptNav";
   const REMOTE_TTS_KEY = "atlas.remote.tts";
   const REMOTE_TTS_SUMMARY_KEY = "atlas.remote.ttsSummary";
   const REMOTE_STORAGE_SUFFIX = (
@@ -157,37 +266,53 @@
     }
     remoteTabInstanceId = newRemoteTabToken();
     if (!remoteTabInstanceId) {
+      // No instance id means no probe is possible at all. Replacing outright is
+      // the safe read of a prior owner we can never ask about.
       if (priorRemoteTabOwner) replaceRemoteTabIdentity();
       done(remoteTabToken || undefined);
       return;
     }
     window.addEventListener("pagehide", clearRemoteTabOwner, { once: true });
 
-    const finish = (replace) => {
+    /**
+     * `proven` says whether the identity we are about to announce was settled
+     * by an ANSWER — a sibling saying "occupied", or nobody having a prior
+     * claim to answer for in the first place.
+     *
+     * A claim settled by silence is the duplicated-tab case and the
+     * crashed-tab case at once, and no amount of waiting here separates them:
+     * a backgrounded tab is throttled by every mobile browser, so its reply
+     * arrives long after any deadline this page could pick. Guessing had a
+     * one-way cost — announce a copied token and the relay retires the
+     * original tab's socket — so this stops guessing and says so instead. The
+     * relay can ask the incumbent socket a question this page cannot.
+     */
+    const finish = (replace, proven) => {
       if (replace) replaceRemoteTabIdentity();
+      else if (!proven) window.__grokTabClaimUnproven = true;
       markRemoteTabClaimed();
       done(remoteTabToken || undefined);
     };
     if (typeof BroadcastChannel !== "function") {
-      finish(!!priorRemoteTabOwner);
+      finish(!!priorRemoteTabOwner, true);
       return;
     }
     let channel;
     try {
       channel = new BroadcastChannel(REMOTE_TAB_CHANNEL);
     } catch (_) {
-      finish(!!priorRemoteTabOwner);
+      finish(!!priorRemoteTabOwner, true);
       return;
     }
     let claimed = false;
     let settled = false;
     let timer;
-    const settle = (replace) => {
+    const settle = (replace, proven) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
       claimed = true;
-      finish(replace);
+      finish(replace, proven !== false);
     };
     channel.onmessage = (event) => {
       const message = event && event.data;
@@ -209,12 +334,36 @@
     };
     if (priorRemoteTabOwner) {
       channel.postMessage({ type: "probe", token: remoteTabToken, instanceId: remoteTabInstanceId });
-      timer = setTimeout(() => settle(false), REMOTE_TAB_CLAIM_TIMEOUT_MS);
+      // Silence is not an answer, and this timer no longer pretends it is.
+      // It bounds how long a fresh page waits before getting on with it; the
+      // relay settles the ownership question with a round trip of its own.
+      timer = setTimeout(() => settle(false, false), REMOTE_TAB_CLAIM_TIMEOUT_MS);
     } else {
       settle(false);
     }
     window.addEventListener("pagehide", () => channel.close(), { once: true });
   }
+
+  /**
+   * The relay found a live tab holding the token this page inherited.
+   *
+   * Everything the copy brought with it goes: the identity, so the next
+   * reconnect claims nothing; the remembered conversation, so this tab does not
+   * resume into the original's session; and the in-memory file edits. The
+   * SHELL owns the outbound queue and the captured drafts and drops its own —
+   * it is the half that would replay them.
+   *
+   * Exposed rather than wired directly because the shell is the only thing
+   * holding the socket. An older shell simply never calls it, and an older
+   * renderer never defines it; both then behave exactly as they did before the
+   * relay learned to ask.
+   */
+  window.__grokReleaseTabIdentity = () => {
+    if (!IS_REMOTE) return null;
+    replaceRemoteTabIdentity();
+    markRemoteTabClaimed();
+    return remoteTabToken || null;
+  };
 
   let resolveRemoteTabTokenReady;
   window.__grokTabTokenReady = new Promise((resolve) => {
@@ -283,6 +432,33 @@
       window.matchMedia("(hover: none), (pointer: coarse)").matches;
   }
 
+  /**
+   * How tall the composer may grow, in lines (owner, 2026-09-04).
+   *
+   * A phone stops sooner than a desktop, because there the composer is not the
+   * only thing competing for the screen: the keyboard already owns the bottom
+   * half, and a box that grows to nine lines on top of it leaves nothing of the
+   * conversation to read while you write about it. That is the same reason the
+   * box grows at all (#144) — being able to see what you are writing — applied
+   * to the other side of the trade.
+   *
+   * Coarse pointer AND no hover, the signal the add-project form already uses:
+   * a touchscreen laptop still has a mouse and is not a phone. Not gated on
+   * IS_REMOTE, because a phone is a phone whether it reached us through the
+   * relay or the native shell.
+   */
+  const COMPOSER_MAX_LINES_TOUCH = 6;
+  const COMPOSER_MAX_LINES_DESK = 10;
+  function composerMaxLines() {
+    return typeof window.matchMedia === "function"
+      && window.matchMedia("(hover: none), (pointer: coarse)").matches
+      ? COMPOSER_MAX_LINES_TOUCH
+      : COMPOSER_MAX_LINES_DESK;
+  }
+  // Exported for tests: happy-dom does no layout, so a height assertion would
+  // measure nothing. The decision is the testable part.
+  window.__grokComposerMaxLines = composerMaxLines;
+
   const $ = (id) => document.getElementById(id);
   const messagesEl = $("messages");
   const input = $("input");
@@ -322,20 +498,27 @@
     codex: "Ask GPT\u2026",
     claude: "Ask Claude\u2026",
   };
-  const EFFORT_TOOLTIPS = {
-    none: "None — no extra reasoning",
-    minimal: "Minimal — least reasoning",
-    low: "Low — fast, lightweight reasoning",
-    medium: "Medium — balanced",
-    high: "High — deeper reasoning",
-    xhigh: "XHigh — deepest reasoning, slowest",
+  // What each level MEANS. The name is prepended from `effortLabel` rather than
+  // spelled here, so one level cannot be called two things in one popover — the
+  // strip header read "Extra high" while its own tip said "XHigh".
+  const EFFORT_BLURBS = {
+    none: "no extra reasoning",
+    minimal: "least reasoning",
+    low: "fast, lightweight reasoning",
+    medium: "balanced",
+    high: "deeper reasoning",
+    xhigh: "deepest reasoning, slowest",
   };
+  function effortTooltip(level) {
+    const blurb = EFFORT_BLURBS[level];
+    return blurb ? `${effortLabel(level)} — ${blurb}` : effortLabel(level);
+  }
 
-  // The effort levels the gear picker OFFERS: the ACTIVE model's advertised menu
+  // The effort levels the model picker OFFERS: the ACTIVE model's advertised menu
   // (`models[]._meta.reasoningEfforts`, already delivered to the webview on the
   // `session` message), ordered low→high with any unknown advertised value
   // appended. Falls back to the full ladder only when a model advertises none
-  // (older CLI / non-reasoning model). So the dots always match what the current
+  // (older CLI / non-reasoning model). So the stops always match what the current
   // model actually accepts — not a hardcoded set (grok-4.5 advertises just
   // low/medium/high). The advertised list rides in state.availableModels, which
   // is our per-session cache; the picker is locked until that's loaded anyway.
@@ -356,6 +539,9 @@
 
   const state = {
     welcomeVisible: true,
+    // Which provider the composer's sign-in card is currently offering, so the
+    // moment it clears can be told from the moment it is merely replaced.
+    signInCardFor: "",
     currentModelId: null,
     activeProvider: "grok",
     providersKnown: false,
@@ -363,6 +549,8 @@
     // Settings → Providers re-observation in flight. Host-owned; see the
     // `providerState` case for why the client never sets it on its own.
     providersChecking: false,
+    githubState: null,
+    githubRepos: null,
     onboardingMode: null,
     onboardingInfo: {},
     /** provider -> the device-login card last sent by the host. Mirrored into
@@ -434,10 +622,10 @@
     rejectedSubmissionText: "",
     // Remote-only placeholder bubble shown between a send and the host's echo.
     optimisticSendEl: null,
-    // Steer (#52). Optimistic: `_x.ai/interject` is unadvertised, so we can't ask
-    // whether it works — we offer it and let the host latch this off the first
-    // time the CLI answers -32601 (the text falls back to the queue, never lost).
-    steerSupported: true,
+    // The host normalizes backend capability at initialize. Grok starts
+    // optimistic; Codex requires its advertisement; -32601 latches either off.
+    steerSupported: false,
+    steeringProvider: null,
     // Atlas thumbs (#114). Off until the host advertises feedbackAvailability.
     // Only the live-process turn that just finished is rateable (not session/load).
     feedbackAvailable: false,
@@ -448,6 +636,10 @@
     // running turn hears you now, and it does not. See steerableProvider().
     lastTurnUsage: null, // last prompt's billing split (#53), for the donut popover
     sessionUsage: null, // session-cumulative billing — summed by the host, not grok
+    subscriptionWindows: [], // latest account capacity; never part of the transcript
+    // Whether this HOST has ever sent `subscriptionUsage`. A host property, not
+    // a session one, so a new conversation does not un-learn it.
+    subscriptionUsageKnown: false,
     // Structured session/info addends, bound to the `used` they arrived with.
     // Occupancy-only frames keep this; an open popover re-fetches session/info.
     contextBreakdown: null,
@@ -538,10 +730,8 @@
     appUpdate: null,
     repoPreviews: {},
     repoPreviewsAsked: {},
+    repoPreviewErrors: {},
     repoPreviewsSupported: false,
-    // Latched when the probe goes unanswered past its deadline — the only way to
-    // learn that a host predates the frame, since silence is all it can offer.
-    repoPreviewsUnsupported: false,
     // What the connected host says it can do (initialState.capabilities). Empty
     // until it says, so a control that needs one is withheld rather than offered
     // and then refused.
@@ -656,6 +846,11 @@
     // The current turn's agent-message footer (copy + timestamp). Only the
     // turn's LAST narration segment keeps one — see addMessage.
     turnAgentActionsEl: null,
+    // Turn-level file-change summary: per-tool-call edit stats for the open
+    // agent turn (path-deduped into a "Changed N files" card). Cleared on
+    // agentStart / next user message; the card itself stays in the transcript.
+    turnEditsByToolCallId: new Map(),
+    turnDiffSummaryEl: null,
     // Restored question cards on resume (toolCallId → card element). On replay grok
     // sends a tool_call per question (with rawInput.questions); we render the card
     // immediately and fill the answer in whenever it arrives — on the tool_call
@@ -752,6 +947,16 @@
     appPurpose: "knowledge",
     // CLI worktree RPCs assumed supported until create returns unsupported.
     worktreeSupported: true,
+    // Experimental prompt navigation (#150). On a remote this is the
+    // client's own preference; on a desk it comes from the host, because VS
+    // Code renders Settings in a SEPARATE webview from the chat and a
+    // client-local toggle there can reach nothing at all.
+    // On by default now. `storedBool` falls back only when the key is ABSENT,
+    // so someone who went and turned this off keeps it off; only a device that
+    // never had an opinion picks up the new default.
+    promptNav: IS_REMOTE ? storedBool(PROMPT_NAV_KEY, true) : false,
+    // Independent of tool expansion; a remote owns its per-device default.
+    expandDiffCard: IS_REMOTE ? storedBool(EXPAND_DIFF_CARD_KEY, false) : false,
     // grok.steerByDefault (persisted, global): when true a message sent while
     // grok is working SKIPS the queue and is interjected into the running turn.
     // False = today's behavior (queue, with an on-demand Steer button).
@@ -779,8 +984,8 @@
     // the Add project form shows the destination as you type, so it needs this
     // before anyone has typed anything.
     projectRoot: "",
-    // Last `projectSetup.github` from the host, so a reconnect can reopen the
-    // clone form onto the code the CLI is still polling.
+    // Live `projectSetup.github` while the clone form is open. Closing or
+    // reopening cancels the login; this is not a reason to pop the modal.
     projectGithub: null,
     // Empty-state tip facts from the host (`welcomeTips`): the two counts the
     // chat client never receives on its own plus the retired ids. null until
@@ -854,13 +1059,11 @@
     trash: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`,
     pencil: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/></svg>`,
     folder: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h5l2 3h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/></svg>`,
-    // Lucide folder-closed / folder-open — project expand/collapse (replaces chevron).
-    // Solid folder marks supplied by the owner (media/icons/folder-*.svg),
-    // inlined because the rail sets them with innerHTML. `fill:currentColor`
-    // is the change from the originals — it is what lets a project's colour
-    // tint them, and what keeps them legible in a light theme.
-    folderClosed: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 408 408" fill="currentColor" aria-hidden="true"><path d="M372,88.661H206.32l-33-39.24c-0.985-1.184-2.461-1.848-4-1.8H36c-19.956,0.198-36.023,16.443-36,36.4v240c-0.001,19.941,16.06,36.163,36,36.36h336c19.94-0.197,36.001-16.419,36-36.36v-199C408.001,105.08,391.94,88.859,372,88.661z"/></svg>`,
-    folderOpen: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -57 511.99973 511" fill="currentColor" aria-hidden="true"><path d="m506.039062 180.988281c-7.78125-12.546875-21.53125-20.046875-36.78125-20.046875h-339.5625c-16.832031 0-32.140624 9.488282-39.011718 24.179688l-89.8125 188.308594c3.390625 13.789062 16.269531 24.089843 31.609375 24.089843h361.269531c15.445312 0 29.5625-8.734375 36.460938-22.554687l77.628906-155.59375c6.128906-12.3125 5.449218-26.660156-1.800782-38.382813zm0 0"/><path d="m72.402344 156.15625c6.863281-14.6875 22.175781-24.179688 39.011718-24.179688h319.753907v-40.898437c0-16.859375-14.222657-30.578125-31.703125-30.578125h-186.445313c-.273437 0-.460937-.070312-.53125-.121094l-33.371093-46.660156c-5.910157-8.277344-15.671876-13.21875-26.101563-13.21875h-121.304687c-17.488282 0-31.710938 13.71875-31.710938 30.578125v276.875zm0 0"/></svg>`,
+    // Lucide folder / folder-open — project expand/collapse (replaces chevron).
+    // Lucide project marks. The outline inherits the project tint through
+    // currentColor, just like the other rail glyphs.
+    folderClosed: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`,
+    folderOpen: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>`,
     // Palette glyph for "Set color" — stroke-only so it inherits menu icon tint.
     palette: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="0.5" fill="currentColor"/><circle cx="17.5" cy="10.5" r="0.5" fill="currentColor"/><circle cx="8.5" cy="7.5" r="0.5" fill="currentColor"/><circle cx="6.5" cy="12.5" r="0.5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>`,
     pin: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="m5 17 2-7V5l-2-2h14l-2 2v5l2 7Z"/></svg>`,
@@ -1083,6 +1286,30 @@
     return Math.round(n / 1000) + "K";
   }
 
+  /** Token counts for the ledger: thousands and millions, two decimals below
+   *  the hundred and none above it -- 1.48K, 10.28K, 499K, 1.2M. Trailing
+   *  zeros go, so a round window reads 500K and 1M rather than 500.00K and
+   *  1.00M. Under a thousand the exact number is short enough to say outright.
+   *
+   *  Coarser than it looks is the point: the ledger is read to answer "how
+   *  much room is left", and 498,525 answers that no better than 499K while
+   *  costing a column wide enough to break a number in half on a phone. The
+   *  donut's own tooltip still carries the exact figure. */
+  function compactTokens(n) {
+    const value = Number(n);
+    if (!Number.isFinite(value)) return String(n);
+    const magnitude = Math.abs(value);
+    if (magnitude < 1000) return value.toLocaleString();
+    // 999,500 rather than a million: above it the K branch would round to
+    // "1,000K", which is a million wearing the wrong unit.
+    const [scale, suffix] = magnitude < 999_500 ? [1e3, "K"] : [1e6, "M"];
+    const scaled = magnitude / scale;
+    const text = scaled < 100
+      ? scaled.toFixed(2).replace(/\.?0+$/, "")
+      : Math.round(scaled).toLocaleString();
+    return (value < 0 ? "-" : "") + text + suffix;
+  }
+
   function truncate(s, max) {
     return s.length > max ? s.slice(0, max) + "…" : s;
   }
@@ -1133,14 +1360,35 @@
     remoteBtn.onclick = () => vscode.postMessage({ type: "openRemotePortal", withHint: true });
   }
   updateSendButton(); // spinner by default — session is starting up (busy+locked)
-  gearBtn.innerHTML = ICON.gear;
+  gearBtn.classList.remove("icon-btn");
+  gearBtn.classList.add("toolbar-btn", "model-chip");
+  gearBtn.setAttribute("aria-haspopup", "dialog");
+  gearBtn.setAttribute("aria-expanded", "false");
+  micBtn.classList.add("icon-btn", "mic-btn");
+  addBtn.after(micBtn);
   addBtn.innerHTML = ICON.plus;
   scrollBottomBtn.innerHTML = `${ICON.arrowDown}<span class="scroll-bottom-label">Scroll to bottom</span>`;
+  // Created here rather than in the page, because the template lives in
+  // sidebar.ts and the relay serves its own older copy - an element built in JS
+  // needs neither to change. A sibling of the scroll-to-bottom pill, not a
+  // group with it: the two answer different questions, and this one is still
+  // worth having at the bottom of the transcript where that one is meaningless.
+  // They do share a height (--float-ctl-h) and a corner discipline - see the
+  // .prompt-prev-btn rules in chat.css for why it sits on the right.
+  const promptPrevBtn = document.createElement("button");
+  promptPrevBtn.id = "prompt-prev-btn";
+  promptPrevBtn.className = "prompt-prev-btn";
+  promptPrevBtn.type = "button";
+  promptPrevBtn.title = "Previous prompt";
+  promptPrevBtn.setAttribute("aria-label", "Previous prompt");
+  promptPrevBtn.disabled = true;
+  promptPrevBtn.innerHTML = ICON.chevronUp;
+  scrollBottomBtn.before(promptPrevBtn);
   updateModeBtn("agent");
 
   // ---------- markdown ----------
 
-  const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDisplayName, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, appendHighlightedText, commandProgramLabel, commandTextPreview, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards } = globalThis.GrokWebviewHelpers;
+const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDisplayName, modelPickerLabel, modelDisplayName, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, appendHighlightedText, commandProgramLabel, commandTextPreview, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, aggregateTurnEdits, turnDiffSummaryTitle, parseShellDeletePaths, normalizeTurnEditPathKey, parseAttachmentContext, parseSelectionBlocks, parseImageTags, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards } = globalThis.GrokWebviewHelpers;
 
   function escapeAttr(s) {
     return String(s == null ? "" : s)
@@ -1622,21 +1870,37 @@
     }).join("");
 
     function inline(t) {
+      // A code span and a link's href are LITERAL — nothing inside either is
+      // markdown. Both are pulled out to placeholders before the link and
+      // emphasis passes run, exactly as fenced blocks and math are pulled out
+      // of the document above, and restored at the end.
+      //
+      // Without this the passes run over their own output: `1*2` and `3*4`
+      // renders as one <em> spanning from the first code span to the second,
+      // because by then the asterisks are just characters in a string and the
+      // <code> tags mean nothing to a regex (#143). Same shape reaches a URL
+      // containing `*`, and a [link](x) written inside backticks.
+      //
+      // Link TEXT is deliberately left live: [**bold**](url) is valid markdown
+      // and worked before, so only the href is held.
+      const held = [];
+      const hold = (html) => `\x00C${held.push(html) - 1}\x00`;
       return t
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
         .replace(/`([^`\n]+)`/g, (_, code) => {
           if (looksLikeFileRef(code)) {
             const safe = code.replace(/"/g, "&quot;");
-            return `<a href="${safe}" class="file-ref-link"><code>${code}</code></a>`;
+            return hold(`<a href="${safe}" class="file-ref-link"><code>${code}</code></a>`);
           }
-          return `<code>${code}</code>`;
+          return hold(`<code>${code}</code>`);
         })
         .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, text, url) => {
           const safe = url.replace(/"/g, "&quot;");
-          return `<a href="${safe}">${text}</a>`;
+          return `<a href="${hold(safe)}">${text}</a>`;
         })
         .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
-        .replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+        .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+        .replace(/\x00C(\d+)\x00/g, (_, i) => held[+i]);
     }
 
     // GFM tables: header row | separator row (|---|---|) | data rows
@@ -1839,6 +2103,11 @@
   // ---------- popovers ----------
 
   function closePopovers() {
+    flushPicker();
+    gearBtn.setAttribute("aria-expanded", "false");
+    gearPopover.classList.remove("model-picker");
+    gearPopover.removeAttribute("role");
+    gearPopover.removeAttribute("aria-label");
     modePopover.hidden = true;
     gearPopover.hidden = true;
     addPopover.hidden = true;
@@ -1880,6 +2149,7 @@
     // by the host. Render the cached snapshot immediately, then re-render when
     // a fresh structured response arrives.
     vscode.postMessage({ type: "refreshContextDetails" });
+    vscode.postMessage({ type: "refreshSubscriptionUsage" });
     renderContextPopover();
   }
 
@@ -1901,7 +2171,40 @@
       el.textContent = label;
       (parent || contextPopover).appendChild(el);
     };
-    const tok = (n) => Number(n).toLocaleString();
+    const tok = compactTokens;
+
+    /** A collapsible ledger section.
+     *
+     *  The marker sits immediately AFTER the label, the way the rail's PROJECTS
+     *  header does it, instead of a glyph pushed to the far right with no
+     *  visible relationship to the word it opens. `fold` names the section
+     *  because the first `.popover-section-toggle` stopped meaning "Last turn"
+     *  the moment there were two of them — CSS and tests address it by name. */
+    const foldSection = (title, fold, stateKey) => {
+      const open = !!uiState()[stateKey];
+      const hdr = document.createElement("div");
+      hdr.className = "popover-section popover-section-toggle" + (open ? " expanded" : "");
+      hdr.dataset.fold = fold;
+      const label = document.createElement("span");
+      label.textContent = title;
+      const twisty = document.createElement("span");
+      twisty.className = "popover-twisty";
+      twisty.innerHTML = open ? ICON.chevronDown : ICON.chevronRight;
+      hdr.append(label, twisty);
+      contextPopover.appendChild(hdr);
+      const body = document.createElement("div");
+      body.hidden = !open;
+      contextPopover.appendChild(body);
+      hdr.onclick = (e) => {
+        e.stopPropagation();
+        const next = body.hidden;
+        body.hidden = !next;
+        hdr.classList.toggle("expanded", next);
+        twisty.innerHTML = next ? ICON.chevronDown : ICON.chevronRight;
+        setUiState({ [stateKey]: next }); // remembered across opens + reloads
+      };
+      return body;
+    };
     // Atlas's fixed-point billing unit is 10^10 ticks per USD (xAI's published
     // UsageTotals contract). Keep the divisor explicit; it is not cents/micros.
     const usdTicks = (ticks) => {
@@ -1922,12 +2225,23 @@
       `${tok(used)} / ${tok(state.contextWindow)} (${pct}%)`,
     );
 
-    // Compact sits directly under the context line — it is the action ON that
-    // number, so it belongs to it, not stranded below the billing sections.
-    // Every popover row is a DIV: a <button> here drags in native chrome
-    // (background + border) that reads as a stray box in the popover.
-    const act = document.createElement("div");
-    act.className = "toolbar-popover-item popover-action context-compact" + (used ? "" : " disabled");
+    const bar = document.createElement("div");
+    bar.className = "context-fullness";
+    bar.setAttribute("role", "meter");
+    bar.setAttribute("aria-label", "Context used");
+    bar.setAttribute("aria-valuemin", "0");
+    bar.setAttribute("aria-valuemax", "100");
+    bar.setAttribute("aria-valuenow", String(pct));
+    const fill = document.createElement("i");
+    fill.style.width = pct + "%";
+    fill.style.setProperty("--context-fill", contextFullnessColor(pct));
+    bar.appendChild(fill);
+    contextPopover.appendChild(bar);
+
+    const act = document.createElement("button");
+    act.type = "button";
+    act.className = "context-compact";
+    act.disabled = !used;
     act.textContent = "Compact conversation";
     act.title = used ? "Summarize the conversation so far to free up context" : "Nothing to compact yet";
     if (used) {
@@ -1939,7 +2253,89 @@
     }
     contextPopover.appendChild(act);
 
-    // KNOWLEDGE WORK STOPS HERE: the number and the action on it, nothing else.
+    const subscription = document.createElement("section");
+    subscription.className = "subscription-usage";
+    subscription.setAttribute("aria-label", "Subscription usage across your account");
+    section("Subscription usage · account", subscription);
+    // Lines, not paragraphs: several notes about ONE meter are one remark on
+    // several lines, and giving each its own element gave each its own gap.
+    const note = (text, parent = subscription) => {
+      const el = document.createElement("div");
+      el.className = "popover-fineprint";
+      const lines = Array.isArray(text) ? text : [text];
+      lines.forEach((line, i) => {
+        if (i) el.appendChild(document.createElement("br"));
+        el.appendChild(document.createTextNode(line));
+      });
+      parent.appendChild(el);
+    };
+    const validDate = (value) => typeof value === "string" && Number.isFinite(Date.parse(value));
+    const windows = state.subscriptionWindows.filter((window) =>
+      window && typeof window.usedPercent === "number" && Number.isFinite(window.usedPercent)
+      && window.usedPercent >= 0 && window.usedPercent <= 100
+      && typeof window.label === "string" && window.label.trim()
+      && typeof window.periodType === "string" && window.periodType.trim()
+      && validDate(window.observedAt)
+      && (window.periodStart === undefined || validDate(window.periodStart))
+      && (window.periodEnd === undefined || validDate(window.periodEnd)));
+    if (!windows.length) {
+      // Claude has no pull: its account window rides the rate-limit event that
+      // comes back with a reply, so a session that has not spoken yet has
+      // nothing to show and "nothing reported" reads as a broken panel. The
+      // first version of this said so in two clauses and wrapped to three lines
+      // on a phone; WHY Claude has nothing is our problem, not the reader's, and
+      // what they can do about it is the whole message.
+      note(state.activeProvider === "claude"
+        ? "Fills in after the next reply."
+        : "No subscription usage reported yet.");
+    }
+    const formatPercent = (value) => new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
+    const formatDate = (value) => new Date(value).toLocaleString(undefined, {
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+    });
+    for (const window of windows) {
+      const row = document.createElement("div");
+      row.className = "subscription-window";
+      info(window.label, `${formatPercent(window.usedPercent)}% used · ${formatPercent(100 - window.usedPercent)}% left`, row);
+      const meter = document.createElement("div");
+      meter.className = "subscription-fullness";
+      meter.setAttribute("role", "meter");
+      meter.setAttribute("aria-label", `${window.label} subscription used`);
+      meter.setAttribute("aria-valuemin", "0");
+      meter.setAttribute("aria-valuemax", "100");
+      meter.setAttribute("aria-valuenow", String(window.usedPercent));
+      const fill = document.createElement("i");
+      fill.style.width = window.usedPercent + "%";
+      meter.appendChild(fill);
+      row.appendChild(meter);
+      note([window.periodEnd
+        ? `${Date.parse(window.periodEnd) > Date.now() ? "Resets" : "Reported reset"} ${formatDate(window.periodEnd)}`
+        : "Reset time not reported.",
+      `Observed ${formatDate(window.observedAt)}`], row);
+      subscription.appendChild(row);
+    }
+    if (windows.length && state.activeProvider === "claude") note("Latest reported window; other limits may apply.");
+    // CAPABILITY DETECTION: did the frame that feeds this section ever arrive?
+    //
+    // The phone's client is always as new as the relay deploy while the host is
+    // whatever the person installed, so this section meets hosts that never
+    // heard of `subscriptionUsage`. Those drop `refreshSubscriptionUsage` in
+    // silence, and the section then sat there promising numbers that could not
+    // come -- telling a Claude user to wait for a reply that cannot fill it
+    // (review, 2026-09-14). A host that DOES know the frame sends it at session
+    // start with empty windows, so its arrival is the honest test and the
+    // deliberate empty states above survive it.
+    //
+    // The gate is on the APPEND, not an early return: the two lines that make
+    // this popover visible are the last thing the function does, and the
+    // comment further down records what returning early from here cost last
+    // time. Building a handful of detached nodes and dropping them is the
+    // cheaper mistake.
+    if (state.subscriptionUsageKnown) contextPopover.appendChild(subscription);
+
+    // KNOWLEDGE WORK STOPS HERE: the numbers and the action on them, nothing
+    // else. Context occupancy and account capacity both answer "can I keep
+    // going?", which is a question in either purpose.
     //
     // Everything below is the technical account — system prompt, reasoning
     // overhead, tool definitions, per-turn token and cost rows. That is the
@@ -1954,7 +2350,8 @@
     // function does, so returning early skipped them and the donut simply did
     // nothing in the default mode. Found by review; my own test read
     // textContent off the hidden element and passed, which is the same mistake
-    // as proving a package exists instead of proving the thing works.
+    // as proving a package exists instead of proving the thing works. Anything
+    // added ABOVE this line inherits that trap — assert on a SHOWN popover.
     if (!isCodingPurpose()) { showContextPopover(); return; }
 
     // Snapshot addends are internally consistent (overhead from snapshot.used).
@@ -1988,17 +2385,20 @@
         breakdown.toolDefinitionsTokens != null ||
         (breakdown.categories && breakdown.categories.length);
       if (hasCounted) {
-        section("Already counted above");
+        // Collapsed by default, like the two ledgers below. Every row here is a
+        // breakdown of a number ALREADY shown above, so it is the least likely
+        // reason the donut was opened and the worst thing to unroll by default.
+        const counted = foldSection("Already counted above", "counted", "countedOpen");
         if (breakdown.toolDefinitionsTokens != null) {
           const n = breakdown.toolDefinitionsCount;
           const toolsLabel = typeof n === "number"
             ? `Tool definitions (${n} ${n === 1 ? "tool" : "tools"})`
             : "Tool definitions";
-          info(toolsLabel, tok(breakdown.toolDefinitionsTokens));
+          info(toolsLabel, tok(breakdown.toolDefinitionsTokens), counted);
         }
         if (breakdown.categories) {
           for (const category of breakdown.categories) {
-            info(category.detail ? `${category.label} (${category.detail})` : category.label, tok(category.tokens));
+            info(category.detail ? `${category.label} (${category.detail})` : category.label, tok(category.tokens), counted);
           }
         }
       }
@@ -2012,26 +2412,20 @@
     const sess = state.sessionUsage;
     const row = (u, label, key, fmt, parent) => (u && u[key] != null ? info(label, (fmt || tok)(u[key]), parent) : null);
 
-    // Session total leads: it's the number you act on (what this conversation has
-    // cost). Last turn is diagnostics, so it's a collapsed disclosure below it —
-    // present when you want it, out of the way when you don't.
+    // Both ledgers fold. Session total is still the number you act on and Last
+    // turn is still diagnostics, but the donut is opened to read a CONTEXT
+    // figure, and a popover that unrolls two ledgers every time buries it.
+    // Each remembers its own state, so opening one costs one click, once.
     if (sess) {
-      section("Session total");
-      row(sess, "Input", "inputTokens");
-      row(sess, "↳ cache read", "cachedReadTokens");
-      row(sess, "↳ cache write", "cachedWriteTokens");
-      row(sess, "Output", "outputTokens");
-      row(sess, "Cost", "costUsdTicks", usdTicks);
+      const body = foldSection("Session total", "session", "sessionTotalOpen");
+      row(sess, "Input", "inputTokens", null, body);
+      row(sess, "↳ cache read", "cachedReadTokens", null, body);
+      row(sess, "↳ cache write", "cachedWriteTokens", null, body);
+      row(sess, "Output", "outputTokens", null, body);
+      row(sess, "Cost", "costUsdTicks", usdTicks, body);
     }
     if (turn) {
-      const open = !!uiState().lastTurnOpen;
-      const hdr = document.createElement("div");
-      hdr.className = "popover-section popover-section-toggle" + (open ? " expanded" : "");
-      hdr.innerHTML = `<span>Last turn</span><span class="popover-chevron">›</span>`;
-      contextPopover.appendChild(hdr);
-      const body = document.createElement("div");
-      body.hidden = !open;
-      contextPopover.appendChild(body);
+      const body = foldSection("Last turn", "lastTurn", "lastTurnOpen");
       row(turn, "Input", "inputTokens", null, body);
       row(turn, "↳ cache read", "cachedReadTokens", null, body);
       row(turn, "↳ cache write", "cachedWriteTokens", null, body);
@@ -2043,13 +2437,6 @@
       // routinely dwarfs "Context used". Without this the two numbers look like
       // a bug (they aren't — they're different quantities).
       row(turn, "Model calls", "modelCalls", String, body);
-      hdr.onclick = (e) => {
-        e.stopPropagation();
-        const next = body.hidden;
-        body.hidden = !next;
-        hdr.classList.toggle("expanded", next);
-        setUiState({ lastTurnOpen: next }); // remembered across opens + reloads
-      };
     }
 
     const fine = document.createElement("div");
@@ -2149,30 +2536,70 @@
     return isCodingPurpose() && !!state.expandCommandOutputs;
   }
 
+  /** Coding keeps the turn summary regardless of tool details or their session
+   *  latch. The card's own preference decides whether its file list is open. */
+  function turnDiffSummaryEnabled() {
+    return isCodingPurpose();
+  }
+
+  /** Hide by purpose without losing cards from completed turns. */
+  function applyTurnDiffSummaryVisibility() {
+    document.body.classList.toggle("hide-turn-diff-summary", !turnDiffSummaryEnabled());
+  }
+
   function setAppPurpose(value) {
     const next = value === "coding" ? "coding" : "knowledge";
+    if (hostWait.snapshot()) {
+      postPreference({ type: "setAppPurpose", value: next });
+      refreshSettingsOverlay();
+      return;
+    }
     if (state.appPurpose === next) return;
     state.appPurpose = next;
     vscode.postMessage({ type: "setAppPurpose", value: next });
     applyThinkingVisibility();
     applyExpandCommandOutputs();
+    syncChangesAvailability();
     if (!gearPopover.hidden && state.gearView === "main") renderGearMain();
+    if (!addPopover.hidden) renderAddPopover();
+    refreshModelControls();
     syncGearPlacement();
   }
 
-  function addSection(label) {
+  function addSection(label, target = gearPopover) {
     const el = document.createElement("div");
     el.className = "popover-section";
     el.textContent = label;
-    gearPopover.appendChild(el);
+    target.appendChild(el);
   }
 
-  function addGearItem(labelHtml, onclick) {
+  function addGearItem(labelHtml, onclick, target = gearPopover) {
     const el = document.createElement("div");
     el.className = "toolbar-popover-item";
     el.innerHTML = labelHtml;
     el.onclick = (e) => { e.stopPropagation(); onclick(); };
-    gearPopover.appendChild(el);
+    target.appendChild(el);
+    return el;
+  }
+
+  // Dialogs can overlap (including a wizard arriving from the host), and close
+  // in either order. Only marker presence is a contract; its name is diagnostic.
+  // Per-element ownership makes repeated close paths harmless without keeping
+  // a registry of dialogs or their closers.
+  let modalAboveCount = 0;
+  function markModalAbove(dialog, name) {
+    if (dialog._modalAbove) return;
+    dialog._modalAbove = true;
+    modalAboveCount += 1;
+    document.body.dataset.modalAbove = name;
+    reportLayerDepth();
+  }
+  function unmarkModalAbove(dialog) {
+    if (!dialog || !dialog._modalAbove) return;
+    dialog._modalAbove = false;
+    modalAboveCount -= 1;
+    if (!modalAboveCount) delete document.body.dataset.modalAbove;
+    reportLayerDepth();
   }
 
   // Promise<boolean> confirm dialog rendered in-page (chat.css .confirm-*).
@@ -2183,6 +2610,7 @@
     return new Promise((resolve) => {
       const overlay = document.createElement("div");
       overlay.className = "confirm-overlay";
+      if (opts.requestId !== undefined) overlay.dataset.confirmReqId = String(opts.requestId);
       const panel = document.createElement("div");
       panel.className = "confirm-panel";
       const title = document.createElement("div");
@@ -2201,11 +2629,17 @@
       cancelBtn.type = "button";
       cancelBtn.className = "confirm-btn";
       cancelBtn.textContent = "Cancel";
+      let settled = false;
       const done = (v) => {
+        if (settled) return;
+        settled = true;
         document.removeEventListener("keydown", onKey, true);
         overlay.remove();
-        resolve(opts.booleanResult ? v === "confirm" : v);
+        unmarkModalAbove(overlay);
+        resolve(v === undefined ? undefined : opts.booleanResult ? v === "confirm" : v);
       };
+      // Host consumption dismisses without sending another decision.
+      overlay._resolveConfirm = () => done(undefined);
       const onKey = (e) => {
         if (e.key === "Escape") { e.stopPropagation(); done("cancel"); }
       };
@@ -2230,6 +2664,7 @@
       panel.appendChild(actions);
       overlay.appendChild(panel);
       document.body.appendChild(overlay);
+      markModalAbove(overlay, "confirm");
       focusButton.focus();
     });
   }
@@ -2243,6 +2678,8 @@
 
   // In-app preview overlay. OPT-IN via capabilities.previewInApp (desktop).
   // Absent / remote / VS Code keep the host editor or inline-expand path.
+  // Its z-index (110) is below Settings (120), so it does not set modalAbove:
+  // Settings must keep its existing Escape path when it is over this preview.
   function hostPreviewsInApp() {
     return !IS_REMOTE && state.hostCaps && state.hostCaps.previewInApp === true;
   }
@@ -2340,6 +2777,23 @@
     if (desk && typeof desk.openPath === "function") return desk;
     const remote = state.filesBrowse && state.filesBrowse.component;
     if (remote && typeof remote.openPath === "function") return remote;
+    return null;
+  }
+
+  /**
+   * The mounted file panel, for callers that only want to steer it.
+   *
+   * Deliberately NOT previewFilePanelController above: that one is gated on
+   * hostPreviewsInApp(), which asks whether previews open in the app rather
+   * than in a native editor. Steering the panel is a different question, and
+   * every caller here still capability-detects the method it is about to use,
+   * so a host without a panel simply gets null and offers nothing.
+   */
+  function filePanelController() {
+    const desk = window.__grokDeskFilePanel;
+    if (desk && typeof desk.showChanges === "function") return desk;
+    const remote = state.filesBrowse && state.filesBrowse.component;
+    if (remote && typeof remote.showChanges === "function") return remote;
     return null;
   }
 
@@ -2715,7 +3169,7 @@
       deviceLogin: state.deviceLoginByProvider,
       clientOwnsFontScale: CLIENT_OWNS_FONT_SCALE,
       ttsAvailable,
-      steerSupported: state.steerSupported !== false,
+      steerSupported: steerableProvider(),
       providersKnown: !!state.providersKnown,
       remoteLinked: state.remoteLinked,
       hostCaps: state.hostCaps || {},
@@ -2724,6 +3178,8 @@
 
   function settingsSnapshot() {
     return {
+      pendingPreferences: Object.fromEntries([...pendingPreferences.values()].map((p) => [p.key, p.op.label])),
+      pendingPreferenceValues: Object.fromEntries([...pendingPreferences.values()].map((p) => [p.key, p.value])),
       appPurpose: state.appPurpose === "coding" ? "coding" : "knowledge",
       showThinking: !!state.showThinking,
       expandCommandOutputs: !!state.expandCommandOutputs,
@@ -2736,10 +3192,14 @@
       voiceConfigured: !!state.voiceConfigured,
       voiceSendPhrase: typeof state.voiceSendPhrase === "string" ? state.voiceSendPhrase : "atlas send",
       voiceKeyterms: Array.isArray(state.voiceKeyterms) ? state.voiceKeyterms : [],
+      voiceBackendState: state.voiceBackendState,
       telemetryEnabled: state.telemetryEnabled,
       thumbsFeedback: !!state.thumbsFeedback,
+      promptNav: !!state.promptNav,
+      expandDiffCard: !!state.expandDiffCard,
       providers: state.providers || [],
       providersChecking: !!state.providersChecking,
+      githubState: state.githubState || undefined,
       extVersion: state.extVersion,
       cliVersion: state.cliVersion,
       hostKind: state.hostKind,
@@ -2750,6 +3210,8 @@
       mcpError: state.mcpError,
       mcpWarning: state.mcpWarning,
       mcpConnectors: state.mcpConnectors,
+      mcpRemoteConnect: state.mcpRemoteConnect === true,
+      mcpConnectorAuthorization: state.mcpConnectorAuthorization,
       routines: state.routines,
       routineProjects: state.routineProjects,
       routineModels: state.routineModels,
@@ -2759,6 +3221,7 @@
   }
 
   function applySettingsChange(id, value, message) {
+    if (message && postPreference(message)) return { pending: true, snapshot: settingsSnapshot() };
     switch (id) {
       case "appPurpose":
         state.appPurpose = value === "coding" ? "coding" : "knowledge";
@@ -2779,6 +3242,22 @@
         break;
       case "chatFontScale":
         if (CLIENT_OWNS_FONT_SCALE) setClientFontScale(Number(value) / 100);
+        return;
+      case "expandDiffCard":
+        if (!IS_REMOTE) break;
+        state.expandDiffCard = !!value;
+        storeRemotePref(EXPAND_DIFF_CARD_KEY, state.expandDiffCard);
+        applyExpandDiffCard();
+        return;
+      case "promptNav":
+        // Remote only. A desk lets the message through to the host and gets
+        // the value back as a `promptNav` frame, which is the one route the
+        // VS Code settings tab - a different webview - can travel.
+        if (!IS_REMOTE) break;
+        state.promptNav = !!value;
+        storeRemotePref(PROMPT_NAV_KEY, state.promptNav);
+        if (!state.promptNav) setPromptNavPin(null);
+        updateScrollBtn();
         return;
       case "readRepliesAloud":
         if (IS_REMOTE) {
@@ -2837,6 +3316,96 @@
 
   let settingsOpener = null;
 
+  function openImageLayer() {
+    const overlay = document.querySelector(".image-preview-overlay");
+    return overlay && !overlay.hidden ? overlay : null;
+  }
+
+  // Every overlay file panel, topmost first -- asked of the module that MAKES
+  // panels rather than assembled from the ones this file happens to name. It
+  // named `state.filesBrowse.component` alone, and the provider-config editor
+  // shipped in the same release without ever being added: Back saw no layer,
+  // let the navigation stand, and left the conversation with an unsaved config
+  // file on screen. A list of known panels goes wrong the moment somebody adds
+  // a panel, and that is not an omission the reviewer of the NEW panel would
+  // catch, because it lives in a file they never touched.
+  function openFilePanelLayers() {
+    const panels = window.GrokFilePanel && window.GrokFilePanel.openOverlayPanels;
+    return typeof panels === "function" ? panels() : [];
+  }
+
+  function openFilesLayer() {
+    return openFilePanelLayers()[0] || null;
+  }
+
+  // Page-local capability: the shell decides what to do with these layers.
+  // Read the surfaces themselves; only notification deduplication is cached.
+  // A dialog above owns this gesture; Back with one up behaves as it always
+  // did: it can leave the page. Dialogs do not register Back closers here.
+  window.afkpilotLayers = {
+    // WHY `depth` is 0, which the count alone cannot say. The shell has to be
+    // able to tell "nothing is open" from "a dialog owns this gesture": with a
+    // full-screen Add-project form up it was closing the drawer BEHIND the
+    // form, so the press looked like it had done nothing at all.
+    get modalAbove() { return !!document.body.dataset.modalAbove; },
+    get depth() {
+      if (document.body.dataset.modalAbove) return 0;
+      // Each open overlay COUNTS, rather than "is one open": two can be up at
+      // once -- the project files panel, with Settings then raising the config
+      // editor over it -- and each needs its own entry, or one Back closes
+      // both and the person loses a panel they never dismissed.
+      return Number(!!document.getElementById("settings-overlay"))
+        + openFilePanelLayers().length + Number(!!openImageLayer());
+    },
+    dismissTop() {
+      if (document.body.dataset.modalAbove) return false;
+      // The lightbox first, and without reading the stacking: it opens from the
+      // transcript or a composer chip, and every other layer covers both of
+      // those -- so whenever it is up, it went up last. Its own full-screen
+      // backdrop then hides the controls that would open anything else, so
+      // nothing can arrive over it either.
+      if (openImageLayer()) { closeImagePreview(); return true; }
+      const settings = document.getElementById("settings-overlay");
+      const files = openFilesLayer();
+      // Settings covers the files toggle, so it normally opens last. But an
+      // already-open docked panel can become an overlay while Settings is up:
+      // resizing to phone width raises it to z-index 1200 (Settings is 120).
+      // Read the current stacking for that path, which needs no toggle click.
+      if (settings && (!files || (Number(getComputedStyle(files.element).zIndex) || 0)
+          <= (Number(getComputedStyle(settings).zIndex) || 0))) {
+        closeSettingsOverlay();
+        return true;
+      }
+      if (files) {
+        files.setOpen(false);
+        return true;
+      }
+      return false;
+    },
+    // Not a layer, and deliberately not part of `depth`/`dismissTop`: a toolbar
+    // popover does not own Back. The shell needs it because a phone opens the
+    // projects drawer OVER the conversation, and a model/mode/context popover
+    // left hanging there belongs to the screen underneath — the drawer is the
+    // page's own layer, so only the page knows it opened.
+    closePopovers() { closePopovers(); },
+  };
+  let lastLayerDepth = window.afkpilotLayers.depth;
+  function reportLayerDepth() {
+    const depth = window.afkpilotLayers.depth;
+    if (depth === lastLayerDepth) return;
+    lastLayerDepth = depth;
+    window.dispatchEvent(new CustomEvent("afkpilot-layers"));
+  }
+
+  // Every file panel reports through here, including ones written after this
+  // line. Subscribing to the MODULE rather than passing `onOpenChanged` to each
+  // panel is the point: the provider-config editor was created without that
+  // option and opened in silence, so the page never took a history entry for it
+  // and Back left the conversation. A panel cannot forget to join this.
+  if (window.GrokFilePanel && typeof window.GrokFilePanel.onOverlaysChanged === "function") {
+    window.GrokFilePanel.onOverlaysChanged(reportLayerDepth);
+  }
+
   function closeSettingsOverlay() {
     if (settingsSurface && settingsSurface.dispose) settingsSurface.dispose();
     settingsSurface = null;
@@ -2847,6 +3416,7 @@
     if (opener && typeof opener.focus === "function" && document.contains(opener)) {
       try { opener.focus(); } catch { /* */ }
     }
+    reportLayerDepth();
   }
 
   function refreshSettingsOverlay() {
@@ -2864,6 +3434,7 @@
 
   function openSettingsOverlay(opener, opts) {
     const api = window.GrokSettings;
+    window.GrokVoiceSettings?.install(api);
     if (!api || typeof api.mount !== "function") return;
     closeSettingsOverlay();
     closePopovers();
@@ -2882,10 +3453,14 @@
         // nothing. Remember that one is outstanding; the relay's refusal below
         // is its answer.
         if (msg && msg.type === "saveRoutine") state.routineSavePending = true;
-        vscode.postMessage(msg);
+        if (!postPreference(msg)) vscode.postMessage(msg);
+        else refreshSettingsOverlay();
       },
       apply: applySettingsChange,
       onLocal: (name) => {
+        if (typeof name === "string" && name.indexOf("providerConfig:") === 0) {
+          void openProviderConfigFiles(name.slice("providerConfig:".length));
+        }
         if (name === "explainRemote") showRemoteExplainer();
         if (name === "openDeviceManager") window.open("/", "_blank", "noopener");
         // Settings → Providers → Connect. The overlay stays open behind the
@@ -2898,14 +3473,11 @@
       onClose: closeSettingsOverlay,
     });
     settingsSurface.focusSearch();
+    reportLayerDepth();
   }
 
-  function openAllSettings() {
-    openSettingsCategory();
-  }
-
-  function openSettingsCategory(category) {
-    const opener = appSettingsButton() || document.getElementById("gear-btn") || document.activeElement;
+  function openSettingsCategory(category, fromButton) {
+    const opener = fromButton || appSettingsButton() || document.getElementById("gear-btn") || document.activeElement;
     closePopovers();
     if (hostOpensSettingsEditor()) {
       const message = { type: "openSettingsSurface" };
@@ -2918,6 +3490,8 @@
 
   // Public UI service consumed by media/file-panel.js in both renderer hosts.
   window.__grokFilePanelConfirm = uiChoice;
+  window.__grokFilePanelAskAgent = appendComposerText;
+  window.__grokFilePanelOpenSettings = () => openSettingsCategory("providers");
 
   /** uiConfirm with a single text field. Resolves to the string, or null on
    *  cancel — an empty string is a real answer the caller may want to reject on
@@ -2953,6 +3527,7 @@
       const done = (v) => {
         document.removeEventListener("keydown", onKey, true);
         overlay.remove();
+        unmarkModalAbove(overlay);
         resolve(v);
       };
       const onKey = (e) => {
@@ -2972,6 +3547,7 @@
       panel.appendChild(actions);
       overlay.appendChild(panel);
       document.body.appendChild(overlay);
+      markModalAbove(overlay, "prompt");
       field.focus();
       field.select();
     });
@@ -3031,6 +3607,7 @@
     const done = () => {
       document.removeEventListener("keydown", onKey, true);
       overlay.remove();
+      unmarkModalAbove(overlay);
     };
     const onKey = (e) => {
       if (e.key === "Escape") {
@@ -3062,114 +3639,25 @@
     panel.append(closeBtn, title, body, actions);
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
+    markModalAbove(overlay, "remote-explainer");
     moreBtn.focus();
   }
 
   function renderGearMain() {
     state.gearView = "main";
+    gearPopover.classList.remove("model-picker");
+    gearPopover.removeAttribute("role");
+    gearPopover.removeAttribute("aria-label");
     gearPopover.innerHTML = "";
     gearPopover.classList.remove("popover-centered");
 
-    // Two surfaces, one popover. With a rail gear the composer holds what is
-    // about THIS CONVERSATION (model, effort, where it continues) and the rail
-    // holds what is about THE APP (account, purpose, settings, about). Without
-    // one — VS Code — both flags are true and nothing is split, which is why
-    // this needs no host branch.
-    const split = railGearLive();
-    const showConversation = !split || state.gearSurface !== "rail";
-    const showApp = !split || state.gearSurface === "rail";
-
-    if (showConversation) renderGearConversation();
-    if (showApp) {
-      renderGearApp();
-      renderProviderAccounts();
-    }
+    if (state.gearSurface !== "rail") { renderModelPicker(); return; }
+    renderGearApp();
+    renderProviderAccounts();
   }
 
-  /** Model + effort, plus worktree controls that have no header-menu home. */
+  /** Worktree controls retain their existing availability and confirmations. */
   function renderGearConversation() {
-    // ── Model + effort header ─────────────────────────────────────────────
-    const modelEffortSection = document.createElement("div");
-    // When Text size leads, Model and Effort is no longer the first row — keep
-    // the section rule so a separator appears under the slider.
-    modelEffortSection.className = "popover-section" +
-      (CLIENT_OWNS_FONT_SCALE ? "" : " popover-section-first");
-    modelEffortSection.textContent = "Model and Effort";
-    gearPopover.appendChild(modelEffortSection);
-
-    // ── Model + effort row ────────────────────────────────────────────────
-    const row = document.createElement("div");
-    row.className = "model-effort-row";
-
-    // Model + effort both restart or race the session, so they are locked while
-    // a turn or session startup is in flight (the same busy signal as Send).
-    //
-    // Also locked when NOTHING can answer: with no usable agent there is no
-    // model to choose between, and an enabled picker offering a list you cannot
-    // act on is worse than one that plainly says not yet. Connect an agent and
-    // it unlocks with that agent's own default selected (owner, 2026-08-17).
-    const anyUsableProvider = !state.providersKnown
-      || (state.providers || []).some((p) => p.connected && p.needsLogin !== true);
-    const settingsLocked = state.busy || !anyUsableProvider;
-
-    // Until the session's model info arrives (its name + advertised effort menu),
-    // don't show a guessed model or a stale effort ladder — show a Loading state.
-    const modelLoaded = state.availableModels.length > 0 && !!state.currentModelId;
-
-    const nameBtn = document.createElement("button");
-    nameBtn.className = "toolbar-btn model-name-btn" + (settingsLocked || !modelLoaded ? " disabled" : "");
-    const ownModels = state.availableModels.filter((model) => !model.provider || model.provider === state.activeProvider);
-    // With no agent able to answer, show that rather than the last model a
-    // session happened to remember. "GPT-5.6 Sol" sitting under the composer
-    // reads as a working selection when nothing can run at all.
-    const modelName = !anyUsableProvider
-      ? "Models unavailable"
-      : (modelLoaded ? (modelDisplayName(state.currentModelId, ownModels) || "Atlas") : "Loading…");
-    nameBtn.innerHTML = `<span class="btn-label">${escapeHtml(truncate(modelName, 18))}</span>`;
-    nameBtn.disabled = settingsLocked || !modelLoaded;
-    nameBtn.title = !anyUsableProvider
-      ? "Connect an agent to choose a model"
-      : (!modelLoaded
-        ? "Loading the session…"
-        : (settingsLocked ? `${modelName} — available once the session is ready` : `${modelName} — click to change`));
-    if (!settingsLocked && modelLoaded) nameBtn.onclick = (e) => { e.stopPropagation(); renderModelPicker(); };
-    row.appendChild(nameBtn);
-
-    const dotsEl = document.createElement("span");
-    dotsEl.className = "effort-dots" + (settingsLocked || !modelLoaded ? " disabled" : "");
-    if (!modelLoaded) {
-      // Loading: neutral placeholder dots — we don't know the model's menu yet,
-      // so show a fixed skeleton rather than the (stale) fallback ladder.
-      for (let i = 0; i < 5; i++) {
-        const dot = document.createElement("span");
-        dot.className = "effort-dot loading disabled";
-        dot.title = "Loading the session…";
-        dotsEl.appendChild(dot);
-      }
-    } else {
-      const effortLevels = effortLevelsForModel();
-      const currentIdx = effortLevels.indexOf(state.effort);
-      effortLevels.forEach((id, i) => {
-        const dot = document.createElement("span");
-        dot.className = "effort-dot" + (i <= currentIdx ? " active" : "") + (settingsLocked ? " disabled" : "");
-        // Render the dot as a CSS-shaped span (see chat.css). Avoids the classic
-        // ● vs ○ Unicode size mismatch where the empty glyph is visibly larger.
-        dot.title = settingsLocked
-          ? "Available once the session is ready"
-          : (EFFORT_TOOLTIPS[id] || capitalize(id));
-        if (!settingsLocked) dot.onclick = (e) => {
-          e.stopPropagation();
-          state.effort = state.effort === id ? "" : id;
-          vscode.postMessage({ type: "setEffort", level: state.effort });
-          renderGearMain();
-          gearPopover.hidden = false;
-        };
-        dotsEl.appendChild(dot);
-      });
-    }
-    row.appendChild(dotsEl);
-    gearPopover.appendChild(row);
-
     // ── Session ───────────────────────────────────────────────────────────
     // Conversation-wide actions live in the header's overflow on every
     // surface. Worktree Apply/Remove remain here because the VS Code overflow
@@ -3209,21 +3697,28 @@
   }
 
   /** The app itself: what it is used for, settings, and about. */
-  function renderGearApp() {
+  function renderGearApp(target = gearPopover) {
+    const section = (label) => addSection(label, target);
+    const item = (html, action) => addGearItem(html, action, target);
+    const refresh = () => {
+      if (target === addPopover) renderAddPopover();
+      else renderGearMain();
+      target.hidden = false;
+    };
     // ── Use this app for ──────────────────────────────────────────────────
     // Progressive disclosure: Knowledge work (default) hides worktrees,
     // thinking traces and tool details; Coding unlocks them (still default off).
     // Icons here only. The same choice in Settings is a <select>, where an
     // option cannot carry markup — so it stays text and the two surfaces
     // differ deliberately rather than by neglect.
-    addSection("Use this app for");
-    addGearItem(
+    section("Use this app for");
+    item(
       `<span class="gear-lead" title="Hides worktrees, thinking traces, and tool details. The default for knowledge work.">${ICON.brain}<span>Knowledge work</span></span>${state.appPurpose !== "coding" ? '<span class="popover-check">✓</span>' : ""}`,
-      () => { setAppPurpose("knowledge"); renderGearMain(); gearPopover.hidden = false; },
+      () => { setAppPurpose("knowledge"); refresh(); },
     );
-    addGearItem(
+    item(
       `<span class="gear-lead" title="Adds worktrees, thinking traces, and tool details (still off by default).">${ICON.squareChevronRight}<span>Coding</span></span>${state.appPurpose === "coding" ? '<span class="popover-check">✓</span>' : ""}`,
-      () => { setAppPurpose("coding"); renderGearMain(); gearPopover.hidden = false; },
+      () => { setAppPurpose("coding"); refresh(); },
     );
 
     // ── Remote Control ────────────────────────────────────────────────────
@@ -3231,33 +3726,35 @@
     // `remoteLinked === null` = the host hasn't answered yet: show NOTHING
     // rather than guessing. Unlink lives only in Settings → Account.
     if (!IS_REMOTE && state.remoteLinked !== null) {
-      addSection("Remote Control");
+      section(target === addPopover ? "Remote control" : "Remote Control");
       if (state.remoteLinked) {
-        addGearItem(`<span class="gear-lead">${ICON.smartphone}<span>Continue remotely</span></span>`, () => {
+        item(`<span class="gear-lead">${ICON.smartphone}<span>Continue remotely</span></span>`, () => {
           vscode.postMessage({ type: "openRemotePortal", withHint: true });
           closePopovers();
         });
-        addGearItem(`<span class="gear-lead">${ICON.user}<span>Your account</span></span>`, () => {
+        item(`<span class="gear-lead">${ICON.user}<span>Your account</span></span>`, () => {
           vscode.postMessage({ type: "openRemotePortal" });
           closePopovers();
         });
       } else {
-        addGearItem(`<span class="gear-lead">${ICON.user}<span>Sign in (link this device)</span></span>`, () => {
+        item(`<span class="gear-lead">${ICON.user}<span>Sign in (link this device)</span></span>`, () => {
           vscode.postMessage({ type: "remoteSignIn" });
           closePopovers();
         });
-        addGearItem(`<span class="gear-lead">${ICON.info}<span>How it works</span></span>`, () => {
+        item(`<span class="gear-lead">${ICON.info}<span>How it works</span></span>`, () => {
           closePopovers();
           showRemoteExplainer();
         });
       }
     }
 
-    addSection("Settings");
-    addGearItem(`<span class="gear-lead">${ICON.gear}<span>Settings</span></span>`, () => openAllSettings());
+    section("Settings");
+    item(`<span class="gear-lead">${ICON.gear}<span>Settings</span></span>`, () => {
+      openSettingsCategory(undefined, target === addPopover ? addBtn : appSettingsButton());
+    });
     // Older hosts have no provider account frame; retain their existing action.
-    if (!IS_REMOTE && !state.providersKnown) {
-      addGearItem("<span>Log out</span>", () => {
+    if (target === gearPopover && !IS_REMOTE && !state.providersKnown) {
+      item("<span>Log out</span>", () => {
         vscode.postMessage({ type: "logout" });
         closePopovers();
       });
@@ -3405,9 +3902,18 @@
   }
 
   function renderModelPicker() {
+    const scroll = gearPopover.querySelector(".model-picker-list")?.scrollTop || 0;
     state.gearView = "model";
     gearPopover.innerHTML = "";
-    addGearItem('<span class="popover-back">← Model</span>', renderGearMain);
+    gearPopover.classList.add("model-picker");
+    gearPopover.setAttribute("role", "dialog");
+    gearPopover.setAttribute("aria-label", "Model and effort");
+    renderEffortStrip();
+    const list = document.createElement("div");
+    list.className = "model-picker-list";
+    list.setAttribute("role", "radiogroup");
+    list.setAttribute("aria-label", "Model");
+    gearPopover.appendChild(list);
     let models = state.availableModels.length
       ? state.availableModels
       : [{ modelId: state.currentModelId || "grok-build", name: state.currentModelId || "grok-build" }];
@@ -3432,7 +3938,7 @@
       const heading = document.createElement("div");
       heading.className = "popover-section model-provider-heading";
       heading.textContent = providerDisplayName(provider);
-      gearPopover.appendChild(heading);
+      list.appendChild(heading);
     };
     // A provider that cannot answer is simply not in this list. It used to get
     // a heading and a "Sign in to load models" row, which put an agent you
@@ -3443,7 +3949,8 @@
     const renderModelRow = (m) => {
       const modelProvider = m.provider || state.activeProvider;
       addProviderHeading(modelProvider);
-      const el = document.createElement("div");
+      const el = document.createElement("button");
+      el.type = "button";
       const active = m.modelId === state.currentModelId && (!m.provider || m.provider === state.activeProvider);
       const label = brandModelDisplayName(modelPickerLabel(m) || m.modelId, m.modelId);
       const glyphId = providerLogoId(modelProvider);
@@ -3456,27 +3963,40 @@
         `</span>` +
         (active ? '<span class="popover-check">✓</span>' : "");
       el.title = m.modelId;
+      el.disabled = modelSelectionLocked();
+      el.setAttribute("role", "radio");
+      el.setAttribute("aria-checked", String(active));
       el.onclick = (e) => {
         e.stopPropagation();
-        const message = { type: "setModel", modelId: m.modelId };
-        if (state.providersKnown && m.provider) message.provider = m.provider;
-        vscode.postMessage(message);
-        closePopovers();
+        previewModel(m);
       };
-      gearPopover.appendChild(el);
+      list.appendChild(el);
     };
     const addManageProvidersRow = () => {
+      // Worktree actions keep their existing home, outside the model scroller.
+      renderGearConversation();
+      const footer = document.createElement("div");
+      footer.className = "model-picker-footer";
+      gearPopover.appendChild(footer);
       const sep = document.createElement("div");
       sep.className = "popover-sep";
-      gearPopover.appendChild(sep);
-      const el = document.createElement("div");
+      footer.appendChild(sep);
+      const el = document.createElement("button");
+      el.type = "button";
       el.className = "toolbar-popover-item model-manage-providers";
       el.innerHTML = `<span class="gear-lead">${ICON.settings2}<span>Manage providers</span></span>`;
       el.onclick = (e) => {
         e.stopPropagation();
-        openSettingsCategory("providers");
+        openSettingsCategory("providers", gearBtn);
       };
-      gearPopover.appendChild(el);
+      footer.appendChild(el);
+      // Pre-provider-state hosts still need their original account action.
+      if (!IS_REMOTE && !state.providersKnown) {
+        addGearItem("<span>Log out</span>", () => {
+          vscode.postMessage({ type: "logout" });
+          closePopovers();
+        }, footer);
+      }
     };
     if (grouped) {
       for (const provider of ["grok", "codex", "claude"]) {
@@ -3485,10 +4005,12 @@
         }
       }
       addManageProvidersRow();
+      list.scrollTop = scroll;
       return;
     }
     for (const m of models) renderModelRow(m);
     addManageProvidersRow();
+    list.scrollTop = scroll;
   }
 
   /** The trigger for the surface currently being rendered. */
@@ -3537,8 +4059,7 @@
 
   function openGearPopover(fromBtn) {
     gearPopover.classList.remove("popover-centered");
-    // Which button was pressed decides which sections render. Without a rail
-    // gear both surfaces collapse into the composer one, so this is inert there.
+    // The chip opens model + effort directly; the rail gear keeps the app menu.
     const surface = fromBtn && fromBtn.id === "rail-gear-btn" ? "rail" : "composer";
     // Clicking the button that is already showing closes it — clicking the OTHER
     // one switches to it. Closing on any open popover made the two surfaces
@@ -3548,10 +4069,14 @@
       closePopovers();
       if (showingThis) return;
     }
+    // One popover at a time (#148): the donut, mode and add menus stayed up
+    // under the gear because only their own openers dismissed the others.
+    closePopovers();
     state.gearSurface = surface;
     renderGearMain();
     positionGearPopover(fromBtn || activeGearButton());
     gearPopover.hidden = false;
+    gearBtn.setAttribute("aria-expanded", String(surface === "composer"));
   }
 
   // Welcome "about" link → Settings → About. VS Code opens the editor tab;
@@ -3917,28 +4442,282 @@
   }
 
   /**
-   * Split the settings surfaces rather than moving one button.
-   *
-   * The composer button NEVER disappears — Model and Effort is the highest-
-   * frequency control in the app and belongs next to the thing you type in.
-   * What changes is what it holds, and its icon follows that: sliders
-   * (settings-2) once the rail owns the app settings, the gear when it owns
-   * everything (VS Code, which has no rail). Derived from `railGearLive()`,
-   * not from a host flag.
+   * The composer button NEVER disappears — Model and Effort belongs beside
+   * the thing you type in. It stays in place and stops being anonymous: the
+   * chip names its contents. The rail still owns the app menu where present.
    */
   function syncGearPlacement() {
     const railGear = ensureRailGear();
     ensureRailResizer();
-    const split = railGearLive();
     gearBtn.hidden = false;
-    gearBtn.innerHTML = split ? ICON.settings2 : ICON.gear;
-    gearBtn.title = split ? "Model, effort and session" : "Settings";
+    syncModelChip();
+    if (railGear) railGear.hidden = !railGearLive();
+  }
+
+  function currentModel() {
+    return state.availableModels.find((m) => m.modelId === state.currentModelId
+      && (!m.provider || m.provider === state.activeProvider));
+  }
+
+  function modelSelectionLocked() {
+    return state.busy || !currentModel() || (state.providersKnown
+      && !state.providers.some((p) => p.connected && !p.needsLogin));
+  }
+
+  function effectiveEffort() {
+    const model = currentModel();
+    const levels = effortLevelsForModel();
+    // Metadata is the fallback, never an invented provider default. Old hosts
+    // can omit it; the strip then says Default without claiming a scale stop.
+    if (levels.includes(state.effort)) return state.effort;
+    return levels.includes(model?.reasoningEffort) ? model.reasoningEffort : "";
+  }
+
+  function effortLabel(level) { return level === "xhigh" ? "Extra high" : capitalize(level); }
+
+  function syncModelChip() {
+    const unavailable = state.providersKnown && !state.providers.some((p) => p.connected && !p.needsLogin);
+    const name = unavailable ? "Models unavailable" : currentModel()
+      ? modelDisplayName(state.currentModelId, state.availableModels.filter((m) => !m.provider || m.provider === state.activeProvider))
+      : "Loading…";
+    const effort = currentModel() && !unavailable ? effortLabel(effectiveEffort()) : "";
+    // Name and effort, and nothing else. The provider is already spelled out by
+    // the model name itself, and a chevron on this button and none on the mode
+    // button beside it made one of the two look like the menu (owner, 2026-09-13
+    // -- both are toolbar buttons that open a popover). Dropping the glyph also
+    // takes away the last rung's fallback, so the name now narrows instead of
+    // disappearing: an empty button is not a smaller button.
+    const model = document.createElement("span");
+    model.className = "model-chip-name";
+    model.textContent = name;
+    const word = document.createElement("span");
+    word.className = "model-chip-effort";
+    word.textContent = effort;
+    gearBtn.replaceChildren(model, word);
+    gearBtn.disabled = false; // Selection can lock; provider recovery cannot.
+    gearBtn.title = [name, effort, "Model and effort"].filter(Boolean).join(" · ")
+      + (modelSelectionLocked() ? " — selection available once the session is ready" : "");
     gearBtn.setAttribute("aria-label", gearBtn.title);
-    if (railGear) railGear.hidden = !split;
+  }
+
+  function refreshModelControls() {
+    syncModelChip();
+    if (!gearPopover.hidden && state.gearView === "model") renderModelPicker();
+  }
+
+  let effortNoticeTimer;
+  function announceEffortChange() {
+    let notice = document.querySelector(".composer-effort-notice");
+    if (!notice) {
+      notice = document.createElement("div");
+      notice.className = "composer-effort-notice";
+      notice.setAttribute("role", "status");
+      gearBtn.closest(".composer").appendChild(notice);
+    }
+    const name = modelDisplayName(state.currentModelId, state.availableModels);
+    const level = effectiveEffort();
+    notice.textContent = `${name} uses ${level ? effortLabel(level) : "its default"} effort.`;
+    clearTimeout(effortNoticeTimer);
+    effortNoticeTimer = setTimeout(() => { notice.textContent = ""; }, 4000);
+  }
+
+  // The PICKER previews while it is open and commits ONCE, when it closes --
+  // the effort strip and the model list alike. Committing per tap was unusable
+  // on an empty session: the first tap restarts the session, `busy` locks the
+  // control mid-gesture, and the host drops every later change with its own
+  // `session.priming` guard -- so a mis-tap could not be corrected until the
+  // restart finished, which reads as "nothing happens". One commit at the end
+  // is also one restart, not one per stop a finger crosses.
+  //
+  // The model list joined the strip on 2026-09-13 (owner: "I wouldn't close the
+  // model and effort picker when someone changes the model. Their next step may
+  // be changing the effort"). Picking a model used to close the popover, so
+  // "this model at that effort" cost two visits -- and the second could not
+  // start until the first had finished restarting.
+  let effortPending = null;   // the level the strip is showing, once it has moved
+  let effortBaseline = null;  // what the host had when this opening began
+  let modelPending = null;    // {modelId, provider} the list is showing, once it has moved
+  let modelBaseline = null;   // what the host had when this opening began
+
+  /** Commit what the picker is showing, as ONE message. Two posts would race:
+   *  the host does not serialize its async message handlers, so a `setEffort`
+   *  that restarts could read the remembered model back before the `setModel`
+   *  beside it had written one. `setModel` therefore carries the effort, and
+   *  the host applies the model first. A host too old to read that field
+   *  applies the model and ignores the level -- the strip then reconciles to
+   *  what the session actually runs at, and changing effort alone still works. */
+  function flushPicker() {
+    const model = modelPending, wasModel = modelBaseline;
+    const level = effortPending, wasLevel = effortBaseline;
+    effortPending = null; effortBaseline = null;
+    modelPending = null; modelBaseline = null;
+    const effortMoved = level !== null && level !== wasLevel;
+    if (model && (model.modelId !== wasModel.modelId || model.provider !== wasModel.provider)) {
+      const message = { type: "setModel", modelId: model.modelId };
+      // The row's OWN provider, not the one the preview resolved: a row that
+      // declares none leaves the host to infer it from the model id, which is
+      // what an older catalog needs (providerForRequestedModel).
+      if (state.providersKnown && model.declared) message.provider = model.declared;
+      if (effortMoved) message.effort = level;
+      vscode.postMessage(message);
+      return;
+    }
+    if (effortMoved) vscode.postMessage({ type: "setEffort", level });
+  }
+
+  /** Show a model as chosen without committing it. The chip and the strip both
+   *  read `state`, so writing it here IS the optimism the owner asked for: the
+   *  picker reopened before the host has applied anything still shows what was
+   *  picked, rather than snapping back to the value being replaced. */
+  function previewModel(m) {
+    if (modelSelectionLocked()) return;
+    const provider = m.provider || state.activeProvider;
+    if (!modelBaseline) modelBaseline = { modelId: state.currentModelId, provider: state.activeProvider };
+    state.currentModelId = m.modelId;
+    state.activeProvider = provider;
+    modelPending = { modelId: m.modelId, provider, declared: m.provider };
+    // A model carries its own ladder, so a level previewed against the PREVIOUS
+    // model stays a choice only while THIS one still offers it: an off-menu
+    // level is refused by the adapter, which would leave the strip showing
+    // something the session never ran at. "" is every model's default and keeps.
+    if (effortPending && !effortLevelsForModel().includes(effortPending)) {
+      effortPending = null;
+      effortBaseline = null;
+    }
+    // Re-rendering destroys the row that was just clicked, so a keyboard walk
+    // through the list would drop focus to the body mid-gesture.
+    const refocus = gearPopover.contains(document.activeElement);
+    syncModelChip();
+    renderModelPicker();
+    const row = refocus && gearPopover.querySelector(".model-picker-row.active");
+    if (row) { try { row.focus(); } catch { /* */ } }
+  }
+
+  function renderEffortStrip() {
+    const box = document.createElement("div");
+    box.className = "model-effort-strip";
+    const levels = currentModel() ? effortLevelsForModel() : [];
+    const locked = modelSelectionLocked();
+    const preview = (level) => {
+      if (modelSelectionLocked()) return;
+      // First move of this opening: remember what the host had, so returning to
+      // the level you started on closes without posting anything at all.
+      if (effortBaseline === null) effortBaseline = effectiveEffort();
+      state.effort = level;
+      effortPending = level;
+      // Reset must not reuse metadata that represents a previous override.
+      if (!level && currentModel()) currentModel().reasoningEffort = undefined;
+      syncModelChip();
+      update();
+    };
+    const header = document.createElement("div");
+    header.className = "effort-strip-header";
+    const label = document.createElement("span");
+    label.textContent = "Effort";
+    const value = document.createElement("strong");
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "effort-reset";
+    reset.textContent = "Reset";
+    reset.title = "Reset to the provider default";
+    reset.disabled = locked;
+    reset.onclick = (e) => { e.stopPropagation(); preview(""); };
+    header.append(label, value, reset);
+    const track = document.createElement("div");
+    track.className = "effort-strip-track";
+    track.setAttribute("role", "radiogroup");
+    track.setAttribute("aria-label", "Reasoning effort");
+    track.style.setProperty("--n", String(Math.max(1, levels.length)));
+    track.innerHTML = '<span class="effort-strip-rail"></span><span class="effort-strip-fill"></span>';
+    const tip = document.createElement("div");
+    tip.className = "effort-strip-tip";
+    const stops = levels.map((level, index) => {
+      const stop = document.createElement("button");
+      stop.type = "button";
+      stop.className = "effort-strip-stop";
+      stop.dataset.effort = level;
+      stop.setAttribute("role", "radio");
+      stop.setAttribute("aria-label", effortLabel(level));
+      stop.title = effortTooltip(level);
+      stop.disabled = locked;
+      stop.innerHTML = "<i></i>";
+      stop.onclick = (e) => { e.stopPropagation(); preview(level); };
+      stop.onkeydown = (e) => {
+        const delta = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1
+          : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+        const next = e.key === "Home" ? 0 : e.key === "End" ? levels.length - 1
+          : delta ? (index + delta + levels.length) % levels.length : -1;
+        if (next < 0) return;
+        e.preventDefault(); e.stopPropagation();
+        preview(levels[next]); stops[next].focus();
+      };
+      track.appendChild(stop);
+      return stop;
+    });
+    // Drag the knob. The track is a grid of equal columns, so the column under
+    // the pointer IS the stop -- no rail-geometry maths that could disagree with
+    // where the dots are actually painted. Pointer capture keeps the gesture
+    // alive once the finger leaves the 42px band, which on a phone it always
+    // does, and `touch-action: none` (chat.css) stops the popover scrolling
+    // underneath it instead.
+    const levelAt = (clientX) => {
+      const r = track.getBoundingClientRect();
+      if (!levels.length || !(r.width > 0)) return null;
+      const i = Math.floor((clientX - r.left) / (r.width / levels.length));
+      return levels[Math.min(levels.length - 1, Math.max(0, i))];
+    };
+    let dragging = false;
+    track.addEventListener("pointerdown", (e) => {
+      if (modelSelectionLocked() || e.button > 0) return;
+      dragging = true;
+      try { track.setPointerCapture(e.pointerId); } catch {}
+      const level = levelAt(e.clientX);
+      if (level !== null) preview(level);
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    track.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const level = levelAt(e.clientX);
+      if (level !== null && level !== state.effort) preview(level);
+      e.preventDefault();
+    });
+    const endDrag = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { track.releasePointerCapture(e.pointerId); } catch {}
+    };
+    track.addEventListener("pointerup", endDrag);
+    track.addEventListener("pointercancel", endDrag);
+
+    const update = () => {
+      const level = effectiveEffort();
+      const index = levels.indexOf(level);
+      const fraction = Math.max(0, index) / Math.max(1, levels.length - 1);
+      track.style.setProperty("--f", String(fraction));
+      // Interpolate at the same positions and in the same colour space as
+      // the strip, so a knob between palette anchors matches its ramp slice.
+      const anchors = [0, .38, .7, 1];
+      const segment = fraction <= .38 ? 0 : fraction <= .7 ? 1 : 2;
+      const mix = (fraction - anchors[segment]) / (anchors[segment + 1] - anchors[segment]) * 100;
+      track.style.setProperty("--knob", `color-mix(in srgb, var(--e${segment + 1}), var(--e${segment + 2}) ${mix}%)`);
+      stops.forEach((stop, i) => {
+        stop.classList.toggle("current", i === index);
+        stop.classList.toggle("past", i < index);
+        stop.setAttribute("aria-checked", String(i === index));
+        stop.tabIndex = i === Math.max(0, index) ? 0 : -1;
+      });
+      value.textContent = !currentModel() ? "Loading…" : level ? effortLabel(level) : "Default";
+      tip.textContent = level ? effortTooltip(level) : "Uses the provider default";
+    };
+    update();
+    box.append(header, track, tip);
+    gearPopover.appendChild(box);
   }
 
   function openModePopover() {
     if (!modePopover.hidden) { closePopovers(); return; }
+    closePopovers();
     modePopover.innerHTML = "";
     for (const [id, meta] of Object.entries(MODE_META)) {
       // Plan is Atlas's extension-owned plan gate. Codex owns its own plan
@@ -3979,9 +4758,20 @@
   function openAddPopover() {
     if (!addPopover.hidden) { closePopovers(); return; }
     closePopovers();
+    renderAddPopover();
+    positionPopover(addPopover, addBtn);
+    addPopover.hidden = false;
+  }
+
+  function renderAddPopover() {
     addPopover.innerHTML = "";
+    const ownsApp = !railGearLive() && !IS_REMOTE;
+    if (ownsApp) addSection("Attach", addPopover);
     const item = document.createElement("div");
     item.className = "toolbar-popover-item";
+    // Relay upload adapters insert their document row immediately after this
+    // marker, never after the first generic action in a mixed menu.
+    item.dataset.uploadRow = "photo";
     item.innerHTML = `<span class="add-item-icon">${ICON.upload}</span><span>Upload from computer</span>`;
     item.onclick = (e) => {
       e.stopPropagation();
@@ -3989,8 +4779,7 @@
       closePopovers();
     };
     addPopover.appendChild(item);
-    positionPopover(addPopover, addBtn);
-    addPopover.hidden = false;
+    if (ownsApp) renderGearApp(addPopover);
   }
 
   // Dashboard dot in the history dropdown. Gray (the `none` default) at rest; the
@@ -4033,16 +4822,13 @@
   /**
    * Whether the agent running this session can hear a mid-turn message.
    *
-   * Steer is `_x.ai/interject`, an xAI extension to ACP — so it is a GROK
-   * capability, not an ACP one. Codex's adapter answers -32601 and the text
-   * falls back to the queue, and Claude Code has no interject at all. Both
-   * therefore schedule instead, and neither is offered a button that describes
-   * something its agent cannot do.
-   *
-   * An absent provider means an older host that only ever ran Atlas.
+   * Use the focused backend's host-confirmed capability. Remotes also require
+   * the host dispatch field: the relay can ship this renderer before a host
+   * learns Codex steering. Neither an absent field nor a version proves support.
    */
   function steerableProvider() {
-    return state.activeProvider !== "claude" && state.activeProvider !== "codex";
+    if (IS_REMOTE && state.hostCaps?.remoteSteering !== true) return false;
+    return state.steerSupported && state.steeringProvider === state.activeProvider;
   }
 
   /**
@@ -4428,7 +5214,7 @@
     historyFooterEl.hidden = !(loadedClearable || moreUnloaded);
   }
 
-  function renderSessionRows() {
+  function renderSessionRows(autoPage = true) {
     const list = historyListEl;
     if (!list) return;
     list.innerHTML = "";
@@ -4456,7 +5242,7 @@
       list.appendChild(more);
     }
     updateHistoryFooter();
-    requestNextSessionsPageIfUnderfilled();
+    if (autoPage) requestNextSessionsPageIfUnderfilled();
   }
 
   function renderSessionRow(s) {
@@ -4671,7 +5457,7 @@
 
   let railEl = null;
   let railResolved = false;
-  let railProbeTimer = null;
+  const railProbeTimers = {};
   // Monotonic renderer-local counter for railTransition.token. Not a grok
   // session id — never sent to the host; only used so superseded timers and
   // late frames cannot complete a transition that a later click replaced.
@@ -4898,7 +5684,8 @@
         closeRailColorPicker();
         // Skip a no-op write: re-picking the current colour should not churn
         // the catalog (and a remote round-trip for nothing).
-        if (sw.id === current) return;
+        if (sw.id === current && !pendingPreferences.has("color:" + repo.cwd)) return;
+        if (postPreference({ type: "setRepoColor", cwd: repo.cwd, color: sw.id })) return;
         vscode.postMessage({ type: "setRepoColor", cwd: repo.cwd, color: sw.id });
         // Paint now. The next `repos` frame that names this cwd is the
         // authority — confirm, contradict, or a silent host's expiry.
@@ -5175,7 +5962,7 @@
    *  outranks it, and there is no flag left behind to go stale. */
   function railSections() {
     const ordered = railRepos();
-    // Host without archive capability (desktop curated open/close): no Project
+    // Host without archive capability (older desktop builds): no Project
     // Archive group and no age rule. Presence of `archived` on rows is the
     // signal — see railArchiveSupported.
     if (!railArchiveSupported()) {
@@ -5208,17 +5995,19 @@
   }
 
   function railRepoArchived(repo, floorKeys, now) {
-    // Never the project you are reading. Archiving it is still recorded — it
-    // drops out of sight the moment you work somewhere else — but a rail that
-    // files the open conversation under "Archived" is describing the screen
-    // wrongly.
-    if (sameCwd(repo.cwd, state.selectedRepoCwd)) return false;
     const known = railKnownRows(repo);
     const at = railRepoActivity(repo);
     // Your own last word, in force until the project is worked in again — and
     // without the project's own rows there is nothing that could have overruled
     // it, so it stands as given rather than being tested against a guess.
     if (repo.archivedAt > 0 && (!known || repo.archivedAt >= at)) return !!repo.archived;
+    // Below here every rule is a GUESS about where you are or how long it has
+    // been, and none of them may overrule the line above. The project you are
+    // reading is exempt from being archived FOR you -- not from being archived
+    // BY you. Ordering these the other way round is what made Archive look
+    // broken on the project a machine boots into: the host stored the choice,
+    // this returned false, and the row never moved.
+    if (sameCwd(repo.cwd, state.selectedRepoCwd)) return false;
     // The age rule NEVER runs on a guess. Without the project's conversations we
     // do not know when it was last worked in: `repo.updatedAt` is the session
     // DIRECTORY's mtime, and that does not move when you continue an existing
@@ -5711,35 +6500,73 @@
    *  an old host would be sent one dead request per repo on every catalog push. */
   function requestRailPreviews() {
     if (!rail() || !state.reposKnown) return;
+    // Before capability proof there is exactly one probe. If it failed, only
+    // the visible Retry may send it again; catalog repaints are not retries.
+    if (!state.repoPreviewsSupported && Object.keys(state.repoPreviewErrors).length) return;
     const wanted = railRepos().filter(
-      (r) => r.available && !sameCwd(r.cwd, state.selectedRepoCwd) && !state.repoPreviews[cwdKey(r.cwd)],
+      (r) => r.available
+        && !sameCwd(r.cwd, state.selectedRepoCwd)
+        && !state.repoPreviews[cwdKey(r.cwd)]
+        && !state.repoPreviewErrors[cwdKey(r.cwd)],
     );
     if (!wanted.length) return;
     const ask = state.repoPreviewsSupported ? wanted : wanted.slice(0, 1);
-    for (const r of ask) {
-      const key = cwdKey(r.cwd);
-      if (state.repoPreviewsAsked[key]) continue;
-      state.repoPreviewsAsked[key] = true;
-      vscode.postMessage({ type: "listRepoSessions", cwd: r.cwd, limit: RAIL_EXPANDED });
-      armRailProbeDeadline();
+    for (const r of ask) requestRailPreview(r);
+  }
+
+  function requestRailPreview(repo) {
+    const key = cwdKey(repo.cwd);
+    if (state.repoPreviewsAsked[key]) return;
+    let accepted;
+    try {
+      accepted = vscode.postMessage({ type: "listRepoSessions", cwd: repo.cwd, limit: RAIL_EXPANDED });
+    } catch (err) {
+      failRailPreview(repo.cwd, "transport-refused");
+      return;
+    }
+    if (accepted === false) {
+      failRailPreview(repo.cwd, "transport-refused");
+      return;
+    }
+    state.repoPreviewsAsked[key] = true;
+    armRailProbeDeadline(repo.cwd);
+    if (accepted && typeof accepted.then === "function") {
+      accepted.then((sent) => {
+        if (sent === false && state.repoPreviewsAsked[key]) failRailPreview(repo.cwd, "transport-refused");
+      }, () => {
+        if (state.repoPreviewsAsked[key]) failRailPreview(repo.cwd, "transport-refused");
+      });
     }
   }
 
-  /** A host that predates `listRepoSessions` answers with silence, so the only
-   *  way to tell "still reading the session store" from "will never reply" is a
-   *  deadline. Armed once, on the first probe; cancelled by the first answer. */
-  function armRailProbeDeadline() {
-    if (railProbeTimer || state.repoPreviewsSupported || state.repoPreviewsUnsupported) return;
+  function clearRailProbeDeadline(cwd) {
+    const key = cwdKey(cwd);
+    if (!railProbeTimers[key]) return;
+    clearTimeout(railProbeTimers[key]);
+    delete railProbeTimers[key];
+  }
+
+  function failRailPreview(cwd, reason) {
+    const key = cwdKey(cwd);
+    clearRailProbeDeadline(cwd);
+    delete state.repoPreviewsAsked[key];
+    state.repoPreviewErrors[key] = reason || "no-answer";
+    console.warn(`[rail] listRepoSessions failed: ${state.repoPreviewErrors[key]}`);
+    renderRail();
+  }
+
+  /** Every accepted request owns a deadline. Expiry is a load failure, never a
+   *  version verdict, and releases the in-flight slot for the visible Retry. */
+  function armRailProbeDeadline(cwd) {
+    const key = cwdKey(cwd);
+    clearRailProbeDeadline(cwd);
     const ms = Number(window.__grokRailProbeTimeoutMs) > 0
       ? Number(window.__grokRailProbeTimeoutMs)
       : RAIL_PROBE_TIMEOUT_MS;
-    railProbeTimer = setTimeout(() => {
-      railProbeTimer = null;
-      if (state.repoPreviewsSupported) return;
-      // A verdict, not a fact: nothing answered in time. Said out loud so the
-      // rail has something to show, and dropped on the next reconnect.
-      state.repoPreviewsUnsupported = true;
-      renderRail();
+    railProbeTimers[key] = setTimeout(() => {
+      delete railProbeTimers[key];
+      if (!state.repoPreviewsAsked[key]) return;
+      failRailPreview(cwd, "deadline-expired");
     }, ms);
   }
 
@@ -5748,21 +6575,12 @@
    *  but that is a correction owed when the conversation ARRIVES, not a reason to
    *  refuse the fold forever. Keyed on the repo changing, so re-collapsing the
    *  project you are working in sticks until you go somewhere else. */
-  /**
-   * Forget an unanswered capability probe.
-   *
-   * `repoPreviewsUnsupported` is inferred from silence, so it is only ever as
-   * good as the moment it was measured. A reconnect may be a different host —
-   * or the same one, no longer busy — and without this the page carried
-   * "Sessions need a newer Grok Build" about a current host for as long as it
-   * stayed open (owner, on a cloud machine that had just run a CLI sign-out,
-   * 2026-08-31).
-   */
+  /** Reconnect abandons every old in-flight request; the new socket may retry. */
   function forgetRailProbeVerdict() {
-    if (state.repoPreviewsSupported) return;
-    if (railProbeTimer) { clearTimeout(railProbeTimer); railProbeTimer = null; }
-    state.repoPreviewsUnsupported = false;
+    for (const timer of Object.values(railProbeTimers)) clearTimeout(timer);
+    for (const key of Object.keys(railProbeTimers)) delete railProbeTimers[key];
     state.repoPreviewsAsked = {};
+    state.repoPreviewErrors = {};
   }
 
   function railFollowLiveRepo() {
@@ -5781,6 +6599,50 @@
     state.railLiveRepoKey = live;
     if (live) delete state.railCollapsed[live];
   }
+
+  /**
+   * Carry the pointer's hover across a wholesale rebuild.
+   *
+   * `renderRail()` empties the rail and builds it again, and one boot does that
+   * a dozen times or more as each project's rows arrive. The browser recomputes
+   * :hover only AFTER the lifecycle that paints the new nodes, so the row under
+   * a cursor that never moved paints WITHOUT its hover fill and without its
+   * action buttons for one frame, every time — which is the blinking the owner
+   * saw while the rail loaded. .rail-rebuilding only silenced the fade; the
+   * frame at the wrong state was still painted.
+   *
+   * So find the row the pointer is over in the same task that builds it and mark
+   * it, before anything is painted. The mark is dropped on the next real pointer
+   * move, which is exactly when :hover becomes authoritative again.
+   */
+  let railPointerXY = null;
+  let railHoverHeld = null;
+
+  function railDropHoverHold() {
+    if (railHoverHeld) railHoverHeld.classList.remove("rail-hover-hold");
+    railHoverHeld = null;
+  }
+
+  function railHoldHoverAfterRebuild() {
+    railDropHoverHold();
+    if (!railPointerXY || typeof document.elementFromPoint !== "function") return;
+    const at = document.elementFromPoint(railPointerXY.x, railPointerXY.y);
+    const row = at && at.closest ? at.closest(".rail-session, .rail-repo-head") : null;
+    if (!row) return;
+    row.classList.add("rail-hover-hold");
+    railHoverHeld = row;
+  }
+
+  document.addEventListener("pointermove", (e) => {
+    railPointerXY = { x: e.clientX, y: e.clientY };
+    railDropHoverHold();
+  }, true);
+  // Leaving the window (or a touch ending) means there is no pointer to carry.
+  // documentElement, and NOT capturing: pointerleave does not bubble, but a
+  // capturing listener on document would still see the copy fired at every row
+  // the pointer crosses, and switch the carry off on the first move.
+  document.documentElement.addEventListener("pointerleave", () => { railPointerXY = null; railDropHoverHold(); });
+  document.addEventListener("pointercancel", () => { railPointerXY = null; railDropHoverHold(); }, true);
 
   function renderRail() {
     const root = rail();
@@ -5889,7 +6751,13 @@
     // headings — a filtered list that still lists everything is not a filter.
     const sections = railSections();
     const repos = sections.active.filter((repo) => !q || railRepoHasMatch(repo));
-    if (repos.length) {
+    const archivedRepos = sections.archived.filter((repo) => !q || railRepoHasMatch(repo));
+    // TWIN of the same guard in projects-rail.js. Archiving the last project
+    // used to take the header, the "+" and the wide add target with it, leaving
+    // a rail with nothing to press -- and `!shownAnything` could not rescue it,
+    // because the archive section below had already set it.
+    const emptyProjects = !repos.length && !q && archivedRepos.length > 0;
+    if (repos.length || emptyProjects) {
       const forcedOpen = !!q;
       const open = forcedOpen || !railGroupIsCollapsed("projects");
       root.appendChild(railCollapsibleGroupHead({
@@ -5907,6 +6775,7 @@
         list.className = "rail-list rail-projects";
         for (const repo of repos) list.appendChild(renderRailRepo(repo, false));
         root.appendChild(list);
+        if (emptyProjects) root.appendChild(railNote("Every project is archived."));
         // Full-width target under the list, not only the small "+" in the group
         // head. With one project or none the rail is mostly empty space and the
         // header glyph is easy to miss — and on a phone, easy to miss AND hard
@@ -5917,7 +6786,7 @@
     }
 
     // Project archive: put-away + age-quiet projects. Folded by default; search opens it.
-    const archived = sections.archived.filter((repo) => !q || railRepoHasMatch(repo));
+    const archived = archivedRepos;
     if (archived.length) {
       const forcedOpen = !!q;
       const open = forcedOpen || !railGroupIsCollapsed("archived");
@@ -5966,6 +6835,7 @@
     // anchor button, and re-opening it mid-catalog-refresh is not worth the
     // bookkeeping. Closing avoids a fixed popover stranded over a gone row.
     if (railColorPickerEl) closeRailColorPicker();
+    railHoldHoverAfterRebuild();
     // Let the browser paint this rebuild with transitions off, then restore them
     // so an ordinary hover still fades. rAF (not a timer) so it lands after the
     // paint rather than at an arbitrary later moment.
@@ -6068,7 +6938,10 @@
     plus.textContent = "+";
     add.appendChild(plus);
     add.appendChild(document.createTextNode("Add project"));
-    add.onclick = () => openAddProjectMenu(add);
+    add.onclick = (e) => {
+      e.stopPropagation();
+      openAddProjectMenu(add);
+    };
     return add;
   }
 
@@ -6105,6 +6978,23 @@
     };
   }
 
+  /**
+   * May this surface put a project away?
+   *
+   * NOT canAddProjectFolder(), and the difference is the whole bug. That helper
+   * used to mean "the native picker is here" — false on every remote, so Hide
+   * never drew there and gate and action agreed. Then create and clone shipped
+   * as remote-capable ways IN, the helper started answering true on a remote,
+   * and Hide came with it: drawn, posted, and dropped by the host's policy
+   * without a word. The owner found it on a cloud machine.
+   *
+   * Its own capability now, advertised only where the action can be honoured.
+   */
+  function canRemoveProjectFolder() {
+    const caps = state.hostCaps || {};
+    return caps.removeProjectFolder === true;
+  }
+
   function canAddProjectFolder() {
     const caps = addProjectCaps();
     return caps.canImport || caps.canCreate || caps.canClone;
@@ -6134,8 +7024,7 @@
     const run = (id) => {
       // The knowledge-work hint acts instead of instructing: it opens the
       // setting that would put Clone in this menu.
-      if (id === "clone-needs-coding") openSettingsCategory("general");
-      else if (id === "import") vscode.postMessage({ type: "addProjectFolder" });
+      if (id === "import") vscode.postMessage({ type: "addProjectFolder" });
       else openAddProjectForm(id);
     };
     // One way in is a click, not a menu that asks permission to be a click.
@@ -6159,14 +7048,33 @@
   let addProjectFormScrim = null;
   let addProjectFormKeydown = null;
 
+  /**
+   * Cancel a GitHub device login, but only at a host that knows what that
+   * means. An older one maps every unrecognised provider to `grok`, so sending
+   * it there either does nothing (no Grok login running) or cancels somebody
+   * else's Grok sign-in. Silence costs the abandoned login its 15-minute
+   * timeout, which is exactly the behaviour those hosts already had.
+   */
+  function cancelGithubDeviceLoginIfSupported() {
+    if (IS_REMOTE && !(state.hostCaps && state.hostCaps.remoteGithubToken)) return;
+    vscode.postMessage({ type: "cancelDeviceLogin", provider: "github" });
+  }
+
   function closeAddProjectForm() {
-    if (addProjectFormScrim) addProjectFormScrim.remove();
+    const wasClone = !!(addProjectFormApi && addProjectFormApi.el && addProjectFormApi.el.dataset.kind === "clone");
+    if (wasClone) {
+      state.projectGithub = null;
+      cancelGithubDeviceLoginIfSupported();
+    }
+    const scrim = addProjectFormScrim;
+    if (scrim) scrim.remove();
     // Capture-phase, so it must come off again — a listener left behind would
     // swallow Escape everywhere else in the app for the rest of the session.
     if (addProjectFormKeydown) document.removeEventListener("keydown", addProjectFormKeydown, true);
     addProjectFormKeydown = null;
     addProjectFormScrim = null;
     addProjectFormApi = null;
+    unmarkModalAbove(scrim);
   }
 
   /**
@@ -6181,16 +7089,59 @@
     if (!helpers || typeof helpers.addProjectForm !== "function") return;
     closeAddProjectForm();
     closeRailMenu();
+    if (kind === "clone") {
+      state.projectGithub = null;
+      cancelGithubDeviceLoginIfSupported();
+    }
+    const githubSignIn = !IS_REMOTE || !!(state.hostCaps && state.hostCaps.remoteGithubSignIn);
+    // The token path is NOT covered by remoteGithubSignIn: that flag promises
+    // the device-code flow and nothing else, and a host advertising it but
+    // predating `githubLoginWithToken` takes the credential across the relay
+    // and drops it, clearing the field with no error.
+    const githubToken = !IS_REMOTE || !!(state.hostCaps && state.hostCaps.remoteGithubToken);
     const api = helpers.addProjectForm({
       kind,
       root: state.projectRoot,
-      onSubmit: (value) => {
+      canGithubCli: githubSignIn,
+      canUseToken: githubToken,
+      onSubmit: (value, extra) => {
         vscode.postMessage(
           kind === "clone"
-            ? { type: "cloneProject", url: value }
+            ? { type: "cloneProject", url: value, ...(extra && extra.name ? { name: extra.name } : {}) }
             : { type: "createProject", name: value },
         );
       },
+      onLoginWithToken: (token) => {
+        vscode.postMessage({ type: "githubLoginWithToken", token });
+      },
+      onConnect: () => {
+        // Same gate as onFix below, and for the same reason: a host that
+        // predates `remoteGithubSignIn` drops `setupGithubCli` silently, so
+        // without this the picker's Connect row is a button that does nothing.
+        // The client is always as new as the relay deploy while the extension
+        // is whatever the person installed, so "older host" is the ordinary
+        // case, not an edge one.
+        if (IS_REMOTE && !(state.hostCaps && state.hostCaps.remoteGithubSignIn)) {
+          if (addProjectFormApi) {
+            addProjectFormApi.update({
+              error: IS_CLOUD_HOST
+                ? "This machine's app is too old to connect GitHub from here. It updates itself shortly."
+                : "Sign in to GitHub on the computer running this workspace — a terminal opens there — then try again here.",
+            });
+          }
+          return;
+        }
+        vscode.postMessage({ type: "setupGithubCli", action: "auth" });
+      },
+      onRequestRepos: () => {
+        vscode.postMessage({ type: "listGithubRepos" });
+      },
+      githubState: state.githubState || undefined,
+      repos: state.githubRepos,
+      terminalSignIn: !IS_REMOTE,
+      onRecheck: () => vscode.postMessage({ type: "refreshProviders" }),
+      touch: remoteUsesTouchComposer() || (typeof window.matchMedia === "function"
+        && window.matchMedia("(hover: none), (pointer: coarse)").matches),
       onCancel: closeAddProjectForm,
       // Local: signing in happens in a terminal, and the form stays open so
       // they can clone again afterwards.
@@ -6255,7 +7206,12 @@
       closeAddProjectForm();
     };
     document.addEventListener("keydown", addProjectFormKeydown, true);
-    api.update({ root: state.projectRoot, github: state.projectGithub || undefined });
+    api.update({
+      root: state.projectRoot,
+      githubState: state.githubState || undefined,
+      repos: state.githubRepos,
+    });
+    markModalAbove(scrim, "add-project");
     api.focus();
   }
 
@@ -6907,7 +7863,7 @@
     const add = document.createElement("button");
     add.type = "button";
     add.className = "rail-action-btn";
-    add.innerHTML = ICON.plus;
+    add.innerHTML = ICON.squarePen;
     add.title = selected ? "New session here" : "Switch to this project and start a new session";
     // Deliberately NOT gated on repoSwitcherLocked(). Starting a conversation is
     // the one thing that should always be available, and a lock that disables it
@@ -6972,11 +7928,11 @@
         title: inArchive
           ? "Show this project under Projects again"
           : "Move this project out of the way. Its conversations stay, and working here brings it back.",
-        onSelect: () => vscode.postMessage({
+        onSelect: () => postPreference({
           type: "setRepoArchived",
           cwd: repo.cwd,
           archived: !inArchive,
-        }),
+        }) || vscode.postMessage({ type: "setRepoArchived", cwd: repo.cwd, archived: !inArchive }),
       }, null] : []),
       // Folder colour — host-persisted, capability-gated the same way as archive
       // (`color` present on catalog rows). Opens a swatch picker rather than a
@@ -6987,19 +7943,28 @@
         title: "Tint this project's folder icon so it is easy to find",
         onSelect: () => openRepoColorPicker(projectMenuBtn, repo),
       }, null] : []),
-      // The desktop's equivalent, and a different act despite the same intent.
-      // Its rail IS the set of open folders, so putting a project away means
-      // closing it — there is no archive flag to set, and the browser client
-      // has no business closing folders on the machine it is borrowing. Same
-      // capability as the + that adds them: a host that can open a folder can
-      // close one, and one that cannot never grows either control.
-      ...(canAddProjectFolder() ? [{
+      // Hide closes a local folder; archiving only changes its rail group.
+      ...(canRemoveProjectFolder() ? [{
         label: "Hide project",
         icon: ICON.archive,
         title:
           "Take this project out of the list. Nothing is deleted — the folder " +
           "stays on disk, and + adds it back.",
-        onSelect: () => vscode.postMessage({ type: "removeProjectFolder", cwd: repo.cwd }),
+        // Confirmed, like every other rail act that reaches other surfaces. The
+        // VS Code rail has always asked; this one posted bare, so one gesture was
+        // guarded on one surface and not the other. It also takes the row off
+        // every linked device at once, which is worth saying out loud.
+        onSelect: () => {
+          const repoLabel = repo.label || cwdLeaf(repo.cwd);
+          uiConfirm({
+            title: `Hide “${repoLabel}”?`,
+            body: `Takes this project out of the list on every linked device:\n${repo.cwd}`
+              + "\n\nNothing is deleted — the folder stays on disk, and Add project brings it back.",
+            confirmLabel: "Hide",
+          }).then((ok) => {
+            if (ok) vscode.postMessage({ type: "removeProjectFolder", cwd: repo.cwd });
+          });
+        },
       }, null] : []),
       {
         label: "Clear all history",
@@ -7063,16 +8028,20 @@
         appendRailSessionSlice(body, entries, key, (s) => renderRailSessionRow(s, repo));
         return body;
       }
-      // No rows yet. Two very different reasons, and saying "Loading…" for both
-      // is the wrong answer: a host too old to answer `listRepoSessions` will
-      // NEVER answer, and the probe is sent for one repo only — so every other
-      // repo would sit on a spinner forever with nothing coming.
-      if (state.repoPreviewsUnsupported) {
-        const note = railNote("Update Atlas to preview");
-        note.title =
-          "Atlas on your computer — the extension or the desktop app — is older " +
-          "than this page, so it can't list another project's sessions without " +
-          "switching to it. Click the project name to open it, or update it.";
+      const previewError = state.repoPreviewErrors[key];
+      if (previewError) {
+        const note = railNote("Couldn't load these conversations. ");
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "rail-note-retry";
+        retry.textContent = "Retry";
+        retry.onclick = (e) => {
+          e.stopPropagation();
+          delete state.repoPreviewErrors[key];
+          renderRail();
+          requestRailPreview(repo);
+        };
+        note.appendChild(retry);
         body.appendChild(note);
       } else {
         body.appendChild(railNote("Loading…"));
@@ -7452,9 +8421,8 @@
     return el;
   }
 
-  /** Take an unfiltered first page as the selected repo's rail rows. The one
-   *  place `railSelectedRows` is written, so "the rail's list" can only ever be
-   *  a whole, unsearched page for the repo currently selected. */
+  /** Take an unfiltered first page as the selected repo's rail rows. Targeted
+   *  removals also prune it, without adopting the history popover's search. */
   function adoptRailRows(entries) {
     state.railSelectedRows = uniqueSessionRows(entries);
     state.railSelectedRowsKnown = true;
@@ -7673,16 +8641,26 @@
     return {
       appPurpose: state.appPurpose === "coding" ? "coding" : "knowledge",
       isRemote: IS_REMOTE,
+      // The Explorer drag tip is about a workbench behaviour the desktop shell
+      // does not have.
+      desktopShell: IS_DESKTOP_CLIENT,
+      // Asked of the DEVICE, not the surface: the relay's own browser client on
+      // a laptop pastes images fine, and a phone cannot regardless of where it
+      // is pointed. matchMedia is absent in some test DOMs, so absence reads as
+      // "not touch" rather than throwing.
+      coarsePointer: (() => {
+        try {
+          return !!(window.matchMedia && window.matchMedia("(hover: none), (pointer: coarse)").matches);
+        } catch { return false; }
+      })(),
       // Mirrors continueChatDestinations(), so the tip is never offered where
       // the action it links to would be refused.
       worktreeSupported: state.worktreeSupported !== false,
       inWorktree: !!state.isWorktree,
       altAgentConnected: !state.providersKnown || altConnected,
-      // A cloud machine can connect agents from here and cannot connect Claude
-      // Code at all; both change what the providers tip should say and whether
-      // it may be shown.
-      cloudHost: !!(state.hostCaps && state.hostCaps.remoteAgentSignOut),
       remoteCanConnectAgents: !!(state.hostCaps && state.hostCaps.remoteAgentSignIn),
+      // The same capability Settings gates its Connectors category on.
+      mcpSettings: !!(state.hostCaps && state.hostCaps.mcpSettings),
       routineCount: host.routineCount,
       connectorCount: host.connectorCount,
       // A phone's read-aloud is its own client-side preference, not the desk's.
@@ -7942,7 +8920,57 @@
    * places where the screen genuinely becomes empty again - a new session, and
    * the deferred transcript wipe. Every other caller is a repaint.
    */
+  function renderCodexUpdateNudge() {
+    const existing = $("welcome-codex-update");
+    if (existing) existing.remove();
+    const welcome = $("welcome");
+    const codex = (state.providers || []).find((p) => p.id === "codex");
+    if (!welcome || !codex || !codex.cliUpdate) return;
+    // Codex's CLI version is Codex's business. On the Grok or Claude tab this
+    // was an offer to update a tool the user had not selected, sitting on
+    // another provider's welcome screen — noise at best, and confusing about
+    // which agent it was even talking about.
+    if (state.activeProvider !== "codex") return;
+    const update = codex.cliUpdate;
+    // Retain progress/outcome after the version changes so an empty phone
+    // conversation doesn't lose the answer to the update it just requested.
+    if ((!codex.connected || !codex.updateAvailable) && update.status === "idle") return;
+    // An offer and a status share this box, and they are not the same thing.
+    // While an update runs, and after it finishes, this is a progress line:
+    // ambient, `muted`, nothing to do. When there IS something to take, it
+    // gets the foreground colour and a real button - as a grey sentence under
+    // a grey link it read as disabled text and went unnoticed on a phone.
+    const offer = !!(codex.connected && (codex.updateAvailable || update.status === "failed") &&
+      update.status !== "running");
+    const el = document.createElement("div");
+    el.id = "welcome-codex-update";
+    el.className = offer ? "welcome-tip welcome-cli-update welcome-cli-update-offer" :
+      "welcome-tip welcome-cli-update muted";
+    el.setAttribute("role", "status");
+    const text = document.createElement("span");
+    text.textContent = update.message ||
+      `Codex CLI v${codex.cliVersion} is older than v${codex.latestCliVersion}, the version included with this app. Update to discover newer models. `;
+    el.appendChild(text);
+    if (offer) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Update Codex CLI";
+      button.disabled = (state.providers || []).some((p) => p.cliUpdate && p.cliUpdate.status === "running");
+      button.onclick = async () => {
+        const ok = await uiConfirm({
+          title: "Update Codex CLI?",
+          body: "This runs Codex’s updater on the connected machine. Running Codex sessions will stop, then visible conversations will resume.",
+          confirmLabel: "Update Codex CLI",
+        });
+        if (ok) vscode.postMessage({ type: "updateCodex" });
+      };
+      el.appendChild(button);
+    }
+    welcome.appendChild(el);
+  }
+
   function renderWelcomeTip(advance) {
+    renderCodexUpdateNudge();
     // Never in the browser client. The capability is mirrored to remotes with
     // the rest of initialState, but where the chat sits is a property of the
     // machine running the extension - `moveView` is host-local and the relay
@@ -8233,7 +9261,8 @@
     "userMessage", "agentStart", "thoughtChunk", "messageChunk", "media",
     "userMessageChunk", "historyBatch", "toolCall", "toolCallUpdate",
     "permissionRequest", "permissionOptions", "permissionResolved",
-    "exitPlanRequest", "planResolved", "questionRequest", "planNotice",
+    "exitPlanRequest", "planResolved", "questionRequest", "questionResolved", "planNotice",
+    "subscriptionUsage",
     "autoCompactNotice", "planBlocked", "promptComplete", "commandOutput",
     "agentReset", "agentError", "agentEnd", "exit", "sessionContext",
     "xaiNotification", "subagentUpdate", "childStream", "runProgress",
@@ -8349,6 +9378,11 @@
       thoughtBuffer: state.thoughtBuffer,
       activeToolGroupEl: state.activeToolGroupEl,
       turnAgentActionsEl: state.turnAgentActionsEl,
+      // Replayed turns record their own edits and build their own cards inside
+      // the park; without this the live turn's tracker would absorb them and
+      // its card would be pinned into the history nodes.
+      turnEdits: [...state.turnEditsByToolCallId],
+      turnDiffSummaryEl: state.turnDiffSummaryEl,
       turnRating: state.turnRating,
       suppressReplayTurn: state.suppressReplayTurn,
       skipUserBubble: state.skipUserBubble,
@@ -8369,6 +9403,8 @@
     state.thoughtBuffer = "";
     state.activeToolGroupEl = null;
     state.turnAgentActionsEl = null;
+    state.turnEditsByToolCallId.clear();
+    state.turnDiffSummaryEl = null;
     state.suppressReplayTurn = false;
     state.skipUserBubble = false;
     state.userMsgCount = startUserCount;
@@ -8410,6 +9446,9 @@
     state.thoughtBuffer = saved.thoughtBuffer;
     state.activeToolGroupEl = saved.activeToolGroupEl;
     state.turnAgentActionsEl = saved.turnAgentActionsEl;
+    state.turnEditsByToolCallId.clear();
+    for (const [id, entry] of saved.turnEdits) state.turnEditsByToolCallId.set(id, entry);
+    state.turnDiffSummaryEl = saved.turnDiffSummaryEl;
     state.turnRating = saved.turnRating;
     state.suppressReplayTurn = saved.suppressReplayTurn;
     state.skipUserBubble = saved.skipUserBubble;
@@ -8514,6 +9553,8 @@
     state.pendingCommandDetails = [];
     state.toolExpandOverride = null; // the Expand/Collapse All latch is per-session; a swap/restore starts clean (the replay buffer re-applies it for a warm re-focus)
     state.turnAgentActionsEl = null;
+    state.turnEditsByToolCallId.clear();
+    state.turnDiffSummaryEl = null;
     state.activeAgentEl = null;
     state.activeAgentRaw = "";
     state.activeUserEl = null;
@@ -8532,11 +9573,15 @@
     state.userMsgCount = 0;
     state.feedbackAvailable = false;
     state.turnRating = 0;
+    state.steerSupported = false;
+    state.steeringProvider = null;
     state.interjectionCount = 0;
     state.historyEventCount = 0;
     state.lastTurnUsage = null;
     state.sessionUsage = null;
+    state.subscriptionWindows = [];
     state.contextBreakdown = null;
+    if (!contextPopover.hidden) renderContextPopover();
     state.suppressReplayTurn = false;
     state.skipUserBubble = false;
     cancelPendingSpeech();
@@ -8692,7 +9737,7 @@
     // The products' own names, everywhere this panel speaks. Not "Grok": that
     // is the model, the extension is Grok Build, and a heading that disagrees
     // with the button beneath it reads as two different things to connect.
-    const NAMES = { grok: "Grok Build", codex: "Codex", claude: "Claude Code" };
+    const NAMES = { grok: "Atlas", codex: "Codex", claude: "Claude Code" };
     const name = NAMES[provider] || "an agent";
     const status = (text) => { if (ver) setWelcomeStatus(text, false); };
 
@@ -8898,10 +9943,11 @@
   function closeConnectWizard() {
     if (!connectWizard) return;
     document.removeEventListener("keydown", connectWizard.onKey, true);
-    delete document.body.dataset.modalAbove;
-    connectWizard.overlay.remove();
+    const overlay = connectWizard.overlay;
+    overlay.remove();
     const opener = connectWizard.opener;
     connectWizard = null;
+    unmarkModalAbove(overlay);
     if (opener && typeof opener.focus === "function" && document.contains(opener)) {
       try { opener.focus(); } catch { /* the opener may have gone with a repaint */ }
     }
@@ -8939,9 +9985,6 @@
     overlay.onclick = (e) => { if (e.target === overlay) { e.stopPropagation(); closeConnectWizard(); } };
     const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); closeConnectWizard(); } };
     document.addEventListener("keydown", onKey, true);
-    // Tells any page underneath (the settings overlay has its own Escape and
-    // Tab trap) that a modal owns the keyboard while this is up.
-    document.body.dataset.modalAbove = "connect-wizard";
     document.body.appendChild(overlay);
     connectWizard = { provider, overlay, panel, body, onKey, opener: opener || document.activeElement };
     // Nothing has come back from the host yet — and on a cloud machine the
@@ -8950,6 +9993,8 @@
     // (owner, 2026-08-31). A real frame replaces this on arrival.
     if (!state.deviceLoginByProvider[provider]) connectWizard.lastDevice = { status: "starting" };
     renderConnectWizard();
+    // Settings underneath must yield both its Escape handler and its Tab trap.
+    markModalAbove(overlay, "connect-wizard");
     const focusTarget = body.querySelector(".onb-action") || closeBtn;
     try { focusTarget.focus(); } catch { /* focus is a courtesy, never a failure */ }
   }
@@ -9513,6 +10558,10 @@
     const a = state.turnAgentActionsEl;
     if (!a || !a.hidden) return;
     a.hidden = false;
+    // Same boundary as the copy/timestamp footer: pin the turn's file-change
+    // list under the last content so it reads as the turn's conclusion. Ahead
+    // of the timestamp write, which returns early on a footer without one.
+    pinTurnDiffSummary();
     const ts = a.querySelector(".msg-timestamp");
     if (!ts) return;
     if (!state.replaying) {
@@ -9520,6 +10569,257 @@
     } else if (typeof timestampMs === "number" && Number.isFinite(timestampMs)) {
       ts.textContent = formatTime(timestampMs);
     }
+  }
+
+
+  // ---- Turn-level file change summary ----
+  // Aggregates edit-tool diffs + delete mutations (kind:delete or shell
+  // Remove-Item/rm/del) across every tool group in the open turn into one
+  // "Changed N files" card. Edit data is the same wire diffs the rows already
+  // paint; deletes are inferred from tool kind / command text — no disk re-diff.
+
+  function startTurnDiffTracking() {
+    // Leave any previous turn's card in the transcript; only drop the live
+    // pointer + per-call map so this turn starts empty.
+    state.turnEditsByToolCallId.clear();
+    state.turnDiffSummaryEl = null;
+  }
+
+  function pinTurnDiffSummary() {
+    const el = state.turnDiffSummaryEl;
+    if (el && el.isConnected) appendTranscriptChild(el);
+  }
+
+  /** Workspace-relative path for the summary list (falls back to the raw path). */
+  function turnEditDisplayPath(p) {
+    if (!p) return "Unknown file";
+    let s = String(p).replace(/\\/g, "/");
+    const cwd = (state.cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    if (cwd) {
+      const sl = s.toLowerCase();
+      const cl = cwd.toLowerCase();
+      if (sl === cl) return s.split("/").pop() || s;
+      if (sl.startsWith(cl + "/")) s = s.slice(cwd.length + 1);
+    }
+    return s || "Unknown file";
+  }
+
+  function recordTurnEdit(toolCallId, path, added, removed, openDiff, oldText, newText) {
+    if (!toolCallId) return;
+    state.turnEditsByToolCallId.set(toolCallId, {
+      kind: "edit",
+      // The tool row this edit came from. A remote cannot open a native diff
+      // (openDiff is host-local in remote-policy.ts), so its only way to show
+      // one is to expand the row that already has it.
+      toolCallId,
+      path: path || "",
+      added: typeof added === "number" ? added : 0,
+      removed: typeof removed === "number" ? removed : 0,
+      openDiff: openDiff || null,
+      // Block-level strings for multi-edit chaining (first.old → last.new).
+      oldText: typeof oldText === "string" ? oldText : undefined,
+      newText: typeof newText === "string" ? newText : undefined,
+    });
+    refreshTurnDiffSummaryUi();
+  }
+
+  function recordTurnDelete(toolCallId, path) {
+    if (!toolCallId || !path) return;
+    state.turnEditsByToolCallId.set(toolCallId, {
+      kind: "delete",
+      path,
+      added: 0,
+      removed: 0,
+      openDiff: null,
+    });
+    refreshTurnDiffSummaryUi();
+  }
+
+  // kind:delete tools + shell Remove-Item/rm/del — the only ways grok deletes
+  // files today (there is no dedicated ACP delete in the write path).
+  function maybeRecordTurnDelete(call) {
+    if (!call || !call.toolCallId) return;
+    const kind = toolKind(call);
+    if (kind === "delete" || /^delete\b/i.test(String(call.title || "").trim())) {
+      const p = toolFilePath(call);
+      if (p) recordTurnDelete(call.toolCallId, p);
+      return;
+    }
+    if (kind === "execute" || categorize(call) === "command") {
+      const r = call.rawInput || call.input || {};
+      const cmd = r.command || r.cmd || "";
+      const paths = parseShellDeletePaths(cmd);
+      for (let i = 0; i < paths.length; i++) {
+        // One tool call can name several paths; key each so they don't clobber.
+        recordTurnDelete(call.toolCallId + "::del::" + i, paths[i]);
+      }
+    }
+  }
+
+  /** The row's path, filename FIRST and directory second — the same order the
+   *  Changes panel uses, so one file reads the same way in the card and in the
+   *  panel. The directory is the half that gets cut, and it is cut from the
+   *  LEFT so the folders nearest the file survive. Only when the filename alone
+   *  cannot fit does it ellipsize; see chat.css for the ladder.
+   *  `title` keeps the original path reachable. */
+  function turnDiffFilePathEl(rawPath) {
+    const el = document.createElement("span");
+    el.className = "turn-diff-file-path";
+    const shown = turnEditDisplayPath(rawPath);
+    if (rawPath) el.title = rawPath;
+    const cut = shown.lastIndexOf("/");
+    if (cut < 0) {
+      el.textContent = shown;
+      return el;
+    }
+    const leaf = document.createElement("span");
+    leaf.className = "turn-diff-file-name";
+    leaf.textContent = shown.slice(cut + 1);
+    // No separator on either half. The name leads, the path trails it as
+    // context, and a stray slash between them would read as a broken path.
+    const dir = document.createElement("span");
+    dir.className = "turn-diff-file-dir";
+    dir.textContent = shown.slice(0, cut);
+    el.appendChild(leaf);
+    el.appendChild(dir);
+    return el;
+  }
+
+  function setTurnDiffSummaryExpanded(el, open) {
+    el.classList.toggle("expanded", !!open);
+    const header = el.querySelector(".turn-diff-summary-header");
+    if (header) header.setAttribute("aria-expanded", String(!!open));
+    for (const body of el.querySelectorAll(".turn-diff-summary-list, .turn-diff-summary-foot")) {
+      body.hidden = !open;
+    }
+  }
+
+  // Explicit preference changes override manual toggles on every loaded turn,
+  // including transcript nodes parked while history is being hydrated.
+  function applyExpandDiffCard() {
+    const cards = liveTranscriptQueryAll(".turn-diff-summary");
+    if (historyPark) cards.push(...historyPark.querySelectorAll(".turn-diff-summary"));
+    for (const card of cards) {
+      setTurnDiffSummaryExpanded(card, state.expandDiffCard);
+    }
+  }
+
+  function refreshTurnDiffSummaryUi() {
+    const agg = aggregateTurnEdits(state.turnEditsByToolCallId.values());
+    if (!agg.files.length) {
+      if (state.turnDiffSummaryEl) {
+        state.turnDiffSummaryEl.remove();
+        state.turnDiffSummaryEl = null;
+      }
+      return;
+    }
+    let el = state.turnDiffSummaryEl;
+    if (!el || !el.isConnected) {
+      el = document.createElement("div");
+      el.className = "turn-diff-summary" + (state.expandDiffCard ? " expanded" : "");
+      el.setAttribute("role", "region");
+      el.setAttribute("aria-label", "Files changed this turn");
+      state.turnDiffSummaryEl = el;
+    }
+    while (el.firstChild) el.removeChild(el.firstChild);
+
+    const hdr = document.createElement("button");
+    hdr.type = "button";
+    hdr.className = "turn-diff-summary-header";
+    hdr.onclick = () => setTurnDiffSummaryExpanded(el, !el.classList.contains("expanded"));
+    const chevron = document.createElement("span");
+    chevron.className = "turn-diff-summary-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m6 3 5 5-5 5"/></svg>';
+    hdr.appendChild(chevron);
+    const title = document.createElement("span");
+    title.className = "turn-diff-summary-title";
+    title.textContent = turnDiffSummaryTitle(agg);
+    hdr.appendChild(title);
+    if (agg.totalAdded > 0 || agg.totalRemoved > 0) {
+      hdr.appendChild(document.createTextNode(" · "));
+      hdr.appendChild(makeDiffStat(agg.totalAdded, agg.totalRemoved));
+    }
+    el.appendChild(hdr);
+
+    // Path → the LAST tool call that touched it, for the reveal below.
+    // Same normalization aggregateTurnEdits merges on, so the lookup cannot
+    // miss on a case variant that the card itself folded into one row.
+    const lastCallByPath = new Map();
+    for (const entry of state.turnEditsByToolCallId.values()) {
+      if (entry && entry.kind === "edit" && entry.toolCallId) {
+        lastCallByPath.set(normalizeTurnEditPathKey(entry.path || ""), entry.toolCallId);
+      }
+    }
+
+    const list = document.createElement("div");
+    list.className = "turn-diff-summary-list";
+    for (const f of agg.files) {
+      const isDel = f.action === "deleted";
+      // The row opens that file's own tool row, on every surface. There is no
+      // whole-turn diff to open instead: a wire diff carries the REPLACED
+      // REGION, not a snapshot, so a file edited twice has no honest before/
+      // after without host-side baselines — and the tool row it reveals holds
+      // the real diff, with its own "open diff →" to the native editor beside
+      // it. A remote could not have posted openDiff anyway (host-local).
+      const revealId = lastCallByPath.get(normalizeTurnEditPathKey(f.path || ""));
+      const clickable = !isDel && !!revealId;
+      const row = document.createElement(clickable ? "button" : "div");
+      row.className = "turn-diff-file"
+        + (clickable ? " has-diff" : "")
+        + (isDel ? " is-deleted" : "");
+      if (clickable) {
+        row.type = "button";
+        row.title = "Show the diff";
+        row.onclick = (e) => {
+          e.stopPropagation();
+          // Expands the row and its group, and scrolls it into view — the same
+          // answer the permission card gives a remote.
+          revealToolDiff(revealId);
+        };
+      }
+      // M / A / D in front of the path — git's own letters, the ones the
+      // Changes view already uses, so a person reads one vocabulary in both
+      // places. The word "Deleted" used to sit where the +/− goes; the D and
+      // the strike-through say it between them.
+      const status = isDel ? "D" : f.action === "created" ? "A" : "M";
+      const letter = document.createElement("span");
+      letter.className = "turn-diff-file-status is-" + status.toLowerCase();
+      letter.textContent = status;
+      letter.title = isDel ? "Deleted" : f.action === "created" ? "Added" : "Modified";
+      row.appendChild(letter);
+      row.appendChild(turnDiffFilePathEl(f.path));
+      if (!isDel) row.appendChild(makeDiffStat(f.added, f.removed));
+      list.appendChild(row);
+    }
+    el.appendChild(list);
+
+    // The way OUT of the card, and into the whole picture.
+    //
+    // The card answers "what did this turn touch"; the next question is almost
+    // always "what is uncommitted now", and until this link the only route was
+    // to find the panel and press a glyph. Offered only where the panel exists
+    // AND has a repository to talk about — a dead link on a knowledge-work
+    // session would be worse than no link, and both are ordinary states.
+    const panel = filePanelController();
+    if (panel && typeof panel.canShowChanges === "function" && panel.canShowChanges()) {
+      const foot = document.createElement("div");
+      foot.className = "turn-diff-summary-foot";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "turn-diff-open-changes";
+      open.textContent = "Open Changes";
+      open.onclick = (e) => {
+        e.stopPropagation();
+        panel.showChanges();
+      };
+      foot.appendChild(open);
+      el.appendChild(foot);
+    }
+
+    setTurnDiffSummaryExpanded(el, el.classList.contains("expanded"));
+    appendTranscriptChild(el); // live: always ride at the end of the turn
+    scrollToBottom();
   }
 
   function feedbackOffered() {
@@ -9822,6 +11122,29 @@
     return parts.length ? parts.join(", ").replace(/^./, (c) => c.toUpperCase()) : "Tool calls";
   }
 
+  // Deliberate short trim (40 chars): a row reads as a scannable summary, not a
+  // wall of shell. Shared so the running header and the settled row clamp
+  // identically.
+  const clampToolTarget = (s) => (s && s.length > 40 ? s.slice(0, 40) + "…" : s);
+
+  /**
+   * What a search tool is looking for. The pattern is the useful thing — grep
+   * ships both `pattern` and `path:"."`, and the path is the unhelpful half.
+   *
+   * #145: the settled row has named the pattern for a long time, but the
+   * running header said a bare "Searching", so the one moment you actually
+   * want to know what is being searched was the one moment we would not say.
+   * Every neighbouring verb already carries its argument (Reading foo.ts,
+   * Listing src/, Editing bar.css); this makes search consistent with them.
+   * It is NOT the details block — a search row has no IN/OUT, because the IN
+   * would repeat this label and the OUT is the match list.
+   */
+  function searchPatternText(call) {
+    const r = (call && (call.rawInput || call.input)) || {};
+    const p = r.glob_pattern || r.pattern || r.query || r.regex || r.search;
+    return typeof p === "string" && p.trim() ? clampToolTarget(p.trim()) : "";
+  }
+
   function inProgressLabel(call) {
     const name = toolName(call);
     const kind = toolKind(call);
@@ -9832,9 +11155,15 @@
     if (/^(read_file|file_read)$/.test(name) || kind === "read") {
       return filePath ? `Reading ${prettyPath(filePath)}` : "Reading file";
     }
-    if (/^(web_search|search_web)$/.test(name)) return "Searching web";
+    if (/^(web_search|search_web)$/.test(name)) {
+      const q = searchPatternText(call);
+      return q ? `Searching web for "${q}"` : "Searching web";
+    }
     if (/^(web_fetch|webfetch)$/.test(name)) return "Fetching page";
-    if (/^(grep|ripgrep|search_files)$/.test(name) || kind === "search") return "Searching";
+    if (/^(grep|ripgrep|search_files)$/.test(name) || kind === "search") {
+      const p = searchPatternText(call);
+      return p ? `Searching for "${p}"` : "Searching";
+    }
     if (/^(write_file|file_write|write|edit_file|search_replace|str_replace)$/.test(name) || kind === "edit" || kind === "write") {
       const renamed = toolRenamePaths(call);
       if (renamed) return `Editing ${prettyPath(renamed.from)} → ${prettyPath(renamed.to)}`;
@@ -9858,10 +11187,10 @@
     const command = r.command || r.cmd;
     const pattern = r.glob_pattern || r.pattern || r.query || r.regex || r.search;
     const url = r.url || r.uri;
-    // Deliberate short trim (40 chars): collapsed rows read as a scannable
-    // summary, not a wall of shell — the full command lives one click away in
-    // the IN/OUT detail. (CSS still single-line-ellipsizes whatever remains.)
-    const clamp = (s) => (s && s.length > 40 ? s.slice(0, 40) + "…" : s);
+    // Collapsed rows read as a scannable summary, not a wall of shell — the
+    // full command lives one click away in the IN/OUT detail. (CSS still
+    // single-line-ellipsizes whatever remains.)
+    const clamp = clampToolTarget;
     // A search tool's *pattern* is the useful target — prefer it over the path it
     // searched (grep ships both `pattern` and `path:"."`, which would otherwise
     // render the unhelpful "root folder"). Match by kind OR name so it still wins
@@ -10044,12 +11373,16 @@
       if (!el._userToggled) setGroupExpanded(el, groupShouldExpand(el));
     }
     state.activeToolGroupEl = null;
+    pinTurnDiffSummary();
   }
 
   function addToToolGroup(call) {
     clearWelcome();
     hideGrokking(); // a tool card is the first content of this turn
     hideThinkingIndicator(); // a running tool now conveys the activity
+    // Deletes never carry a type:"diff" block — catch kind:delete + shell
+    // Remove-Item/rm here (and on restore's completed tool_call).
+    maybeRecordTurnDelete(call);
     if (!state.activeToolGroupEl) {
       // Starting a fresh batch of tools after some agent narration: detach the
       // active agent bubble so the NEXT narration opens a new bubble *below* this
@@ -10223,6 +11556,9 @@
     for (const group of liveTranscriptQueryAll(".tool-group")) {
       setGroupExpanded(group, groupShouldExpand(group));
     }
+    // Purpose changes also route here. Visibility depends only on purpose;
+    // tool settings and the session latch leave each card's open state alone.
+    applyTurnDiffSummaryVisibility();
   }
 
   // Command Palette: Atlas: Expand/Collapse All Tool Details (This Session). Sets
@@ -10488,6 +11824,20 @@
     }
     const labelEl = item.querySelector(".tool-item-label");
     if (labelEl) applyToolLabel(labelEl, merged);
+    // The running header names the NEWEST call (addToToolGroup), and its
+    // argument often arrives on an update rather than the first tool_call —
+    // Claude ships an empty rawInput and fills it in. Without this the header
+    // sits on a bare "Searching" for the whole search, which is the half of
+    // #145 worth fixing. Only while running: once the batch closes the header
+    // is a summary, not a verb.
+    if (groupCalls && groupCalls.classList.contains("in-progress") && Array.isArray(groupCalls._calls)) {
+      const newest = groupCalls._calls[groupCalls._calls.length - 1];
+      const hdrLabel = groupCalls.querySelector(".tool-group-label");
+      if (hdrLabel && newest && newest.toolCallId === id) {
+        hdrLabel.textContent = inProgressLabel(merged);
+        paintGroupDiffTotals(groupCalls); // textContent just wiped the totals slot
+      }
+    }
     // A shell command that only shows up on the update still earns its IN/OUT
     // box; attachCommandDetails is a no-op once the row already has one.
     // MCP args that arrive after a pending row use the same attach.
@@ -10788,6 +12138,21 @@
       blocks.push({ diff, hunks });
     }
     item._diffStat = { added, removed, path: diffs[0] && diffs[0].path };
+
+    // Turn-level summary: same counts as the row, keyed by toolCallId so an
+    // echo→completed repaint replaces rather than double-counts. Block-level
+    // old/new text enable chained multi-edit net recompute (first→last).
+    // openDiff uses the first block (matches the row's "open diff →").
+    const d0 = diffs[0];
+    recordTurnEdit(
+      toolCallId,
+      d0 && d0.path,
+      added,
+      removed,
+      d0 ? openDiffMessage(d0) : null,
+      d0 ? d0.oldText : undefined,
+      d0 ? d0.newText : undefined,
+    );
     const diffPath = diffs[0] && diffs[0].path;
     if (diffPath && item._call && !toolFilePath(item._call)) {
       item._call.rawInput = { ...(item._call.rawInput || {}), path: diffPath };
@@ -11071,28 +12436,6 @@
     scrollToBottom();
   }
 
-  /**
-   * An outdated host cannot describe its own age, so the client says it.
-   *
-   * Observed 2026-08-31: an old desktop answered a new session with "That
-   * project folder is no longer open on the desktop" while the rail, on the
-   * same screen, said every project needed a newer Grok Build. Both were the
-   * same fact -- the host is behind -- and only one of them said so. The host
-   * that produced the sentence is the one that cannot be taught a better one,
-   * so the newest thing in the loop supplies the missing half.
-   *
-   * Matched on the literal because an old host offers no other signal; the
-   * sentence is APPENDED, never replaced, so if the folder really is closed
-   * the original answer still stands.
-   */
-  function errorTextForHostAge(text) {
-    if (!state.repoPreviewsUnsupported) return text;
-    if (!/no longer open on the desktop|archived, so it is not available from here/.test(text)) return text;
-    return text
-      + " That machine is also running an older Grok Build, which can report projects"
-      + " incorrectly — updating it there is worth trying first.";
-  }
-
   function addError(text, code) {
     clearWelcome();
     const el = document.createElement("div");
@@ -11166,6 +12509,116 @@
       postResumeSession(held.id, held.cwd, { claim: true });
     };
     el.append(title, body, btn);
+  }
+
+  /**
+   * A lapsed account is only actionable if the person is told where to act.
+   *
+   * "Sign in" normally lives on the empty-state welcome card, and that card
+   * deliberately refuses to paint over a live conversation (welcomeHoldActive)
+   * -- which is exactly where a token expires. What the owner saw on a phone
+   * was the vendor's own "Authentication required" in red and nothing else: no
+   * account row, no button, no mention of signing in. So the offer goes where
+   * the failure is, directly above the composer that is about to fail again.
+   *
+   * The composer is NOT frozen the way a superseded session freezes it. This
+   * flag is our bookkeeping about somebody else's credential; locking a person
+   * out of their own conversation over it is worse than one more refused send.
+   */
+  /**
+   * "Your sign-in worked", where the person is actually looking.
+   *
+   * Nothing else says it: `providerState` only un-hides affordances, and the
+   * agent's refusal stays on screen until something else is appended.
+   */
+  function noteSignInRecovered(provider) {
+    // An empty transcript is already telling the whole story through the
+    // onboarding panel -- and `addPlanNotice` hides that panel to make room,
+    // which would trade a confirmation for the connect UI itself.
+    if (state.welcomeVisible) return;
+    addPlanNotice(providerDisplayName(provider) + " is signed in again.", ICON.check);
+  }
+
+  function renderProviderSignInCard() {
+    const composer = document.querySelector(".composer");
+    let el = document.getElementById("provider-signin-card");
+    const provider = state.providersKnown && providerNeedsLogin(state.activeProvider)
+      ? state.activeProvider : "";
+    // The card going away because the account was RENEWED is the only proof the
+    // sign-in worked that this view ever gets: the refusal that sent them here
+    // is still the last thing in the transcript, so a wizard that closes in
+    // silence reads as a failure (owner, 2026-09-14). Recognise the transition
+    // here, where both halves are already known, and say so once.
+    //
+    // Deliberately a CLIENT-side line, not a host message: "was the error
+    // visible in THIS view?" is a question only this view can answer, and a
+    // restored conversation repaints from the host's buffer -- so the line is
+    // gone the next time the conversation loads, which is what he asked for.
+    const wasUp = state.signInCardFor;
+    state.signInCardFor = provider;
+    // `wasUp !== provider` alone would also fire when the active provider is
+    // switched away from a still-expired account, so re-read the flag itself.
+    if (wasUp && wasUp !== provider && !providerNeedsLogin(wasUp)) {
+      noteSignInRecovered(wasUp);
+    }
+    if (!provider || !composer) {
+      if (el) el.remove();
+      return;
+    }
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "provider-signin-card";
+      el.className = "provider-signin-card";
+      composer.insertBefore(el, composer.firstChild);
+    }
+    const name = providerDisplayName(provider);
+    // Capability, never a version check: a host built before remote sign-in
+    // drops `runGrokLogin` silently, and a button that does nothing is worse
+    // than the honest dead end. Same rule the connect panel already follows.
+    const canSignIn = !IS_REMOTE || !!(state.hostCaps && state.hostCaps.remoteAgentSignIn);
+    // A sign-in already running is not an offer to make one. The code entry
+    // closes the moment the code is submitted, but verifying it takes a second
+    // or two -- and the card underneath went straight back to "Sign in", which
+    // reads as "that did not work, try again" at the exact moment it IS working
+    // (owner, from a phone, 2026-09-14).
+    //
+    // STATUS ONLY. The connect panel's liveness test also counts `preflight`,
+    // and copying that here was wrong: it answers "does the wizard own the
+    // panel", not "is a sign-in running". Codex preflight advice rides along on
+    // EVERY later frame of the flow (sidebar.ts, `entry.send`) including
+    // `failed`, and the first Codex tap on a cloud workspace is preflight with
+    // nothing started at all -- so the card said "Signing in…" with no way back
+    // to the button, over an account nobody was signing in to (review, round 1).
+    const status = (state.deviceLoginByProvider[provider] || {}).status;
+    const signingIn = status === "starting" || status === "waiting" || status === "verifying";
+    el.replaceChildren();
+    const title = document.createElement("p");
+    title.className = "provider-signin-title";
+    title.textContent = name + " needs you to sign in again";
+    const body = document.createElement("p");
+    body.className = "provider-signin-body";
+    // What it MEANS, not what happened: the refusals are visible above, and
+    // what the reader needs to know is that they stop once this is done.
+    body.textContent = canSignIn
+      ? "The account is still linked — its sign-in expired, so replies are refused until you renew it."
+      : name + " can only be signed in on the computer running this workspace. Sign in there, then refresh this view.";
+    el.append(title, body);
+    if (!canSignIn) return;
+    if (signingIn) {
+      // Keep the row rather than dropping it: the card holding its height
+      // stops the composer jumping under a thumb that is still near it.
+      const busy = document.createElement("p");
+      busy.className = "provider-signin-busy";
+      busy.textContent = "Signing in…";
+      el.appendChild(busy);
+      return;
+    }
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "provider-signin-btn";
+    btn.textContent = "Sign in";
+    btn.onclick = () => { vscode.postMessage({ type: "runGrokLogin", provider }); };
+    el.appendChild(btn);
   }
 
   function enterSessionSuperseded(id, cwd) {
@@ -11321,9 +12774,11 @@
         img.alt = "Generated image";
         img.loading = "lazy";
         const mediaLabel = (msg.path && String(msg.path).split(/[\\/]/).pop()) || "Generated image";
-        // Editor host → openFile (tab). No editor / remote → lightbox. No
-        // fullId: generated media is already full-size on the wire (remote
-        // inlines the whole file as a data: URI; it never downscales).
+        // Editor host → openFile (tab). No editor / remote → lightbox. The src
+        // is always the original here — a served app-resource:// URI on a desk,
+        // the whole inlined file on a remote — so `isOriginal` is true on both.
+        // The handle is only ever used where those bytes are unreadable, which
+        // `openImagePreview` decides; a remote holding a data: URI ignores it.
         if (hostOpensInEditor() && msg.path) {
           img.title = "Open " + msg.path;
           img.style.cursor = "pointer";
@@ -11331,7 +12786,7 @@
         } else {
           img.title = "View " + mediaLabel;
           img.style.cursor = "pointer";
-          img.onclick = () => openImagePreview(msg.src, mediaLabel);
+          img.onclick = () => openImagePreview(msg.src, mediaLabel, msg.fullId, true);
         }
         el.appendChild(img);
       }
@@ -11850,12 +13305,12 @@
     scrollToBottom();
   }
 
-  function addPlanNotice(text) {
+  function addPlanNotice(text, icon) {
     clearWelcome();
     hideGrokking();
     const el = document.createElement("div");
     el.className = "plan-notice";
-    el.innerHTML = `${ICON.listTree}<span>${escapeHtml(text)}</span>`;
+    el.innerHTML = `${icon || ICON.listTree}<span>${escapeHtml(text)}</span>`;
     appendTranscriptChild(el);
     scrollToBottom();
   }
@@ -11953,6 +13408,7 @@
     const wrapper = state.activeAgentEl.parentElement;
     if (wrapper) wrapper._copyText = state.activeAgentRaw;
     scrollToBottom();
+    pinTurnDiffSummary(); // narration after tools must not leave the summary mid-turn
   }
 
   function applyChatZoom() {
@@ -12173,6 +13629,7 @@
     state.activeAgentRaw = "";
     state.activeThoughtEl = null;
     state.activeThoughtHdrEl = null;
+    pinTurnDiffSummary();
   }
 
   // Replayed user prompts (session/load) arrive as user_message_chunk updates.
@@ -12226,6 +13683,10 @@
       // Marker + comment: drop the marker, keep the user's words. Live
       // counted this (the comment), so we count it here too.
       text = verdict.text;
+      // Restore has no agentStart between turns — a new user bubble is the
+      // turn boundary. Pin the previous turn's change list before clearing.
+      pinTurnDiffSummary();
+      startTurnDiffTracking();
       state.userMsgCount += 1;
       state.activeUserEl = addMessage("user", "", undefined, { timestampMs });
       state.activeUserRaw = "";
@@ -12563,14 +14024,81 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  // The floating "Scroll to bottom" button (#28) shows exactly when we've stopped
+  // The floating prompt navigation (#150) shows exactly when we've stopped
   // following the bottom — same threshold that gates auto-scroll, so it appears
   // the instant streaming output runs off-screen. It lives inside `.composer`
   // (position:absolute over the input), so it rides the chat's `--chat-zoom`
   // scale and stays pinned above the input area at any font scale.
   function updateScrollBtn() {
     scrollBottomBtn.classList.toggle("visible", !state.stickToBottom);
+    scrollBottomBtn.disabled = state.stickToBottom;
+    updatePromptNav();
   }
+
+  // The prompt a jump landed on. The control is at the bottom, where the thumb
+  // is, and the prompt it finds arrives at the top, where the eye goes - this
+  // mark is what joins the two, and without it a short jump looks like nothing
+  // happened. Any real scroll gesture drops it. It holds the ELEMENT, not an
+  // index, so loading earlier history - which shifts every index - cannot
+  // mis-point it.
+  let promptNavPin = null;
+  function setPromptNavPin(el) {
+    if (promptNavPin === el) return;
+    if (promptNavPin) promptNavPin.classList.remove("prompt-nav-target");
+    promptNavPin = el || null;
+    if (promptNavPin) promptNavPin.classList.add("prompt-nav-target");
+  }
+
+  function promptPosition() {
+    // Count the DOM, not history ordinals: a remote snapshot has only its tail.
+    const prompts = liveTranscriptQueryAll(".msg.user:not(.queued)");
+    const rect = messagesEl.getBoundingClientRect();
+    const scale = rect.height / messagesEl.offsetHeight || 1;
+    const inset = parseFloat(getComputedStyle(messagesEl).paddingTop) || 0;
+    const tops = prompts.map((el) => (el.getBoundingClientRect().top - rect.top) / scale - inset);
+    let current = -1;
+    let previous = -1;
+    for (let i = 0; i < tops.length; i++) {
+      if (tops[i] <= 2) current = i;
+      // Inside a long answer, its own prompt is the previous landmark.
+      if (tops[i] < -2) previous = i;
+    }
+    return { prompts, tops, current: Math.max(0, current), previous };
+  }
+
+  function updatePromptNav() {
+    // Shown whenever there is an earlier prompt to go back to - INCLUDING while
+    // stuck to the bottom, which is the control's best moment rather than its
+    // worst: watching a long answer arrive is exactly when "what did I ask?"
+    // comes up. That is also why it is not part of the scroll-to-bottom pill,
+    // which correctly has nothing to say down there.
+    const available = !!state.promptNav && promptPosition().previous >= 0;
+    promptPrevBtn.classList.toggle("visible", available);
+    promptPrevBtn.disabled = !available;
+  }
+
+  // Previous only, deliberately. Going FORWARD is the direction that could not
+  // be made to work: the last screenful of prompts all share the terminal
+  // scrollTop, so no scroll brings them to the top of the viewport and a
+  // forward step looks like it did nothing (the owner's "it still says 6/7").
+  // Backwards always has somewhere to go, and it is the whole job that was
+  // asked for - take me back to what I asked.
+  function jumpPrompt() {
+    const { prompts, tops, previous } = promptPosition();
+    if (previous < 0) return;
+    // Deliberate navigation supersedes a wheel flick still inside its 750ms
+    // latch, which would otherwise clear the mark from the inertial scroll
+    // events that arrive after this click.
+    userScrollIntentUntil = 0;
+    messagesEl.scrollTo({ top: messagesEl.scrollTop + tops[previous], behavior: "instant" });
+    setPromptNavPin(prompts[previous]);
+    // We are demonstrably no longer at the bottom, and saying so is not
+    // cosmetic: leaving the pin set would have the next content growth yank the
+    // reader straight back down, undoing the jump they just made.
+    setStickToBottom(false);
+    updateScrollBtn();
+  }
+  promptPrevBtn.onclick = jumpPrompt;
 
   // Always pull the view to the bottom and re-pin. For interactive activity the
   // user needs to see regardless of where they've scrolled: permission/question
@@ -12578,6 +14106,7 @@
   // historyReplay frame follows the pin instead of re-pinning.
   function forceScrollToBottom() {
     if (state.replaying) return;
+    setPromptNavPin(null);
     setStickToBottom(true);
     messagesEl.scrollTop = messagesEl.scrollHeight;
     updateScrollBtn();
@@ -12615,10 +14144,11 @@
   // pinned; a deliberate scroll-up has cleared stickToBottom and is untouched.
   let contentFollowFrame = 0;
   new MutationObserver(() => {
-    if (state.replaying || state.historyHydrating || prependLock || !state.stickToBottom || contentFollowFrame) return;
+    if (state.replaying || state.historyHydrating || prependLock || contentFollowFrame) return;
     contentFollowFrame = requestAnimationFrame(() => {
       contentFollowFrame = 0;
       if (state.stickToBottom && !state.replaying && !prependLock) messagesEl.scrollTop = messagesEl.scrollHeight;
+      updatePromptNav();
     });
   }).observe(messagesEl, {
     childList: true,
@@ -12685,13 +14215,16 @@
         messagesEl.scrollTop, messagesEl.scrollHeight, messagesEl.clientHeight,
         currentStickThreshold(),
       ));
+      setPromptNavPin(null);
       updateScrollBtn();
     }
+    updatePromptNav();
     maybeLoadEarlierHistory();
   });
 
   scrollBottomBtn.onclick = () => {
     autoScrolling = true;
+    setPromptNavPin(null);
     setStickToBottom(true);
     updateScrollBtn();
     messagesEl.scrollTo({ top: messagesEl.scrollHeight, behavior: "smooth" });
@@ -13049,10 +14582,8 @@
   // Inline card for grok's x.ai/ask_user_question. Renders each question with
   // its options; single-select with one question resolves on click (like the
   // permission card), otherwise the user picks across questions and submits.
-  // The host replies with { outcome: "accepted", answers } — keyed by question
-  // text — which unblocks grok's tool mid-turn. On answer the card COLLAPSES to
-  // the question + a clear green "✓ <chosen>" so it's obvious grok received it
-  // (the bare grey-out gave no such signal).
+  // Submit settles immediately, including against an old host. A host
+  // questionResolved refines that state; it cannot prove the CLI consumed it.
   function addQuestionCard(req) {
     clearWelcome();
     hideGrokking();
@@ -13070,6 +14601,7 @@
     });
     const el = document.createElement("div");
     el.className = "card question";
+    el.dataset.questionReqId = String(req.id);
 
     const title = buildQuestionHead(el, "Atlas is asking");
 
@@ -13087,6 +14619,10 @@
 
     let submitBtn;
     let skip;
+    let submitted = false;
+    let skipped = false;
+    let recoveryAnswers;
+    let resolution;
     const updateSubmit = () => {
       if (!submitBtn) return;
       const built = buildQuestionAnswers(questions, effectiveSelections());
@@ -13095,23 +14631,69 @@
     };
     // Collapse the card to its answered/skipped representation: drop the option
     // buttons + Submit + Skip, retitle, and append the chosen answer per block.
-    const collapse = (skipped) => {
+    const collapse = () => {
+      if (el.classList.contains("resolved")) return;
+      // Retain even a half-written or deselected Other draft. The CLI answer
+      // map can trim selected text; recovery must keep what the user typed.
+      recoveryAnswers = selections.map((picked, qi) =>
+        [...picked, ...(otherText[qi] ? [otherText[qi]] : [])].join(", "));
       el.classList.add("resolved");
-      title.textContent = skipped ? "Skipped" : "You answered";
+      title.textContent = skipped ? "Skipped" : "Submitted";
       const actions = el.querySelector(".card-actions");
       if (actions) actions.remove();
       if (skip) skip.remove();
       [...el.querySelectorAll(".question-block")].forEach((block, qi) => {
         const opts = block.querySelector(".question-options");
         if (opts) opts.remove();
-        block.appendChild(answerLineEl(skipped ? "" : (effectiveSelections()[qi] || []).join(", ")));
+        const labels = submitted ? effectiveSelections()[qi].join(", ") : recoveryAnswers[qi];
+        const answer = answerLineEl(labels);
+        if (!labels && !skipped) answer.textContent = "No answer entered";
+        if (skipped && labels) answer.textContent = "Draft: " + labels;
+        block.appendChild(answer);
+        if (submitted && otherText[qi] && !otherSelected[qi]) {
+          const draft = answerLineEl(otherText[qi]);
+          draft.textContent = "Draft: " + otherText[qi];
+          block.appendChild(draft);
+        }
       });
     };
+    const offerRecovery = () => {
+      if (el.querySelector(".question-recover")) return;
+      const recover = document.createElement("button");
+      recover.className = "question-recover";
+      recover.textContent = "Add answers to composer";
+      recover.disabled = !recoveryAnswers.some((answer) => answer.length > 0);
+      recover.onclick = () => {
+        const block = questions.map((q, qi) => recoveryAnswers[qi]
+          ? questionText(q) + "\n" + recoveryAnswers[qi] : "").filter(Boolean).join("\n\n");
+        if (!block) return;
+        input.value = input.value ? input.value + "\n\n" + block : block;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.focus();
+        input.selectionStart = input.selectionEnd = input.value.length;
+      };
+      el.appendChild(recover);
+    };
+    el._resolveQuestion = (outcome) => {
+      if (!["accepted", "stale", "closed"].includes(outcome)) return;
+      // Once stale, a duplicate/reordered acknowledgement cannot resurrect it.
+      if (resolution === "stale" || resolution === outcome) return;
+      resolution = outcome;
+      collapse();
+      if (outcome === "stale" || !submitted && !skipped) {
+        title.textContent = "Question is no longer open";
+        offerRecovery();
+      } else if (outcome === "accepted") {
+        title.textContent = skipped ? "Skipped" : "You answered";
+      }
+    };
     const submit = () => {
+      if (el.classList.contains("resolved")) return;
       const { answers, allAnswered } = buildQuestionAnswers(questions, effectiveSelections());
       if (!allAnswered || otherSelected.some((selected, qi) => selected && !otherText[qi].trim())) return;
+      submitted = true;
+      collapse();
       vscode.postMessage({ type: "questionAnswer", requestId: req.id, answers, annotations: {} });
-      collapse(false);
     };
 
     questions.forEach((q, qi) => {
@@ -13179,23 +14761,54 @@
         };
         opts.appendChild(btn);
         if (isOther) {
-          const custom = document.createElement("input");
-          custom.type = "text";
+          // A textarea, not a single-line input (#144): an "Other" answer is
+          // often a list or a couple of paragraphs, and a one-line box meant
+          // the writer could not read back what they had typed. One row at
+          // rest so it looks no heavier than the input it replaces; it grows
+          // with the content and then scrolls, same rule as the composer.
+          const custom = document.createElement("textarea");
+          custom.rows = 1;
           custom.className = "question-other-input";
           custom.placeholder = "Type your answer";
           custom.setAttribute("aria-label", `${questionText(q)} — Other answer`);
           custom.hidden = true;
+          const autosize = () => {
+            const cs = window.getComputedStyle(custom);
+            const line = parseFloat(cs.lineHeight) || 20;
+            const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+              + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+            // Same ceiling as the composer: it is the same trade about how much
+            // of the screen a writing box may take, and two different answers to
+            // it on one screen would be arbitrary.
+            const max = Math.round(line * composerMaxLines() + pad);
+            custom.style.height = "auto";
+            const content = custom.scrollHeight;
+            custom.style.height = Math.max(Math.round(line + pad), Math.min(content, max)) + "px";
+            custom.style.overflowY = content > max ? "auto" : "hidden";
+          };
           custom.oninput = () => {
             otherText[qi] = custom.value;
+            autosize();
             updateSubmit();
           };
           custom.onkeydown = (e) => {
-            if (e.key === "Enter" && submitBtn && !submitBtn.disabled) {
+            // The composer's rule, verbatim, so one convention covers both:
+            // Ctrl/Cmd+Enter when the user has chosen that, otherwise Enter —
+            // except on a touch composer, where Enter has to make a newline
+            // because a phone keyboard has no other way to.
+            const sendKey = state.useCtrlEnter
+              ? e.key === "Enter" && (e.metaKey || e.ctrlKey)
+              : !remoteUsesTouchComposer() && e.key === "Enter" && !e.shiftKey;
+            if (sendKey && submitBtn && !submitBtn.disabled) {
               e.preventDefault();
               submit();
             }
           };
           opts.appendChild(custom);
+          // Hidden until "Other" is picked, so the first measurement has to
+          // wait for it to be revealed — the click handler focuses it, and
+          // focus is what this rides on.
+          custom.onfocus = autosize;
         }
       }
       block.appendChild(opts);
@@ -13218,8 +14831,10 @@
     skip.className = "question-skip";
     skip.textContent = "Skip";
     skip.onclick = () => {
+      if (el.classList.contains("resolved")) return;
+      skipped = true;
+      collapse();
       vscode.postMessage({ type: "questionCancel", requestId: req.id });
-      collapse(true);
     };
     el.appendChild(skip);
 
@@ -13542,6 +15157,87 @@
 
   // ---------- chips ----------
 
+  let imageCopySequence = 0;
+  let pendingImageCopy = null;
+
+  function imageClipboardBlob(src) {
+    if (!/^data:image\/(png|jpeg|gif|webp|bmp);base64,/i.test(src || "")) {
+      return Promise.reject(new Error("Original image unavailable"));
+    }
+    if (src.startsWith("data:image/png;base64,")) {
+      const bytes = Uint8Array.from(atob(src.slice(src.indexOf(",") + 1)), (c) => c.charCodeAt(0));
+      return Promise.resolve(new Blob([bytes], { type: "image/png" }));
+    }
+    // Clipboard image support is PNG. Decode the original data URI on THIS
+    // device and retain its natural dimensions, never the overlay/thumbnail size.
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Cannot decode original image"));
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext("2d");
+          if (!ctx || !canvas.width || !canvas.height) throw new Error("Cannot decode original image");
+          ctx.drawImage(img, 0, 0);
+          canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Cannot encode image")), "image/png");
+        } catch (error) { reject(error); }
+      };
+      img.src = src;
+    });
+  }
+
+  function cancelImageCopy() {
+    if (!pendingImageCopy) return;
+    clearTimeout(pendingImageCopy.timer);
+    pendingImageCopy.reject(new Error("Image preview closed"));
+    pendingImageCopy = null;
+  }
+
+  function copyPreviewImage(overlay, fullId, originalSrc) {
+    const button = overlay.querySelector(".image-preview-copy");
+    if (button.disabled) return;
+    const status = overlay.querySelector(".image-preview-status");
+    button.disabled = true;
+    status.textContent = "Copying image…";
+    const job = { requestId: ++imageCopySequence, fullId, timer: null, reject: null, resolve: null };
+    pendingImageCopy = job;
+    const blob = new Promise((resolve, reject) => {
+      job.reject = reject;
+      job.resolve = (src) => {
+        Promise.resolve().then(() => imageClipboardBlob(src)).then((pixels) => {
+          if (pendingImageCopy === job) resolve(pixels);
+          else reject(new Error("Image preview closed"));
+        }, reject);
+      };
+      // Old hosts/relays ignore the additive request; never fall back to pixels
+      // from imageFull, whose contract permits a resized preview.
+      job.timer = setTimeout(() => reject(new Error("Original image unavailable")), 20000);
+    });
+    // WebKit requires write() in the click, with a promised Blob for async work.
+    // Waiting for the host first loses the gesture on a phone.
+    blob.catch(() => {});
+    let write;
+    try {
+      write = navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+      if (fullId) vscode.postMessage({ type: "requestImageOriginal", fullId, requestId: job.requestId });
+      else job.resolve(originalSrc);
+    } catch (error) { write = Promise.reject(error); }
+    Promise.resolve(write).then(() => {
+      if (pendingImageCopy === job) status.textContent = "Image copied";
+    }, () => {
+      if (pendingImageCopy === job) status.textContent = "Could not copy image. Full resolution may be unavailable or clipboard access was denied.";
+    }).finally(() => {
+      clearTimeout(job.timer);
+      job.reject(new Error("Image copy finished"));
+      if (pendingImageCopy === job) {
+        pendingImageCopy = null;
+        button.disabled = false;
+      }
+    });
+  }
+
   /** Toggle the "rendering the full size" disc over the open preview.
    *  The timeout is not decoration: an unrecognised handle is answered with
    *  SILENCE on purpose, so that probing reveals nothing about what is on disk —
@@ -13567,6 +15263,7 @@
    *  outlives the transcript, so a focus swap must not leave the previous
    *  session's image sitting over the next one. */
   function closeImagePreview() {
+    cancelImageCopy();
     const overlay = document.querySelector(".image-preview-overlay");
     if (overlay) {
       overlay.hidden = true;
@@ -13578,16 +15275,22 @@
     }
     setImagePreviewLoading(false);
     state.pendingImageFullId = null;
+    // A layer, not a dialog above one: Back closes the picture and leaves the
+    // person in the conversation, which on a phone is the commonest Back there
+    // is. Nothing else changes -- Escape and the close control still call this.
+    reportLayerDepth();
   }
 
-  function openImagePreview(src, label, fullId) {
+  function openImagePreview(src, label, fullId, isOriginal = false) {
     if (!src) return;
+    cancelImageCopy();
     let overlay = document.querySelector(".image-preview-overlay");
     if (!overlay) {
       overlay = document.createElement("div");
       overlay.className = "image-preview-overlay";
       overlay.hidden = true;
       overlay.innerHTML = `<button type="button" class="image-preview-close" aria-label="Close image preview">&times;</button><img>`
+        + `<div class="image-preview-actions"><button type="button" class="image-preview-copy" title="Copy full-resolution image">${ICON.copy}<span>Copy image</span></button><span class="image-preview-status" role="status"></span></div>`
         + `<div class="image-preview-spinner" role="status" aria-label="Loading full-size image" hidden>${ICON.spinner}</div>`;
       overlay.onclick = (e) => { if (e.target === overlay) closeImagePreview(); };
       overlay.querySelector(".image-preview-close").onclick = closeImagePreview;
@@ -13598,6 +15301,22 @@
     img.alt = label || "Attached image";
     overlay.hidden = false;
     overlay.querySelector(".image-preview-close").focus();
+    const copy = overlay.querySelector(".image-preview-copy");
+    const canCopy = !!(navigator.clipboard && navigator.clipboard.write && typeof ClipboardItem !== "undefined");
+    const originalSrc = isOriginal && src.startsWith("data:image/") ? src : null;
+    // Holding the original bytes in the page beats any handle, so the handle is
+    // for surfaces that do NOT have them. Asking the host anyway can only do
+    // worse from here: `imageFull`'s contract is a render capped at 1600px, and
+    // even `imageOriginal`, which is honestly full-size, is a round trip that
+    // can time out where the bytes on screen cannot. Generated media reaches a
+    // remote as a whole inlined file, so this is the difference between the
+    // handle helping the desk and quietly degrading the phone.
+    const hostFullId = originalSrc ? null : fullId;
+    copy.disabled = !canCopy || !(hostFullId || originalSrc);
+    overlay.querySelector(".image-preview-status").textContent = !canCopy
+      ? "Image copying is unavailable in this browser."
+      : !(hostFullId || originalSrc) ? "Full-resolution image unavailable." : "";
+    copy.onclick = () => copyPreviewImage(overlay, hostFullId, originalSrc);
 
     // A remote only ever holds a 320px thumbnail, so enlarging it shows a blurry
     // copy of what was already on screen. Ask the host for a real render and
@@ -13605,18 +15324,33 @@
     // unanswered request degrades to exactly the old behaviour.
     state.pendingImageFullId = null;
     setImagePreviewLoading(false);
-    if (IS_REMOTE && fullId) {
-      state.pendingImageFullId = fullId;
+    if (IS_REMOTE && hostFullId) {
+      state.pendingImageFullId = hostFullId;
       setImagePreviewLoading(true);
-      vscode.postMessage({ type: "requestImageFull", fullId });
+      vscode.postMessage({ type: "requestImageFull", fullId: hostFullId });
     }
+    reportLayerDepth();
   }
 
+  // Capture, and registered at load. The settings overlay puts its own Escape
+  // handler on document in capture too, when it opens; at one node capture runs
+  // in registration order, so this one goes first and Escape closes the picture
+  // on top rather than the page beneath it. That used to fall out of the
+  // `modalAbove` marker the lightbox set. It is a LAYER now, so Back can close
+  // it -- and a layer has to claim the keyboard for itself. The marker is still
+  // honoured in the other direction: a dialog stacked ABOVE the picture owns
+  // Escape while it is up.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    if (document.body.dataset.modalAbove) return;
     const overlay = document.querySelector(".image-preview-overlay");
-    if (overlay && !overlay.hidden) closeImagePreview();
-  });
+    if (!overlay || overlay.hidden) return;
+    // stopImmediatePropagation, not stopPropagation: the settings handler is
+    // on the SAME node in the same phase, and stopping propagation only stops
+    // the event moving to the next node.
+    e.stopImmediatePropagation();
+    closeImagePreview();
+  }, true);
 
   function previewCacheForCurrentSession() {
     return state.imagePreviews;
@@ -13725,6 +15459,12 @@
 
   // ---------- donut ----------
 
+  function contextFullnessColor(pct) {
+    return pct > 90 ? "var(--vscode-charts-red, #f48771)"
+      : pct > 70 ? "var(--vscode-charts-yellow, #d7ba7d)"
+      : "var(--vscode-charts-green, #4ec9b0)";
+  }
+
   function updateDonut(used) {
     // Remember the last usage so a later redraw (e.g. the context window changing
     // when the model switches) keeps the same "used" and just rescales the max.
@@ -13735,10 +15475,7 @@
     const circumference = 2 * Math.PI * 6; // must match the donut circles' r in getHtml
     const arc = (pct / 100) * circumference;
     donutArc.setAttribute("stroke-dasharray", `${arc} ${circumference}`);
-    let color = "var(--vscode-charts-green, #4ec9b0)";
-    if (pct > 90) color = "var(--vscode-charts-red, #f48771)";
-    else if (pct > 70) color = "var(--vscode-charts-yellow, #d7ba7d)";
-    donutArc.setAttribute("stroke", color);
+    donutArc.setAttribute("stroke", contextFullnessColor(pct));
     donutLabel.textContent = `${toK(used)}/${toK(max)}`;
     donutLabel.title = `${used.toLocaleString()} / ${max.toLocaleString()} tokens`;
     donutEl.title = `Context usage — ${used.toLocaleString()} / ${max.toLocaleString()} tokens`;
@@ -14010,6 +15747,17 @@
   }
 
   function sendOrStop() {
+    // A model or effort the picker is still SHOWING belongs to this send. The
+    // document's own click listener flushes on the way out, but it sits on the
+    // bubble phase -- this button's handler runs first, so without this line
+    // `send` reaches the host BEFORE `setModel` and the prompt runs on the
+    // model the person just replaced (and a switch that restarts tears the
+    // client down under the turn). Keeping the picker open made "pick, then
+    // Send" the natural gesture, so this is now the ordinary path, not a
+    // corner. Committing here is also what gives the host a `pickerChange` for
+    // `handleSend` to wait on. Idempotent: the close that follows posts
+    // nothing, and a flush with nothing pending posts nothing either.
+    flushPicker();
     if (state.sessionSuperseded) return;
     if (state.onboardingMode === "no-project") return;
     if (state.busy) {
@@ -14064,6 +15812,8 @@
     }
     // Chips are host-owned state (every mutation routes through the host and
     // comes back via postChips) — the host snapshots its own copy on send.
+    if (sendWait) sendWait.cancel();
+    sendWait = hostWait.begin({ label: "Sending your message", success: "Message sent.", failure: "Couldn't send your message." });
     vscode.postMessage({ type: "send", text, ...(submissionId ? { submissionId } : {}) });
     input.value = "";
     renderInputHighlight();
@@ -14079,6 +15829,9 @@
   // setup failure (no API key, ffmpeg missing), sends "voiceError" to reset us.
   function renderMic() {
     if (!micBtn) return;
+    if (state.voiceBackendState?.backends) {
+      state.voiceConfigured = !!state.voiceBackendState.backends[state.activeProvider || "grok"];
+    }
     micBtn.classList.toggle("listening", state.mic === "listening");
     micBtn.classList.toggle("transcribing", state.mic === "transcribing");
     micBtn.classList.toggle("connecting", state.mic === "connecting");
@@ -14102,24 +15855,35 @@
       micBtn.innerHTML = ICON.spinner;
       micBtn.title = "Transcribing…";
       micBtn.disabled = true;
-    } else if (IS_REMOTE && !state.voiceConfigured && !voiceNeedsGrokAccount()) {
-      micBtn.innerHTML = ICON.mic;
-      micBtn.title = "Voice dictation is unavailable because the host has no Speech-to-Text credential";
-      micBtn.disabled = true;
     } else {
+      // A remote with no host credential used to be DISABLED here, with the
+      // reason in a `title`. On a phone that is a dead button and nothing
+      // else: there is no hover, so the tooltip never renders, and a tap
+      // produces silence. The host already answers a credential-less start
+      // with a plain error naming what is missing, so the button stays live
+      // and lets it — the same arrangement the desk has always had.
       micBtn.innerHTML = ICON.mic;
       micBtn.title = state.voiceConfigured
         ? "Voice control"
         : voiceNeedsGrokAccount()
           ? "Voice needs Atlas connected"
-          : "Voice control — click to set up (needs an xAI API key)";
+          : "Voice control — click to set up (needs an OpenAI or xAI credential)";
       micBtn.disabled = false;
     }
     // "needs setup" dot only when idle, clickable, and no key is configured.
     micBtn.classList.toggle("needs-setup", !micBtn.disabled && state.mic === "idle" && !state.voiceConfigured);
   }
 
+  /** "Connect Grok" is the right advice only when Grok is the missing piece.
+   *  Since a second backend exists, a host can have a credential that this
+   *  provider's pick does not use — and there the host's own error is more
+   *  precise than any wording here, so this stays narrow: nothing usable for
+   *  EITHER vendor, and Grok not connected. Gating on the mere presence of
+   *  `voiceBackendState` (as this did briefly) makes it permanently false,
+   *  because the host always sends that field now. */
   function voiceNeedsGrokAccount() {
+    const backends = state.voiceBackendState;
+    if (backends && (backends.hasXai || backends.hasOpenAi)) return false;
     return !!state.providersKnown && !state.voiceConfigured
       && !state.providers.some((provider) => provider.id === "grok" && provider.connected);
   }
@@ -14363,6 +16127,15 @@
         void explainVoiceNeedsGrok();
         return;
       }
+      // The HOST owns the credential and is the only thing that can say which
+      // one is missing — an explicit backend choice with no key for it reads
+      // nothing like "connect Grok". Ask it rather than deciding here, exactly
+      // as the desk does. No microphone is touched on this path, so a tap that
+      // is going to be refused costs no permission prompt.
+      if (!state.voiceConfigured) {
+        vscode.postMessage({ type: "remoteVoiceStart" });
+        return;
+      }
       void startBrowserMic();
     }
   }
@@ -14379,6 +16152,11 @@
 
   // Append a transcript to whatever's typed (batch mode — one-shot result).
   function insertTranscript(text) {
+    appendComposerText(text);
+  }
+
+  // Voice and panel suggestions share insertion; sending remains a user action.
+  function appendComposerText(text) {
     const t = (text || "").trim();
     if (!t) return;
     const cur = input.value;
@@ -14437,16 +16215,21 @@
   // Mirror the composer text onto the backdrop, wrapping a trailing send command
   // ("atlas send") in an accent pill. Call whenever the input value changes.
   // Auto-grow the composer with its content: 2 lines at rest (Cursor-style,
-  // matching the textarea's rows attribute), expanding to 5 as the user
-  // types, then scrolling. The .input-highlight overlay is inset:0 in the
-  // same wrap, so it tracks the height for free; its scrollTop is synced in
-  // renderInputHighlight.
+  // matching the textarea's rows attribute), expanding to composerMaxLines()
+  // as the user types, then scrolling. The .input-highlight overlay is inset:0
+  // in the same wrap, so it tracks the height for free; its scrollTop is synced
+  // in renderInputHighlight.
+  //
+  // More than the original 5 (#144): a longer answer could not be read back
+  // while writing it. A drag handle was considered and rejected — a maximum you
+  // have to re-drag every time you want the history back is worse than one that
+  // is simply large enough. See composerMaxLines for why a phone gets fewer.
   function autosizeInput() {
     const cs = window.getComputedStyle(input);
     const line = parseFloat(cs.lineHeight) || 20;
     const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
     const min = Math.round(line * 2 + pad);
-    const max = Math.round(line * 5 + pad);
+    const max = Math.round(line * composerMaxLines() + pad);
     input.style.height = "auto";
     const content = input.scrollHeight;
     input.style.height = Math.max(min, Math.min(content, max)) + "px";
@@ -14535,10 +16318,14 @@
   // (session-start priming — no session id to interject against yet), a CLI that
   // can't interject, and (defensively) not being busy at all. Any of those fall
   // back to the queue, which is the safe home for the text either way.
-  // Attachments ride `_x.ai/interject` `content` (same encoder as a send).
+  // Attachments use the backend's steering content (same encoder as a send).
   function queueOutgoing(text, chips) {
     if (state.sessionSuperseded) return;
     const attachments = Array.isArray(chips) ? chips : explicitVisibleChips(state.chips);
+    if (hostWait.snapshot()) {
+      queuedWaits.add({ text, chipIds: visibleChipIds(attachments), sessionId: state.activeSessionId,
+        op: hostWait.begin({ label: "Sending your message", success: "Message queued.", failure: "Couldn't send your message." }) });
+    }
     if (
       state.steerByDefault && state.steerSupported && steerableProvider() && state.busy && !state.busyLocked
     ) {
@@ -14651,7 +16438,7 @@
     // still ends up with the button once busy lands.
     // Not for Claude Code: it has no mid-turn interject, so the button would
     // offer to do something the agent cannot do. Its messages stay scheduled.
-    // Attachments ride `_x.ai/interject` `content` — the host encodes them the
+    // Attachments ride the backend's steering content — the host encodes them the
     // same way as a send. An older CLI that ignores `content` gets the whole
     // item queued rather than a silent drop.
     if (state.steerSupported && steerableProvider()) {
@@ -15556,13 +17343,14 @@
 
   const SETTINGS_LIVE_MSGS = new Set([
     "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
-    "steerByDefault", "steerUnavailable", "soundNotifications", "processingSound",
+    "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
-    "providerState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
+    "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
   ]);
 
   function handleHostMessage(msg) {
     if (!msg || typeof msg !== "object") return;
+    observePreferences(msg);
     if (state.replayHold && msg.type !== "historyReplay" && REPLAY_HOLD_TYPES.has(msg.type)) {
       state.replayHeld.push(msg);
       return;
@@ -15571,6 +17359,12 @@
       case "initialState":
         state.useCtrlEnter = msg.useCtrlEnter;
         state.effort = msg.effort || "";
+        // Existing initialState is the acknowledgement, including refusal or
+        // cancelled restart. Do not replay session: it clears context details.
+        if (currentModel() && effortLevelsForModel().includes(state.effort)) {
+          currentModel().reasoningEffort = state.effort;
+        }
+        refreshModelControls();
         state.cwd = msg.cwd || "";
         state.extVersion = msg.extVersion || "";
         // Field presence, not a version check: an older host sends neither, and
@@ -15583,6 +17377,8 @@
         // any control is drawn — and a host that says nothing is a host that
         // cannot, which is the safe way round.
         state.hostCaps = (msg.capabilities && typeof msg.capabilities === "object") ? msg.capabilities : {};
+        if (providerConfigPanel && !providerConfigFilesAvailable()) providerConfigPanel.setOpen(false);
+        renderQueuedBlocks();
         // Field presence: an older host never sends this, and command View all
         // then omits language rather than inventing a dialect.
         state.commandLanguage = typeof msg.commandLanguage === "string" ? msg.commandLanguage : "";
@@ -15591,11 +17387,24 @@
         // the host that was quiet, not to this one.
         forgetRailProbeVerdict();
         restoreRememberedRemoteSession();
-        // Capability field presence — never a version check. Local hosts ignore.
+        // A second snapshot used to be read here as proof that the connection
+        // had died — the panel already existing was the whole test. It was a
+        // guess, and it was wrong in both directions: a session swap or a host
+        // re-asserting its state produces a snapshot with no socket trouble at
+        // all, while a cloud machine that suspended and woke can be gone for a
+        // minute before one arrives. Nothing in this webview can see a socket.
+        // The page's shell can, and says so; see `hostReachable`/`hostLink`.
         ensureRemoteFilesBrowser();
         if (typeof msg.showThinking === "boolean") state.showThinking = msg.showThinking;
         if (typeof msg.expandCommandOutputs === "boolean") state.expandCommandOutputs = msg.expandCommandOutputs;
         if (typeof msg.steerByDefault === "boolean") state.steerByDefault = msg.steerByDefault;
+        // A remote ignores the desk's value and keeps its own: the frame is
+        // suppressed on the way out, but initialState is mirrored wholesale.
+        if (!IS_REMOTE && typeof msg.promptNav === "boolean") state.promptNav = msg.promptNav;
+        if (!IS_REMOTE) {
+          state.expandDiffCard = msg.expandDiffCard === true;
+          applyExpandDiffCard();
+        }
         if (typeof msg.soundNotifications === "boolean") state.soundNotifications = msg.soundNotifications;
         if (typeof msg.processingSound === "boolean") state.processingSound = msg.processingSound;
         releaseAudioIfSilent();
@@ -15614,6 +17423,31 @@
         applyExpandCommandOutputs();
         syncGearPlacement();
         renderWelcomeTip();
+        break;
+      case "hostReachable":
+        // The shell's own voice, not the host's: the connection this view's
+        // reads were riding ended, and a new one is up. Only something watching
+        // a socket can know that, which is why it is told rather than inferred.
+        //
+        // A local host never sends it and a remote page that predates it never
+        // does either, so an absent message means exactly the old behaviour —
+        // capability by arrival, as everywhere else on this wire.
+        //
+        // A shell that also sends `hostLink` has said all of this there, in
+        // more detail and with the phase attached. Answering both would abandon
+        // the in-flight reads twice for one reconnection.
+        if (hostWait.snapshot()) break;
+        onRemoteHostReachable(null);
+        break;
+      case "hostLink":
+        // What the link IS, every time it changes — including the phases that
+        // are nobody's cue to act (waking, offline, back but not restored).
+        // Splitting it from the command above is the whole point: this one is
+        // free to receive, so the strip can say what is happening without a
+        // `git status` riding on every flap of a phone's radio.
+        if (!msg.link) break;
+        if (msg.link.reachable) onRemoteHostReachable(msg.link);
+        else noteRemoteFileDisconnect();
         break;
       case "moveViewHint":
         // Live retraction. `initialState` is not re-sent on a session swap, so a
@@ -15637,14 +17471,28 @@
           break;
         }
         if (msg.busy) state.projectGithub = null;
-        else if (msg.github && typeof msg.github === "object") state.projectGithub = msg.github;
+        else if (addProjectFormApi && msg.github && typeof msg.github === "object") state.projectGithub = msg.github;
         else if (msg.error) state.projectGithub = null;
-        // Reconnect: the form is gone, the CLI is still polling, and the
-        // snapshot carried the code. Reopen the clone form so they can finish.
-        if (!addProjectFormApi && msg.github && (msg.github.status === "starting" || msg.github.status === "waiting")) {
-          openAddProjectForm("clone");
+        if (addProjectFormApi) addProjectFormApi.update({
+          ...msg,
+          github: state.projectGithub || msg.github,
+          githubState: state.githubState || undefined,
+          repos: state.githubRepos,
+        });
+        break;
+      case "githubState":
+        state.githubState = msg.github && typeof msg.github === "object" ? msg.github : null;
+        if (addProjectFormApi) addProjectFormApi.update({ githubState: state.githubState });
+        break;
+      case "githubRepos":
+        state.githubRepos = Array.isArray(msg.repos) ? msg.repos : [];
+        if (addProjectFormApi) {
+          addProjectFormApi.update({
+            repos: state.githubRepos,
+            reposTruncated: msg.truncated === true,
+            reposError: typeof msg.error === "string" ? msg.error : "",
+          });
         }
-        if (addProjectFormApi) addProjectFormApi.update({ ...msg, github: state.projectGithub || msg.github });
         break;
       case "welcomeTips":
         // Deliberately NOT an advance: this frame arrives on startup and after
@@ -15690,6 +17538,8 @@
         // sends no frame at all, and a locally-set flag would spin forever.
         // Absent means idle, which is also what every pre-refresh host means.
         state.providersChecking = msg.checking === true;
+        renderCodexUpdateNudge();
+        refreshSettingsOverlay();
         // Connecting an additional account happens from the gear while the
         // current transcript stays mounted. The login/recovery view temporarily
         // borrows the welcome overlay; dismiss it when the provider it was
@@ -15705,9 +17555,15 @@
             || (CONNECT_ONBOARDING_MODES[state.onboardingMode]
               ? (state.onboardingInfo && state.onboardingInfo.provider) || ""
               : "");
-          const anyConnected = state.providers.some((provider) => provider.connected);
+          // "Connected" is the configured account; one the host says still
+          // needs a sign-in has not answered a card that asks for one. A fresh
+          // cloud machine posts connect-agent and then broadcasts providerState
+          // with grok connected + needsLogin behind it, and this dismissal
+          // blanked the first attach until a reload (owner, 2026-09-05).
+          const usable = (provider) => !!provider.connected && provider.needsLogin !== true;
+          const anyConnected = state.providers.some(usable);
           const askedForConnected = onboardingProvider && state.providers.some((provider) =>
-            provider.id === onboardingProvider && provider.connected);
+            provider.id === onboardingProvider && usable(provider));
           // `connect-agent` names no provider: it is the "pick any of the
           // three" card, so any connected account answers it.
           const chooserAnswered = state.onboardingMode === "connect-agent" && anyConnected;
@@ -15716,6 +17572,9 @@
           }
         }
         if (!gearPopover.hidden && state.gearView === "main") renderGearMain();
+        if (!addPopover.hidden) renderAddPopover();
+        refreshModelControls();
+        renderProviderSignInCard();
         if (!historyPopover.hidden) renderSessionRows();
         renderRail();
         break;
@@ -15726,8 +17585,19 @@
         state.mcpWarning = msg.warning || "";
         refreshSettingsOverlay();
         break;
+      case "mcpConnectorAuthorization":
+        if (msg.status === "finished") {
+          if (!state.mcpConnectorAuthorization || state.mcpConnectorAuthorization.attemptId === msg.attemptId) {
+            state.mcpConnectorAuthorization = msg.error ? msg : undefined;
+          }
+        } else {
+          state.mcpConnectorAuthorization = msg;
+        }
+        refreshSettingsOverlay();
+        break;
       case "mcpConnectors":
         state.mcpConnectors = Array.isArray(msg.connectors) ? msg.connectors : [];
+        state.mcpRemoteConnect = msg.remoteConnect === true;
         refreshSettingsOverlay();
         break;
       case "routines":
@@ -15768,11 +17638,28 @@
         // the case this guards): repaint so the section appears rather than
         // waiting for the next open.
         if (!gearPopover.hidden && state.gearView === "main") renderGearMain();
+        if (!addPopover.hidden) renderAddPopover();
+        refreshModelControls();
         break;
       case "steerByDefault":
         // Live toggle (grok.steerByDefault). Pure policy for the next send —
         // the queued block's Steer button is unaffected.
         state.steerByDefault = !!msg.value;
+        break;
+      case "expandDiffCard":
+        // Settings in a separate IDE webview reaches the transcript via host.
+        // A remote keeps its own value even if an older relay mirrors this.
+        if (!IS_REMOTE) {
+          state.expandDiffCard = !!msg.value;
+          applyExpandDiffCard();
+        }
+        break;
+      case "promptNav":
+        // Arrives after the host writes grok.promptNav, which is how a
+        // toggle flipped in the VS Code settings TAB reaches this webview.
+        state.promptNav = !!msg.value;
+        if (!state.promptNav) setPromptNavPin(null);
+        updateScrollBtn();
         break;
       case "soundNotifications":
         // Live toggle (grok.soundNotifications). Only affects future turn-end/
@@ -15841,7 +17728,10 @@
         state.appPurpose = msg.value === "coding" ? "coding" : "knowledge";
         applyThinkingVisibility();
         applyExpandCommandOutputs();
+        syncChangesAvailability();
         if (!gearPopover.hidden && state.gearView === "main") renderGearMain();
+        if (!addPopover.hidden) renderAddPopover();
+        refreshModelControls();
         syncGearPlacement();
         break;
       case "fontScale":
@@ -15871,18 +17761,38 @@
         moveComposerCaret(msg.direction);
         break;
       case "uiConfirmRequest":
+        // A host from before uiConfirmRequest became transient still buffers and
+        // replays it, and reopening a DESTRUCTIVE modal unprompted after a
+        // reconnect is the defect we are fixing. But dropping it silently is not
+        // the answer either: that host is still awaiting this id, with no drain
+        // of its own, so its Edit/Rewind `await confirmInChat` would hang for
+        // ever. Decline it instead — no modal, and the old host fails closed.
+        if (state.replaying) {
+          vscode.postMessage({ type: "uiConfirmAnswer", id: msg.id, ok: false });
+          break;
+        }
         // The host asks; the webview owns the dialog. Always answer, including
         // on dismissal — the host is awaiting this id and a rewind must fail
         // closed rather than hang.
+        if ([...document.querySelectorAll(".confirm-overlay")]
+          .some((el) => el.dataset.confirmReqId === String(msg.id))) break;
         uiConfirm({
+          requestId: msg.id,
           title: msg.title,
           body: msg.body,
           confirmLabel: msg.confirmLabel,
           danger: msg.danger,
         }).then((ok) => {
+          if (ok === undefined) return;
           vscode.postMessage({ type: "uiConfirmAnswer", id: msg.id, ok: !!ok });
         });
         break;
+      case "uiConfirmResolved": {
+        const el = [...document.querySelectorAll(".confirm-overlay")]
+          .find((el) => el.dataset.confirmReqId === String(msg.requestId));
+        if (el) el._resolveConfirm();
+        break;
+      }
       case "truncateMessages": {
         // Rewind/edit: drop only the discarded turns instead of clearing the
         // panel and replaying the whole conversation (which flashed the welcome
@@ -15933,12 +17843,14 @@
         state.activeThoughtEl = null;
         state.activeToolGroupEl = null;
         state.turnAgentActionsEl = null;
+        state.turnEditsByToolCallId.clear();
+        state.turnDiffSummaryEl = null;
         // The host has just rebuilt the aggregate from the surviving ledger.
         // No completed-turn figure survives a rewind; when the whole transcript
         // is gone, neither does the session aggregate.
         state.lastTurnUsage = null;
         if (surviving === 0) state.sessionUsage = null;
-        if (!contextPopover.hidden) openContextPopover();
+        if (!contextPopover.hidden) renderContextPopover();
         hideGrokking();
         hideThinkingIndicator();
         // The newest surviving agent message ends a finished turn, so its
@@ -16002,6 +17914,9 @@
         break;
       }
       case "initialized": {
+        state.steeringProvider = msg.info.provider || "grok";
+        state.steerSupported = msg.info.steeringSupported === true;
+        renderQueuedBlocks();
         // The ACP handshake is done, but session/new or session/load may still be
         // running. Keep showing Starting until the startup lock clears.
         if (!msg.info.provider || msg.info.provider === "grok") state.cliVersion = msg.info.version || "";
@@ -16023,13 +17938,23 @@
       case "localModels":
         break;
       case "session": {
+        state.subscriptionWindows = [];
         state.currentModelId = msg.currentModelId;
         state.activeProvider = msg.provider === "codex" || msg.provider === "claude" ? msg.provider : "grok";
+        renderQueuedBlocks();
         syncFeedbackButtons();
         syncProviderVoice();
+        renderMic();
+        // The nudge is gated on the active provider, and this is the only place
+        // that changes — without a repaint here it would linger on the tab the
+        // user switched TO until some unrelated render happened to run.
+        renderCodexUpdateNudge();
         if (state.railTransition?.kind === "new") renderRail();
         state.isWorktree = !!msg.worktree; // gates the gear Apply/Remove worktree items
         state.availableModels = msg.models || [];
+        if (currentModel()?.reasoningEffort) state.effort = currentModel().reasoningEffort;
+        refreshModelControls();
+        renderProviderSignInCard();
         const m = state.availableModels.find((x) => x.modelId === msg.currentModelId && (!x.provider || x.provider === state.activeProvider));
         if (m?.totalContextTokens) state.contextWindow = m.totalContextTokens;
         state.contextBreakdown = null;
@@ -16078,7 +18003,13 @@
         break;
       }
       case "modelChanged": {
+        const previousEffort = effectiveEffort();
         state.currentModelId = msg.modelId;
+        if (!effortLevelsForModel().includes(state.effort)) {
+          state.effort = currentModel()?.reasoningEffort || "";
+        }
+        refreshModelControls();
+        if (previousEffort && previousEffort !== effectiveEffort()) announceEffortChange();
         // The context window is model-specific (grok-build 512K vs Composer 200K).
         // The initial `session` event carries grok's *default* model, so when we
         // switch (e.g. to the configured default) recompute the max — otherwise the
@@ -16119,10 +18050,12 @@
         break;
       case "voiceConfigured":
         state.voiceConfigured = !!msg.value;
+        state.voiceBackendState = msg.backendState;
         if (typeof msg.sendPhrase === "string") state.voiceSendPhrase = msg.sendPhrase;
         if (Array.isArray(msg.keyterms)) state.voiceKeyterms = msg.keyterms.filter((t) => typeof t === "string");
         renderMic();
         renderInputHighlight();
+        refreshSettingsOverlay();
         break;
       case "voicePartial":
         if (state.voiceDiscarded) break;
@@ -16152,6 +18085,17 @@
         input.value = "";
         renderInputHighlight();
         if (t) {
+          // Speech is the composer's other door, and no click precedes it:
+          // this arrives as a host message, so nothing bubbles into
+          // `closePopovers` to commit what the picker is showing -- and
+          // `micBtn.onclick` stops propagation, so even pressing the mic does
+          // not. Opening the picker mid-dictation and saying the phrase is the
+          // way in. Above the branch rather than inside `submitMessage`,
+          // because the gesture is one gesture; the queueing branch cannot
+          // itself carry a pending pick (`modelSelectionLocked` refuses a
+          // preview while a turn runs) and costs nothing to cover. The typed
+          // and pressed doors are flushed once in `sendOrStop`, the same way.
+          flushPicker();
           if (state.busy) queueOutgoing(t);
           else submitMessage(t);
         }
@@ -16207,6 +18151,13 @@
         break;
       }
       case "userMessage":
+        for (const pending of queuedWaits) {
+          if (pending.sessionId === state.activeSessionId && msg.text === pending.text && sameChipIds(msg.chips, pending.chipIds)) {
+            pending.op.success = "Message sent.";
+            pending.op.succeed();
+            queuedWaits.delete(pending);
+          }
+        }
         // Live send, including a buffer rebuild inside historyReplay. A prior
         // hidden turn's skip ends here — this event is never hidden.
         state.skipUserBubble = false;
@@ -16221,6 +18172,7 @@
             : msg.text === state.pendingSubmissionText &&
               sameChipIds(msg.chips, state.pendingSubmissionChipIds))
         )) {
+          if (sendWait) { sendWait.succeed(); sendWait = null; }
           clearOptimisticSend();
           state.pendingSubmissionText = "";
           state.pendingSubmissionId = null;
@@ -16238,6 +18190,11 @@
           drainPlanHistory(state.userMsgCount);
           drainPermissionHistory(state.userMsgCount);
           state.userMsgCount += 1;
+          // Previous agent turn is over: pin its change list and drop the live
+          // tracker so this user message starts a clean turn boundary. A steer
+          // is the same turn, so it deliberately keeps the running tracker.
+          pinTurnDiffSummary();
+          startTurnDiffTracking();
         }
         addMessage("user", msg.text, msg.chips || [], { steer: msg.steer });
         forceScrollToBottom(); // jump back to the bottom on the user's own send (#16)
@@ -16248,6 +18205,10 @@
         // turn that just finished is rateable.
         retireLiveTurnFeedback(state.turnAgentActionsEl);
         state.turnAgentActionsEl = null; // new turn → previous turn keeps its footer
+        // Fresh tracker for this turn's edits (userMessage already closed the
+        // previous card on a live send; this also covers afterTurn follow-ups
+        // that emit agentStart without a new user bubble).
+        startTurnDiffTracking();
         if (!state.replaying) state.turnRating = 0;
         state.ttsTurnText = "";
         showGrokking();
@@ -16287,6 +18248,11 @@
         if (msg.src && overlay && !overlay.hidden) overlay.querySelector("img").src = msg.src;
         setImagePreviewLoading(false);
         state.pendingImageFullId = null;
+        break;
+      }
+      case "imageOriginal": {
+        const job = pendingImageCopy;
+        if (job && job.fullId === msg.fullId && job.requestId === msg.requestId) job.resolve(msg.src);
         break;
       }
       case "historyReplay":
@@ -16453,10 +18419,10 @@
           fillRestoredAnswer(restoredEl, toolUpdateText(msg.call));
           break;
         }
-        // Live: the interactive card already handled the answer; drop the stash so
-        // the chip stays suppressed and we don't fall through to the diff path.
+        // Live: the host resolves the interactive card. Drop the stash so the
+        // chip stays suppressed and we don't fall through to the diff path.
         if (state.questionToolCalls.has(msg.call?.toolCallId)) {
-          if (toolUpdateText(msg.call) || String(msg.call?.status).toLowerCase() === "completed") {
+          if (toolUpdateText(msg.call) || ["completed", "failed"].includes(String(msg.call?.status).toLowerCase())) {
             state.questionToolCalls.delete(msg.call.toolCallId);
           }
           break;
@@ -16629,6 +18595,12 @@
         if (el) resolvePlanCardEl(el, msg.verdict);
         break;
       }
+      case "questionResolved": {
+        const el = liveTranscriptQueryAll(".card.question")
+          .find((c) => c.dataset.questionReqId === String(msg.requestId));
+        if (el) el._resolveQuestion(msg.outcome);
+        break;
+      }
       case "questionRequest":
         addQuestionCard(msg.req);
         if (!state.replaying) {
@@ -16675,6 +18647,11 @@
         // turn ends (research/signals-refresh-probe.cjs), which then updates
         // it via its own meta or the host's contextUsage read.
         if (msg.meta?.totalTokens != null) updateDonut(msg.meta.totalTokens);
+        break;
+      case "subscriptionUsage":
+        state.subscriptionUsageKnown = true;
+        state.subscriptionWindows = Array.isArray(msg.windows) ? msg.windows : [];
+        if (!contextPopover.hidden) renderContextPopover();
         break;
       case "contextUsage":
         // Host-authoritative occupancy: grok's signals.json / live envelope,
@@ -16796,6 +18773,7 @@
         markLiveTurnFeedback();
         state.busy = false;
         updateSendButton();
+        refreshChangesCount();
         if (!state.replaying) maybeNotifySound("done"); // #59 — live turns only, and only when away
         speakCompletedTurn();
         break;
@@ -16844,6 +18822,13 @@
         // re-focus like everything else, so queued blocks survive session swaps.
         // Prefer additive `queued` (text + chips); `items` is the text-only fallback.
         state.sendQueue = normalizeQueuedSends(msg);
+        for (const pending of queuedWaits) {
+          if (pending.sessionId === state.activeSessionId && state.sendQueue.some((entry) =>
+            entry.text === pending.text && sameChipIds(entry.chips, pending.chipIds))) {
+            pending.op.succeed();
+            queuedWaits.delete(pending);
+          }
+        }
         if (!state.sendQueue.length) {
           state.queuedSubmissionPending = false;
           state.queuedSubmissionRejected = false;
@@ -16923,7 +18908,7 @@
         // session total), so keep whatever we have rather than blanking it.
         if (msg.turn) state.lastTurnUsage = msg.turn;
         if (msg.session) state.sessionUsage = msg.session;
-        if (!contextPopover.hidden) openContextPopover(); // live-refresh if open
+        if (!contextPopover.hidden) renderContextPopover();
         break;
       case "setBusy":
         // Host-driven busy state for flows where there's no natural agentEnd
@@ -16949,6 +18934,7 @@
         }
         // Refresh the gear popover's model/effort lock state if it's open.
         if (!gearPopover.hidden) renderGearMain();
+        syncModelChip();
         break;
       case "summarizing": {
         clearWelcome();
@@ -16965,6 +18951,9 @@
         addSessionContextBanner();
         break;
       case "clearMessages":
+        for (const el of document.querySelectorAll(".confirm-overlay[data-confirm-req-id]")) {
+          el._resolveConfirm();
+        }
         resetForNewSession();
         break;
       case "onboarding":
@@ -16998,6 +18987,11 @@
             // first painted the previous state every time (caught by driving
             // the states in a browser, 2026-08-31).
             syncConnectWizard(msg.provider, msg.device);
+            // The composer card reads the same mirror, and this is the only
+            // frame that moves it. Without this call its "Signing in…" state
+            // waits for the next providerState -- which is the frame that
+            // arrives when the sign-in has already finished.
+            renderProviderSignInCard();
           }
         break;
       case "error":
@@ -17071,6 +19065,22 @@
           // Rejected by the relay (quota/rate cap): the message was never
           // sent, so the optimistic bubble must go — the "Not sent" recovery
           // block below is the honest representation.
+          if (sendWait) {
+            sendWait.fail(msg.text, () => {
+              // The existing recovery UI owns the authored text and delivery.
+              const text = state.rejectedSubmissionText;
+              if (!text) return;
+              if (input.value.trim()) {
+                // Existing composer work is never replaced to perform a retry.
+                input.focus();
+                return;
+              }
+              state.rejectedSubmissionText = "";
+              renderQueuedBlocks();
+              input.value = text;
+              sendOrStop();
+            });
+          }
           clearOptimisticSend();
           hideGrokking();
           state.rejectedSubmissionText = state.pendingSubmissionText;
@@ -17082,13 +19092,41 @@
           renderQueuedBlocks();
           updateSendButton();
         }
-        addError(errorTextForHostAge(msg.text), msg.code);
+        addError(msg.text, msg.code);
         break;
       case "hostNotice":
         addPlanNotice(msg.text);
         break;
       case "xaiNotification":
         break;
+      case "sessionRemoved": {
+        if (!msg.id) break;
+        const removed = state.sessions.find((s) => s.id === msg.id);
+        state.sessions = state.sessions.filter((s) => s.id !== msg.id);
+        state.railSelectedRows = state.railSelectedRows.filter((s) => s.id !== msg.id);
+        state.pinnedSessions = state.pinnedSessions.filter((s) => s.id !== msg.id);
+        for (const preview of Object.values(state.repoPreviews)) {
+          const before = preview.entries.length;
+          preview.entries = preview.entries.filter((s) => s.id !== msg.id);
+          if (typeof preview.total === "number") {
+            preview.total = Math.max(0, preview.total - (before - preview.entries.length));
+          }
+        }
+        if (removed) {
+          state.sessionTotal = Math.max(0, state.sessionTotal - 1);
+          if (state.sessionNextOffset != null) state.sessionNextOffset = Math.max(0, state.sessionNextOffset - 1);
+          if (state.sessionProviderCursor && (!removed.provider || removed.provider === "grok")) {
+            state.sessionProviderCursor.grokOffset = Math.max(0, state.sessionProviderCursor.grokOffset - 1);
+          }
+        }
+        delete state.dots[msg.id];
+        if (rememberedRemoteSession?.id === msg.id) saveRememberedRemoteSession(null);
+        // A removal carries no focus confirmation. Preserve an in-flight rail
+        // transition until sessionName names the conversation being opened.
+        if (!historyPopover.hidden) renderSessionRows(false);
+        renderRail();
+        break;
+      }
       case "sessions": {
         const entries = uniqueSessionRows(msg.entries);
         const offset = msg.offset || 0;
@@ -17241,15 +19279,23 @@
         // Proof this host answers per-repo previews — until now the rail has
         // only probed with a single request.
         const known = state.repoPreviewsSupported;
+        const key = cwdKey(msg.cwd);
         state.repoPreviewsSupported = true;
-        state.repoPreviewsUnsupported = false;
-        if (railProbeTimer) { clearTimeout(railProbeTimer); railProbeTimer = null; }
-        state.repoPreviews[cwdKey(msg.cwd)] = {
-          entries: uniqueSessionRows(msg.entries),
-          total: typeof msg.total === "number" ? msg.total : (msg.entries || []).length,
-        };
+        clearRailProbeDeadline(msg.cwd);
+        delete state.repoPreviewsAsked[key];
+        if (msg.error) {
+          delete state.repoPreviews[key];
+          state.repoPreviewErrors[key] = msg.error;
+          console.warn(`[rail] listRepoSessions host refusal: ${msg.error}`);
+        } else {
+          delete state.repoPreviewErrors[key];
+          state.repoPreviews[key] = {
+            entries: uniqueSessionRows(msg.entries),
+            total: typeof msg.total === "number" ? msg.total : (msg.entries || []).length,
+          };
+        }
         state.dots = Object.assign({}, state.dots, msg.dots || {});
-        if (settlePendingRename(state.repoPreviews[cwdKey(msg.cwd)].entries)) {
+        if (!msg.error && settlePendingRename(state.repoPreviews[key].entries)) {
           renderSessionName();
           renderSessionHead();
         }
@@ -17282,7 +19328,6 @@
               entries: state.railSelectedRows.slice(0, RAIL_EXPANDED),
               total: state.railSelectedRows.length,
             };
-            state.repoPreviewsAsked[cwdKey(wasSelected)] = true;
           }
           // The list for the new repo has not arrived yet — see railRowsFor.
           state.railSessionsStale = true;
@@ -17355,11 +19400,26 @@
       case "projectDirListing":
         handleProjectDirListing(msg);
         break;
+      case "providerConfigContent":
+        settleRemoteFileRequest("configRead", msg);
+        break;
+      case "providerConfigWriteResult":
+        settleRemoteFileRequest("configWrite", msg);
+        break;
       case "projectFileContent":
         handleProjectFileContent(msg);
         break;
       case "projectFileWriteResult":
         handleProjectFileWriteResult(msg);
+        break;
+      case "gitStatusResult":
+        handleGitStatusResult(msg);
+        break;
+      case "gitFileDiffResult":
+        handleGitFileDiffResult(msg);
+        break;
+      case "gitRunResult":
+        handleGitRunResult(msg);
         break;
       default:
         // No case ran. Either the host posted a type outside the contract (drift
@@ -17374,6 +19434,9 @@
         break;
     }
     if (SETTINGS_LIVE_MSGS.has(msg.type)) refreshSettingsOverlay();
+    if (providerConfigPanel && ["initialState", "session", "sessionName", "setBusy", "agentStart", "agentEnd"].includes(msg.type)) {
+      providerConfigPanel.refreshFileNotice();
+    }
     // After any step grok takes mid-turn, make sure the chat still shows it's
     // working — never a dead frame while a turn is unfinished (esp. with thinking
     // traces hidden). The turn-end boundary (promptComplete) is excluded so the
@@ -17419,9 +19482,117 @@
   if (railChromeBeforeCatalog()) renderRail();
   modeBtn.onclick = (e) => { e.stopPropagation(); if (state.busyLocked) return; openModePopover(); };
   gearBtn.onclick = (e) => { e.stopPropagation(); openGearPopover(); };
+  gearBtn.onkeydown = (e) => {
+    if (e.key === "Escape" && !gearPopover.hidden && state.gearView === "model") {
+      e.preventDefault(); e.stopPropagation(); closePopovers();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault(); e.stopPropagation();
+      if (gearPopover.hidden || state.gearSurface !== "composer") openGearPopover();
+      gearPopover.querySelector('.effort-strip-stop[tabindex="0"]:not(:disabled), .model-manage-providers')?.focus();
+    }
+  };
+  gearPopover.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || state.gearView !== "model") return;
+    e.preventDefault(); e.stopPropagation();
+    closePopovers(); gearBtn.focus();
+  });
+
+  // ---------- provider config files ----------
+  // Desktop/remote Settings mount this panel; standalone Settings opens the host editor.
+  // These are display entries, not filesystem listings; messages carry only a
+  // provider id and the host owns the closed path allowlist.
+  const PROVIDER_CONFIG_ENTRIES = [
+    { provider: "grok", name: "Grok", relPath: ".grok/config.toml" },
+    { provider: "codex", name: "Codex", relPath: ".codex/config.toml" },
+    { provider: "claude", name: "Claude", relPath: ".claude/settings.json" },
+  ];
+  let providerConfigPanel = null;
+
+  function providerConfigFilesAvailable() {
+    return !!(state.hostCaps && state.hostCaps.editProviderConfigFiles && state.hostCaps.editProjectFiles
+      && window.GrokFilePanel);
+  }
+
+  function providerConfigNotice(tab) {
+    const entry = PROVIDER_CONFIG_ENTRIES.find((item) => item.relPath === tab.relPath);
+    if (!entry) return null;
+    const notice = document.createElement("div");
+    notice.className = "gfp-notice";
+    const description = document.createElement("p");
+    description.textContent = entry.name + " reads this file at startup. Saved changes apply after restarting a session. Other running sessions keep their current settings.";
+    notice.appendChild(description);
+    if (tab.missing) {
+      const missing = document.createElement("p");
+      missing.textContent = "This file does not exist yet. Save to create it.";
+      notice.appendChild(missing);
+    }
+    const restart = document.createElement("button");
+    restart.type = "button";
+    restart.className = "gfp-action";
+    restart.textContent = "Restart current " + entry.name + " session";
+    const sessionId = state.activeSessionId;
+    restart.disabled = !providerConfigFilesAvailable() || state.activeProvider !== entry.provider
+      || !sessionId || state.busy || tab.dirty || tab.saving;
+    restart.title = state.activeProvider !== entry.provider || !sessionId
+      ? "Open a " + entry.name + " conversation to restart it."
+      : tab.dirty || tab.saving ? "Save your edits before restarting."
+        : state.busy ? "Wait for the current turn to finish." : "Restart the CLI and reload this conversation.";
+    if (restart.disabled) {
+      const hint = document.createElement("p");
+      hint.textContent = restart.title;
+      notice.appendChild(hint);
+    }
+    restart.addEventListener("click", () => {
+      if (!providerConfigFilesAvailable() || state.busy || tab.dirty || tab.saving
+        || state.activeProvider !== entry.provider || state.activeSessionId !== sessionId) return;
+      vscode.postMessage({ type: "restartProviderSession", provider: entry.provider, sessionId });
+      providerConfigPanel.setOpen(false);
+    });
+    notice.appendChild(restart);
+    return notice;
+  }
+
+  async function openProviderConfigFiles(provider) {
+    if (!providerConfigFilesAvailable()) return;
+    const scope = { id: "provider-config-files", label: "Provider config files", title: "~/" };
+    gearPopover.hidden = true;
+    if (!providerConfigPanel) {
+      const request = (kind, relPath, fields, options) => {
+        const entry = PROVIDER_CONFIG_ENTRIES.find((item) => item.relPath === relPath);
+        if (!entry || !providerConfigFilesAvailable()) return Promise.resolve({ ok: false, reason: "editing is not available" });
+        return postRemoteFileRequest(kind, { ...fields, provider: entry.provider }, relPath, options);
+      };
+      providerConfigPanel = window.GrokFilePanel.createFilePanel({
+        access: {
+          currentScope: async () => scope,
+          list: async (_scope, relPath) => ({ ok: true, truncated: false, entries: relPath ? []
+            : PROVIDER_CONFIG_ENTRIES.map((entry) => ({ name: "~/" + entry.relPath, kind: "file", relPath: entry.relPath })) }),
+          read: async (_scope, relPath, options) => {
+            const result = await request("configRead", relPath, { type: "readProviderConfig" }, options);
+            // Path arrival is the create capability. An old host's miss stays
+            // an error; no new enum value can fall through its project route.
+            if (result && !result.ok && result.reason === "not found" && result.absPath) {
+              return { ...result, ok: true, relPath, kind: relPath.endsWith(".json") ? "json" : "text",
+                text: result.text || "", stamp: result.stamp || { mtimeMs: 0, size: -1 }, missing: true };
+            }
+            return result;
+          },
+          write: (_scope, value) => request("configWrite", value.relPath, {
+            type: "writeProviderConfig", text: value.text, stamp: value.stamp, expectedAbsPath: value.expectedAbsPath,
+          }),
+        },
+        mount: { panelHost: document.body, presentation: "overlay", id: "provider-config-panel", label: "Provider config files" },
+        ui: { confirm: uiChoice, renderMarkdown, fileNotice: providerConfigNotice, pathLabel: (path) => "~/" + path },
+      });
+    }
+    await providerConfigPanel.setScope(scope);
+    providerConfigPanel.setOpen(true);
+    const entry = PROVIDER_CONFIG_ENTRIES.find((item) => item.provider === provider);
+    if (entry) await providerConfigPanel.openPath(entry.relPath);
+    providerConfigPanel.refreshFileNotice();
+  }
 
   // ---------- remote project files ----------
-  //
   // Browse + open under the tab's selected repo; edit+save when the host also
   // advertises editProjectFiles. Host fence is repoScopeFor + resolveTreePath
   // (see src/remote-files.ts). No create/delete/rename. Capability-gated (field
@@ -17435,6 +19606,18 @@
   /** Edit is a separate capability so a host can offer browse without a write path. */
   function remoteFilesEditAvailable() {
     return remoteFilesBrowseAvailable() && !!(state.hostCaps && state.hostCaps.editProjectFiles);
+  }
+
+  /**
+   * The Changes view rides on the file panel's mount but is its own capability:
+   * a host can browse files without answering git, and every extension released
+   * before this one does exactly that. The flag only says the host UNDERSTANDS
+   * the three messages — a project that is not a repository still advertises it
+   * and answers ok:false, and the panel hides itself on that answer rather than
+   * on the flag.
+   */
+  function remoteGitAvailable() {
+    return remoteFilesBrowseAvailable() && !!(state.hostCaps && state.hostCaps.gitChanges);
   }
 
   function remoteFilesRepoCwd() {
@@ -17452,13 +19635,156 @@
   const remoteFilePending = new Map();
   const remoteFileTails = new Map();
   const remoteFilePoisoned = new Set();
+  const remoteFileUncorrelatedUnsafe = new Set();
+
+  /*
+   * What to say when a request got no answer at all.
+   *
+   * On a cloud machine the overwhelmingly likely reason is that the machine is
+   * asleep — it suspends about a minute after the last frame, so reading the
+   * transcript for a couple of minutes is enough. The click already sent the
+   * request that wakes it, and this panel re-reads when the host dials back in.
+   * Describe that work without promising a boot time or asking for another send.
+   *
+   * It says only what THIS request knows, which is that no answer came.
+   *
+   * It used to open with the relay page's own words — "Waking your cloud
+   * machine…" — so that a person meeting both in one session heard one voice.
+   * Agreeing by hand was the best available answer while both were guessing
+   * from silence, and the comment here said so. The shell no longer guesses:
+   * the relay reports the phase and the page says what is actually happening
+   * to the machine. A second voice inferring the same thing from a thirty-
+   * second timer can now only contradict it — and did, whenever a read timed
+   * out on a machine the relay had already reported reachable.
+   *
+   * So the claim about the machine belongs to the page, and this keeps the
+   * one fact a timed-out read genuinely establishes. Same sentence on a cloud
+   * machine and a laptop, because the difference between them is exactly the
+   * part this no longer claims to know.
+   */
+  function remoteFileSilenceReason() {
+    return "No answer yet. This view fills in when the machine reconnects.";
+  }
 
   function remoteFileRequestKey(kind, cwd, relPath) {
     return kind + "\0" + String(cwd || "") + "\0" + String(relPath || "");
   }
 
-  function postRemoteFileRequest(kind, payload) {
-    const key = remoteFileRequestKey(kind, payload.cwd, payload.relPath);
+  /*
+   * A read is quick or it is broken; a WRITE can legitimately take minutes.
+   *
+   * The host allows a git write 180s (`GIT_WRITE_TIMEOUT_MS`) precisely so a
+   * commit hook or a push over a slow line can finish. One 30s timer for every
+   * file request turned that into "File request timed out" on the phone while
+   * the machine was still working — and the eventual success was thrown away,
+   * so the one screen whose job is to answer "is my work saved" answered
+   * wrongly. The desktop mount has no such timer and always waited.
+   */
+  const REMOTE_FILE_TIMEOUT_MS = 30000;
+  const REMOTE_GIT_WRITE_TIMEOUT_MS = 195000; // the host's 180s, plus the relay round trip
+
+  function remoteFileTimeoutMs(kind) {
+    return kind === "gitRun" ? REMOTE_GIT_WRITE_TIMEOUT_MS : REMOTE_FILE_TIMEOUT_MS;
+  }
+
+  const SHELL_HELD_READS = new Set(["list", "read", "configRead", "gitStatus", "gitDiff"]);
+
+  function postLinkedFileRequest(kind, payload, pathKey, options) {
+    const read = SHELL_HELD_READS.has(kind);
+    if (!read && !hostWait.available()) {
+      vscode.postMessage({ type: "listSessions" });
+      return Promise.resolve({ ok: false, reason: "The machine is offline. Nothing was sent. Try again when it is back." });
+    }
+    return new Promise((resolve) => {
+      const key = remoteFileRequestKey(kind, payload.provider || payload.cwd, pathKey);
+      const pending = { kind, key, cwd: payload.provider || payload.cwd, relPath: pathKey, linked: true, read, resolve, timer: null };
+      const signal = options && options.signal;
+      const finish = (result) => {
+        remoteFilePending.delete(pending.requestId);
+        if (signal) signal.removeEventListener("abort", cancel);
+        resolve(result);
+      };
+      const cancel = () => {
+        remoteFileUncorrelatedUnsafe.add(key);
+        finish({ ok: false, cancelled: true, reason: "View closed." });
+      };
+      pending.resolve = (result) => {
+        // A manufactured refusal ENDS the shell's ownership of this attempt.
+        // Wait for the next usable link before making a fresh correlated read.
+        if (read && !result.ok && !hostWait.available()
+          && /connection|reconnect|restor|offline/i.test(result.reason || "")) {
+          pending.retryOnRestore = true;
+          remoteFilePending.set(pending.requestId, pending);
+          return;
+        }
+        finish(result);
+      };
+      pending.send = () => {
+        if (pending.requestId) remoteFileUncorrelatedUnsafe.add(key);
+        remoteFilePending.delete(pending.requestId);
+        pending.requestId = "file-" + (++remoteFileRequestSeq);
+        pending.retryOnRestore = false;
+        pending.shellHeld = !hostWait.snapshot().restored;
+        // Which socket is carrying this. The host answers a remote request by
+        // addressing the client id that asked, and a reconnect is issued a new
+        // one — so anything still outstanding over an earlier connection has
+        // nowhere left to land. See `settleLostLinkedWrites`.
+        pending.connection = hostWait.snapshot().connection;
+        remoteFilePending.set(pending.requestId, pending);
+        vscode.postMessage({ ...payload, requestId: pending.requestId });
+      };
+      if (signal && signal.aborted) { cancel(); return; }
+      if (signal) signal.addEventListener("abort", cancel, { once: true });
+      pending.send();
+    });
+  }
+
+  function noteRemoteFileDisconnect() {
+    for (const pending of remoteFilePending.values()) {
+      // Reads still in the shell's restore hold keep that owner. A live read
+      // lost with a previous socket has no shell owner and needs a new id.
+      if (pending.linked && pending.read && !pending.shellHeld) pending.retryOnRestore = true;
+    }
+  }
+
+  /**
+   * End every linked WRITE that was riding a connection which no longer exists.
+   *
+   * Reads above are reissued, because asking twice costs nothing. A write is
+   * the opposite: it may already have run, and sending it again is how one tap
+   * becomes two commits. So the answer is neither to replay it nor to keep
+   * waiting — the reply was addressed to a client id the relay retired when
+   * this page reconnected, and it is never coming. Say so, once, and let the
+   * person decide.
+   *
+   * Waiting was the alternative and it is not a neutral one: the panel reads
+   * "Saving…" for as long as the tab stays open, which is the same screen a
+   * successful save leaves behind for a moment, on the one surface whose job is
+   * to answer "is my work saved". Only a reload escaped it.
+   *
+   * The comparison is against the socket that is up NOW, not against a flag,
+   * because the two things that end a request are not the same: a machine gone
+   * quiet for twelve seconds keeps its socket, and a write to a slow `git push`
+   * is still legitimately running behind it.
+   */
+  function settleLostLinkedWrites(connection) {
+    for (const pending of [...remoteFilePending.values()]) {
+      if (!pending.linked || pending.read) continue;
+      if (pending.connection === connection) continue;
+      // The retry sends a new id; a late uncorrelated answer to the abandoned
+      // attempt must not be allowed to satisfy it.
+      remoteFileUncorrelatedUnsafe.add(pending.key);
+      pending.resolve({
+        ok: false,
+        reason: "The connection dropped before that finished. It may already have been applied — check before trying again.",
+      });
+    }
+  }
+
+  function postRemoteFileRequest(kind, payload, keyPath, options) {
+    const pathKey = typeof keyPath === "string" ? keyPath : (payload.relPath || "");
+    if (hostWait.snapshot()) return postLinkedFileRequest(kind, payload, pathKey, options);
+    const key = remoteFileRequestKey(kind, payload.provider || payload.cwd, pathKey);
     if (remoteFilePoisoned.has(key)) {
       return Promise.resolve({ ok: false, reason: "Request state is stale. Refresh this page and try again." });
     }
@@ -17466,14 +19792,25 @@
       const requestId = "file-" + (++remoteFileRequestSeq);
       const timer = setTimeout(() => {
         remoteFilePending.delete(requestId);
-        if (remoteFileRequestIdsSupported !== true) remoteFilePoisoned.add(key);
-        resolve({ ok: false, reason: "File request timed out. Refresh this page and try again." });
-      }, 30000);
+        // Poison only a host PROVEN legacy, never one that merely went quiet.
+        //
+        // `null` means "no answer has arrived yet, so we do not know", and
+        // treating that as legacy was wrong in the case that actually happens:
+        // a cloud machine suspends about a minute after the last frame, so the
+        // FIRST request of a page load routinely lands on a sleeping host and
+        // times out. That poisoned the key, and every later read answered
+        // "Request state is stale. Refresh this page and try again." — the
+        // panel stayed dead after the machine woke, which is why a refresh
+        // looked like the only cure. Silence is not evidence of an old host;
+        // a reply without a requestId is, and that sets this to false.
+        if (remoteFileRequestIdsSupported === false) remoteFilePoisoned.add(key);
+        resolve({ ok: false, reason: remoteFileSilenceReason() });
+      }, remoteFileTimeoutMs(kind));
       remoteFilePending.set(requestId, {
         requestId,
         kind,
-        cwd: payload.cwd,
-        relPath: payload.relPath || "",
+        cwd: payload.provider || payload.cwd,
+        relPath: pathKey,
         key,
         timer,
         resolve,
@@ -17490,8 +19827,43 @@
     return request;
   }
 
+  /**
+   * Fail every request still waiting on the connection that just ended.
+   *
+   * Anything posted over the previous socket is unanswerable: either the frame
+   * never landed or its reply went nowhere. Waiting out each request's own
+   * thirty seconds is not caution,
+   * it is a delay we can already prove is pointless — and it is not free, because
+   * until a reply proves the host echoes requestIds these are serialized per key,
+   * so ONE read swallowed by a frozen socket holds up every read behind it. That
+   * is what left a woken machine still saying "Waking your cloud machine" half a
+   * minute after it had woken.
+   *
+   * Deliberately does NOT poison the key. Silence across a reconnect says nothing
+   * about whether the host is a build too old to echo requestIds, and treating it
+   * as evidence is the mistake the timeout above documents at length.
+   */
+  function abandonRemoteFileRequests() {
+    for (const pending of [...remoteFilePending.values()]) {
+      clearTimeout(pending.timer);
+      remoteFilePending.delete(pending.requestId);
+      pending.resolve({ ok: false, reason: "The connection dropped before that finished." });
+    }
+  }
+
+  /**
+   * The path a reply is about, whichever of the two names it uses. Kept as one
+   * function so the fence below cannot drift from the one in the pending record.
+   */
+  function remoteFileReplyPath(msg) {
+    if (typeof msg.relPath === "string") return msg.relPath;
+    if (typeof msg.path === "string") return msg.path;
+    return "";
+  }
+
   function settleRemoteFileRequest(kind, msg) {
-    if (!state.filesBrowse.component) return false;
+    if (!state.filesBrowse.component && !providerConfigPanel) return false;
+    const replyPath = remoteFileReplyPath(msg);
     let pending = null;
     if (typeof msg.requestId === "string") {
       remoteFileRequestIdsSupported = true;
@@ -17502,8 +19874,9 @@
       if (
         candidate
         && candidate.kind === kind
-        && candidate.cwd === msg.cwd
-        && candidate.relPath === (msg.relPath || "")
+        && candidate.cwd === (msg.provider || msg.cwd)
+        && (candidate.relPath === replyPath || (kind === "configRead" && !msg.ok && !replyPath && msg.provider === candidate.cwd))
+        && !candidate.retryOnRestore
       ) {
         pending = candidate;
       }
@@ -17512,8 +19885,9 @@
       for (const candidate of remoteFilePending.values()) {
         if (
           candidate.kind === kind
-          && candidate.cwd === msg.cwd
-          && candidate.relPath === (msg.relPath || "")
+          && !(candidate.linked && (candidate.retryOnRestore || remoteFileUncorrelatedUnsafe.has(candidate.key)))
+          && candidate.cwd === (msg.provider || msg.cwd)
+          && candidate.relPath === replyPath
         ) {
           pending = candidate;
           break;
@@ -17546,12 +19920,12 @@
         : "";
       const access = {
         currentScope: async () => currentRemoteFileScope(),
-        list: (cwd, relPath) => postRemoteFileRequest("list", {
+        list: (cwd, relPath, options) => postRemoteFileRequest("list", {
           type: "listProjectDir", cwd, relPath: relPath || "",
-        }),
-        read: (cwd, relPath) => postRemoteFileRequest("read", {
+        }, relPath || "", options),
+        read: (cwd, relPath, options) => postRemoteFileRequest("read", {
           type: "readProjectFile", cwd, relPath,
-        }),
+        }, relPath, options),
       };
       if (remoteFilesEditAvailable()) {
         access.write = (cwd, request) => postRemoteFileRequest("write", {
@@ -17561,6 +19935,28 @@
           text: request.text,
           stamp: request.stamp,
           expectedAbsPath: request.expectedAbsPath,
+        });
+      }
+      if (remoteGitAvailable()) {
+        access.gitStatus = (cwd, _value, options) => postRemoteFileRequest("gitStatus", {
+          type: "gitStatus", cwd,
+        }, "", options);
+        access.gitDiff = (cwd, relPath, options) => postRemoteFileRequest("gitDiff", {
+          type: "gitFileDiff", cwd, path: relPath,
+        }, relPath, options);
+        // The op set is closed and re-planned host-side from the host's OWN
+        // snapshot, so this passes the request through rather than validating
+        // it: a renderer check here would be a second, weaker copy of a fence
+        // that has to exist on the host anyway.
+        access.gitRun = (cwd, request) => postRemoteFileRequest("gitRun", {
+          type: "gitRun",
+          cwd,
+          op: request.op,
+          message: request.message,
+          push: request.push,
+          paths: request.paths,
+          branch: request.branch,
+          path: request.path,
         });
       }
       let initialOpen = false;
@@ -17599,17 +19995,33 @@
           confirm: uiChoice,
           renderMarkdown,
           fileIcons: { baseUrl: iconBase },
+          askAgent: appendComposerText,
+          openSettings: window.__grokFilePanelOpenSettings,
         },
+        // No purpose gate here on purpose. People clone repositories in
+        // Knowledge work too, and `changesAvailable()` already answers the real
+        // question from evidence — git's own no-git / not-a-repo reply —
+        // rather than from a proxy for it. The turn-summary card stays
+        // Coding-only for free: it hangs off turnDiffSummaryEnabled(), not this.
+        // Only the remote mount polls. A proven requestId echo is needed too:
+        // a legacy timeout must poison its key to fence late, uncorrelated
+        // replies. Background work must never strand the next explicit read.
+        // Older hosts retain their entry/reconnect/turn-end refresh behavior.
+        pollChanges: () => remoteFileRequestIdsSupported === true,
         initialOpen,
+        onPresentationChanged: reportLayerDepth,
         onOpenChanged: (open) => {
           state.filesBrowse.open = open;
           document.body.classList.toggle("files-browse-open", open);
           try { sessionStorage.setItem("atlas.remote.filesOpen", open ? "1" : "0"); } catch (_) { /* private mode */ }
+          // Creation calls this before returning the dismissible component.
+          if (state.filesBrowse.component) reportLayerDepth();
         },
       });
       state.filesBrowse.component = panel;
       panel.toggleElement.id = "files-browse-btn";
       panel.toggleElement.classList.add("icon-btn");
+      reportLayerDepth();
     }
     placeRemoteFilesButton(panel.toggleElement);
     panel.toggleElement.hidden = false;
@@ -17637,6 +20049,32 @@
     if (host.lastElementChild === btn && sep.nextElementSibling === btn) return;
     host.appendChild(sep);
     host.appendChild(btn);
+  }
+
+  /**
+   * Linked pages keep shell-held reads and retry only ended/live-lost attempts,
+   * and end any write whose connection is gone. Legacy pages still abandon and
+   * refresh wholesale. Neither path ever replays a write.
+   */
+  function onRemoteHostReachable(link) {
+    const panel = state.filesBrowse && state.filesBrowse.component;
+    if (!panel && !providerConfigPanel) return;
+    if (link && hostWait.snapshot()) {
+      if (!link.restored) return;
+      settleLostLinkedWrites(link.connection);
+      for (const pending of [...remoteFilePending.values()]) {
+        if (!pending.linked || !pending.read) continue;
+        if (pending.retryOnRestore) pending.send();
+        // The shell flushes its held read at this boundary. Never reissue it.
+        pending.shellHeld = false;
+      }
+      if (panel) void panel.refreshDisplayed({ preservePending: true });
+      if (providerConfigPanel) void providerConfigPanel.refreshDisplayed({ preservePending: true });
+      return;
+    }
+    abandonRemoteFileRequests();
+    if (panel && typeof panel.refreshDisplayed === "function") void panel.refreshDisplayed();
+    if (providerConfigPanel && providerConfigFilesAvailable()) void providerConfigPanel.refreshDisplayed();
   }
 
   function ensureRemoteFilesBrowser() {
@@ -17668,6 +20106,41 @@
   function handleProjectFileWriteResult(msg) {
     settleRemoteFileRequest("write", msg);
   }
+
+  function handleGitStatusResult(msg) {
+    settleRemoteFileRequest("gitStatus", msg);
+  }
+
+  function handleGitFileDiffResult(msg) {
+    settleRemoteFileRequest("gitDiff", msg);
+  }
+
+  function handleGitRunResult(msg) {
+    settleRemoteFileRequest("gitRun", msg);
+  }
+
+  function mountedFilePanels() {
+    const panels = [];
+    const desk = window.__grokDeskFilePanel;
+    if (desk) panels.push(desk);
+    const remote = state.filesBrowse && state.filesBrowse.component;
+    if (remote) panels.push(remote);
+    return panels;
+  }
+
+  /** The agent just wrote files; the number on the button is stale. No-ops off Coding. */
+  function refreshChangesCount() {
+    for (const panel of mountedFilePanels()) {
+      if (typeof panel.refreshChanges === "function") panel.refreshChanges();
+    }
+  }
+
+  /** Coding ↔ Knowledge work adds or removes the button outright. */
+  function syncChangesAvailability() {
+    for (const panel of mountedFilePanels()) {
+      if (typeof panel.refreshChangesAvailability === "function") panel.refreshChangesAvailability();
+    }
+  }
   // Welcome screen's "about" link → Settings → About.
   const welcomeAboutLink = $("welcome-about-link");
   if (welcomeAboutLink) welcomeAboutLink.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openAboutPanel(); };
@@ -17681,6 +20154,10 @@
   // Hidden from the first paint: the chip has nothing to say until a `repos`
   // frame arrives, and in VS Code it never appears at all.
   applyRepoSwitcherVisibility();
+  // Likewise from the first paint. `initialState` re-applies it, but the
+  // default purpose is knowledge work, so the class has to be right before
+  // the host has said anything.
+  applyTurnDiffSummaryVisibility();
   donutEl.onclick = (e) => {
     e.stopPropagation();
     if (contextPopover.hidden) openContextPopover(); else closePopovers();
@@ -18102,22 +20579,131 @@
     }
   });
 
-  document.addEventListener("dragenter", (e) => { e.preventDefault(); document.body.classList.add("dragging"); });
+  // `dragleave` bubbles from every child the pointer crosses, and the spec fires
+  // `dragenter` on the NEW element BEFORE `dragleave` on the old one — so an
+  // add-on-enter / remove-on-leave pair spends most of a drag switched OFF. The
+  // dashed outline was therefore unreliable exactly when it was being relied on
+  // as a diagnostic ("if you see the outline, the drop is reaching us", #136).
+  // Count depth instead: only the leave that unwinds the last enter ends it.
+  let dragDepth = 0;
+  const endDrag = () => { dragDepth = 0; document.body.classList.remove("dragging"); };
+  document.addEventListener("dragenter", (e) => {
+    e.preventDefault();
+    dragDepth += 1;
+    document.body.classList.add("dragging");
+  });
   document.addEventListener("dragover", (e) => e.preventDefault());
-  document.addEventListener("dragleave", () => document.body.classList.remove("dragging"));
+  document.addEventListener("dragleave", () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) document.body.classList.remove("dragging");
+  });
+  document.addEventListener("dragend", endDrag);
+
+  function parseUriList(data) {
+    return data.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+  }
+
+  function parseJsonList(data) {
+    try {
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed.filter((entry) => typeof entry === "string" && entry) : [];
+    } catch { return []; }
+  }
+
+  /** Every transfer type we know how to turn into a path, best first.
+   *
+   *  `text/uri-list` is the standard one and all an OS file manager sets. VS
+   *  Code's Explorer is an INTERNAL drag and fills several more (verified
+   *  against the shipped workbench bundle, 1.135): it writes the standard list
+   *  TRUNCATED TO THE FIRST resource, and puts every dragged resource in
+   *  `application/vnd.code.uri-list`; `CodeFiles` is a JSON array of plain fs
+   *  paths and `ResourceURLs` a JSON array of URI strings. Reading only the
+   *  standard type is why a multi-file Explorer drag can land as one file — or,
+   *  where the standard type is absent, as nothing at all. */
+  // ORDER MATTERS: we take the first type that yields anything, so the complete
+  // lists must come before the truncated one. VS Code sets `text/uri-list` to
+  // the FIRST dragged resource only and puts the full set in its own
+  // `application/vnd.code.uri-list` — reading the standard type first would
+  // silently attach one file out of five. The standard type stays last because
+  // it is the only one an OS file-manager drag sets at all.
+  const DROP_SOURCES = [
+    { type: "application/vnd.code.uri-list", parse: parseUriList },
+    { type: "CodeFiles", parse: parseJsonList },
+    { type: "ResourceURLs", parse: parseJsonList },
+    { type: "text/uri-list", parse: parseUriList },
+  ];
+
+  /** The transfer types only VS Code's own workbench writes. Their presence is
+   *  proof the drag STARTED inside this window rather than in the OS file
+   *  manager — which is the whole reason Shift cannot be read as a modifier on
+   *  this path (see the drop handler). Lowercase, because that is how the DnD
+   *  spec hands every format back. */
+  const VSCODE_INTERNAL_TYPES = [
+    "application/vnd.code.uri-list",
+    "codefiles",
+    "resourceurls",
+    "codeeditors",
+  ];
+
+  /** A raw entry we are willing to hand the host, which accepts a `file://` URI
+   *  OR a plain absolute path. Anything else — `http:`, `vscode-remote:`, a bare
+   *  relative label — is refused here rather than turned into a bad path. */
+  function droppableEntry(entry) {
+    if (/^file:\/\//i.test(entry)) return entry;
+    if (/^[A-Za-z]:[\\/]/.test(entry)) return entry;
+    if (entry.startsWith("/") || entry.startsWith("\\\\")) return entry;
+    return undefined;
+  }
+
   document.addEventListener("drop", (e) => {
     e.preventDefault();
-    document.body.classList.remove("dragging");
-    const data = e.dataTransfer?.getData("text/uri-list");
-    if (!data) return;
-    const uris = data.split(/\r?\n/).filter((l) => l && !l.startsWith("#"));
-    for (const uri of uris) {
-      if (!/^file:\/\//i.test(uri)) continue;
-      // Post the RAW URI — the host converts it with fileUriToPath, which
+    endDrag();
+    const dt = e.dataTransfer;
+    // The DnD spec lowercases every format on both set and get, so match
+    // case-insensitively — `CodeFiles` arrives as `codefiles`.
+    const types = dt ? Array.from(dt.types || []) : [];
+    const byLower = new Map(types.map((type) => [String(type).toLowerCase(), type]));
+    const entries = [];
+    let via;
+    for (const source of DROP_SOURCES) {
+      const actual = byLower.get(source.type.toLowerCase());
+      if (actual === undefined) continue;
+      let raw = "";
+      try { raw = dt.getData(actual) || ""; } catch { raw = ""; }
+      if (!raw) continue;
+      const accepted = source.parse(raw).map(droppableEntry).filter(Boolean);
+      if (!accepted.length) continue;
+      via = source.type;
+      entries.push(...accepted);
+      break;
+    }
+    // SHIFT IS OURS ON AN OS DRAG AND NOT OURS ON A VS CODE ONE.
+    //
+    // A `dragstart` anywhere in the workbench window makes VS Code set
+    // `pointer-events: none` on every webview iframe, and it re-evaluates that
+    // on each `drag`/`dragover`: holding Shift is the ONLY thing that lifts it.
+    // So a drag out of the Explorer can reach this webview at all only with
+    // Shift held — the user is not choosing the modifier, the workbench is
+    // demanding it. Reading it as our own turned every Explorer drop into a
+    // whole-file inline attachment, and every dragged image into a binary file
+    // read as utf-8 to count lines instead of a vision attachment (#136).
+    //
+    // An OS file-manager drag fires no `dragstart` in this renderer, so nothing
+    // is blocked, none of these types are set, and Shift means what it always
+    // meant there.
+    const internal = VSCODE_INTERNAL_TYPES.some((type) => byLower.has(type));
+    const shift = e.shiftKey && !internal;
+    // Report the SHAPE of every drop, handled or not: a drop that yielded
+    // nothing is otherwise indistinguishable from one that never arrived, which
+    // is what made #136 unfalsifiable from outside the machine it happens on.
+    // Type names only — never their values, which are the user's file paths.
+    vscode.postMessage({ type: "dropFile", shift, types, via });
+    for (const entry of entries) {
+      // Post the RAW entry — the host converts a URI with fileUriToPath, which
       // handles the Windows drive-letter (`file:///C:/x` → `C:/x`) and UNC
       // (`file://server/share`) forms that a naive `file://` strip broke
       // (the leading-slash path failed existsSync, so drops died silently).
-      vscode.postMessage({ type: "dropFile", path: uri, shift: e.shiftKey });
+      vscode.postMessage({ type: "dropFile", path: entry, shift });
     }
   });
 

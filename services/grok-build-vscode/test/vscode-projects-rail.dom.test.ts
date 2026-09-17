@@ -101,6 +101,50 @@ function loadSessions(
   });
 }
 
+it("uses open and closed outline project marks that inherit their tint", () => {
+  const { window, doc } = bootRail();
+  const api = railApi(window);
+  loadCatalog(api);
+  loadSessions(api, [row("a1", "/work/alpha", "First conversation")]);
+  const alpha = () => [...doc.querySelectorAll(".rail-repo")].find(
+    (el) => el.querySelector(".rail-repo-label")?.textContent === "alpha",
+  )!;
+  const mark = () => alpha().querySelector(".rail-twisty svg")!;
+  expect(mark().getAttribute("viewBox")).toBe("0 0 24 24");
+  expect(mark().getAttribute("fill")).toBe("none");
+  expect(mark().getAttribute("stroke")).toBe("currentColor");
+  expect(mark().querySelector("path")?.getAttribute("d")).toMatch(/^m6 14 1\.5-2\.9/);
+  (alpha().querySelector(".rail-repo-head") as HTMLElement).click();
+  expect(mark().querySelector("path")?.getAttribute("d")).toMatch(/^M20 20a2 2/);
+  expect(alpha().querySelector(".rail-sessions")).toBeNull();
+  window.happyDOM.abort();
+});
+
+it("removes abandoned sessions from selected rows, previews, pins and Recent without changing focus", () => {
+  const { window, doc, posted } = bootRail();
+  const api = railApi(window);
+  loadCatalog(api);
+  const empty = { ...row("empty", "/work/alpha", "Abandoned empty"), pinned: true };
+  const kept = row("kept", "/work/alpha", "Keep this conversation");
+  loadSessions(api, [empty, kept], "kept");
+  api.onMessage({ type: "repoSessions", cwd: empty.cwd, entries: [empty, kept], total: 2, dots: {} });
+  api.onMessage({ type: "pinnedSessions", entries: [empty], dots: { empty: "idle" } });
+  posted.length = 0;
+  api.onMessage({ type: "sessionRemoved", id: "empty", cwd: empty.cwd });
+  api.onMessage({ type: "sessionRemoved", id: "empty", cwd: empty.cwd });
+  expect(api.state.currentSessions).toEqual([kept]);
+  expect(api.state.pinnedSessions).toEqual([]);
+  expect(Object.values(api.state.previews as Record<string, unknown>)).toEqual([{ entries: [kept], total: 1 }]);
+  expect(api.state.dots).toEqual({});
+  expect(api.state.activeSessionId).toBe("kept");
+  expect(api.recentRows().map((s) => s.id)).toEqual(["kept"]);
+  expect(doc.querySelectorAll('[data-session-id="empty"]')).toHaveLength(0);
+  expect(posted).toEqual([]);
+  loadCatalog(api, "/work/beta");
+  expect(api.recentRows().map((s) => s.id)).toEqual(["kept"]);
+  window.close();
+});
+
 function openProjectMenu(doc: Document, window: Window, repoLabel: string) {
   const labels = [...doc.querySelectorAll(".rail-repo-label")];
   const labelEl = labels.find((e) => e.textContent === repoLabel);
@@ -118,6 +162,22 @@ function menuItem(menu: Element, label: string) {
     (b) => (b.textContent || "").includes(label),
   ) as HTMLElement | undefined;
 }
+
+it("keeps old hosts without archive fields in Projects even after previews arrive", () => {
+  const { window, doc } = bootRail();
+  const api = railApi(window);
+  const catalog = ["alpha", "beta", "gamma", "delta", "epsilon"].map((label) => ({
+    cwd: `/work/${label}`, label, available: true, updatedAt: 1,
+  }));
+  loadCatalog(api, "/work/alpha", catalog);
+  for (const repo of catalog) {
+    api.onMessage({ type: "repoSessions", cwd: repo.cwd, entries: [row(repo.label, repo.cwd, repo.label)], total: 1, dots: {} });
+  }
+  expect(sectionTitles(doc)).not.toContain("Project Archive");
+  expect(repoLabels(doc)).toEqual(expect.arrayContaining(catalog.map((r) => r.label)));
+  expect(menuItem(openProjectMenu(doc, window, "epsilon"), "Archive project")).toBeUndefined();
+  window.close();
+});
 
 describe("VS Code projects rail renderer", () => {
   let h: ReturnType<typeof bootRail>;
@@ -559,6 +619,26 @@ describe("VS Code projects rail renderer", () => {
     });
   });
 
+  describe("archiving the open project", () => {
+    it("files the current project under Project Archive when the user asks", () => {
+      // The two guards here (workspaceCwd, currentCwd) exempt the project you
+      // are standing in from being archived FOR you by the age rule. They used
+      // to run before the stored choice was read, which silently vetoed the
+      // menu item on the one project every fresh machine opens with.
+      const { window, doc } = h;
+      const api = railApi(window);
+      const catalog = [
+        { cwd: "/work/alpha", label: "alpha", available: true, updatedAt: 30, archived: true, archivedAt: Date.now(), color: "" },
+        { cwd: "/work/beta", label: "beta", available: true, updatedAt: 10, archived: false, archivedAt: 0, color: "" },
+      ];
+      loadCatalog(api, "/work/alpha", catalog);
+      loadSessions(api, [row("a1", "/work/alpha", "here", 10)]);
+      api.onMessage({ type: "repoSessions", cwd: "/work/beta", entries: [row("b1", "/work/beta", "there", 20)], dots: {}, total: 1 });
+      expect(api.state.currentCwd).toBe("/work/alpha");
+      expect(sectionTitles(doc)).toContain("Project Archive");
+    });
+  });
+
   describe("project colour picker", () => {
     const withColors = () =>
       repos.map((r) => ({ ...r, color: r.cwd === "/work/beta" ? "teal" : "" }));
@@ -733,6 +813,33 @@ describe("VS Code projects rail renderer", () => {
       expect(doc.querySelectorAll(".rail-repo").length).toBeGreaterThan(0);
       (doc.querySelector(".rail-add-project") as HTMLButtonElement).click();
       expect(doc.querySelectorAll(".rail-repo").length).toBeGreaterThan(0);
+    });
+
+    it("the wide Add project button opens a menu that stays on screen", () => {
+      // The header + stops the opening click from bubbling; the wide button
+      // did not, so the document listener closed the menu on the same click
+      // and the button looked dead. Helpers must be loaded so there is a
+      // menu to open rather than a one-item fallthrough to the picker.
+      const helpers = read("../media/webview-helpers.js");
+      const { doc, window, posted } = bootRail();
+      window.eval(helpers);
+      railApi(window).onMessage({
+        type: "repos",
+        entries: repos,
+        selectedCwd: "/work/alpha",
+        activeCwd: "/work/alpha",
+        canAddProject: true,
+        canCreateProject: true,
+        canCloneProject: true,
+      });
+      posted.length = 0;
+      const wide = doc.querySelector(".rail-add-project-wide") as HTMLButtonElement;
+      expect(wide).toBeTruthy();
+      wide.click();
+      const menu = doc.querySelector(".rail-menu") as HTMLElement;
+      expect(menu).toBeTruthy();
+      expect(menu.textContent).toMatch(/Clone from GitHub/);
+      expect(posted.some((m) => m.type === "addProjectFolder")).toBe(false);
     });
 
     it("offers a way out of an empty rail, where no head is rendered", () => {

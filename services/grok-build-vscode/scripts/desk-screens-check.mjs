@@ -21,6 +21,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { buildQaFixture } from "./qa-fixture.mjs";
 import { assertPinnedAfterZoomedExpandedTurn, hostMsg } from "./desk-stick-to-bottom.mjs";
+import { assertPromptNavigation, assertOriginalImageCopy } from "./desk-prompt-navigation.mjs";
 
 const root = process.cwd();
 const OUT = process.env.SCREENS_DIR || ".screens";
@@ -95,9 +96,18 @@ const BLANK_ICONS = `() => {
   return bad;
 }`;
 
-/** Bar-icon primitive: every visible icon-only chrome member is 20×20 with
- *  an unpainted box (no border, transparent background). Pencil stays 16;
- *  the in-tab X stays 14 (15 on coarse). Overflow … is a tab, not a member. */
+/** Bar-icon primitive: an unpainted box (no border, transparent background)
+ *  around a glyph at one of TWO sizes, split by region rather than by class.
+ *
+ *  20px — chat chrome that is not part of a panel: the composer's buttons and
+ *         the rail's open control.
+ *  16px — the PANEL scale, shared by the file explorer (header and rows), the
+ *         row above the messages, and the project rail's in-row controls. These
+ *         three sit side by side on one screen, and until 2026-09-02 the rail's
+ *         were 13px against the explorer's 20px, which is what the owner saw.
+ *
+ *  Pencil stays 16; the in-tab X stays 14 (15 on coarse). Overflow … is a tab,
+ *  not a member. */
 const BAR_ICONS = `() => {
   const isTransparent = (c) => {
     if (!c || c === "transparent") return true;
@@ -123,8 +133,16 @@ const BAR_ICONS = `() => {
     return { borderNone, bgClear: isTransparent(s.backgroundColor), bg: s.backgroundColor, border: s.borderTopStyle };
   };
   const labelOf = (el) => el.id || el.getAttribute("aria-label") || el.title || String(el.className || "").trim().split(/\\s+/)[0] || "?";
-  const SEL = [
-    ".icon-btn:not(.session-name-edit):not(#session-head-edit)",
+  // What is LEFT at 20: the composer's own buttons. Everything that belongs to a
+  // panel or to the bar above the messages is 16 (14 in VS Code).
+  const CHROME = [
+    ".icon-btn:not(.session-name-edit):not(#session-head-edit):not(#session-head .icon-btn):not(.top-bar .icon-btn)",
+  ].join(",");
+  const PANEL = [
+    // The whole header bar, not just its .rail-action-btn members: on remote,
+    // session-history and session-new are .icon-btn and sat at 20 beside a 16.
+    "#session-head .icon-btn:not(.session-name-edit):not(#session-head-edit)",
+    ".top-bar .icon-btn:not(.session-name-edit):not(#session-head-edit)",
     ".rail-icon-btn",
     ".desk-rail-open-btn",
     ".gfp-toggle",
@@ -135,6 +153,8 @@ const BAR_ICONS = `() => {
     "#session-head-actions .rail-action-btn",
     "#vscode-session-actions .rail-action-btn",
   ].join(",");
+  const SEL = CHROME + "," + PANEL;
+  const TOUCH = window.matchMedia && window.matchMedia("(hover: none)").matches;
   const bad = [];
   const seen = [];
   const members = [];
@@ -145,7 +165,13 @@ const BAR_ICONS = `() => {
     const box = noPaintedBox(el);
     const what = labelOf(el);
     members.push({ what, glyph: g, bg: box.bg, border: box.border });
-    if (Math.abs(g - 20) > 1) bad.push(what + " glyph " + g + "px (want 20)");
+    // THREE tiers, and the third is the viewport's, not the selector's: under
+    // (hover: none) the panel scale goes back to 20, because a 16px glyph read
+    // at arm's length inside a 36px target is not the same problem as a 16px
+    // glyph read at desk distance. Asserting 16 everywhere failed on the tablet
+    // render for a UI that was behaving correctly.
+    const want = el.matches(PANEL) ? (TOUCH ? 20 : 16) : 20;
+    if (Math.abs(g - want) > 1) bad.push(what + " glyph " + g + "px (want " + want + ")");
     if (!box.borderNone) bad.push(what + " border-style " + box.border);
     if (!box.bgClear) bad.push(what + " background " + box.bg);
   }
@@ -154,7 +180,8 @@ const BAR_ICONS = `() => {
     const g = glyphW(pencil);
     const box = noPaintedBox(pencil);
     members.push({ what: "pencil", glyph: g, exempt: true });
-    if (Math.abs(g - 16) > 1) bad.push("pencil glyph " + g + "px (want 16)");
+    const pw = TOUCH ? 20 : 16;
+    if (Math.abs(g - pw) > 1) bad.push("pencil glyph " + g + "px (want " + pw + ")");
     if (!box.borderNone) bad.push("pencil border-style " + box.border);
     if (!box.bgClear) bad.push("pencil background " + box.bg);
   }
@@ -382,13 +409,15 @@ try {
       }),
     };
   });
-  // Knowledge work is the desktop default, so the clone ACTION is not on this
-  // menu — but since 4.1.0 a hint is, because an absent affordance explains
-  // nothing to the person who opened this menu looking for it. Order matters:
-  // the hint is last, after the two things that do work here.
+  // Knowledge work is the desktop default, and since 4.1.6 cloning WORKS here
+  // rather than being a hint pointing at a setting. That hint existed because
+  // an absent affordance explains nothing; an affordance that simply works
+  // explains even less badly, and cloning was never a coding-only act — it is
+  // how you get a project at all. Order matters: it leads, because someone who
+  // opened this menu to clone something should meet it first.
   assert.deepEqual(
     menu.labels,
-    ["New project", "Import a folder", "Clone from GitHub?"],
+    ["Clone from GitHub", "New project", "Import a folder"],
     `desk: add-project menu — ${JSON.stringify(menu)}`,
   );
   assert.ok(menu.descriptions.every(Boolean), `desk: every entry needs its second line — ${JSON.stringify(menu)}`);
@@ -398,12 +427,12 @@ try {
   // the number here would fail the next time that scale is tuned. Zero is the
   // failure worth catching — three empty boxes once shipped through a green
   // suite and three review rounds.
-  // The knowledge-work hint is DELIBERATELY iconless — the owner looked at the
-  // rendered row on 2026-09-01 and kept it that way. Exempted by label rather
-  // than by index or by relaxing the rule: an iconless row is normally the bug
-  // this assertion exists to catch, and "some row may have no icon" would hand
-  // that back. Everything that is meant to be painted still must be.
-  const iconExempt = new Set(["Clone from GitHub?"]);
+  // Nothing is exempt any more: the one iconless row was the knowledge-work
+  // hint, and it is gone. Kept as an empty set rather than deleted, because the
+  // exemption is expressed by LABEL — the next row that legitimately has no
+  // icon names itself here, instead of the rule being relaxed to "some row may
+  // have none", which would hand back the bug this catches.
+  const iconExempt = new Set([]);
   const mustPaint = menu.iconSizes.filter((_, i) => !iconExempt.has(menu.labels[i]));
   assert.equal(
     mustPaint.length,
@@ -417,7 +446,10 @@ try {
   await shot("desk-1d-add-project-menu");
   log(`add project menu: ${menu.labels.join(" / ")}`);
 
-  await page.click(".rail-menu-item");
+  // By LABEL, not by position. This used to click the first row because
+  // "New project" happened to be it; cloning now leads, so an index would
+  // silently exercise a different form and assert the wrong thing about it.
+  await page.click('.rail-menu-item:has(.rail-menu-label:text-is("New project"))');
   await page.waitForSelector(".add-project-form", { timeout: 5000 });
   await page.fill(".add-project-input", "Q3 Positioning");
   const formBox = await page.evaluate(() => {
@@ -524,7 +556,8 @@ try {
   await assertNoBlankIcons("desk file open");
   await assertBarIcons("desk file open");
   assert.equal(
-    await page.evaluate(() => { const f = document.querySelector(".gfp-filter"); return !!f && getComputedStyle(f).display !== "none"; }),
+    // The filter sits in a row that hides as a whole, so ask whether the input has a box, not what its own display says.
+    await page.evaluate(() => { const f = document.querySelector(".gfp-filter"); return !!f && f.getClientRects().length > 0; }),
     false,
     "desk: the tree filter must hide once a file is open — it has no tree to search",
   );
@@ -1014,6 +1047,9 @@ try {
       log(`captured ${name}.png`);
     },
   });
+
+  await assertPromptNavigation(page, shot);
+  await assertOriginalImageCopy(app, page, shot);
 
   // The desktop app must have written a log somebody can actually retrieve.
   //

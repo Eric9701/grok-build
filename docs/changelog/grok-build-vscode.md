@@ -6,6 +6,14 @@
 
 ## 2026-09
 
+### 2026-09-17 — 合并上游 4.6.0
+
+- **状态**：已落地
+- **会话**：[合并上游 vscode](f4655f99-7132-406e-a676-0a06ba292453)
+- 上游 `phuryn/grok-build-vscode` `main` 从 4.1.0 合到 4.6.0：会话中途登录过期卡、OpenAI 语音后端、订阅用量 donut、Changes 视图 / Changed-files 卡、composer model chip + effort strip、Provider config files、Codex steer。
+- 保留 Atlas overlay：品牌、`~/.atlas`、`atlas` CLI、`atlas.*` 设置、本地 `[model.*]`、企业更新通道 `10.218.220.237:22255/atlas`。
+- 测试对准 Atlas 文案与 `atlas.*` 存储键（`npm test`：256 files / 6164 passed）。
+
 ### 2026-09-02 — 建立本变更记录
 
 - **状态**：文档

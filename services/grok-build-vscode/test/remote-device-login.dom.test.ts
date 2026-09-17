@@ -51,13 +51,13 @@ describe("a phone with nothing connected", () => {
     const h = boot({ remote: true });
     onboarding(h, {});
     expect(text(h)).not.toMatch(/only be connected on the computer/i);
-    expect(actions(h)).toContain("Connect Grok Build");
+    expect(actions(h)).toContain("Connect Atlas");
   });
 
   it("offers every agent when none is connected, rather than guessing", () => {
     const h = boot({ remote: true });
     dispatch(h.window, { type: "onboarding", state: "connect-agent", platform: "linux" });
-    expect(actions(h)).toEqual(["Connect Grok Build", "Connect Codex", "Connect Claude Code"]);
+    expect(actions(h)).toEqual(["Connect Atlas", "Connect Codex", "Connect Claude Code"]);
   });
 
   it("offers Claude on a cloud machine instead of a dead-end note", () => {
@@ -65,7 +65,7 @@ describe("a phone with nothing connected", () => {
     dispatch(h.window, { type: "onboarding", state: "connect-agent", platform: "linux" });
     expect(text(h)).not.toMatch(/not available yet/i);
     expect(actions(h)).toEqual([
-      "Connect Grok Build (recommended)",
+      "Connect Atlas (recommended)",
       "Connect Codex",
       "Connect Claude Code",
     ]);
@@ -89,7 +89,7 @@ describe("while the flow runs", () => {
   it("says something between the tap and the code", () => {
     const h = boot({ remote: true });
     onboarding(h, { device: { status: "starting" } });
-    expect(text(h)).toMatch(/Connecting Grok Build/);
+    expect(text(h)).toMatch(/Connecting Atlas/);
     expect(byAct(h, "cancelDeviceLogin")).toBeTruthy();
   });
 
@@ -187,7 +187,7 @@ describe("when it ends", () => {
   it("confirms success", () => {
     const h = boot({ remote: true });
     onboarding(h, { device: { status: "done" } });
-    expect(text(h)).toMatch(/Grok Build connected/);
+    expect(text(h)).toMatch(/Atlas connected/);
   });
 
   it("offers a retry on a failure that retrying could fix", () => {
@@ -326,6 +326,37 @@ describe("after the sign-in succeeds", () => {
       type: "providerState",
       providers: [
         { id: "grok", connected: true },
+        { id: "codex", connected: false },
+        { id: "claude", connected: false },
+      ],
+    });
+    expect((h.doc.getElementById("welcome") as HTMLElement).hidden).toBe(true);
+  });
+
+  it("keeps offering while the connected account still needs a sign-in", () => {
+    // The frame order a fresh cloud machine sends on its first attach: the
+    // credential probe fails, the host posts connect-agent, then a broadcast
+    // providerState lands BEHIND it with grok configured (connected) but
+    // needsLogin. Dismissing on "connected" alone hid the card, and the owner
+    // saw an empty page until a reload (2026-09-05).
+    const h = boot({ remote: true });
+    dispatch(h.window, { type: "onboarding", state: "connect-agent", platform: "linux" });
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true, cliVersion: "1.0.13", needsLogin: true },
+        { id: "codex", connected: false },
+        { id: "claude", connected: false },
+      ],
+    });
+    expect((h.doc.getElementById("welcome") as HTMLElement).hidden).toBe(false);
+    expect(actions(h)).toContain("Connect Atlas");
+
+    // The sign-in lands: the same frame without needsLogin answers the card.
+    dispatch(h.window, {
+      type: "providerState",
+      providers: [
+        { id: "grok", connected: true, cliVersion: "1.0.13" },
         { id: "codex", connected: false },
         { id: "claude", connected: false },
       ],

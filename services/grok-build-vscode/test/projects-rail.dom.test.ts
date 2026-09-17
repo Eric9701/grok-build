@@ -79,6 +79,45 @@ const usableItem = (menu: Element, label: string) => {
 };
 
 describe("projects rail", () => {
+  it("removes a known session from history, selected rows, previews and pins without requesting a list", () => {
+    const { doc, window, posted } = boot();
+    const empty = { ...row("empty", "/work/alpha", "Abandoned empty"), numMessages: 0, pinned: true };
+    const kept = row("kept", "/work/alpha", "Keep this conversation");
+    dispatch(window, { ...sessionsFrame([empty, kept]), activeId: "kept" });
+    dispatch(window, { type: "sessionName", sessionId: "kept", name: kept.displayName, cwd: kept.cwd });
+    dispatch(window, { type: "repoSessions", cwd: empty.cwd, entries: [empty, kept], dots: {}, total: 2 });
+    dispatch(window, { type: "pinnedSessions", entries: [empty], dots: { empty: "idle" } });
+    click(window, doc.getElementById("history-btn")!);
+    dispatch(window, { ...sessionsFrame([empty, kept]), activeId: "kept", hasMore: true, total: 100, nextOffset: 50 });
+    // Clearing the request's loading state could trigger automatic pagination;
+    // the removal itself must not issue any new catalog request.
+    posted.length = 0;
+    dispatch(window, { type: "sessionRemoved", id: "empty", cwd: empty.cwd });
+    dispatch(window, { type: "sessionRemoved", id: "empty", cwd: empty.cwd });
+    expect(doc.querySelectorAll('[data-session-id="empty"]')).toHaveLength(0);
+    expect(doc.querySelector('#history-popover [data-session-id="kept"]')).not.toBeNull();
+    expect(doc.querySelector('.rail-session.active')?.getAttribute("data-session-id")).toBe("kept");
+    expect(posted).toEqual([]);
+    // Switching projects hands selected rows back to previews. The removed row
+    // must not reappear from either the old preview or the selected snapshot.
+    dispatch(window, { type: "repos", entries: repos, selectedCwd: "/work/beta", activeCwd: "/work/alpha" });
+    expect(doc.querySelectorAll('[data-session-id="empty"]')).toHaveLength(0);
+    expect(doc.getElementById("session-head-title")?.textContent).toBe(kept.displayName);
+  });
+
+  it("keeps the pending rail target while the empty session being left is removed", () => {
+    const { doc, window } = boot();
+    dispatch(window, { ...sessionsFrame([
+      row("empty", "/work/alpha", "Empty"), row("target", "/work/alpha", "Target"),
+    ]), activeId: "empty" });
+    click(window, doc.querySelector('#projects-rail [data-session-id="target"]')!);
+    dispatch(window, { type: "sessionRemoved", id: "empty", cwd: "/work/alpha" });
+    expect(doc.querySelector('.rail-session.active')?.getAttribute("data-session-id")).toBe("target");
+    dispatch(window, { type: "sessionName", sessionId: "target", name: "Target", cwd: "/work/alpha" });
+    expect(doc.querySelector('.rail-session.active')?.getAttribute("data-session-id")).toBe("target");
+    expect(doc.querySelectorAll('[data-session-id="empty"]')).toHaveLength(0);
+  });
+
   it("does not mount without a #projects-rail element, even when repos arrives", () => {
     // Regression guard for VS Code: getHtml never includes the mount, so a
     // `repos` frame (sent for clear-all naming) must not light a rail column.
@@ -397,10 +436,7 @@ describe("projects rail", () => {
     expect(rail(doc).hidden).toBe(false);
   });
 
-  // A host too old to answer `listRepoSessions` replies with silence, and the
-  // probe only ever names ONE repo — so every other repo would spin forever with
-  // nothing coming. After the deadline the rail says what to do about it.
-  it("tells you to update the host when the probe goes unanswered", async () => {
+  it("reports the timed-out project truthfully and offers a retry", async () => {
     const h = bootWebview({
       remote: true,
       beforeScripts: (w: any) => { withRail(w); w.__grokRailProbeTimeoutMs = 5; },
@@ -411,10 +447,9 @@ describe("projects rail", () => {
     await new Promise((r) => setTimeout(r, 40));
 
     const notes = [...h.doc.querySelectorAll(".rail-note")].map((e) => e.textContent);
-    // Every repo we are not in — including the ones never probed, which is the
-    // half that used to hang.
-    expect(notes.filter((t) => t === "Update Atlas to preview")).toHaveLength(2);
-    expect(notes).not.toContain("Loading…");
+    expect(notes.filter((t) => t === "Couldn't load these conversations. Retry")).toHaveLength(1);
+    expect(notes).not.toContain("Sessions need a newer Grok Build");
+    expect(notes).not.toContain("Update Atlas to preview");
     // The repo we ARE in still shows its sessions: that list needs no new frame.
     expect(sessionNames(h.doc, repoNames(h.doc).indexOf("alpha"))).toEqual(["alpha one"]);
   });
@@ -450,12 +485,7 @@ describe("projects rail", () => {
     expect(sessionNames(h.doc, repoNames(h.doc).indexOf("alpha"))).toEqual(["alpha one"]);
   });
 
-  it("re-probes after a reconnect instead of libelling the host for ever", async () => {
-    // The verdict is inferred from EIGHT SECONDS OF SILENCE, and a cloud
-    // machine that is waking, or busy running a CLI sign-out, misses that
-    // window. The owner's host had just done both and the page then said
-    // "Sessions need a newer Grok Build" about a current build for as long as
-    // it stayed open — nothing ever asked again (2026-08-31).
+  it("re-probes after a reconnect and clears the old request state", async () => {
     const h = bootWebview({
       remote: true,
       beforeScripts: (w: any) => { withRail(w); w.__grokRailProbeTimeoutMs = 5; },
@@ -464,7 +494,7 @@ describe("projects rail", () => {
     dispatch(h.window, sessionsFrame([row("a1", "/work/alpha", "alpha one", 9)]));
     await new Promise((r) => setTimeout(r, 40));
     expect([...h.doc.querySelectorAll(".rail-note")].map((e) => e.textContent))
-      .toContain("Sessions need a newer Grok Build");
+      .toContain("Couldn't load these conversations. Retry");
 
     // A reconnect: every remote snapshot opens with initialState.
     h.posted.length = 0;
@@ -478,7 +508,7 @@ describe("projects rail", () => {
     // It asks again rather than repeating a verdict about a host that is gone.
     expect(h.posted.some((m: any) => m.type === "listRepoSessions")).toBe(true);
     expect([...h.doc.querySelectorAll(".rail-note")].map((e) => e.textContent))
-      .not.toContain("Sessions need a newer Grok Build");
+      .not.toContain("Couldn't load these conversations. Retry");
   });
 
   it("never shows that hint to a host that does answer", async () => {
@@ -490,11 +520,37 @@ describe("projects rail", () => {
     dispatch(h.window, {
       type: "repoSessions", cwd: "/work/beta", entries: [row("b1", "/work/beta", "beta one", 4)], dots: {}, total: 1,
     });
+    dispatch(h.window, { type: "repoSessions", cwd: "/work/gamma", entries: [], dots: {}, total: 0 });
 
     await new Promise((r) => setTimeout(r, 40));
 
     const notes = [...h.doc.querySelectorAll(".rail-note")].map((e) => e.textContent);
     expect(notes).not.toContain("Update Atlas to preview");
+    expect(notes).not.toContain("Couldn't load these conversations. Retry");
+  });
+
+  it("does not mark a transport-refused preview in flight and retries only on request", () => {
+    let accept = false;
+    const h = bootWebview({
+      remote: true,
+      beforeScripts: withRail,
+      postMessage: (message) => message.type === "listRepoSessions" ? accept : undefined,
+    });
+    dispatch(h.window, { type: "repos", entries: repos, selectedCwd: "/work/alpha", activeCwd: "/work/alpha" });
+
+    expect(h.posted.filter((m) => m.type === "listRepoSessions")).toHaveLength(1);
+    expect([...h.doc.querySelectorAll(".rail-note")].map((e) => e.textContent))
+      .toContain("Couldn't load these conversations. Retry");
+
+    // A catalog repaint is not a background retry.
+    dispatch(h.window, { type: "repos", entries: repos, selectedCwd: "/work/alpha", activeCwd: "/work/alpha" });
+    expect(h.posted.filter((m) => m.type === "listRepoSessions")).toHaveLength(1);
+
+    accept = true;
+    click(h.window, h.doc.querySelector(".rail-note-retry") as HTMLElement);
+    expect(h.posted.filter((m) => m.type === "listRepoSessions")).toHaveLength(2);
+    expect([...h.doc.querySelectorAll(".rail-note")].map((e) => e.textContent))
+      .not.toContain("Couldn't load these conversations. Retry");
   });
 
   it("fans out to the remaining repos only once a preview comes back", () => {
@@ -992,7 +1048,7 @@ describe("projects rail", () => {
 
     /** Five projects: one selected, three recent (which the floor would protect
      *  anyway), and two long-idle ones past the floor. */
-    function bootArchive(overrides: Record<string, Record<string, unknown>> = {}) {
+    function bootArchive(overrides: Record<string, Record<string, unknown>> = {}, remote = true) {
       const catalog = [
         repo("home", ago(0), overrides.home),
         repo("one", ago(1), overrides.one),
@@ -1001,7 +1057,7 @@ describe("projects rail", () => {
         repo("stale", ago(80), overrides.stale),
         repo("ancient", ago(400), overrides.ancient),
       ];
-      const h = bootWebview({ remote: true, beforeScripts: withRail });
+      const h = bootWebview({ remote, beforeScripts: withRail });
       dispatch(h.window, { type: "repos", entries: catalog, selectedCwd: "/work/home", activeCwd: "/work/home" });
       // Give every project rows, so activity is read from conversations rather
       // than from the catalog's directory mtime.
@@ -1017,6 +1073,69 @@ describe("projects rail", () => {
       }
       return h;
     }
+
+    it("archives the project you are standing in", () => {
+      // Owner, 2026-09-06: "we can stay inside.... now in the archive. archive
+      // is just a way we group projects." The rail used to refuse to file the
+      // open project under Archived, so Archive on the project a machine boots
+      // into stored the choice and changed nothing on screen -- indistinguishable
+      // from a dead button. An explicit choice outranks the heuristic.
+      const h = bootArchive({}, true);
+      const head = (name: string) => [...h.doc.querySelectorAll(".rail-repo-head")]
+        .find((el) => el.querySelector(".rail-repo-label")?.textContent === name)!;
+      click(h.window, menuItem(openMenu(h.window, head("home")), "Archive project")!);
+      expect(h.posted).toContainEqual({ type: "setRepoArchived", cwd: "/work/home", archived: true });
+      const catalog = ["home", "one", "two", "three", "stale", "ancient"].map((name) =>
+        repo(name, ago(0), name === "home" ? { archived: true, archivedAt: Date.now() } : {}));
+      dispatch(h.window, { type: "repos", entries: catalog, selectedCwd: "/work/home", activeCwd: "/work/home" });
+      expect(sectionRepos(h.doc, "projects")).not.toContain("home");
+      const archiveButton = [...h.doc.querySelectorAll(".rail-head-btn")]
+        .find((el) => el.textContent?.includes("Project Archive"))!;
+      click(h.window, archiveButton);
+      expect(sectionRepos(h.doc, "archived")).toContain("home");
+    });
+
+    it.each([false, true])("archives and restores through the catalog on desktop/remote=%s", (remote) => {
+      const h = bootArchive({}, remote);
+      const head = (name: string) => [...h.doc.querySelectorAll(".rail-repo-head")]
+        .find((el) => el.querySelector(".rail-repo-label")?.textContent === name)!;
+      click(h.window, menuItem(openMenu(h.window, head("one")), "Archive project")!);
+      expect(h.posted).toContainEqual({ type: "setRepoArchived", cwd: "/work/one", archived: true });
+      const catalog = ["home", "one", "two", "three", "stale", "ancient"].map((name) =>
+        repo(name, ago(0), name === "one" ? { archived: true, archivedAt: Date.now() } : {}));
+      dispatch(h.window, { type: "repos", entries: catalog, selectedCwd: "/work/home", activeCwd: "/work/home" });
+      expect(sectionRepos(h.doc, "projects")).not.toContain("one");
+      const archiveButton = [...h.doc.querySelectorAll(".rail-head-btn")]
+        .find((el) => el.textContent?.includes("Project Archive"))!;
+      click(h.window, archiveButton);
+      expect(sectionRepos(h.doc, "archived")).toContain("one");
+      click(h.window, menuItem(openMenu(h.window, head("one")), "Move to Projects")!);
+      expect(h.posted).toContainEqual({ type: "setRepoArchived", cwd: "/work/one", archived: false });
+      dispatch(h.window, {
+        type: "repos", selectedCwd: "/work/home", activeCwd: "/work/home",
+        entries: catalog.map((r) => r.label === "one" ? { ...r, archived: false } : r),
+      });
+      expect(sectionRepos(h.doc, "projects")).toContain("one");
+      h.window.close();
+    });
+
+    it.each([false, true])("age grouping keeps conversation actions usable on desktop/remote=%s", (remote) => {
+      const h = bootArchive({}, remote);
+      click(h.window, [...h.doc.querySelectorAll(".rail-head-btn")]
+        .find((el) => el.textContent?.includes("Project Archive"))!);
+      const stale = [...h.doc.querySelectorAll(".rail-archived .rail-repo")]
+        .find((el) => el.querySelector(".rail-repo-label")?.textContent === "stale")!;
+      expect(stale).toBeTruthy();
+      const menu = openMenu(h.window, stale.querySelector(".rail-repo-head")!);
+      expect(usableItem(menu, "Move to Projects")).toBe(true);
+      expect(usableItem(menu, "Clear all history")).toBe(true);
+      h.doc.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      h.posted.length = 0;
+      click(h.window, stale.querySelector('[data-session-id="stale1"]')!);
+      expect(h.posted).toContainEqual(expect.objectContaining({ type: "resumeSession", id: "stale1", cwd: "/work/stale" }));
+      expect(h.posted.some((m) => m.type === "setRepoArchived")).toBe(false);
+      h.window.close();
+    });
 
     it("drops long-idle projects into a folded Project Archive section", () => {
       const { doc } = bootArchive();
@@ -1441,8 +1560,8 @@ describe("projects rail", () => {
       expect(css).toMatch(/\.rail-head-btn\s*\{[^}]*text-transform:\s*uppercase/s);
     });
 
-    it("omits Project Archive and archive actions when the host omits archive fields (desktop)", () => {
-      // Capability = presence of `archived` on rows. Desktop strips the fields;
+    it("omits Project Archive and archive actions when the host omits archive fields (older desktop)", () => {
+      // Capability = presence of `archived` on rows. Older desktop hosts strip the fields;
       // age rule and Archive menu must not run.
       const day = 24 * 60 * 60 * 1000;
       const t = (days: number) => Date.now() - days * day;
@@ -1627,25 +1746,26 @@ describe("projects rail", () => {
       const twisty = () => alpha().querySelector(".rail-twisty") as HTMLElement;
       // Expanded: ONE flag drives icon + session list (data-expanded + folder-open).
       expect(alpha().getAttribute("data-expanded")).toBe("1");
-      // The two marks are told apart by viewBox — they are the owner's solid
-      // folder artwork (media/icons/folder-*.svg), not a shared 24x24 grid.
-      expect(twisty().innerHTML).toMatch(/viewBox="0 -57 511/);
-      expect(twisty().innerHTML).not.toMatch(/viewBox="0 0 408 408"/);
+      // Shared 24px outline marks are distinguished by their lucide paths.
+      expect(twisty().querySelector("svg")?.getAttribute("fill")).toBe("none");
+      expect(twisty().querySelector("svg")?.getAttribute("stroke")).toBe("currentColor");
+      expect(twisty().innerHTML).toMatch(/m6 14 1\.5-2\.9/);
+      expect(twisty().innerHTML).not.toMatch(/M20 20a2 2/);
       expect(alpha().querySelector(".rail-sessions")).not.toBe(null);
       // Icon and list cannot disagree: sessions present ⇒ open icon path.
       expect(!!alpha().querySelector(".rail-sessions")).toBe(
-        /viewBox="0 -57 511/.test(twisty().innerHTML),
+        /m6 14 1\.5-2\.9/.test(twisty().innerHTML),
       );
       // Folder is an indicator (not a button); the whole head toggles.
       expect(twisty().tagName).toBe("SPAN");
       click(window, alpha().querySelector(".rail-repo-head") as HTMLElement);
       // Collapsed: the closed mark, no sessions, data-expanded=0.
       expect(alpha().getAttribute("data-expanded")).toBe("0");
-      expect(twisty().innerHTML).toMatch(/viewBox="0 0 408 408"/);
-      expect(twisty().innerHTML).not.toMatch(/viewBox="0 -57 511/);
+      expect(twisty().innerHTML).toMatch(/M20 20a2 2/);
+      expect(twisty().innerHTML).not.toMatch(/m6 14 1\.5-2\.9/);
       expect(alpha().querySelector(".rail-sessions")).toBe(null);
       expect(!!alpha().querySelector(".rail-sessions")).toBe(
-        /viewBox="0 -57 511/.test(twisty().innerHTML),
+        /m6 14 1\.5-2\.9/.test(twisty().innerHTML),
       );
     });
 
@@ -2152,6 +2272,33 @@ describe("rail transition (optimistic highlight)", () => {
     expect(activeName(doc, "alpha")).toBe("alpha one");
   });
 
+  it.each(["Escape", "input Escape", "Enter", "Cancel", "Rename", "backdrop"])("releases the rename prompt's modal marker through %s", async (exit) => {
+    const h = boot("/work/alpha");
+    dispatch(h.window, { ...sessionsFrame([row("a1", "/work/alpha", "alpha one", 9)]), activeId: "a1" });
+    (h.window as any).__grokFilePanelOpenSettings();
+    const layers = (h.window as any).afkpilotLayers;
+    expect(layers.depth).toBe(1);
+    const changes: number[] = [];
+    h.window.addEventListener("afkpilot-layers", () => changes.push(layers.depth));
+    const section = h.doc.querySelectorAll(".rail-repo")[repoNames(h.doc).indexOf("alpha")];
+    click(h.window, menuItem(openMenu(h.window, section.querySelector(".rail-session")!), "Rename")!);
+    const input = h.doc.querySelector(".confirm-input") as HTMLInputElement;
+    input.value = "A new name";
+    expect(h.doc.body.dataset.modalAbove).toBe("prompt");
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
+    if (exit === "Escape") h.doc.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    else if (exit === "input Escape" || exit === "Enter") input.dispatchEvent(new h.window.KeyboardEvent("keydown", { key: exit === "Enter" ? "Enter" : "Escape", bubbles: true }));
+    else click(h.window, h.doc.querySelector(exit === "backdrop" ? ".confirm-overlay"
+      : exit === "Rename" ? ".confirm-primary" : ".confirm-btn:not(.confirm-primary)")!);
+    await Promise.resolve();
+    expect(h.doc.querySelector(".confirm-overlay")).toBeNull();
+    expect(h.doc.body.dataset.modalAbove).toBeUndefined();
+    expect(layers.depth).toBe(1);
+    expect(changes).toEqual([0, 1]);
+    expect(h.posted.filter((msg) => msg.type === "renameSession")).toHaveLength(exit === "Enter" || exit === "Rename" ? 1 : 0);
+  });
+
   it("paints a rail rename on the header and row before any host frame", async () => {
     const { doc, window } = boot("/work/alpha");
     dispatch(window, {
@@ -2490,18 +2637,25 @@ describe("rail overflow menus toggle", () => {
     expect(chip().disabled).toBe(false);
   });
 
-  it("offers Hide project only where the host can close folders", () => {
+  it("offers Hide project only where the host can close folders", async () => {
     // Desktop's rail IS the open-folder set, so putting a project away means
-    // closing it. The browser client has no business closing folders on the
-    // machine it is borrowing, and gates on the same capability as the "+" that
-    // adds them.
+    // closing it.
+    //
+    // It gates on its OWN capability since 4.1.2, not on the "+" that adds
+    // projects. Those agreed only while "+" meant the native picker, which no
+    // remote has; once create and clone shipped as remote-capable ways in, the
+    // shared gate started answering true on a phone and Hide came with it —
+    // drawn, posted, and dropped by remote-policy without a word.
     const h = bootWebview({ beforeScripts: withRail });
     dispatch(h.window, {
       type: "initialState",
       effort: "medium", cwd: "/work/alpha", useCtrlEnter: false, extVersion: "0",
       showThinking: true, expandCommandOutputs: false, steerByDefault: false,
       soundNotifications: false, processingSound: false, readRepliesAloud: false,
-      capabilities: { uploadFile: true, remoteVoice: false, addProjectFolder: true },
+      capabilities: {
+        uploadFile: true, remoteVoice: false,
+        addProjectFolder: true, removeProjectFolder: true,
+      },
     });
     dispatch(h.window, { type: "repos", entries: repos, selectedCwd: "/work/alpha", activeCwd: "/work/alpha" });
 
@@ -2509,6 +2663,12 @@ describe("rail overflow menus toggle", () => {
     const hide = menuItem(openMenu(h.window, beta), "Hide project");
     expect(hide).toBeTruthy();
     click(h.window, hide as HTMLElement);
+    // It ASKS now, like the VS Code rail always has. Nothing is posted on the
+    // click alone — the row leaves every linked device at once, and one
+    // surface guarding that gesture while the other did not was the drift.
+    expect(h.posted.filter((p) => p.type === "removeProjectFolder")).toEqual([]);
+    click(h.window, h.doc.querySelector(".confirm-btn.confirm-primary") as HTMLElement);
+    await Promise.resolve();
     expect(h.posted.filter((p) => p.type === "removeProjectFolder"))
       .toEqual([{ type: "removeProjectFolder", cwd: "/work/beta" }]);
 
@@ -2592,5 +2752,40 @@ describe("project header is a fold control, not a repo switch", () => {
     click(window, headFor(doc, "beta"));
     expect(sessionCount(doc, "beta")).toBe(1);
     expect(posted.filter((p) => p.type === "selectRepo")).toEqual([]);
+  });
+});
+
+// The phone's projects drawer opens OVER the conversation, and the model, mode
+// and context popovers are anchored to the composer it covers. web/chat.html
+// owns the drawer (see `withRail` above: the mount is the relay page's), so the
+// renderer cannot see it open — it exposes the close instead.
+describe("the shell can close the renderer's toolbar popovers", () => {
+  const openers = [
+    ["context", "donut", "context-popover"],
+    ["model / gear", "gear-btn", "gear-popover"],
+    ["mode", "mode-btn", "mode-popover"],
+  ] as const;
+
+  it.each(openers)("closes the %s popover", (_label, button, popover) => {
+    const h = bootWebview();
+    withRail(h.window);
+    dispatch(h.window, { type: "session", provider: "grok", models: [], currentModelId: "m" } as any);
+    click(h.window, h.doc.getElementById(button)!);
+    expect(h.doc.getElementById(popover)!.hidden).toBe(false);
+
+    (h.window as any).afkpilotLayers.closePopovers();
+    expect(h.doc.getElementById(popover)!.hidden).toBe(true);
+  });
+
+  // It is not a Back closer: a popover dismisses on the next tap anywhere, so
+  // giving it a history entry would spend the gesture that belongs to the
+  // drawer under it.
+  it("is not counted as a layer", () => {
+    const h = bootWebview();
+    withRail(h.window);
+    const layers = (h.window as any).afkpilotLayers;
+    click(h.window, h.doc.getElementById("donut")!);
+    expect(layers.depth).toBe(0);
+    expect(layers.dismissTop()).toBe(false);
   });
 });

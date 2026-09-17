@@ -3,6 +3,8 @@ import type { HostMsg } from "./protocol";
 import type { FileChip } from "./chips";
 import { permissionOptionsForPlan } from "./plan-gate";
 import type { AcpProvider } from "./acp-backend";
+import type { SubscriptionUsageBinding } from "./subscription-usage";
+import type { TelemetrySessionOrigin } from "./telemetry";
 import {
   queuedSendsMessage,
   takeQueuedSendsPrefix,
@@ -87,6 +89,8 @@ export class Session {
   chips: FileChip[] = [];
   /** The live ACP client (one spawned `atlas agent stdio` process), once started. */
   client?: AcpClient;
+  /** Latest account capacity, held outside conversation history. */
+  subscriptionUsage?: SubscriptionUsageBinding;
 
   /** YOLO: auto-approve every permission request for this session. */
   autoApprove = false;
@@ -117,6 +121,11 @@ export class Session {
     turnSettled: boolean;
     warningTimer?: ReturnType<typeof setTimeout>;
   };
+
+  /** The conversation behind this session has been deleted. Set once, at the
+   *  deletion, so nothing downstream parks it, revives it, or re-derives the
+   *  fact from an id that outlives the directory. */
+  deleted = false;
 
   /** This session has conversational history (vs. a fresh, empty one). */
   hasHistory = false;
@@ -187,7 +196,9 @@ export class Session {
   pendingExitPlans = new Map<number | string, PendingExitPlan>();
 
   /**
-   * Live question requests awaiting an answer, by ACP request id.
+   * Live questions by ACP request id, with the toolCallId when the CLI supplies
+   * it. A matching terminal tool update closes the request even without a local
+   * answer. Older CLIs without that id retain the turn-end/stale-answer fallback.
    *
    * Tracked for the same reason as the two maps beside it: answering one card
    * does not resume a turn that another card is still blocking. Questions had
@@ -196,7 +207,7 @@ export class Session {
    * agent stayed blocked, and on a rented machine the heartbeat that follows
    * `working` kept it awake and billing indefinitely.
    */
-  pendingQuestions = new Set<number | string>();
+  pendingQuestions = new Map<number | string, string | undefined>();
 
   /** Submitted plan comments still awaiting `_x.ai/interject` acceptance. */
   inFlightPlanComments = new Map<number | string, InFlightPlanComment>();
@@ -222,6 +233,10 @@ export class Session {
    * can render plan cards inline with the conversation rather than at the end.
    */
   userMessageCount = 0;
+
+  /** Ephemeral accounting for this conversation; not reset by replay/rewind. */
+  telemetrySessionOrigin?: TelemetrySessionOrigin;
+  remoteMessageReported = false;
 
   /**
    * True while a sequence of user_message_chunk events is mid-flight, so we
@@ -620,6 +635,7 @@ export function sessionUiSnapshot(
   chips: FileChip[] = session.chips,
 ): HostMsg[] {
   const messages: HostMsg[] = [];
+  messages.push({ type: "subscriptionUsage", windows: session.subscriptionUsage?.snapshot() ?? [] });
   if (session.client?.currentModelId) {
     messages.push({ type: "modelChanged", modelId: session.client.currentModelId });
   }

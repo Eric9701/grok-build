@@ -23,12 +23,25 @@
 
 import type { ModelInfo, PromptResultMeta, PromptUsage, PermissionRequest, ExitPlanRequest, QuestionRequest } from "./acp";
 import type { FileChip } from "./chips";
+import type { SttPreference, VoiceBackendState } from "./voice";
 import type { RepoListEntry, SessionListEntry } from "./sessions";
 import type { Dot } from "./session-pool";
 import type { RunProgressUpdate } from "./run-progress";
 import type { McpServerView } from "./mcp";
 import type { ConnectorView } from "./mcp-connectors";
 import type { RoutineDraft, RoutineModelOption, RoutineProjectOption, RoutineView } from "./routines";
+import type { GitStatusSnapshot } from "./git-status";
+import type { SubscriptionWindow } from "./subscription-usage";
+
+/**
+ * The Changes snapshot as it crosses the wire.
+ *
+ * An alias rather than a second copy of the shape: this is one of the few
+ * types where a divergence would be silent, because a missing field reads as
+ * "no unpushed commits" rather than as a parse error. The relay mirrors
+ * `frames.ts`, not this, and every field here is plain JSON.
+ */
+export type GitStatusSnapshotWire = GitStatusSnapshot;
 
 /** grok's tool-call payload as it comes off the wire (acp emits it untyped). The
  *  webview reads a handful of fields; the index signature keeps assignment from
@@ -82,6 +95,14 @@ export const HOST_CAPABILITIES = {
   // Edit+save existing project files from a remote. Separate from browse so a
   // host can offer list/read without a write path. OPT-IN field presence.
   editProjectFiles: true,
+  // Exact provider config files through the shared editor, on every surface.
+  editProviderConfigFiles: true,
+  // The Changes view: read git status and per-file diffs, and run the four
+  // operations in `git-status.ts`'s closed set. OPT-IN field presence, never a
+  // version check — an older host classifies `gitStatus` as unknown and DROPS
+  // it, so a client that drew the button unconditionally would draw one that
+  // never fills in.
+  gitChanges: true,
   // Whether this host can run an agent's headless sign-in for a remote and
   // report back the URL and code.
   //
@@ -98,6 +119,15 @@ export const HOST_CAPABILITIES = {
   // `setupGithubCli` as `host-local` and drop it silently, so the Sign in
   // button must not be offered as a working control until this is present.
   remoteGithubSignIn: true,
+  // And again for the two GitHub affordances added after it: pasting a token,
+  // and cancelling with `provider: "github"`. `remoteGithubSignIn` cannot stand
+  // in for either — it promises only the device-code flow, and every host that
+  // advertises it but predates these two would take a pasted credential across
+  // the relay and drop it in silence, while a cancel would be read as `grok`
+  // (the old handler maps any unrecognised provider to it) and either do
+  // nothing or cancel somebody's Grok sign-in instead. One flag covers both
+  // because they shipped together and always will.
+  remoteGithubToken: true,
   // Same shape again, for Rewind and Edit on user bubbles. Every host built
   // before 4.1.0 classifies `rewindSession` / `editLastMessage` /
   // `uiConfirmAnswer` as host-local and drops them, so a browser client — which
@@ -105,6 +135,9 @@ export const HOST_CAPABILITIES = {
   // nothing at all for every user who has not updated yet. That window is not
   // hypothetical: the relay ships first, by release-order rule.
   remoteRewind: true,
+  // Backend steering dispatch and its per-session capability. Older hosts
+  // route Codex to Grok's method, so remotes must require this field.
+  remoteSteering: true,
 } as const;
 
 /** Device-code GitHub sign-in carried on `projectSetup`. Additive. */
@@ -113,6 +146,32 @@ export type ProjectSetupGithub = {
   url?: string;
   code?: string;
   message?: string;
+};
+
+/**
+ * GitHub connection snapshot. Field presence is the capability: an older host
+ * never sends `githubState`, and the Settings row / clone picker stay hidden
+ * rather than offering controls that host would drop.
+ *
+ * Never carries a token. `envTokenInForce` is whether this process has
+ * `GH_TOKEN` or `GITHUB_TOKEN` set — not a gh credential-source string,
+ * which is not portably readable.
+ */
+export type GithubState = {
+  connected: boolean;
+  login?: string;
+  envTokenInForce?: boolean;
+  error?: boolean;
+  cliPresent?: boolean;
+  message?: string;
+  /** Live device-code card, when sign-in was started from Settings. */
+  loginFlow?: ProjectSetupGithub;
+};
+
+export type GithubRepoView = {
+  nameWithOwner: string;
+  isPrivate: boolean;
+  updatedAt: string;
 };
 
 /** Machine-readable `error.code` for a send abandoned after its userMessage echo. */
@@ -148,6 +207,20 @@ export type HostUiCapabilities = {
    * No create/delete/rename in this pass.
    */
   editProjectFiles?: boolean;
+  /** Opt-in: absent/false hides provider config files, including on old hosts. */
+  editProviderConfigFiles?: boolean;
+  /**
+   * Whether this host can answer the Changes view: `gitStatus`, `gitFileDiff`
+   * and the closed set of `gitRun` operations.
+   *
+   * OPT-IN and independent of the two above, because it asks a different
+   * question of the machine — not "can I read this project" but "is there a
+   * git here at all". A host in a directory that is not a repository still
+   * advertises the capability and answers with `ok:false`; the client hides
+   * the view on that answer rather than on a missing flag, so a person who
+   * runs `git init` sees the view appear on the next refresh.
+   */
+  gitChanges?: boolean;
   /**
    * Whether this host can run an agent's headless sign-in on a remote's behalf.
    * OPT-IN: absent/false = the remote empty state falls back to "connect it at
@@ -163,11 +236,21 @@ export type HostUiCapabilities = {
    */
   remoteGithubSignIn?: boolean;
   /**
+   * Whether this host accepts a pasted GitHub token (`githubLoginWithToken`)
+   * and understands `cancelDeviceLogin` with `provider: "github"`. OPT-IN:
+   * absent/false = the remote hides the token path entirely and does not send
+   * the GitHub cancel, because an older host drops the first in silence and
+   * misreads the second as `grok`.
+   */
+  remoteGithubToken?: boolean;
+  /**
    * Whether this host accepts Rewind and Edit from a remote. OPT-IN:
    * absent/false = the browser hides both controls rather than offering
    * buttons an older host drops in silence. See HOST_CAPABILITIES.
    */
   remoteRewind?: boolean;
+  /** Backend steering is wired on this host. Absent/false hides remote Steer. */
+  remoteSteering?: boolean;
   /**
    * Whether a remote may sign an agent OUT on this host.
    *
@@ -253,6 +336,12 @@ export type HostUiCapabilities = {
    * and VS Code deliberately does not — its workspace is VS Code's to manage.
    */
   addProjectFolder?: boolean;
+  /** May this surface take a project back OUT of the list?
+   *  Separate from addProjectFolder on purpose: that one answers "is the
+   *  native picker here", which is false on every remote, and Hide rode on it
+   *  until create/clone made it true on remotes and produced a control that
+   *  rendered, posted, and was dropped in silence. */
+  removeProjectFolder?: boolean;
   /**
    * Add project can also MAKE one: a typed name becomes a folder in the host's
    * project root. OPT-IN — absent/false means the menu offers only the folder
@@ -281,7 +370,13 @@ export type QueuedSend = {
 };
 
 export type HostMsg =
-  | { type: "initialState"; effort: string; cwd: string; useCtrlEnter: boolean; extVersion: string; showThinking: boolean; expandCommandOutputs: boolean; steerByDefault: boolean; soundNotifications: boolean; processingSound: boolean; readRepliesAloud: boolean; /** Global "Use this app for" — absent on older hosts means Knowledge work. */ appPurpose?: "knowledge" | "coding";
+  | ({ type: "providerConfigContent"; requestId?: string; provider: "grok" | "codex" | "claude"; relPath: string;
+      /** On a miss, path presence opts into create-on-save. Older hosts omit it. */
+      absPath?: string; text?: string; stamp?: { mtimeMs: number; size: number } }
+      & import("./remote-files").RemoteProjectFileWire)
+  | ({ type: "providerConfigWriteResult"; requestId?: string; provider: "grok" | "codex" | "claude"; relPath: string }
+      & ({ ok: true; stamp: { mtimeMs: number; size: number } } | { ok: false; reason: string }))
+  | { type: "initialState"; effort: string; cwd: string; useCtrlEnter: boolean; extVersion: string; showThinking: boolean; expandCommandOutputs: boolean; steerByDefault: boolean; promptNav: boolean; /** Absent on older hosts means collapsed. */ expandDiffCard?: boolean; soundNotifications: boolean; processingSound: boolean; readRepliesAloud: boolean; /** Global "Use this app for" — absent on older hosts means Knowledge work. */ appPurpose?: "knowledge" | "coding";
       /** VS Code language id for command View all, from the host shell dialect.
        *  Absent on older hosts — View all then omits language. */
       commandLanguage?: string;
@@ -370,7 +465,22 @@ export type HostMsg =
        * Additive: an older client ignores it and renders the form as before.
        */
       github?: ProjectSetupGithub;
+      /**
+       * The derived folder name was already taken. Additive: the form then
+       * asks for a different name rather than failing the clone as a dead end.
+       */
+      collision?: string;
     }
+  /**
+   * GitHub connection for Settings and the clone picker. Additive: an older
+   * client ignores it. Never carries a token.
+   */
+  | { type: "githubState"; github: GithubState }
+  /**
+   * One page of repositories for the clone combobox. Fetched on form open,
+   * filtered on the client — a keystroke must not cross the relay.
+   */
+  | { type: "githubRepos"; repos: GithubRepoView[]; truncated?: boolean; error?: string }
   /** Connected agents plus host-observed, view-only version facts. Version
    * fields are additive so an older host/client keeps the connection UI.
    * `needsLogin` is the account that is still configured but answered an
@@ -380,17 +490,17 @@ export type HostMsg =
    * `checking` is a re-observation in flight (Settings → Providers Refresh). It
    * is the ONLY source of that spinner: a client must never latch it locally,
    * or an older host that ignores `refreshProviders` would spin forever. */
-  | { type: "providerState"; providers: { id: "grok" | "codex" | "claude"; connected: boolean; needsLogin?: boolean; cliVersion?: string; adapterVersion?: string; latestCliVersion?: string; updateAvailable?: boolean }[]; checking?: boolean }
+  | { type: "providerState"; providers: { id: "grok" | "codex" | "claude"; connected: boolean; needsLogin?: boolean; cliVersion?: string; adapterVersion?: string; latestCliVersion?: string; updateAvailable?: boolean; cliUpdate?: { status: "idle" | "running" | "succeeded" | "failed"; message?: string } }[]; checking?: boolean }
   /** Grok's grok.com + user-level MCP inventory (`_x.ai/mcp/list`; project-file
    *  servers omitted). The desk keeps launch recipes and `configFile`; remotes
    *  receive `projectMcpServerForRemote` (page fields only — no `tag`).
-   *  Connect/disconnect stay desk-only. */
+   *  Config-file editing stays desk-only. */
   | { type: "mcpServers"; servers: McpServerView[]; loading?: boolean; error?: string; warning: string }
-  /** Host-owned Tier-1 connector catalog. Mirrored so a remote can SEE which
-   *  apps are connected; connect/disconnect stay desk-only (OAuth + ~/.mcp-auth
-   *  and key-auth HostSecrets live on the machine running the host). Views
-   *  never carry the key. */
-  | { type: "mcpConnectors"; connectors: ConnectorView[] }
+  /** Machine-global, secret-free inventory. Presence of remoteConnect enables
+   *  remote key writes and OAuth; older hosts omit it. */
+  | { type: "mcpConnectors"; connectors: ConnectorView[]; remoteConnect?: true }
+  /** Device-global consent link, replayed on reconnect. attemptId guards stale completion frames. */
+  | { type: "mcpConnectorAuthorization"; id: string; attemptId: string; status: "waiting" | "finished"; url?: string; error?: string }
   /**
    * The Routines page, whole. Carries its own pickers rather than leaning on
    * the chat state, because the VS Code settings TAB loads settings.js and
@@ -427,6 +537,40 @@ export type HostMsg =
   // Whether this machine holds a relay device token (gear "AFK Pilot" section).
   // Local-webview chrome — never mirrored to remotes.
   | { type: "remoteStatus"; linked: boolean }
+  /**
+   * The connection carrying this webview's messages ended, and a new one is up.
+   *
+   * Sent by the RELAY's page shell, which is what plays host on a remote and
+   * already speaks `hostNotice` and `error` from that position. A local host
+   * never sends it: a desk webview has no socket to lose, and reloading it
+   * rebuilds everything anyway. It is declared here because the contract is
+   * "what a webview may receive", and a type that arrives undeclared is exactly
+   * the drift `isKnownHostMessage` exists to catch.
+   *
+   * The webview cannot work this out for itself, and used to try: it read a
+   * second `initialState` as proof the connection had died, which is wrong in
+   * both directions — a session swap produces one with no socket trouble at
+   * all, and a suspended cloud machine can be gone a minute before one arrives.
+   * Capability by arrival, as everywhere else: no frame, old behaviour.
+   */
+  | { type: "hostReachable" }
+  /**
+   * The same shell, reporting the link's STATE rather than commanding a
+   * re-read. `hostReachable` above is a command — the webview answers it by
+   * abandoning every in-flight file request and re-running `git status` for
+   * whatever is on screen — so it may only fire when the connection actually
+   * came back from a held state. A page that also wants to say "still waking",
+   * "still offline", "back but not restored yet" needs a message that costs
+   * nothing to receive, and this is it.
+   *
+   * `link.connection` counts the shell's sockets. A request posted over an
+   * earlier one can never be answered: replies are addressed to the client id
+   * that asked, and a reconnect is issued a new one.
+   */
+  | {
+    type: "hostLink";
+    link: { reachable: boolean; phase: string; since: number; restored: boolean; connection: number };
+  }
   | { type: "fontScale"; value: number }
   | { type: "grokUpdateStatus"; current?: string | null; latest?: string | null; updateAvailable?: boolean; policy?: unknown; error?: string }
   /** Desktop app update notice (manual download page). Host-local; VS Code
@@ -435,7 +579,7 @@ export type HostMsg =
   | { type: "updateAvailable"; version: string; url: string }
   /** Desktop in-app update is downloaded and waiting for restart. Host-local. */
   | { type: "updateReady"; version: string }
-  | { type: "initialized"; info: { cliPath: string; cwd: string; version: string | null; provider?: "grok" | "codex" | "claude"; init: { protocolVersion?: unknown } } }
+  | { type: "initialized"; info: { cliPath: string; cwd: string; version: string | null; provider?: "grok" | "codex" | "claude"; steeringSupported?: boolean; init: { protocolVersion?: unknown } } }
   | { type: "cliUpdating" }
   // `worktree` gates the gear's Apply/Remove worktree items to worktree sessions.
   | { type: "session"; sessionId: string; models: ModelInfo[]; currentModelId: string | undefined; worktree?: boolean; provider?: "grok" | "codex" | "claude" }
@@ -455,7 +599,7 @@ export type HostMsg =
   | { type: "modeChanged"; modeId: string }
   | { type: "openModePopover" }
   | { type: "voiceState"; status: "listening" | "transcribing" | "idle" }
-  | { type: "voiceConfigured"; value: boolean; sendPhrase?: string; keyterms?: string[] }
+  | { type: "voiceConfigured"; value: boolean; sendPhrase?: string; keyterms?: string[]; backendState?: VoiceBackendState }
   /** Live `atlas.telemetry.enabled` so the settings surface stays in sync. */
   | { type: "telemetryEnabled"; value: boolean }
   /** Live `atlas.thumbsFeedback` so the settings surface stays in sync. */
@@ -539,6 +683,75 @@ export type HostMsg =
       ok: false;
       reason: string;
     }
+  /**
+   * Answer to `gitStatus` — everything the Changes view needs to say whether
+   * the work is safe. `cwd` echoes the scoped root so a client with two tabs
+   * can drop an answer meant for the other one.
+   *
+   * `ok:false` is an ORDINARY answer, not an error: a directory with no git in
+   * it, or no repository, is a perfectly normal project. `kind` says which, so
+   * the client can hide the view rather than paint a failure.
+   */
+  | {
+      type: "gitStatusResult";
+      requestId?: string;
+      cwd: string;
+      ok: true;
+      snapshot: GitStatusSnapshotWire;
+      /** A run is in flight for this repository; controls stay disabled. */
+      busy?: boolean;
+    }
+  | {
+      type: "gitStatusResult";
+      requestId?: string;
+      cwd: string;
+      ok: false;
+      kind: "no-git" | "not-a-repo" | "failed";
+      reason: string;
+    }
+  /**
+   * Answer to `gitFileDiff` — one file's unified patch, rendered by the client.
+   * `truncated` means the patch was cut at the host's cap and the view says so
+   * rather than showing a silently short diff.
+   */
+  | {
+      type: "gitFileDiffResult";
+      requestId?: string;
+      cwd: string;
+      path: string;
+      ok: true;
+      patch: string;
+      truncated: boolean;
+      untracked: boolean;
+    }
+  | { type: "gitFileDiffResult"; requestId?: string; cwd: string; path: string; ok: false; reason: string }
+  /**
+   * Answer to `gitRun`. On success the fresh snapshot comes back in the same
+   * message, so the list cannot briefly show the state that was just committed.
+   *
+   * On failure `reason` is a sentence with a next move in it and `detail` is
+   * git's own stderr, shown underneath. Both, never one: the sentence alone
+   * hides what happened, and stderr alone tells a person nothing to do.
+   */
+  | {
+      type: "gitRunResult";
+      requestId?: string;
+      cwd: string;
+      op: "commit" | "push" | "newBranch" | "revertFile";
+      ok: true;
+      snapshot: GitStatusSnapshotWire;
+    }
+  | {
+      type: "gitRunResult";
+      requestId?: string;
+      cwd: string;
+      op: "commit" | "push" | "newBranch" | "revertFile";
+      ok: false;
+      reason: string;
+      detail?: string;
+      /** The snapshot after the failure, when it could still be read. */
+      snapshot?: GitStatusSnapshotWire;
+    }
   /** `steer` marks a mid-turn interjection (#52). It paints a user bubble but is
    *  NOT a prompt and gets no rewind point, so the bubble must not consume a
    *  rewind index — see refreshUserRewindButtons. */
@@ -546,7 +759,7 @@ export type HostMsg =
   | { type: "agentStart" }
   | { type: "thoughtChunk"; text: string }
   | { type: "messageChunk"; text: string }
-  | { type: "media"; media: string; src?: string; url?: string; mimeType?: string; path?: string }
+  | { type: "media"; media: string; src?: string; url?: string; mimeType?: string; path?: string; fullId?: string }
   | {
       type: "userMessageChunk";
       text: string;
@@ -556,6 +769,9 @@ export type HostMsg =
   /** Answer to {@link WebviewMsg} `requestImageFull`. Sent only to the tab that
    *  asked; `src` absent means the source is gone (swept, or deleted). */
   | { type: "imageFull"; fullId: string; src?: string }
+  /** Original file bytes for device-local clipboard conversion. Unlike imageFull,
+   *  these are never resized. An absent src means unavailable, never a thumbnail. */
+  | { type: "imageOriginal"; fullId: string; requestId: number; src?: string }
   | { type: "historyReplay"; active: boolean }
   /** Remote reconnect snapshot delivered as one browser event. Updated clients
    *  render every nested message synchronously; older per-message frames remain
@@ -568,6 +784,8 @@ export type HostMsg =
   | { type: "permissionRequest"; req: PermissionRequest }
   | { type: "permissionOptions"; requestId: number | string; options: PermissionRequest["options"] }
   | { type: "permissionResolved"; requestId: number | string; optionId: string }
+  | { type: "questionResolved"; requestId: number | string; outcome: "accepted" | "stale" | "closed" }
+  | { type: "subscriptionUsage"; windows: SubscriptionWindow[] }
   // The host spreads the plan-review snapshot (planPath/planName) into the bare
   // ExitPlanRequest before posting, so the wire shape is wider than acp's type.
   | { type: "exitPlanRequest"; req: ExitPlanRequest & { planPath?: string; planName?: string } }
@@ -702,6 +920,12 @@ export type HostMsg =
   | { type: "expandCommandOutputs"; value: boolean }
   // grok.steerByDefault — send-while-busy skips the queue and steers (#52).
   | { type: "steerByDefault"; value: boolean }
+  // grok.promptNav — the Previous-prompt button (#150). Desk
+  // only: a remote keeps its own per-device preference, so this frame is
+  // `host-local` outbound and never crosses the relay.
+  | { type: "promptNav"; value: boolean }
+  // Host-backed on desk; a remote keeps its own default (host-local outbound).
+  | { type: "expandDiffCard"; value: boolean }
   // On-demand audit: expand (open:true) / collapse (open:false) EVERY tool group
   // and command IN/OUT box in the focused session at once. Ephemeral (not
   // persisted) — the Command Palette "Grok: Expand/Collapse All Tool Details".
@@ -726,17 +950,29 @@ export type HostMsg =
    *  reverting files), so the webview can't decide to show `uiConfirm` itself.
    *  `id` correlates the answer; the host awaits a promise keyed on it. */
   | { type: "uiConfirmRequest"; id: string; title: string; body?: string; confirmLabel: string; danger?: boolean }
+  | { type: "uiConfirmResolved"; requestId: string }
   // nextOffset = the index offset the next load-more should request — ids CONSUMED
   // from the on-disk index, not entries shown (hidden subagent sessions occupy
   // slots without producing rows).
   | { type: "sessions"; entries: SessionListEntry[]; activeId?: string | null; dots: Record<string, Dot>; offset: number; total: number; hasMore: boolean; nextOffset: number; providerCursor?: { grokOffset: number; codexHighWater?: { updatedAt: number; id: string } }; query: string }
+  /** A known conversation was removed. Drop it from every catalog view without
+   *  changing the client's active conversation or requesting a fresh list. */
+  | { type: "sessionRemoved"; id: string; cwd: string }
   // A preview page for ONE repo, answering `listRepoSessions`. Deliberately a
   // separate frame from `sessions`: that one is the focused history list and
   // owns paging/search/auto-open state, so a sibling repo's rows arriving on it
   // would clobber the list the user is actually reading. `cwd` echoes the scope
   // the host resolved, which is also the capability signal — a client that
   // never sees this frame keeps its single-repo fallback.
-  | { type: "repoSessions"; cwd: string; entries: SessionListEntry[]; dots: Record<string, Dot>; total: number }
+  | {
+      type: "repoSessions";
+      cwd: string;
+      entries: SessionListEntry[];
+      dots: Record<string, Dot>;
+      total: number;
+      /** Additive refusal detail. Older clients ignore it and render the empty page. */
+      error?: "project-unavailable" | "sessions-unavailable";
+    }
   // Every pinned conversation, across ALL repos — the projects rail's Pinned
   // group. Deliberately not per-repo: a pin is only worth anything if it lifts a
   // conversation OUT of the project you would otherwise have to open first, so
@@ -781,7 +1017,7 @@ export type HostMsg =
   // ordinary send carrying the same host-issued id, so relay quota/rate metering
   // applies at dequeue time and replayed/outbox copies are recognisably one send.
   | { type: "submitQueuedSend"; id: string; text: string }
-  // Steer (#52) is unavailable on this CLI (`_x.ai/interject` → -32601). Latches
+  // Steer (#52) is unavailable on this backend. Latches
   // the button off for the session; the queue stays as the fallback.
   | { type: "steerUnavailable" }
   /**
@@ -855,6 +1091,7 @@ export type WebviewMsg =
   /** Host-driven wizard: edit an existing user `[model.<id>]` table. */
   | { type: "editLocalModel"; id: string }
   | { type: "removeLocalModel"; id: string }
+  | { type: "openProviderConfig"; provider: "grok" | "codex" | "claude" }
   | { type: "openProjectConfig" }
   | { type: "listMcpServers" }
   /** Open the Routines page — the host answers with a `routines` frame. */
@@ -867,9 +1104,10 @@ export type WebviewMsg =
   /** Fire once, now. Deliberately takes no window key — a manual run must not
    *  consume the scheduled one. */
   | { type: "runRoutineNow"; id: string }
-  /** Desk-only: OAuth opens a browser; key-auth sends `key` once (never echoed). */
+  /** Key is write-only. OAuth publishes a device-global sign-in link. */
   | { type: "connectMcpConnector"; id: string; key?: string; readOnly?: boolean }
-  /** Desk-only: drop the id from our list. Key-auth also deletes the HostSecrets entry. OAuth does not delete ~/.mcp-auth tokens. */
+  /** Drop the id from our list and any HostSecrets key. Does not revoke OAuth,
+   * clear ~/.mcp-auth, or remove tools from already running sessions. */
   | { type: "disconnectMcpConnector"; id: string }
   | { type: "showLogs" }
   /** Unpackaged desktop only — toggle Chromium DevTools (gear / F12). */
@@ -914,15 +1152,36 @@ export type WebviewMsg =
    * Same containment: a URL is not a destination. Git's own credential helper
    * does the authenticating — nothing here mints, stores or forwards a token.
    */
-  | { type: "cloneProject"; url: string }
+  | { type: "cloneProject"; url: string; name?: string }
   /**
    * Install or sign in to the GitHub CLI.
    *
-   * Offered only after a clone failed in a way `gh` would fix. A local webview
+   * Offered after a clone failed in a way `gh` would fix, and from the
+   * Settings GitHub row / the clone picker's connect row. A local webview
    * still opens a terminal. A remote `auth` runs the headless device-code flow
-   * and reports the URL and code on `projectSetup.github`.
+   * and reports the URL and code on `projectSetup.github` and `githubState`.
    */
-  | { type: "setupGithubCli"; action: "install" | "auth" }
+  | { type: "setupGithubCli"; action: "install" | "auth"; surface?: "settings" }
+  /**
+   * List this account's repositories for the clone combobox. Host runs
+   * `gh repo list --limit 200` once; the client filters. A remote may send
+   * this: the picker is how a phone clones, and it reveals nothing a clone
+   * of those URLs would not already reach.
+   */
+  | { type: "listGithubRepos" }
+  /**
+   * Sign out of GitHub on this machine. Same class as agent `logout`: desk
+   * remotes must not revoke a credential every surface shares; a cloud
+   * machine has no other surface, so CLOUD_DISPOSITION admits it there.
+   */
+  | { type: "githubSignOut" }
+  /**
+   * Store a pasted GitHub token via `gh auth login --with-token`. The token
+   * is a secret: the host must never echo it, log it, or put it in state the
+   * webview can read. A remote may send this — a cloud machine is exactly
+   * where a fine-grained token is the narrower credential to be holding.
+   */
+  | { type: "githubLoginWithToken"; token: string }
   // `panel-right` / `panel-bottom` dock the panel on that edge before revealing;
   // plain `panel` leaves the layout alone (view-move.ts § panelPositionFor).
   //
@@ -944,13 +1203,20 @@ export type WebviewMsg =
    *  thumbnail for. `fullId` is an opaque handle the HOST issued — deliberately
    *  not a path, so a remote can only ask for pictures it was already shown. */
   | { type: "requestImageFull"; fullId: string }
+  /** Separate type: older hosts may return a resized imageFull, which cannot
+   *  fulfil a full-resolution clipboard request. */
+  | { type: "requestImageOriginal"; fullId: string; requestId: number }
   | { type: "composerFocus"; focused: boolean }
   | { type: "setExpandCommandOutputs"; value: boolean }
   | { type: "setSteerByDefault"; value: boolean }
+  | { type: "setPromptNav"; value: boolean }
+  | { type: "setExpandDiffCard"; value: boolean }
   /** Persist `atlas.voiceSendPhrase`. Empty disables hands-free send. */
   | { type: "setVoiceSendPhrase"; value: string }
   /** Persist `atlas.voiceKeyterms` (user dictionary terms only). */
   | { type: "setVoiceKeyterms"; value: string[] }
+  | { type: "setVoiceBackend"; value: SttPreference }
+  | { type: "configureOpenAiVoice" }
   /** Persist `atlas.telemetry.enabled`. Desktop toggle; remotes do not send this. */
   | { type: "setTelemetryEnabled"; value: boolean }
   /** Persist `atlas.thumbsFeedback`. Host-owned; remotes honour the desk value. */
@@ -960,19 +1226,31 @@ export type WebviewMsg =
    * from the webview drag-drop surface. Desktop posts only a host-minted
    * `handle` (see file-selection-registry) — a renderer-invented path is refused.
    */
-  | { type: "dropFile"; path?: string; handle?: string; shift: boolean }
+  // `types`/`via` are diagnostics: the transfer types the drop actually carried
+  // and the one we read a path out of. Sent once per drop, with no path, so a
+  // drop that yields nothing still says so in the Output channel (#136).
+  | { type: "dropFile"; path?: string; handle?: string; shift: boolean; types?: string[]; via?: string }
   | { type: "permissionAnswer"; requestId: number | string; optionId: string }
   | { type: "exitPlanAnswer"; requestId: number | string; verdict: "approved" | "abandoned" | "rejected"; comment?: string }
   | { type: "questionAnswer"; requestId: number | string; answers?: Record<string, string>; annotations?: Record<string, { notes?: string; preview?: string }> }
   | { type: "questionCancel"; requestId: number | string }
-  | { type: "setModel"; modelId: string; provider?: "grok" | "codex" | "claude" }
+  // `effort` rides along when one close of the picker changed both. Sending it
+  // as a second `setEffort` would race: the host does not serialize its async
+  // message handlers, so an effort restart could read the remembered model back
+  // before the switch beside it had written one. A host too old to read the
+  // field applies the model and ignores the level — the picker then reconciles
+  // to what the session runs at, and changing effort alone still works.
+  | { type: "setModel"; modelId: string; provider?: "grok" | "codex" | "claude"; effort?: string }
   | { type: "installCodex" }
   | { type: "cancelCodexInstall" }
   | { type: "runInstallCmd" }
   | { type: "runGrokLogin"; provider?: "grok" | "codex" | "claude" }
   // Stop a headless sign-in the host is running. Only reachable while one is in
   // flight, and it kills a child process this same user started moments ago.
-  | { type: "cancelDeviceLogin"; provider?: "grok" | "codex" | "claude" }
+  // `github` is the clone-form / Settings `gh auth login --web` child, not an
+  // agent; an older host that does not know the value no-ops rather than
+  // cancelling Grok.
+  | { type: "cancelDeviceLogin"; provider?: "grok" | "codex" | "claude" | "github" }
   // Paste-code half of a headless sign-in: the person typed the vendor's code
   // into the card and we write it to the CLI's stdin. Additive — an older host
   // simply has no handler, and an older client never posts it.
@@ -980,6 +1258,8 @@ export type WebviewMsg =
   | { type: "logout"; provider?: "grok" | "codex" | "claude" }
   | { type: "checkGrokUpdate" }
   | { type: "updateGrok" }
+  | { type: "updateCodex" }
+  | { type: "updateClaude" }
   | { type: "recheckConnection"; provider?: "grok" | "codex" | "claude" }
   /** Re-observe every account without asserting anything about it. Unlike
    *  `recheckConnection` this never marks a provider connected — it re-runs the
@@ -1034,6 +1314,19 @@ export type WebviewMsg =
   // (same pipeline as drop / the + picker). The `@rel/path` text stays in the
   // composer, so the prompt carries both the prose reference and the chip.
   | { type: "addMentionFile"; relPath: string }
+  /** Provider config files use new types so older hosts drop them, never
+   *  interpret a new selector as an existing project-root request. */
+  | { type: "readProviderConfig"; requestId?: string; provider: "grok" | "codex" | "claude" }
+  | {
+      type: "writeProviderConfig";
+      requestId?: string;
+      provider: "grok" | "codex" | "claude";
+      text: string;
+      /** A missing read supplies {mtimeMs: 0, size: -1}; save may create only that config. */
+      stamp: { mtimeMs: number; size: number };
+      expectedAbsPath: string;
+    }
+  | { type: "restartProviderSession"; provider: "grok" | "codex" | "claude"; sessionId: string }
   /**
    * Remote file browse: list one directory under the tab's selected repo
    * (`cwd` must be that scope — see `resolveRemoteFileRoot`). `relPath`
@@ -1065,6 +1358,38 @@ export type WebviewMsg =
       text: string;
       stamp: { mtimeMs: number; size: number };
       expectedAbsPath: string;
+    }
+  /**
+   * Changes view: read `git status` for the tab's selected repo. Same fence as
+   * the file browse — `cwd` must be the scope `resolveRemoteFileRoot` allows.
+   * Answered by `gitStatusResult`. Capability: `gitChanges`.
+   */
+  | { type: "gitStatus"; requestId?: string; cwd: string }
+  /**
+   * Changes view: read one changed file's patch. `path` is repository-relative
+   * and is checked against the snapshot the host computes fresh — a path the
+   * repository is not reporting as changed is refused, which is a stronger
+   * fence than any string test could be.
+   */
+  | { type: "gitFileDiff"; requestId?: string; cwd: string; path: string }
+  /**
+   * Changes view: run one of the four operations in the closed set.
+   *
+   * The host re-plans from its OWN fresh snapshot rather than trusting anything
+   * in this message beyond the operation and its inputs, so a stale client
+   * cannot commit a file that stopped being changed, and the argv that runs is
+   * built by the same function that produced the text on the confirmation card.
+   */
+  | {
+      type: "gitRun";
+      requestId?: string;
+      cwd: string;
+      op: "commit" | "push" | "newBranch" | "revertFile";
+      message?: string;
+      push?: boolean;
+      paths?: string[];
+      branch?: string;
+      path?: string;
     }
   | { type: "pasteImage"; mimeType: string; data: string; previewId?: string }
   // Remote browser upload: an untrusted basename plus base64 bytes. The host
@@ -1134,6 +1459,7 @@ export type WebviewMsg =
   | { type: "workflowControl"; action: "pause" | "resume" | "stop"; displayName: string }
   /** Read-only Grok context snapshot for the open donut popover. */
   | { type: "refreshContextDetails" }
+  | { type: "refreshSubscriptionUsage" }
   // Relay account (gear "AFK Pilot" section, local webview only): start the
   // device-link flow / drop the device token / open the relay web portal.
   | { type: "remoteSignIn" }
@@ -1152,51 +1478,56 @@ export type WebviewMsg =
 // error). The runtime arrays are just the keys, so they can never drift from the
 // union without failing the build.
 const HOST_MESSAGE_TYPE_MAP: Record<HostMsg["type"], true> = {
-  initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, providerState: true, mcpServers: true, mcpConnectors: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
+  initialState: true, moveViewHint: true, welcomeTips: true, projectSetup: true, githubState: true, githubRepos: true, providerState: true, mcpServers: true, mcpConnectors: true, mcpConnectorAuthorization: true, routines: true, codexInstallProgress: true, planModeAvailability: true, showThinking: true, appPurpose: true, fontScale: true, grokUpdateStatus: true, updateAvailable: true, updateReady: true, telemetryEnabled: true, thumbsFeedback: true,
   initialized: true, cliUpdating: true, session: true, localModels: true, sessionName: true, modelChanged: true,
   modeChanged: true, openModePopover: true, voiceState: true, voiceConfigured: true,
   voicePartial: true, voiceSubmit: true, voiceTranscript: true, voiceError: true,
-  chips: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, userMessage: true, agentStart: true,
+  chips: true, commandsUpdate: true, mentionResults: true, projectDirListing: true, projectFileContent: true, projectFileWriteResult: true, gitStatusResult: true, gitFileDiffResult: true, gitRunResult: true, userMessage: true, agentStart: true,
+  providerConfigContent: true, providerConfigWriteResult: true,
   thoughtChunk: true, messageChunk: true, media: true, userMessageChunk: true,
   historyReplay: true, historyBatch: true, permissionHistoryQueue: true, planHistoryQueue: true,
   toolCall: true, toolCallUpdate: true, permissionRequest: true, permissionOptions: true,
-  permissionResolved: true, exitPlanRequest: true, planResolved: true, questionRequest: true,
+  permissionResolved: true, exitPlanRequest: true, planResolved: true, questionRequest: true, questionResolved: true,
+  subscriptionUsage: true,
   planNotice: true, autoCompactNotice: true, planBlocked: true, promptComplete: true, contextUsage: true, agentReset: true,
   agentError: true, agentEnd: true, exit: true, setBusy: true, summarizing: true,
   sessionContext: true, clearMessages: true, onboarding: true, error: true, hostNotice: true,
-  xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true,
-  soundNotifications: true, processingSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, moveComposerCaret: true, remoteStatus: true,
-  setAllToolDetails: true, focusInput: true, findInSession: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true,
-  sessions: true, repoSessions: true, pinnedSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
+  xaiNotification: true, subagentUpdate: true, childStream: true, runProgress: true, commandOutput: true, expandCommandOutputs: true, steerByDefault: true, promptNav: true, expandDiffCard: true,
+  soundNotifications: true, processingSound: true, readRepliesAloud: true, summarizeRepliesAloud: true, speechSummary: true, imageFull: true, imageOriginal: true, moveComposerCaret: true, remoteStatus: true, hostReachable: true, hostLink: true,
+  setAllToolDetails: true, focusInput: true, findInSession: true, restoreComposer: true, truncateMessages: true, uiConfirmRequest: true, uiConfirmResolved: true,
+  sessions: true, sessionRemoved: true, repoSessions: true, pinnedSessions: true, repos: true, sessionDot: true, queuedSends: true, submitQueuedSend: true,
   steerUnavailable: true, feedbackAvailability: true, turnFeedbackAck: true, usage: true,
 };
 
 const WEBVIEW_MESSAGE_TYPE_MAP: Record<WebviewMsg["type"], true> = {
   ready: true, remotePreferences: true, send: true, newSession: true, cancel: true, pickModel: true,
   setMode: true, removeChip: true, toggleChip: true, openFile: true, showInFolder: true, openUrl: true,
-  openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true,
-  addProjectFolder: true, removeProjectFolder: true, createProject: true, cloneProject: true, setupGithubCli: true,
+  openText: true, openDiff: true, exportExpr: true, setEffort: true, openGlobalConfig: true, openProviderConfig: true,
+  addProjectFolder: true, removeProjectFolder: true, createProject: true, cloneProject: true, setupGithubCli: true, listGithubRepos: true, githubSignOut: true, githubLoginWithToken: true,
   openProjectConfig: true, listMcpServers: true, connectMcpConnector: true, disconnectMcpConnector: true,
   listRoutines: true, saveRoutine: true, deleteRoutine: true, setRoutinePaused: true, runRoutineNow: true, showLogs: true, toggleDevTools: true, openSettings: true, openSettingsSurface: true, closeSettingsSurface: true, dismissWelcomeTip: true, welcomeTipShown: true, moveView: true,
   listLocalModels: true, addLocalModel: true, editLocalModel: true, removeLocalModel: true,
-  setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true,
-  setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, summarizeSpeech: true, requestImageFull: true, composerFocus: true,
+  setShowThinking: true, setAppPurpose: true, setExpandCommandOutputs: true, setSteerByDefault: true, setPromptNav: true, setExpandDiffCard: true,
+  setSoundNotifications: true, setProcessingSound: true, setReadRepliesAloud: true, setSummarizeRepliesAloud: true, setVoiceSendPhrase: true, setVoiceKeyterms: true, setTelemetryEnabled: true, setThumbsFeedback: true, summarizeSpeech: true, requestImageFull: true, requestImageOriginal: true, composerFocus: true,
   dropFile: true, permissionAnswer: true, exitPlanAnswer: true, questionAnswer: true,
   questionCancel: true, setModel: true, installCodex: true, cancelCodexInstall: true, runInstallCmd: true, runGrokLogin: true,
   cancelDeviceLogin: true, submitDeviceLoginCode: true,
-  logout: true, checkGrokUpdate: true, updateGrok: true, recheckConnection: true, refreshProviders: true, retryProviderSession: true,
+  logout: true, checkGrokUpdate: true, updateGrok: true, updateCodex: true, updateClaude: true, recheckConnection: true, refreshProviders: true, retryProviderSession: true,
   listSessions: true, listRepoSessions: true, selectRepo: true, toggleRepoPin: true, toggleSessionPin: true,
   setRepoArchived: true, setRepoColor: true,
   resumeSession: true, renameSession: true, deleteSession: true,
   clearAllSessions: true, pickFile: true, mentionQuery: true, addMentionFile: true,
   listProjectDir: true, readProjectFile: true, writeProjectFile: true,
+  readProviderConfig: true, writeProviderConfig: true, restartProviderSession: true,
+  gitStatus: true, gitFileDiff: true, gitRun: true,
   pasteImage: true, uploadFile: true, voiceStart: true,
-  voiceStop: true, remoteVoiceStart: true, remoteVoiceChunk: true,
+  voiceStop: true, setVoiceBackend: true, configureOpenAiVoice: true, remoteVoiceStart: true, remoteVoiceChunk: true,
   remoteVoiceStop: true, queueSend: true, dequeueSend: true, clearQueuedSends: true,
   steerSend: true, turnFeedback: true, forkSession: true,
   newWorktreeSession: true, applyWorktree: true, removeWorktree: true,
   rewindSession: true, editLastMessage: true, uiConfirmAnswer: true, workflowControl: true,
   refreshContextDetails: true,
+  refreshSubscriptionUsage: true,
   remoteSignIn: true, remoteSignOut: true, unlinkRemoteDevice: true, openRemotePortal: true,
   openUpdateRelease: true, restartToUpdate: true,
 };

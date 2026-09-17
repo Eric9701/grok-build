@@ -1120,6 +1120,29 @@ export function commandOutputForToolCall(
  * the agent is still rebindable. The host
  * uses this to fall back to a restart instead of surfacing the raw error.
  */
+/**
+ * A resume was refused with JSON-RPC -32002.
+ *
+ * DELIBERATELY NOT CALLED “empty thread”, which is what an earlier version of
+ * this assumed and shipped for exactly one review round. The pinned Claude
+ * adapter raises `RequestError.resourceNotFound` for TWO unrelated causes:
+ *
+ *   error.message === "Query closed before response received" ||
+ *   error.message.includes("No conversation found with session ID")
+ *
+ * The second is a thread that is missing or holds no messages. The FIRST is
+ * the SDK query dying mid-resume — which can happen to a conversation with
+ * twenty thousand bytes of somebody's work in it. The two are indistinguishable
+ * from here, so this can say a resume failed and nothing more.
+ *
+ * Treating it as emptiness would open a blank transcript and tell the person
+ * their conversation had never contained anything, while it sat on disk. That
+ * is why this only chooses better WORDS and never changes what happens.
+ */
+export function isResumeNotFound(err: any): boolean {
+  return err?.code === -32002 || err?.data?.code === -32002;
+}
+
 export function isIncompatibleAgentError(err: any): boolean {
   if (err?.data?.code === "MODEL_SWITCH_INCOMPATIBLE_AGENT") return true;
   // Fallback if a future CLI keeps the message but drops the structured code.
@@ -1133,20 +1156,17 @@ export function isIncompatibleAgentError(err: any): boolean {
  * sibling processes (or `atlas login`) that share `~/.grok/auth.json`; a fresh
  * process re-reads the current disk token, so the host transparently restarts
  * the wedged process instead of making the user sign out and back in. Kept
- * deliberately broad — this is ONLY the gate for that one guarded reload+retry,
- * never for what the retry's failure ultimately shows (that split is
- * `isCredentialError` vs `entitlementNoticeText`, #58): a false match costs one
- * reload, then the real error surfaces on the retry.
- * A rate/usage-limit message yields to `isRateLimitErrorText` first (#57): a
- * weekly-limit error carries the same billing-flavored wording, but routing it
- * here ends on the login screen, which can't fix a limit.
+ * deliberately broad — this gates one guarded reload. `isCredentialError`
+ * separately decides whether the failed prompt may be replayed; other access
+ * failures surface their original detail without sending another prompt (#151).
+ * Recognized rate/usage limits yield to the direct limit notice (#57), without
+ * rebuilding a process whose credentials already work.
  */
 export function isAuthErrorText(msg: unknown): boolean {
   const s = String(msg ?? "");
   if (isRateLimitErrorText(s)) return false;
   if (/\b(401|403)\b|unauthor|forbidden|\bcredential|\bapi[_\s-]?key\b|not (?:signed|logged) ?in|(?:sign|log) ?in again|re-?login|authenticat\w*\s*(?:failed|required|error|expired)|token (?:has )?expired|expired\s+token|session (?:has )?expired/i.test(s)) return true;
-  // Billing/entitlement wording joins the retry gate: it CAN be a wedged token,
-  // and if it isn't, the retry's failure shows the entitlement notice instead.
+  // Other access failures still rebuild the process for the next user turn.
   return /\bpay(?:ment)?\b|\bbilling\b|\bsubscription\b|\bentitl\w+|\bunpaid\b|\bcredits?\s+(?:exhaust|remain|requir)/i.test(s);
 }
 

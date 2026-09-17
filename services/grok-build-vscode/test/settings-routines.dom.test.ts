@@ -626,7 +626,7 @@ describe("the model picker", () => {
     click(root.querySelector(".settings-routine-new"));
     const labels = [...root.querySelectorAll('[data-field="model"] optgroup')]
       .map((g) => g.getAttribute("label"));
-    expect(labels).toEqual(["Grok", "Claude"]);
+    expect(labels).toEqual(["Atlas", "Claude"]);
   });
 
   it("hides the empty-model row beside real models, as the composer does", () => {
@@ -639,7 +639,7 @@ describe("the model picker", () => {
     });
     click(root.querySelector(".settings-routine-new"));
     const options = [...root.querySelectorAll('[data-field="model"] option')].map((o) => o.textContent);
-    expect(options).toEqual(["Grok 4.6"]);
+    expect(options).toEqual(["Atlas 4.6"]);
   });
 
   it("keeps the empty-model row when it is the only thing a provider offers", () => {
@@ -650,7 +650,7 @@ describe("the model picker", () => {
     });
     click(root.querySelector(".settings-routine-new"));
     const options = [...root.querySelectorAll('[data-field="model"] option')].map((o) => o.textContent);
-    expect(options).toEqual(["Grok default"]);
+    expect(options).toEqual(["Atlas default"]);
   });
 
   it("keeps the empty-model row for a routine already saved on it", () => {
@@ -667,7 +667,7 @@ describe("the model picker", () => {
     click(root.querySelector(".settings-routine-toggle"));
     const select = root.querySelector('[data-field="model"]') as HTMLSelectElement;
     expect([...select.querySelectorAll("option")].map((o) => o.textContent))
-      .toEqual(["Grok default", "Grok 4.6"]);
+      .toEqual(["Atlas default", "Atlas 4.6"]);
     expect(select.value).toBe("grok ");
   });
 

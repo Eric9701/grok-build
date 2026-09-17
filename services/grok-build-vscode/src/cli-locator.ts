@@ -1,7 +1,7 @@
-import { existsSync, statSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
+import { findCliOnPath, isCliFile } from "./cli-path";
 
 const IS_WIN = process.platform === "win32";
 
@@ -12,14 +12,14 @@ function candidateNames(preferAtlas: boolean): string[] {
   return preferAtlas ? [...atlas, ...grok] : [...grok, ...atlas];
 }
 
-function effectiveHome(): string {
+function effectiveHome(env: NodeJS.ProcessEnv): string {
   // Respect env overrides first so tests + users can redirect the home lookup.
-  const fromEnv = IS_WIN ? process.env.USERPROFILE : process.env.HOME;
+  const fromEnv = IS_WIN ? env.USERPROFILE : env.HOME;
   return fromEnv || homedir();
 }
 
-/** Home dir bins to search: `$GROK_HOME/bin`, then `~/.atlas/bin`, then `~/.grok/bin`. */
-function homeBinDirs(): string[] {
+/** Home dir bins: `$GROK_HOME/bin`, then `~/.atlas/bin`, then `~/.grok/bin`. */
+function homeBinDirs(env: NodeJS.ProcessEnv): string[] {
   const dirs: string[] = [];
   const seen = new Set<string>();
   const push = (p: string) => {
@@ -28,10 +28,10 @@ function homeBinDirs(): string[] {
     seen.add(n);
     dirs.push(n);
   };
-  if (process.env.GROK_HOME) {
-    push(path.join(process.env.GROK_HOME, "bin"));
+  if (env.GROK_HOME) {
+    push(path.join(env.GROK_HOME, "bin"));
   }
-  const home = effectiveHome();
+  const home = effectiveHome(env);
   push(path.join(home, ".atlas", "bin"));
   push(path.join(home, ".grok", "bin"));
   return dirs;
@@ -40,21 +40,22 @@ function homeBinDirs(): string[] {
 function findInDir(dir: string, names: string[]): string | undefined {
   for (const name of names) {
     const candidate = path.join(dir, name);
-    if (existsSync(candidate)) return candidate;
+    if (isCliFile(candidate)) return candidate;
   }
   return undefined;
 }
 
-function findOnPath(cmdName: string): string | undefined {
-  try {
-    const cmd = IS_WIN ? `where ${cmdName}` : `command -v ${cmdName}`;
-    const out = execSync(cmd, { encoding: "utf8" }).trim();
-    const first = out.split(/\r?\n/)[0]?.trim();
-    if (first && existsSync(first)) return first;
-  } catch {
-    // ignore — not on PATH
-  }
-  return undefined;
+/** `env` is injectable for the same reason locateCodexCli and locateClaudeCli
+ *  take one. A test that redirects the home or PATH lookup by assigning
+ *  `process.env` is mutating state shared with every other test FILE in the
+ *  process, because vitest runs those as threads - and the shell fallback below
+ *  then runs a real `where grok`, which on any machine with the CLI installed
+ *  returns the very binary the test asserts is absent. */
+export function locateGrokCli(
+  configuredPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  return locateAtlasCli(configuredPath, env);
 }
 
 /**
@@ -62,21 +63,19 @@ function findOnPath(cmdName: string): string | undefined {
  * Order: configured path → `$GROK_HOME/bin` / `~/.atlas/bin` / `~/.grok/bin`
  * (atlas first) → PATH `atlas` → PATH `grok`.
  */
-export function locateGrokCli(configuredPath: string): string | undefined {
-  return locateAtlasCli(configuredPath);
-}
-
-/** Alias for {@link locateGrokCli} — Atlas-first discovery. */
-export function locateAtlasCli(configuredPath: string): string | undefined {
+export function locateAtlasCli(
+  configuredPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
   if (configuredPath) {
-    return existsSync(configuredPath) ? configuredPath : undefined;
+    return isCliFile(configuredPath) ? configuredPath : undefined;
   }
   const names = candidateNames(true);
-  for (const dir of homeBinDirs()) {
+  for (const dir of homeBinDirs(env)) {
     const hit = findInDir(dir, names);
     if (hit) return hit;
   }
-  return findOnPath("atlas") || findOnPath("grok");
+  return findCliOnPath("atlas", env, process.platform) || findCliOnPath("grok", env, process.platform);
 }
 
 /** Whether this activation follows a previously-recorded extension version. */

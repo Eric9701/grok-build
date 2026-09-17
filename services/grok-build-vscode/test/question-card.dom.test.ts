@@ -55,7 +55,7 @@ describe("question card (real chat.js in a DOM)", () => {
     expect(card.classList.contains("resolved")).toBe(true);
     // Collapses to a clear answered state: heading flips, options gone, the
     // chosen label shown (the original gap — single-select gave no feedback).
-    expect(card.querySelector(".card-title")!.textContent).toBe("You answered");
+    expect(card.querySelector(".card-title")!.textContent).toBe("Submitted");
     expect(card.querySelector(".question-text")!.textContent).toBe("Pick one?");
     expect(card.querySelector(".question-answer")!.textContent).toBe("✓ Option B");
     expect(card.querySelectorAll(".question-option")).toHaveLength(0);
@@ -216,6 +216,118 @@ describe("question card (real chat.js in a DOM)", () => {
   });
 });
 
+describe("question resolution and answer recovery on every chat surface", () => {
+  const draft = "First paragraph.\n\n- one\n- two";
+  function prepare(surface = "vscode") {
+    const h = bootWebview({
+      vscode: surface === "vscode", remote: surface === "remote",
+      beforeScripts: (window) => { if (surface === "desktop") (window as any).grokDesktopShell = true; },
+    });
+    dispatch(h.window, { type: "questionRequest", req: SINGLE });
+    const card = h.doc.querySelector(".card.question")!;
+    click(h.window, [...card.querySelectorAll(".question-option")].find((b) => b.textContent === "Other")!);
+    const field = card.querySelector("textarea") as HTMLTextAreaElement;
+    field.value = draft;
+    field.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    return { ...h, card };
+  }
+
+  it("works against an old host that never acknowledges Submit", () => {
+    const { window, doc, posted, card } = prepare();
+    click(window, card.querySelector(".primary")!);
+    expect(card.querySelector(".card-title")!.textContent).toBe("Submitted");
+    expect(card.querySelector(".question-answer")!.textContent).toContain(draft);
+    expect(card.querySelector("textarea")).toBeNull();
+    expect(posted.filter((m: any) => m.type === "questionAnswer")).toHaveLength(1);
+    const composer = doc.querySelector("#input") as HTMLTextAreaElement;
+    composer.value = "My next message";
+    composer.dispatchEvent(new window.Event("input", { bubbles: true }));
+    expect((doc.querySelector("#send-btn") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it.each(["vscode", "remote", "desktop"])("recovers stale answers inside chat and appends without sending (%s)", (surface) => {
+    const { window, doc, posted, card } = prepare(surface);
+    const composer = doc.querySelector("#input") as HTMLTextAreaElement;
+    composer.value = "  Existing draft\n";
+    click(window, card.querySelector(".primary")!);
+    dispatch(window, { type: "questionResolved", requestId: 3, outcome: "stale" });
+    dispatch(window, { type: "questionResolved", requestId: 3, outcome: "stale" });
+    expect(card.querySelector(".card-title")!.textContent).toBe("Question is no longer open");
+    const answer = card.querySelector(".question-answer")!;
+    expect(answer.textContent).toContain(draft);
+    const range = doc.createRange();
+    range.selectNodeContents(answer);
+    window.getSelection()!.addRange(range);
+    expect(window.getSelection()!.toString()).toContain(draft);
+    expect(card.querySelectorAll(".question-recover")).toHaveLength(1);
+    const before = posted.length;
+    click(window, card.querySelector(".question-recover")!);
+    expect(composer.value).toBe("  Existing draft\n\n\nPick one?\n" + draft);
+    expect(posted.slice(before).some((m: any) => m.type === "send" || m.type === "questionAnswer")).toBe(false);
+  });
+
+  it.each(["closed", "accepted"])("preserves an unsent draft when the request is %s elsewhere", (outcome) => {
+    const { window, card, posted } = prepare();
+    dispatch(window, { type: "questionResolved", requestId: 3, outcome });
+    expect(card.querySelector(".card-title")!.textContent).toBe("Question is no longer open");
+    expect(card.querySelector(".question-answer")!.textContent).toContain(draft);
+    expect(card.querySelector(".question-recover")).not.toBeNull();
+    expect(card.querySelectorAll("textarea, .question-option, .question-skip")).toHaveLength(0);
+    expect(posted.filter((m: any) => m.type === "questionAnswer")).toEqual([]);
+  });
+
+  it("refines Submitted on acceptance, but stale is terminal and never erases text", () => {
+    const { window, card } = prepare();
+    click(window, card.querySelector(".primary")!);
+    dispatch(window, { type: "questionResolved", requestId: 3, outcome: "accepted" });
+    expect(card.querySelector(".card-title")!.textContent).toBe("You answered");
+    dispatch(window, { type: "questionResolved", requestId: 3, outcome: "stale" });
+    dispatch(window, { type: "questionResolved", requestId: 3, outcome: "accepted" });
+    expect(card.querySelector(".card-title")!.textContent).toBe("Question is no longer open");
+    expect(card.querySelectorAll(".question-answer")).toHaveLength(1);
+    expect(card.querySelector(".question-answer")!.textContent).toContain(draft);
+  });
+
+  it("recovers each answer with its question, including a deselected Other draft", () => {
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, { type: "questionRequest", req: { id: "many", questions: [
+      { question: "First?", multiSelect: true, options: [{ label: "A" }] },
+      { question: "Second?", options: [{ label: "B" }] },
+    ] } });
+    const blocks = [...doc.querySelectorAll(".question-block")];
+    const other = blocks[0].querySelectorAll(".question-option")[1];
+    click(window, other);
+    const field = blocks[0].querySelector("textarea") as HTMLTextAreaElement;
+    field.value = draft;
+    field.dispatchEvent(new window.Event("input", { bubbles: true }));
+    click(window, other); // Hide the field without deleting the typed text.
+    click(window, blocks[1].querySelector(".question-option")!);
+    dispatch(window, { type: "questionResolved", requestId: "many", outcome: "closed" });
+    click(window, doc.querySelector(".question-recover")!);
+    expect((doc.querySelector("#input") as HTMLTextAreaElement).value)
+      .toBe("First?\n" + draft + "\n\nSecond?\nB");
+    expect(posted.some((m: any) => m.type === "send" || m.type === "questionAnswer")).toBe(false);
+  });
+
+  it("labels a retained unselected draft separately from the submitted answer", () => {
+    const { window, card, posted } = prepare();
+    click(window, card.querySelector(".question-option")!); // A submits instead of Other.
+    expect(posted.find((m: any) => m.type === "questionAnswer")!.answers).toEqual({ "Pick one?": "Option A" });
+    expect([...card.querySelectorAll(".question-answer")].map((el) => el.textContent))
+      .toEqual(["✓ Option A", "Draft: " + draft]);
+  });
+
+  it("holds resolution with the question during buffered replay", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "historyReplay", active: true });
+    dispatch(window, { type: "questionRequest", req: SINGLE });
+    dispatch(window, { type: "questionResolved", requestId: 3, outcome: "closed" });
+    dispatch(window, { type: "historyReplay", active: false });
+    expect(doc.querySelector(".card.question .card-title")!.textContent).toBe("Question is no longer open");
+    expect(doc.querySelector(".card.question .question-option")).toBeNull();
+  });
+});
+
 describe("question card — resume restore (replayed tool_call)", () => {
   // On resume, grok replays ask_user_question as a tool_call (carrying the
   // questions in rawInput) + a completed tool_call_update (carrying the answer
@@ -353,5 +465,63 @@ describe("question card — resume restore (replayed tool_call)", () => {
     const card = doc.querySelector(".card.question.resolved")!;
     expect(card.querySelector(".question-text")!.textContent).toBe("Pick a number?");
     expect(card.querySelector(".question-answer")!.textContent).toBe("✓ Seven");
+  });
+});
+
+/**
+ * #144 — the "Other" answer is a textarea, not a one-line input.
+ *
+ * The reporter wanted to paste a list or a couple of paragraphs into it and
+ * could not read back what they had typed. Everything the single-line input
+ * supported has to keep working, which is what the existing cases above
+ * cover; these assert the element itself and that a newline survives.
+ */
+describe("question card: the Other field takes more than one line (#144)", () => {
+  const withOther = (requestId: number) => ({
+    id: requestId,
+    questions: [{
+      question: "What should I do?",
+      options: [{ label: "Proceed", description: "go" }],
+      multiSelect: false,
+    }],
+  });
+
+  const openOther = (window: any, doc: any) => {
+    const card = doc.querySelector(".card.question") as HTMLElement;
+    const other = [...card.querySelectorAll(".question-option")]
+      .find((b) => b.textContent!.includes("Other")) as HTMLButtonElement;
+    click(window, other);
+    return card.querySelector(".question-other-input") as HTMLTextAreaElement;
+  };
+
+  it("renders a textarea", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "questionRequest", req: withOther(90) });
+    expect(openOther(window, doc).tagName).toBe("TEXTAREA");
+  });
+
+  it("starts at one row, so it is no heavier than the input it replaced", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "questionRequest", req: withOther(91) });
+    // happy-dom hands `rows` back as the raw attribute string.
+    expect(Number(openOther(window, doc).rows)).toBe(1);
+  });
+
+  it("carries a multi-line answer through to the host verbatim", () => {
+    const { window, doc, posted } = bootWebview();
+    dispatch(window, { type: "questionRequest", req: withOther(92) });
+    const custom = openOther(window, doc);
+    const answer = "First paragraph.\n\n- one\n- two";
+    custom.value = answer;
+    custom.dispatchEvent(new window.Event("input", { bubbles: true }));
+    const card = doc.querySelector(".card.question") as HTMLElement;
+    click(window, card.querySelector(".card-actions .primary") as HTMLButtonElement);
+
+    expect(posted).toContainEqual({
+      type: "questionAnswer",
+      requestId: 92,
+      answers: { "What should I do?": answer },
+      annotations: {},
+    });
   });
 });

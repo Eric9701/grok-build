@@ -9,6 +9,9 @@ describe("brandUserFacingText", () => {
     );
     expect(brandUserFacingText("Grok is still working")).toBe("Atlas is still working");
     expect(brandUserFacingText("Get SuperGrok for higher limits")).toBe("Get SuperGrok for higher limits");
+    expect(brandUserFacingText("The model 'grok-build' requires a Grok subscription.")).toBe(
+      "The model 'grok-build' requires an Atlas subscription.",
+    );
   });
 });
 

@@ -61,6 +61,15 @@ function makeUplink(overrides: Partial<ConstructorParameters<typeof RemoteUplink
 describe("RemoteUplink client identity and targeted sends", () => {
   beforeEach(() => { wsMock.sockets.length = 0; });
 
+  it("logs an outbound frame refused while the uplink is disconnected", () => {
+    const logs: string[] = [];
+    const uplink = makeUplink({ log: (line) => logs.push(line) });
+    uplink.broadcastTo(["tab-a"], {
+      type: "repoSessions", cwd: "/work/open", entries: [], dots: {}, total: 0,
+    });
+    expect(logs).toContain("[remote] could not send repoSessions (uplink is not connected)");
+  });
+
   it("hello is legacy-shaped without client metadata and includes mapped client when supplied", () => {
     const uplink = makeUplink({ deviceName: "Dell (Windows 11)" });
     uplink.start();
@@ -201,6 +210,72 @@ describe("RemoteUplink client identity and targeted sends", () => {
     expect(revoked).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1000);
     expect(wsMock.sockets).toHaveLength(2);
+
+    uplink.dispose();
+    vi.useRealTimers();
+  });
+
+  // A 4002 says the relay is healthy and this device is momentarily held —
+  // nearly always by this host's OWN socket, frozen at the relay because the
+  // machine suspended without ever sending a FIN. The relay now challenges that
+  // incumbent the instant we knock, so the obstacle clears in seconds; waiting
+  // a thirty-second backoff for it is what made a returning laptop look dead
+  // for a minute. See refusalRetryMs.
+  it("waits out a 4002 in seconds rather than earning a thirty-second delay", async () => {
+    vi.useFakeTimers();
+    const logs: string[] = [];
+    const uplink = makeUplink({ log: (line) => logs.push(line) });
+    uplink.start();
+
+    wsMock.sockets[0].emit("close", 4002);
+    expect(logs.at(-1)).toContain("refused (device still held)");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(wsMock.sockets).toHaveLength(2);
+
+    uplink.dispose();
+    vi.useRealTimers();
+  });
+
+  it("hands a long run of refusals back to ordinary backoff, at the delay it already had", async () => {
+    vi.useFakeTimers();
+    const logs: string[] = [];
+    const uplink = makeUplink({ log: (line) => logs.push(line) });
+    uplink.start();
+
+    // Refusals at t = 0, 2s, 4s, 6s, 8s are inside the 10s window; the one at
+    // 10s is a rival rather than a corpse — two windows on one desk share an
+    // installId, so one of them has to lose slowly.
+    for (let i = 0; i < 6; i += 1) {
+      wsMock.sockets.at(-1)!.emit("close", 4002);
+      await vi.advanceTimersByTimeAsync(2000);
+    }
+
+    expect(logs.filter((l) => l.includes("refused (device still held)"))).toHaveLength(5);
+    // The short retries must not have grown the backoff on the way past —
+    // resetting or inflating it here is the flapping bug connectionWasHealthy
+    // was written to prevent.
+    expect(logs.at(-1)).toContain("uplink disconnected (code 4002); retrying in 1s");
+
+    uplink.dispose();
+    vi.useRealTimers();
+  });
+
+  it("starts a fresh window when an ordinary close breaks the run", async () => {
+    vi.useFakeTimers();
+    const logs: string[] = [];
+    const uplink = makeUplink({ log: (line) => logs.push(line) });
+    uplink.start();
+
+    wsMock.sockets.at(-1)!.emit("close", 4002);
+    await vi.advanceTimersByTimeAsync(2000);
+    // Long enough that a window measured from the FIRST refusal would be spent.
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    wsMock.sockets.at(-1)!.emit("close", 1011);
+    await vi.advanceTimersByTimeAsync(1000);
+    wsMock.sockets.at(-1)!.emit("close", 4002);
+
+    expect(logs.filter((l) => l.includes("refused (device still held)"))).toHaveLength(2);
 
     uplink.dispose();
     vi.useRealTimers();
@@ -451,6 +526,39 @@ describe("RemoteUplink socket-level project authorization", () => {
     const closedPreview = { ...preview, cwd: "/work/closed", entries: [] } as HostMsg;
     uplink.broadcastTo(["tab-a"], closedPreview, "/work/closed");
     expect(socket.sent.map(JSON.parse).filter((f: { t: string }) => f.t === "host-to")).toEqual([]);
+    uplink.dispose();
+  });
+
+  it("writes the authorized rows from a mixed repoSessions frame", () => {
+    const logs: string[] = [];
+    const uplink = makeUplink({
+      auth: {
+        authorizedCwds: () => ["/work/project"],
+        scopeCwdForClient: () => "/work/other",
+        sameCwd: pathsEqual,
+      },
+      log: (line) => logs.push(line),
+    });
+    uplink.start();
+    const socket = wsMock.sockets[0];
+    socket.emit("open");
+
+    uplink.broadcastTo(["tab-a"], {
+      type: "repoSessions",
+      cwd: "/work/project",
+      entries: [
+        { id: "kept", title: "Kept", cwd: "/work/project" } as any,
+        { id: "worktree", title: "Worktree", cwd: "/tmp/worktree" } as any,
+      ],
+      dots: { kept: "working", worktree: "needs-you" },
+      total: 2,
+    }, "/work/project");
+
+    const [frame] = socket.sent.map(JSON.parse).filter((item: { t: string }) => item.t === "host-to");
+    expect(frame.msg.entries.map((entry: { id: string }) => entry.id)).toEqual(["kept"]);
+    expect(frame.msg.dots).toEqual({ kept: "working" });
+    expect(frame.msg.total).toBe(1);
+    expect(logs.some((line) => line.includes("filtered 1 unauthorized repoSessions entry"))).toBe(true);
     uplink.dispose();
   });
 

@@ -63,6 +63,8 @@
 | 2026-08-24 → 08-26 | [规则下发与 overlay](61031787-835f-4e05-ade6-0a8f5c68e17a) | 方案 + vscode/cli |
 | 2026-08-26 → 08-27 | [刷新 model](0076d771-ca2e-4b30-9f24-533fea368fe4) | cli、vscode |
 | 2026-08-26 → 09-02 | [工作画像 skill](075a1108-c3dd-4976-850b-286b649c24ab) | plugin |
+| 2026-09-16 → 09-17 | [合并 vscode 4.6.0](f4655f99-7132-406e-a676-0a06ba292453) | vscode |
+| 2026-09-15 | [代码新增行](f4655f99-7132-406e-a676-0a06ba292453) | cli、server |
 | 2026-09-13 | [会话记忆](57e9ab26-cafd-4fb7-bd67-a823e1b5cd61) | 文档（project-memory 回填） |
 | 2026-09-12 | [Relay 斜杠与 MD](b34f81f3-7ffc-409c-b31d-96b84cf24a65) | 旁路 relay-demo |
 | 2026-09-11 | [Relay Demo Linux](5952b17a-2178-4e04-8f5c-cd0fa0bfda8f) | 旁路 relay-demo |

@@ -9,13 +9,15 @@
   const vscode = acquireVsCodeApi();
 
   const ICON = {
-    // Solid folder marks supplied by the owner (media/icons/folder-*.svg),
-    // inlined because the rail sets them with innerHTML. `fill:currentColor`
-    // is the change from the originals — it is what lets a project's colour
-    // tint them, and what keeps them legible in a light theme.
-    folderClosed: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 408 408" fill="currentColor" aria-hidden="true"><path d="M372,88.661H206.32l-33-39.24c-0.985-1.184-2.461-1.848-4-1.8H36c-19.956,0.198-36.023,16.443-36,36.4v240c-0.001,19.941,16.06,36.163,36,36.36h336c19.94-0.197,36.001-16.419,36-36.36v-199C408.001,105.08,391.94,88.859,372,88.661z"/></svg>`,
-    folderOpen: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -57 511.99973 511" fill="currentColor" aria-hidden="true"><path d="m506.039062 180.988281c-7.78125-12.546875-21.53125-20.046875-36.78125-20.046875h-339.5625c-16.832031 0-32.140624 9.488282-39.011718 24.179688l-89.8125 188.308594c3.390625 13.789062 16.269531 24.089843 31.609375 24.089843h361.269531c15.445312 0 29.5625-8.734375 36.460938-22.554687l77.628906-155.59375c6.128906-12.3125 5.449218-26.660156-1.800782-38.382813zm0 0"/><path d="m72.402344 156.15625c6.863281-14.6875 22.175781-24.179688 39.011718-24.179688h319.753907v-40.898437c0-16.859375-14.222657-30.578125-31.703125-30.578125h-186.445313c-.273437 0-.460937-.070312-.53125-.121094l-33.371093-46.660156c-5.910157-8.277344-15.671876-13.21875-26.101563-13.21875h-121.304687c-17.488282 0-31.710938 13.71875-31.710938 30.578125v276.875zm0 0"/></svg>`,
+    // Lucide project marks. The outline inherits the project tint through
+    // currentColor, just like the other rail glyphs.
+    folderClosed: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`,
+    folderOpen: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>`,
     plus: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>`,
+    // New session. The SAME glyph the chat header's New button uses (ICON.squarePen
+    // in media/chat.js) — one action should not have two icons depending on which
+    // control you reach it from. The rail's "+" now means only "add a project".
+    squarePen: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>`,
     pin: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="m5 17 2-7V5l-2-2h14l-2 2v5l2 7Z"/></svg>`,
     pinFilled: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="m5 17 2-7V5l-2-2h14l-2 2v5l2 7Z" fill="currentColor"/></svg>`,
     ellipsis: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>`,
@@ -108,9 +110,12 @@
      *  from `projectSetup`. The form shows the destination as you type. */
     projectRoot: "",
     projectGithub: null,
+    githubState: null,
+    githubRepos: null,
   };
 
   let menuEl = null;
+  let menuAnchorEl = null;
   let colorPickerEl = null;
 
   /**
@@ -380,6 +385,7 @@
       menuEl.remove();
       menuEl = null;
     }
+    menuAnchorEl = null;
   }
 
   function closeMenu() {
@@ -499,10 +505,15 @@
     const mw = el.offsetWidth;
     const mh = el.offsetHeight;
     const anchorTop = at ? at.y : rect.top;
+    const anchorBottom = at ? at.y : rect.bottom;
     let left = at ? at.x : rect.right - mw;
-    let top = (at ? at.y : rect.bottom) + 2;
+    // Prefer below the anchor. Flip above when there is no room — the wide
+    // Add project control sits at the bottom of the rail, so opening only
+    // downward would put the menu off-screen.
+    let top = anchorBottom + 2;
     left = Math.max(4, Math.min(left, window.innerWidth - mw - 4));
     if (top + mh > window.innerHeight - 4) top = Math.max(4, anchorTop - mh - 2);
+    if (top + mh > window.innerHeight - 4) top = Math.max(4, window.innerHeight - mh - 4);
     el.style.left = left + "px";
     el.style.top = top + "px";
   }
@@ -555,6 +566,7 @@
     }
     document.body.appendChild(menu);
     menuEl = menu;
+    menuAnchorEl = anchor;
     placePopover(menu, anchor, at);
   }
 
@@ -614,8 +626,16 @@
   }
 
   document.addEventListener("click", (e) => {
-    if (menuEl && !menuEl.contains(e.target)) closeMenu();
-    else if (colorPickerEl && !colorPickerEl.contains(e.target)) closeColorPicker();
+    if (menuEl) {
+      if (menuEl.contains(e.target)) return;
+      // The opening click bubbles here. The header + stops it; the wide
+      // Add project button did not, so the menu opened and immediately
+      // closed — which read as a button that does nothing.
+      if (menuAnchorEl && menuAnchorEl.contains(e.target)) return;
+      closeMenu();
+      return;
+    }
+    if (colorPickerEl && !colorPickerEl.contains(e.target)) closeColorPicker();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeMenu();
@@ -687,6 +707,50 @@
       .slice(0, RECENT_CAP);
   }
 
+  /**
+   * Carry the pointer's hover across a wholesale rebuild.
+   *
+   * `render()` empties #rail-scroll and builds it again, and one boot does that
+   * a dozen times or more as each project's rows arrive. The browser recomputes
+   * :hover only AFTER the lifecycle that paints the new nodes, so the row under
+   * a cursor that never moved paints WITHOUT its hover fill and without its
+   * action buttons for one frame, every time — which is the blinking the owner
+   * saw while the rail loaded. .rail-rebuilding only silenced the fade; the
+   * frame at the wrong state was still painted.
+   *
+   * So find the row the pointer is over in the same task that builds it and mark
+   * it, before anything is painted. The mark is dropped on the next real pointer
+   * move, which is exactly when :hover becomes authoritative again.
+   */
+  let railPointer = null;
+  let railHoverHeld = null;
+
+  function dropHoverHold() {
+    if (railHoverHeld) railHoverHeld.classList.remove("rail-hover-hold");
+    railHoverHeld = null;
+  }
+
+  function holdHoverAfterRebuild() {
+    dropHoverHold();
+    if (!railPointer || typeof document.elementFromPoint !== "function") return;
+    const at = document.elementFromPoint(railPointer.x, railPointer.y);
+    const row = at && at.closest ? at.closest(".rail-session, .rail-repo-head") : null;
+    if (!row) return;
+    row.classList.add("rail-hover-hold");
+    railHoverHeld = row;
+  }
+
+  document.addEventListener("pointermove", (e) => {
+    railPointer = { x: e.clientX, y: e.clientY };
+    dropHoverHold();
+  }, true);
+  // Leaving the window (or a touch ending) means there is no pointer to carry.
+  // documentElement, and NOT capturing: pointerleave does not bubble, but a
+  // capturing listener on document would still see the copy fired at every row
+  // the pointer crosses, and switch the carry off on the first move.
+  document.documentElement.addEventListener("pointerleave", () => { railPointer = null; dropHoverHold(); });
+  document.addEventListener("pointercancel", () => { railPointer = null; dropHoverHold(); }, true);
+
   function render() {
     const root = document.getElementById("rail-scroll");
     if (!root) return;
@@ -750,12 +814,26 @@
     }
 
     const { current, other } = partitionRepos();
-    const { active, archived } = splitByArchive(other);
+    // The open folder goes through the split like everything else. Lifting it
+    // out first was a SECOND mechanism holding it in Projects, on top of the
+    // guards in repoIsArchived -- so archiving it stored the choice and moved
+    // nothing, and fixing only the guards fixed only half of it.
+    const { active, archived } = splitByArchive(current ? [current, ...other] : other);
 
-    // Open folder stays first inside Projects; everything else remains alphabetical.
-    const projectRepos = (current ? [current, ...active] : active)
-      .filter((r) => !q || repoHasMatch(r));
-    if (projectRepos.length) {
+    // Open folder stays first inside Projects; everything else remains
+    // alphabetical. If the user archived it, it is not in Projects to lead.
+    const ordered = current && active.indexOf(current) > 0
+      ? [current, ...active.filter((r) => r !== current)]
+      : active;
+    const projectRepos = ordered.filter((r) => !q || repoHasMatch(r));
+    // Archiving every project must not take the screen's controls with it. The
+    // header, the "+" and the wide add target all live inside this block, so
+    // the last archived row used to leave a rail with no way to add anything --
+    // and the `!shown` fallback below could not step in, because the archive
+    // section had already set `shown`. The archive is a grouping, not a
+    // different screen, so Projects stays with an empty state of its own.
+    const emptyProjects = !projectRepos.length && !q && archived.length > 0;
+    if (projectRepos.length || emptyProjects) {
       const forcedOpen = !!q;
       const open = forcedOpen || !state.groupCollapsed.projects;
       root.appendChild(collapsibleGroupHead({
@@ -778,6 +856,12 @@
           }));
         }
         root.appendChild(list);
+        if (emptyProjects) {
+          const note = document.createElement("div");
+          note.className = "rail-note";
+          note.textContent = "Every project is archived.";
+          root.appendChild(note);
+        }
         // A full-width target under the list, not only the small "+" beside the
         // group title. The owner's reason, and it is about where the eye goes:
         // with one project or none the rail is mostly empty space, and the only
@@ -823,6 +907,7 @@
       root.appendChild(note);
     }
 
+    holdHoverAfterRebuild();
     requestAnimationFrame(() => root.classList.remove("rail-rebuilding"));
   }
 
@@ -845,7 +930,10 @@
     plus.textContent = "+";
     add.appendChild(plus);
     add.appendChild(document.createTextNode("Add project"));
-    add.onclick = () => openAddProjectMenu(add);
+    add.onclick = (e) => {
+      e.stopPropagation();
+      openAddProjectMenu(add);
+    };
     return add;
   }
 
@@ -955,9 +1043,7 @@
       // Same hint as the chat rail, and the same rule: it acts rather than
       // instructs. This view has no settings overlay of its own, so it asks the
       // host for the editor tab.
-      if (id === "clone-needs-coding") {
-        vscode.postMessage({ type: "openSettingsSurface", category: "general" });
-      } else if (id === "import") vscode.postMessage({ type: "addProjectFolder" });
+      if (id === "import") vscode.postMessage({ type: "addProjectFolder" });
       else openAddProjectForm(id);
     };
     // One way in is a click, not a menu that asks permission to be a click.
@@ -981,6 +1067,11 @@
   let addProjectFormKeydown = null;
 
   function closeAddProjectForm() {
+    const wasClone = !!(addProjectFormApi && addProjectFormApi.el && addProjectFormApi.el.dataset.kind === "clone");
+    if (wasClone) {
+      state.projectGithub = null;
+      vscode.postMessage({ type: "cancelDeviceLogin", provider: "github" });
+    }
     if (addProjectFormScrim) addProjectFormScrim.remove();
     // Capture-phase listener: leaving it attached would swallow Escape in this
     // view for the rest of the window.
@@ -995,13 +1086,17 @@
     if (!helpers || typeof helpers.addProjectForm !== "function") return;
     closeAddProjectForm();
     closeMenu();
+    if (kind === "clone") {
+      state.projectGithub = null;
+      vscode.postMessage({ type: "cancelDeviceLogin", provider: "github" });
+    }
     const api = helpers.addProjectForm({
       kind,
       root: state.projectRoot,
-      onSubmit: (value) => {
+      onSubmit: (value, extra) => {
         vscode.postMessage(
           kind === "clone"
-            ? { type: "cloneProject", url: value }
+            ? { type: "cloneProject", url: value, ...(extra && extra.name ? { name: extra.name } : {}) }
             : { type: "createProject", name: value },
         );
       },
@@ -1010,6 +1105,15 @@
         type: "setupGithubCli",
         action: fix === "install-gh" ? "install" : "auth",
       }),
+      onConnect: () => vscode.postMessage({ type: "setupGithubCli", action: "auth" }),
+      onLoginWithToken: (token) => vscode.postMessage({ type: "githubLoginWithToken", token }),
+      onRequestRepos: () => vscode.postMessage({ type: "listGithubRepos" }),
+      githubState: state.githubState || undefined,
+      repos: state.githubRepos,
+      terminalSignIn: true,
+      onRecheck: () => vscode.postMessage({ type: "refreshProviders" }),
+      touch: typeof window.matchMedia === "function"
+        && window.matchMedia("(hover: none), (pointer: coarse)").matches,
     });
     if (!api) return;
     const scrim = document.createElement("div");
@@ -1026,7 +1130,11 @@
       closeAddProjectForm();
     };
     document.addEventListener("keydown", addProjectFormKeydown, true);
-    api.update({ root: state.projectRoot, github: state.projectGithub || undefined });
+    api.update({
+      root: state.projectRoot,
+      githubState: state.githubState || undefined,
+      repos: state.githubRepos,
+    });
     api.focus();
   }
 
@@ -1094,12 +1202,14 @@
    *    for it to have been recent about.
    */
   function repoIsArchived(repo, floorKeys, now) {
-    if (sameCwd(repo.cwd, state.workspaceCwd)) return false;
-    if (sameCwd(repo.cwd, state.currentCwd)) return false;
     const { known } = sessionsForRepo(repo);
     const at = repoActivity(repo);
     const archivedAt = Number(repo.archivedAt) || 0;
     if (archivedAt > 0 && (!known || archivedAt >= at)) return !!repo.archived;
+    // Guesses only, below an answer. Standing in a project exempts it from
+    // being archived FOR you by the age rule; it must not veto your own click.
+    if (sameCwd(repo.cwd, state.workspaceCwd)) return false;
+    if (sameCwd(repo.cwd, state.currentCwd)) return false;
     if (!known) return !!repo.archived;
     if (floorKeys.has(cwdKey(repo.cwd))) return false;
     return at > 0 ? now - at > RAIL_ARCHIVE_AFTER_MS : true;
@@ -1107,6 +1217,9 @@
 
   /** Split the catalog into what belongs in Projects and what belongs in the Archive. */
   function splitByArchive(repos) {
+    if (!state.repos.some((r) => typeof r.archived === "boolean")) {
+      return { active: repos, archived: [] };
+    }
     const now = Date.now();
     const byActivity = state.repos.slice().sort((a, b) => repoActivity(b) - repoActivity(a));
     const floorKeys = new Set(
@@ -1212,7 +1325,7 @@
       const add = document.createElement("button");
       add.type = "button";
       add.className = "rail-action-btn";
-      add.innerHTML = ICON.plus;
+      add.innerHTML = ICON.squarePen;
       add.title = "New session";
       add.onclick = (e) => {
         e.stopPropagation();
@@ -1574,7 +1687,6 @@
         render();
         break;
       case "appPurpose":
-        // Only the Add project menu reads this here — Coding gains cloning.
         state.appPurpose = msg.value === "coding" ? "coding" : "knowledge";
         break;
       case "projectSetup":
@@ -1587,9 +1699,28 @@
           break;
         }
         if (msg.busy) state.projectGithub = null;
-        else if (msg.github && typeof msg.github === "object") state.projectGithub = msg.github;
+        else if (addProjectFormApi && msg.github && typeof msg.github === "object") state.projectGithub = msg.github;
         else if (msg.error) state.projectGithub = null;
-        if (addProjectFormApi) addProjectFormApi.update({ ...msg, github: state.projectGithub || msg.github });
+        if (addProjectFormApi) addProjectFormApi.update({
+          ...msg,
+          github: state.projectGithub || msg.github,
+          githubState: state.githubState || undefined,
+          repos: state.githubRepos,
+        });
+        break;
+      case "githubState":
+        state.githubState = msg.github && typeof msg.github === "object" ? msg.github : null;
+        if (addProjectFormApi) addProjectFormApi.update({ githubState: state.githubState });
+        break;
+      case "githubRepos":
+        state.githubRepos = Array.isArray(msg.repos) ? msg.repos : [];
+        if (addProjectFormApi) {
+          addProjectFormApi.update({
+            repos: state.githubRepos,
+            reposTruncated: msg.truncated === true,
+            reposError: typeof msg.error === "string" ? msg.error : "",
+          });
+        }
         break;
       case "repos": {
         const leaving = state.currentCwd;
@@ -1651,6 +1782,21 @@
         }
         render();
         requestPreviews();
+        break;
+      }
+      case "sessionRemoved": {
+        if (!msg.id) break;
+        state.currentSessions = state.currentSessions.filter((s) => s.id !== msg.id);
+        state.pinnedSessions = state.pinnedSessions.filter((s) => s.id !== msg.id);
+        for (const preview of Object.values(state.previews)) {
+          const before = preview.entries.length;
+          preview.entries = preview.entries.filter((s) => s.id !== msg.id);
+          if (typeof preview.total === "number") {
+            preview.total = Math.max(0, preview.total - (before - preview.entries.length));
+          }
+        }
+        delete state.dots[msg.id];
+        render();
         break;
       }
       case "sessions": {

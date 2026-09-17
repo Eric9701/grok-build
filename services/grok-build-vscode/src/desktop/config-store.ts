@@ -36,7 +36,9 @@ export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "atlas.terminalShell": "auto",
   "atlas.showThinking": false,
   "atlas.expandCommandOutputs": false,
+  "atlas.expandDiffCard": false,
   "atlas.steerByDefault": false,
+  "atlas.promptNav": true,
   "atlas.soundNotifications": false,
   "atlas.processingSound": false,
   "atlas.readRepliesAloud": false,
@@ -52,10 +54,13 @@ export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "atlas.voiceKeyterms": [],
   "atlas.voiceLanguage": "",
   "atlas.voiceStreaming": true,
+  "atlas.voiceBackend": "auto",
+  "atlas.voiceOpenAiApiKey": "",
+  "atlas.voiceOpenAiModel": "gpt-live-transcribe",
 };
 
 /** Config keys that must never be written to plaintext config.json. */
-export const SENSITIVE_CONFIG_KEYS = new Set(["atlas.voiceApiKey"]);
+export const SENSITIVE_CONFIG_KEYS = new Set(["atlas.voiceApiKey", "atlas.voiceOpenAiApiKey"]);
 
 /**
  * Sync encrypted bag for sensitive config keys (same file layout as

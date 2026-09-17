@@ -224,7 +224,7 @@ describe("every provider configuration a remote can be in", () => {
       // The row's id still keys on the agent; the heading is the product's own
       // name and whose it is.
       const HEADINGS: Record<string, string> = {
-        Grok: "Grok Build by SpaceXAI",
+        Grok: "Atlas by SpaceXAI",
         Codex: "Codex by OpenAI",
         Claude: "Claude Code by Anthropic",
       };
@@ -343,24 +343,13 @@ describe("every provider configuration a remote can be in", () => {
   });
 });
 
-describe("an outdated host cannot describe its own age, so the client does", () => {
+describe("host age is never inferred from a missing rail reply", () => {
   const chatSrc = fs.readFileSync(path.join(root, "media", "chat.js"), "utf8");
 
-  it("appends the update hint only to the project-availability errors, and only when the host is behind", () => {
-    // The rail already knows: repoPreviewsUnsupported is the same signal that
-    // makes every project say it needs a newer Grok Build. The chat error next
-    // to it said nothing about age (owner, 2026-08-31).
-    const start = chatSrc.indexOf("function errorTextForHostAge(");
-    expect(start).toBeGreaterThan(-1);
-    const body = chatSrc.slice(start, chatSrc.indexOf("function addError(", start));
-    expect(body).toContain("state.repoPreviewsUnsupported");
-    expect(body).toContain("no longer open on the desktop");
-    expect(body).toContain("archived, so it is not available from here");
-    // Appended, never replaced: the folder may really be closed.
-    expect(body).toContain("return text");
-    expect(body).toContain("updating it there is worth trying first");
-    // And it is actually wired into the error path.
-    expect(chatSrc).toContain("addError(errorTextForHostAge(msg.text), msg.code)");
+  it("renders host errors verbatim and leaves version checks to initialState", () => {
+    expect(chatSrc).not.toContain("repoPreviewsUnsupported");
+    expect(chatSrc).not.toContain("errorTextForHostAge");
+    expect(chatSrc).toContain("addError(msg.text, msg.code)");
   });
 });
 
@@ -695,7 +684,15 @@ describe("the wizard and Settings share a screen", () => {
     // overlay's 120, so a Connect clicked in Settings opened the wizard
     // behind the page that launched it — reproducing the exact invisibility
     // the wizard was built to cure (review, 2026-08-31).
-    const wizard = zIndexOf(chatCss, ".connect-wizard-overlay");
+    //
+    // The private `.connect-wizard-overlay { z-index: 200 }` that fixed it is
+    // gone: the same bug turned up a third time on the Changes view's Discard,
+    // so the base now clears every layer that can launch a confirmation (see
+    // confirm-stacking.test.ts). Keeping the 200 would have been actively
+    // harmful — equal specificity, later in the file, so it would have pinned
+    // the wizard back under the phone's full-screen panel. The wizard mounts as
+    // `confirm-overlay connect-wizard-overlay` and now simply inherits.
+    const wizard = zIndexOf(chatCss, ".confirm-overlay");
     const settings = zIndexOf(settingsCss, ".settings-overlay");
     expect(settings).toBeGreaterThan(0);
     expect(wizard).toBeGreaterThan(settings);
@@ -712,7 +709,7 @@ describe("the wizard and Settings share a screen", () => {
     expect(guard).toBeLessThan(onKey.indexOf('e.key === "Escape"'));
 
     const chatSrc = fs.readFileSync(path.join(root, "media", "chat.js"), "utf8");
-    expect(chatSrc).toContain('document.body.dataset.modalAbove = "connect-wizard"');
+    expect(chatSrc).toContain('markModalAbove(overlay, "connect-wizard")');
     expect(chatSrc).toContain("delete document.body.dataset.modalAbove");
   });
 

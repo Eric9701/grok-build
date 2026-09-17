@@ -20,11 +20,19 @@ import {
   workingFrame,
   parseRelayFrame,
   nextBackoffMs,
+  refusalRetryMs,
+  CLOSE_BAD_TOKEN,
+  CLOSE_DEVICE_BUSY,
   INITIAL_BACKOFF_MS,
+  connectionWasHealthy,
   redactRelayUrl,
   type RelayClientSource,
 } from "./remote-frames";
-import { isSelfScopedOutbound, mayDeliverRemoteHostMsg } from "./remote-policy";
+import {
+  isSelfScopedOutbound,
+  mayDeliverRemoteHostMsg,
+  repoSessionsMessageForRemote,
+} from "./remote-policy";
 
 /**
  * Live project-scope inputs for the outbound write gate. Re-read on every
@@ -132,14 +140,21 @@ export function filterAuthorizedOutbound(
   scopeCwd: string | undefined,
   sameCwd: (a: string, b: string) => boolean,
 ): HostMsg[] {
-  return msgs.filter((msg) =>
-    mayDeliverRemoteHostMsg(msg, authorizedCwds, scopeCwd, sameCwd),
-  );
+  return msgs.flatMap((message) => {
+    const msg = message.type === "repoSessions"
+      ? repoSessionsMessageForRemote(message, authorizedCwds, sameCwd)
+      : message;
+    return mayDeliverRemoteHostMsg(msg, authorizedCwds, scopeCwd, sameCwd) ? [msg] : [];
+  });
 }
 
 export class RemoteUplink {
   private ws?: WebSocket;
   private backoff = INITIAL_BACKOFF_MS;
+  /** When the current run of 4002 refusals began; 0 when there is none. */
+  private refusedSince = 0;
+  /** When the live socket opened, so a close can tell healthy from flapping. */
+  private openedAt = 0;
   private reconnectTimer?: NodeJS.Timeout;
   private disposed = false;
   private awaitingRosterCount = false;
@@ -224,30 +239,43 @@ export class RemoteUplink {
    */
   deliver(target: RemoteDeliveryTarget, msg: HostMsg): void {
     const unique = [...new Set(target.clientIds)];
-    if (!unique.length || this.ws?.readyState !== WebSocket.OPEN) return;
+    if (!unique.length) return;
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      this.opts.log(`[remote] could not send ${msg.type} (uplink is not connected)`);
+      return;
+    }
+    const authorized = this.opts.auth.authorizedCwds();
+    const outbound = msg.type === "repoSessions"
+      ? repoSessionsMessageForRemote(msg, authorized, this.opts.auth.sameCwd)
+      : msg;
+    if (msg.type === "repoSessions" && outbound.type === "repoSessions"
+      && outbound.entries.length !== msg.entries.length) {
+      const removed = msg.entries.length - outbound.entries.length;
+      this.opts.log(`[remote] filtered ${removed} unauthorized repoSessions ${removed === 1 ? "entry" : "entries"}`);
+    }
     // A frame that names its own project (`repoSessions`, `sessionName`) is
     // ABOUT that project, not payload from the recipient's conversation, so the
     // ownership filter below must not see it: the rail asks about a sibling
     // project by design and every answer was being dropped as "does not own
     // scope". authorizeWrite still checks the frame's own cwd against the live
     // authorized set, so this widens delivery, never authorization.
-    const scopeCwd = isSelfScopedOutbound(msg.type) ? undefined : target.scopeCwd;
+    const scopeCwd = isSelfScopedOutbound(outbound.type) ? undefined : target.scopeCwd;
 
     if (scopeCwd !== undefined) {
       const owners = filterRecipientsOwningScope(unique, scopeCwd, this.opts.auth);
       for (const id of unique) {
         if (!owners.includes(id)) {
           this.opts.log(
-            `[remote] dropped ${msg.type} for client ${id} (does not own scope: ${scopeCwd})`,
+            `[remote] dropped ${outbound.type} for client ${id} (does not own scope: ${scopeCwd})`,
           );
         }
       }
       if (!owners.length) return;
-      if (!this.authorizeWrite(msg, scopeCwd)) return;
+      if (!this.authorizeWrite(outbound, scopeCwd)) return;
       try {
-        this.ws.send(JSON.stringify(hostToFrame(owners, msg)));
+        this.ws.send(JSON.stringify(hostToFrame(owners, outbound)));
       } catch {
-        /* teardown race; reconnect handles it */
+        this.opts.log(`[remote] could not send ${outbound.type} (uplink write failed)`);
       }
       return;
     }
@@ -256,29 +284,29 @@ export class RemoteUplink {
     // multi-tab send cannot borrow another tab's open project.
     if (unique.length === 1) {
       const scope = this.opts.auth.scopeCwdForClient(unique[0]);
-      if (!this.authorizeWrite(msg, scope)) return;
+      if (!this.authorizeWrite(outbound, scope)) return;
       try {
-        this.ws.send(JSON.stringify(hostToFrame(unique, msg)));
+        this.ws.send(JSON.stringify(hostToFrame(unique, outbound)));
       } catch {
-        /* teardown race; reconnect handles it */
+        this.opts.log(`[remote] could not send ${outbound.type} (uplink write failed)`);
       }
       return;
     }
     const allowed: string[] = [];
     for (const id of unique) {
       const scope = this.opts.auth.scopeCwdForClient(id);
-      if (this.authorizeWrite(msg, scope, /* silent */ true)) allowed.push(id);
+      if (this.authorizeWrite(outbound, scope, /* silent */ true)) allowed.push(id);
       else {
         this.opts.log(
-          `[remote] dropped ${msg.type} for client ${id} (project scope not authorized: ${scope ?? "<none>"})`,
+          `[remote] dropped ${outbound.type} for client ${id} (project scope not authorized: ${scope ?? "<none>"})`,
         );
       }
     }
     if (!allowed.length) return;
     try {
-      this.ws.send(JSON.stringify(hostToFrame(allowed, msg)));
+      this.ws.send(JSON.stringify(hostToFrame(allowed, outbound)));
     } catch {
-      /* teardown race; reconnect handles it */
+      this.opts.log(`[remote] could not send ${outbound.type} (uplink write failed)`);
     }
   }
 
@@ -341,7 +369,8 @@ export class RemoteUplink {
     const ws = new WebSocket(url);
     this.ws = ws;
     ws.on("open", () => {
-      this.backoff = INITIAL_BACKOFF_MS;
+      // NOT a backoff reset. Opening proves nothing — see connectionWasHealthy.
+      this.openedAt = Date.now();
       this.awaitingRosterCount = true;
       this.reconnectRoster = undefined;
       // Redacted: a relay may live behind a base path, and that path is not
@@ -398,7 +427,7 @@ export class RemoteUplink {
       if (this.disposed) return;
       // 4001 = relay rejected the token — retrying with the same token is
       // pointless; the user must re-link. Stop, loudly.
-      if (code === 4001) {
+      if (code === CLOSE_BAD_TOKEN) {
         this.opts.log(`[remote] uplink rejected (revoked device token) — run "AFK Pilot: Link this device" again`);
         try {
           this.opts.onCredentialRevoked?.();
@@ -407,6 +436,29 @@ export class RemoteUplink {
         }
         return;
       }
+      // A connection that lasted is evidence the relay is reachable, so the
+      // next attempt starts from the floor. One that did not keeps the delay
+      // it earned, which is what stops a flapping socket hammering the relay.
+      const connectedMs = this.openedAt ? Date.now() - this.openedAt : 0;
+      this.openedAt = 0;
+      // 4002 = another socket is holding this device, and it is nearly always
+      // this host's own frozen one. The relay challenges that incumbent as
+      // soon as we knock, so the obstacle clears in seconds — wait those out
+      // briefly rather than earning a thirty-second delay for it. Bounded:
+      // past the window the refusal is a real rival, and ordinary backoff
+      // takes over with the delay it already had. See `refusalRetryMs`.
+      if (code === CLOSE_DEVICE_BUSY) {
+        if (!this.refusedSince) this.refusedSince = Date.now();
+        const soon = refusalRetryMs(Date.now() - this.refusedSince);
+        if (soon !== undefined) {
+          this.opts.log(`[remote] uplink refused (device still held); retrying in ${(soon / 1000).toFixed(1)}s`);
+          this.reconnectTimer = setTimeout(() => this.connect(), soon);
+          return;
+        }
+      } else {
+        this.refusedSince = 0;
+      }
+      if (connectionWasHealthy(connectedMs)) this.backoff = INITIAL_BACKOFF_MS;
       this.opts.log(`[remote] uplink disconnected (code ${code}); retrying in ${Math.round(this.backoff / 1000)}s`);
       this.reconnectTimer = setTimeout(() => this.connect(), this.backoff);
       this.backoff = nextBackoffMs(this.backoff);

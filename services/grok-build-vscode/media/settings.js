@@ -86,12 +86,28 @@
   const GITHUB_REPO_URL = "https://github.com/phuryn/grok-build-vscode";
   const GROK_CONNECTORS_URL = "https://grok.com/connectors";
   const CONNECTOR_SECTION_HERE = "On this computer";
+  // A phone is not the computer these live on. The desk-written heading
+  // sitting directly above the remote-written blurb named two different
+  // machines on one screen, which is most of why the section read as
+  // confusing. "Workspace machine" is true of a laptop and of a cloud
+  // machine, so one word covers both remote cases.
+  const CONNECTOR_SECTION_HERE_REMOTE = "On the workspace machine";
   const CONNECTOR_SECTION_GROK = "Atlas connectors";
   const CONNECTOR_SECTION_LOCAL = "Local Atlas connectors";
   const CONNECTOR_BLURB_HERE =
-    "These apps are available to Atlas, Codex, and Claude. Most open a browser to sign in; GitHub uses a personal access token you paste here. Tokens stay on this machine.";
+    "These apps are available to Atlas, Codex, and Claude. Most open a browser to sign in; GitHub takes a token you paste here. Credentials stay on this machine.";
+  // Remote, and allowed to connect. The old copy put three referents in
+  // two sentences — "the machine running this workspace", "this device",
+  // "here" — so "approve access on this device" read as the host when it
+  // means the phone. Sign-in genuinely opens in the browser you are
+  // holding (openConnectorConsent calls window.open here); only the
+  // credential travels.
+  const CONNECTOR_BLURB_HERE_REMOTE_CONNECT =
+    "These apps are available to Atlas, Codex, and Claude on the machine running this workspace. Sign-in opens in this browser; GitHub takes a token you paste here. The credentials are saved on that machine, not on this one.";
   const CONNECTOR_BLURB_HERE_REMOTE =
-    "These apps are connected on the machine running this workspace. Sign-in happens there — it cannot be changed from this page.";
+    "These apps are connected on the machine running this workspace. Connecting and disconnecting are done there, not from this page.";
+  const CONNECTOR_DISCONNECT_COPY =
+    "Disconnect affects future conversations and reopened ones. Tools in already running sessions remain available. It does not revoke access at the vendor or clear saved OAuth sign-ins.";
   const CONNECTOR_BLURB_GROK =
     "These follow your Atlas account, so they are shared across every Atlas session on every machine.";
   const CONNECTOR_BLURB_LOCAL =
@@ -108,6 +124,8 @@
       .replace(/\bGrok Build\b/gi, "Atlas")
       .replace(/\bGrok CLI\b/gi, "Atlas CLI")
       .replace(/\bGrok\b/g, "Atlas")
+      .replace(/\bA Atlas\b/g, "An Atlas")
+      .replace(/\ba Atlas\b/g, "an Atlas")
       .replace(/\0SUPERGROK\0/g, "SuperGrok");
   }
   const ICON_EXTERNAL_LINK =
@@ -198,6 +216,106 @@
    */
   function canSignOutFromRemote(env) {
     return !!(env && env.hostCaps && env.hostCaps.remoteAgentSignOut);
+  }
+
+  function githubOf(snapshot) {
+    const g = snapshot && snapshot.githubState;
+    return g && typeof g === "object" ? g : null;
+  }
+
+  function githubKnown(snapshot) {
+    return !!githubOf(snapshot);
+  }
+
+  function githubConnectedNow(snapshot) {
+    const g = githubOf(snapshot);
+    return !!(g && g.connected && g.error !== true);
+  }
+
+  function githubDescribe(snapshot) {
+    const g = githubOf(snapshot);
+    if (!g) return "";
+    const flow = g.loginFlow;
+    if (flow && flow.status === "failed" && flow.message) return flow.message;
+    if (flow && (flow.status === "starting" || flow.status === "waiting") && flow.message) {
+      return flow.message;
+    }
+    if (g.message) return g.message;
+    if (g.cliPresent === false) return "The GitHub CLI (gh) is not installed on this machine.";
+    if (g.error && g.envTokenInForce) {
+      return "A token in this machine's GH_TOKEN environment variable is in force, and it is not working.";
+    }
+    if (!g.connected) {
+      return "Connect GitHub to clone private repositories and list the ones this account can see.";
+    }
+    const who = g.login ? "@" + g.login : "GitHub";
+    if (g.error) {
+      return "Signed in as " + who + ", but the credential is not working.";
+    }
+    return "Signed in as " + who + ".";
+  }
+
+  function githubAction(snapshot) {
+    return githubConnectedNow(snapshot) ? "Sign out" : "Connect with GitHub CLI";
+  }
+
+  function githubTokenAvailable(snapshot, env) {
+    // NOT canGithubSignInFromRemote: that capability promises the device-code
+    // flow only. A host advertising it but predating `githubLoginWithToken`
+    // takes the pasted credential across the relay and drops it in silence.
+    return !!(githubKnown(snapshot) && !githubConnectedNow(snapshot)
+      && (!env || !env.isRemote || canGithubTokenFromRemote(env)));
+  }
+
+  function githubCliLive(snapshot) {
+    const flow = githubOf(snapshot) && githubOf(snapshot).loginFlow;
+    return !!(flow && (flow.status === "starting" || flow.status === "waiting"));
+  }
+
+  function canGithubSignInFromRemote(env) {
+    return !!(env && env.hostCaps && env.hostCaps.remoteGithubSignIn);
+  }
+
+  /** A pasted token AND `cancelDeviceLogin` with `provider: "github"` — the two
+   *  affordances added after `remoteGithubSignIn`, which shipped together. */
+  function canGithubTokenFromRemote(env) {
+    return !!(env && env.hostCaps && env.hostCaps.remoteGithubToken);
+  }
+
+  /** Cancelling is only safe to send where `github` is understood: an older
+   *  host maps any unrecognised provider to `grok`. */
+  function canCancelGithubLogin(env) {
+    return !env || !env.isRemote || canGithubTokenFromRemote(env);
+  }
+
+  function githubRemoteActionable(snapshot, env) {
+    return githubConnectedNow(snapshot)
+      ? canSignOutFromRemote(env)
+      : canGithubSignInFromRemote(env);
+  }
+
+  function githubConnectMessage(snapshot) {
+    return githubConnectedNow(snapshot)
+      ? { type: "githubSignOut" }
+      : { type: "setupGithubCli", action: "auth", surface: "settings" };
+  }
+
+  const GITHUB_FINE_GRAINED_TOKEN_URL = "https://github.com/settings/personal-access-tokens/new";
+
+  function fillGithubTokenHint(el) {
+    const doc = el.ownerDocument;
+    el.textContent = "";
+    el.appendChild(doc.createTextNode("Paste a "));
+    const a = doc.createElement("a");
+    a.href = GITHUB_FINE_GRAINED_TOKEN_URL;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.className = "settings-github-token-link";
+    a.textContent = "fine-grained token";
+    el.appendChild(a);
+    el.appendChild(doc.createTextNode(
+      " (one repository, Contents: Read, an expiry) or a classic PAT. It is sent once and never shown again.",
+    ));
   }
 
   /**
@@ -339,6 +457,83 @@
     return "—";
   }
 
+  function cliUpdateRows(provider) {
+    const name = provider === "codex" ? "Codex CLI" : "Claude Code CLI";
+    const suffix = provider === "codex" ? "Codex" : "Claude";
+    const entry = (s) => provider === "codex" ? codexProvider(s) : claudeProvider(s);
+    const update = (s) => ((s.providers || []).find((p) => p.id === provider) || {}).cliUpdate;
+    return [{
+      // The id keeps its "about" prefix: it is what the DOM suite addresses and
+      // it records where this row used to live.
+      id: "aboutUpdate" + suffix,
+      // Providers, not About. This is a fact about a provider's CLI, so it
+      // belongs beside that provider's account rather than under the extension
+      // version and the trademark notice.
+      category: "providers",
+      title: name,
+      kind: "action",
+      actionLabel: "Update " + name,
+      keepOpen: true,
+      // The version rides along, because a bare Update button on this page
+      // would be asking someone to act with nothing to act on. `latestCliVersion`
+      // is sent for Codex only, so Claude states the installed version and stops
+      // rather than claiming an up-to-date it cannot know.
+      describe: (s) => {
+        const p = entry(s) || {};
+        const newer = p.updateAvailable && p.latestCliVersion
+          ? "v" + p.latestCliVersion + " is available. "
+          : "";
+        // Two bare version numbers side by side leave the reader to work out
+        // which one is theirs -- rendered, "v0.152.1 · v0.153.4 is available"
+        // can be read as a range. The label settles it. A middot rather than a
+        // full stop between them for the same reason: "v0.152.1. v0.153.4 is
+        // available" reads as one broken sentence.
+        const installed = p.cliVersion
+          ? "Installed v" + p.cliVersion + (newer ? " · " : ". ")
+          : "";
+        return installed + newer
+          + "Runs its updater on the connected machine. This stops this provider’s "
+          + "running sessions, then resumes visible conversations.";
+      },
+      // Only when there is something to take. Offering to update software that
+      // is already current is noise, and this particular offer costs minutes
+      // and stops your running sessions.
+      //
+      // One rule for both providers. Claude briefly had an exception -- it was
+      // always offered, on the grounds that nothing told us what its current
+      // version was -- and the owner caught it offering to update a CLI whose
+      // own "Update completed" line was directly underneath. The host pins a
+      // Claude version now, exactly as it always has for Codex, so the
+      // exception is gone rather than narrowed.
+      //
+      // A running update keeps its row so it cannot vanish mid-operation, and
+      // a failed one keeps it so the retry is where the failure is. A SUCCEEDED
+      // one does not: the version is current now, so the offer goes and the
+      // separate status row carries "Update completed" until the next
+      // conversation clears it.
+      //
+      // An older HOST sends no `updateAvailable` for Claude, so its row simply
+      // does not appear there. That is the safe direction: this app cannot
+      // update a CLI on a host that predates the feature anyway, and the
+      // `cliUpdate` test above is what advertises support in the first place.
+      visible: (s) => {
+        const p = entry(s) || {};
+        if (!p.cliUpdate) return false;
+        if (p.cliUpdate.status === "running" || p.cliUpdate.status === "failed") return true;
+        return !!p.updateAvailable;
+      },
+      enabled: (s) => !(s.providers || []).some((p) => p.cliUpdate && p.cliUpdate.status === "running"),
+      message: () => ({ type: "update" + suffix }),
+    }, {
+      id: "about" + suffix + "UpdateStatus",
+      category: "providers",
+      title: name + " updates",
+      kind: "status",
+      visible: (s) => !!(update(s) && update(s).message),
+      describe: (s) => update(s).message,
+    }];
+  }
+
   /** One sentence, one control. Visibility is decided separately. */
   const ROWS = [
     {
@@ -402,6 +597,19 @@
       message: (value) => ({ type: "setExpandCommandOutputs", value }),
     },
     {
+      id: "expandDiffCard",
+      category: "general",
+      title: "Expand diff card",
+      description: "Open each turn's Changed-files card by default instead of showing only its header.",
+      kind: "toggle",
+      defaultValue: false,
+      visible: (s) => purposeOf(s) === "coding",
+      get: (s) => !!(s && s.expandDiffCard),
+      // VS Code Settings is a separate webview; only a remote applies locally.
+      localOnly: (s, env) => !!(env && env.isRemote),
+      message: (value) => ({ type: "setExpandDiffCard", value }),
+    },
+    {
       id: "steerByDefault",
       category: "general",
       title: "Steer by default",
@@ -447,6 +655,21 @@
         const state = known ? (s.telemetryEnabled ? "On. " : "Off. ") : "";
         return state + TELEMETRY_COPY;
       },
+    },
+    {
+      id: "promptNav",
+      category: "general",
+      title: "Previous prompt button",
+      description: "Show a button above the message box that jumps back to your previous prompt and highlights it. This device only.",
+      kind: "toggle",
+      defaultValue: true,
+      get: (s) => !!(s && s.promptNav),
+      // Client-local on a remote, host-backed on a desk. Not a nicety: VS
+      // Code opens Settings as its own webview, so a localOnly row there
+      // has no `apply` to call and no message to post, and the switch would
+      // flip while nothing happened.
+      localOnly: (s, env) => !!(env && env.isRemote),
+      message: (value) => ({ type: "setPromptNav", value }),
     },
     {
       id: "thumbsFeedback",
@@ -583,6 +806,7 @@
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
       describe: (s) => providerDescription(providerOf(s, "grok")),
       actionLabel: (s) => providerAction(providerOf(s, "grok")),
+      keepOpen: true,
       message: (s) => {
         const provider = providerOf(s, "grok");
         return provider.connected && provider.needsLogin !== true
@@ -602,6 +826,7 @@
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
       describe: (s) => providerDescription(providerOf(s, "codex")),
       actionLabel: (s) => providerAction(providerOf(s, "codex")),
+      keepOpen: true,
       message: (s) => {
         const provider = providerOf(s, "codex");
         return provider.connected && provider.needsLogin !== true
@@ -621,6 +846,7 @@
       visible: (s, env) => !!(env && !env.isRemote && env.providersKnown),
       describe: (s) => providerDescription(providerOf(s, "claude")),
       actionLabel: (s) => providerAction(providerOf(s, "claude")),
+      keepOpen: true,
       message: (s) => {
         const provider = providerOf(s, "claude");
         return provider.connected && provider.needsLogin !== true
@@ -652,7 +878,7 @@
       category: "providers",
       logo: "grok",
       provider: "grok",
-      title: "Grok Build",
+      title: "Atlas",
       vendor: "SpaceXAI",
       description: "",
       kind: "action",
@@ -774,6 +1000,65 @@
           ? { type: "logout", provider: "claude" }
           : { type: "runGrokLogin", provider: "claude" };
       },
+    },
+    {
+      id: "githubConnection",
+      category: "providers",
+      icon: "github",
+      title: "GitHub",
+      description: "",
+      kind: "action",
+      visible: (s, env) => !!(env && !env.isRemote && githubKnown(s)),
+      describe: (s) => githubDescribe(s),
+      actionLabel: (s) => githubAction(s),
+      keepOpen: true,
+      message: (s) => githubConnectMessage(s),
+    },
+    {
+      id: "githubConnectionStatus",
+      category: "providers",
+      icon: "github",
+      title: "GitHub",
+      description: "",
+      kind: "status",
+      visible: (s, env) => !!(env && env.isRemote && githubKnown(s)
+        && !githubRemoteActionable(s, env)),
+      describe: (s) => githubDescribe(s),
+    },
+    {
+      id: "githubConnectionRemote",
+      category: "providers",
+      icon: "github",
+      title: "GitHub",
+      description: "",
+      kind: "action",
+      visible: (s, env) => !!(env && env.isRemote && githubKnown(s)
+        && githubRemoteActionable(s, env)),
+      describe: (s) => githubDescribe(s),
+      actionLabel: (s) => githubAction(s),
+      keepOpen: true,
+      message: (s) => githubConnectMessage(s),
+    },
+    {
+      id: "githubToken",
+      category: "providers",
+      title: "Use a GitHub token",
+      description: "A fine-grained token can be scoped to one repository, with an expiry. It is stored by the GitHub CLI, not by us.",
+      kind: "action",
+      actionLabel: "Paste token",
+      // Folded into the GitHub row as the quieter advanced path. The row
+      // stays in the catalog so existing ids do not vanish; it does not paint.
+      visible: () => false,
+      keepOpen: true,
+      local: "githubToken",
+    },
+    {
+      id: "providerConfigFiles",
+      category: "providers",
+      title: "Provider config files",
+      description: "~/.grok/config.toml · ~/.codex/config.toml · ~/.claude/settings.json",
+      kind: "providerConfigs",
+      visible: (s, env) => !!(env && env.hostCaps && env.hostCaps.editProviderConfigFiles && env.hostCaps.editProjectFiles),
     },
     {
       id: "continueRemotely",
@@ -1004,6 +1289,7 @@
         return versionLabel(p && p.cliVersion);
       },
     },
+    ...cliUpdateRows("codex"),
     {
       id: "aboutClaudeCli",
       category: "about",
@@ -1015,17 +1301,14 @@
         return versionLabel(p && p.cliVersion);
       },
     },
-    // Deliberately absent: "Codex ACP adapter", "Claude ACP adapter" and
-    // "Codex updates". The two adapters are pinned dependencies of THIS
+    ...cliUpdateRows("claude"),
+    // Deliberately absent: "Codex ACP adapter" and "Claude ACP adapter".
+    // The two adapters are pinned dependencies of THIS
     // extension (@agentclientprotocol/codex-acp, @agentclientprotocol/
     // claude-agent-acp, exact versions in package.json) and ship inside the
     // vsix, so they move only when the extension does — a version the reader
-    // cannot act on reads as one more thing to keep current. And "Codex
-    // updates are managed at its install source" was true only when the user
-    // installed Codex themselves; when they let us install it the source is
-    // us, pinned at CODEX_MANAGED_TAG, and there is nowhere for them to go.
-    // One sentence, two meanings. Atlas is the only CLI this extension
-    // actually updates, so it is the only one with an update row.
+    // cannot act on reads as one more thing to keep current. All three CLIs
+    // have explicit update actions; only Atlas is updated automatically by us.
     {
       id: "aboutGrokUpdateStatus",
       category: "about",
@@ -1123,8 +1406,10 @@
     return !!(env && env.hostCaps && env.hostCaps.mcpSettings);
   }
 
-  function connectorSection(row) {
-    if (row.id === "connectorsCatalog") return CONNECTOR_SECTION_HERE;
+  function connectorSection(row, env) {
+    if (row.id === "connectorsCatalog") {
+      return env && env.isRemote ? CONNECTOR_SECTION_HERE_REMOTE : CONNECTOR_SECTION_HERE;
+    }
     return "";
   }
 
@@ -1193,7 +1478,7 @@
           ...snapshot.mcpServers.map((s) => [s.displayName, s.name, s.scopeName, s.configFile].filter(Boolean).join(" ")),
         ].join(" ")
       : "";
-    const section = connectorSection(row);
+    const section = connectorSection(row, env);
     return [
       rowTitle(row, snapshot, env),
       rowDescription(row, snapshot, env),
@@ -1276,6 +1561,12 @@
       case "steerByDefault":
         next.steerByDefault = !!value;
         break;
+      case "expandDiffCard":
+        next.expandDiffCard = !!value;
+        break;
+      case "promptNav":
+        next.promptNav = !!value;
+        break;
       case "readRepliesAloud":
         next.readRepliesAloud = !!value;
         if (!next.readRepliesAloud) next.summarizeRepliesAloud = false;
@@ -1338,6 +1629,8 @@
       voiceKeyterms: [],
       telemetryEnabled: true,
       thumbsFeedback: false,
+      expandDiffCard: false,
+      promptNav: true,
       providers: [],
       // Host-owned, never latched locally: an older host that ignores
       // refreshProviders leaves this false and the button stays idle rather
@@ -1486,7 +1779,7 @@
     const parent = container.parentElement;
     if (!parent) return;
     for (const sibling of Array.from(parent.children)) {
-      if (sibling === container) continue;
+      if (sibling === container || sibling.id === "host-wait-strip") continue;
       if (on) {
         // Track ownership for BOTH attributes: cleanup must not strip an
         // inert some other surface set before settings opened.
@@ -1730,14 +2023,18 @@
     return !!(connector && connector.auth === "key");
   }
 
-  function connectorDescription(connector, env) {
+  function canManageConnectors(snapshot, env) {
+    return !(env && env.isRemote) || snapshot.mcpRemoteConnect === true;
+  }
+
+  function connectorDescription(connector, env, snapshot) {
     if (connector.status === "connecting") {
       return isKeyConnectorView(connector)
         ? "Checking the token…"
         : "Waiting for the browser sign-in to finish…";
     }
     if (connector.status === "error" && connector.error) return connector.error;
-    if (env && env.isRemote) {
+    if (env && env.isRemote && !canManageConnectors(snapshot, env)) {
       if (isKeyConnectorView(connector) && connector.connected && connector.keySet !== true) {
         return connector.description + " Connected, but no key on the desk.";
       }
@@ -1820,8 +2117,9 @@
     el.dataset.id = "connectorsCatalog";
     const warning = document.createElement("div");
     warning.className = "settings-mcp-warning";
+    const canManage = canManageConnectors(snapshot, env);
     warning.textContent = env && env.isRemote
-      ? CONNECTOR_BLURB_HERE_REMOTE
+      ? (canManage ? CONNECTOR_BLURB_HERE_REMOTE_CONNECT : CONNECTOR_BLURB_HERE_REMOTE)
       : CONNECTOR_BLURB_HERE;
     el.appendChild(warning);
     const connectors = sortConnectorsForDisplay(
@@ -1853,13 +2151,14 @@
       name.appendChild(document.createTextNode(connector.name));
       const desc = document.createElement("div");
       desc.className = "settings-row-desc";
-      desc.textContent = connectorDescription(connector, env);
+      desc.textContent = connectorDescription(connector, env, snapshot);
       copy.append(name, desc);
       const control = document.createElement("div");
       control.className = "settings-row-control";
       const connecting = connector.status === "connecting";
+      const authorization = snapshot.mcpConnectorAuthorization;
       const formOpen = !!(keyForm && keyForm.id === connector.id);
-      if (!(env && env.isRemote)) {
+      if (canManage) {
         if (isKeyConnectorView(connector) && connector.connected && !formOpen) {
           const replace = document.createElement("button");
           replace.type = "button";
@@ -1876,6 +2175,7 @@
         btn.dataset.id = connector.id;
         btn.dataset.auth = isKeyConnectorView(connector) ? "key" : "oauth";
         btn.dataset.connected = connector.connected ? "true" : "false";
+        if (connector.connected) btn.title = CONNECTOR_DISCONNECT_COPY;
         if (isKeyConnectorView(connector) && !connector.connected) {
           btn.textContent = connecting ? "Connecting…" : (formOpen ? "Cancel" : "Connect");
           btn.dataset.action = formOpen ? "cancel" : "open";
@@ -1892,7 +2192,7 @@
         control.appendChild(span);
       }
       row.append(copy, control);
-      if (!(env && env.isRemote) && isKeyConnectorView(connector) && connector.connected && connector.keySet === true && !formOpen) {
+      if (canManage && isKeyConnectorView(connector) && connector.connected && connector.keySet === true && !formOpen) {
         const readonly = document.createElement("label");
         readonly.className = "settings-connector-readonly settings-connector-readonly-live";
         const box = document.createElement("input");
@@ -1906,8 +2206,24 @@
         readonly.appendChild(document.createTextNode("Read-only (the agent can look, not write)"));
         row.appendChild(readonly);
       }
-      if (!(env && env.isRemote) && isKeyConnectorView(connector) && formOpen && !connecting) {
+      if (canManage && isKeyConnectorView(connector) && formOpen && !connecting) {
         row.appendChild(renderConnectorKeyForm(connector, keyForm));
+      }
+      if (canManage && authorization && authorization.id === connector.id) {
+        const form = document.createElement("div");
+        form.className = "settings-connector-key settings-connector-oauth";
+        if (authorization.error) form.appendChild(renderMcpSectionState(authorization.error, true));
+        if (authorization.status === "waiting" && authorization.url) {
+          const link = document.createElement("a");
+          link.className = "settings-action is-primary settings-connector-oauth-link";
+          link.href = authorization.url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = "Open sign-in";
+          form.appendChild(link);
+          form.appendChild(renderMcpSectionState("Approve access, then return here. Connection completes automatically."));
+        }
+        row.appendChild(form);
       }
       list.appendChild(row);
     }
@@ -1925,6 +2241,10 @@
   /** The provider row waiting on the host, if any. One at a time: it exists to
    *  stop the second click, so a second pending row would be a contradiction. */
   const PROVIDER_PENDING = { id: "", label: "", wanted: false, at: 0 };
+  /** Desk-only: a terminal sign-in was launched from this row. The host cannot
+   *  observe that terminal finishing, so the row offers Re-check connection
+   *  instead of guessing. */
+  const PROVIDER_TERMINAL = { id: "" };
   /** Longer than the host's own 30s CLI timeout plus a relay round trip, so in
    *  every case this covers, the real answer arrives first. */
   const PROVIDER_PENDING_MS = 45000;
@@ -1934,6 +2254,10 @@
     PROVIDER_PENDING.label = "";
   }
 
+  function clearProviderTerminal() {
+    PROVIDER_TERMINAL.id = "";
+  }
+
   /** Drop the pending label once the host has answered — or given up. */
   function reconcileProviderPending(snapshot) {
     if (!PROVIDER_PENDING.id) return;
@@ -1941,6 +2265,11 @@
     if (providerConnectedNow(snapshot, PROVIDER_PENDING.id) === PROVIDER_PENDING.wanted) {
       clearProviderPending();
     }
+  }
+
+  function reconcileProviderTerminal(snapshot) {
+    if (!PROVIDER_TERMINAL.id) return;
+    if (providerConnectedNow(snapshot, PROVIDER_TERMINAL.id)) clearProviderTerminal();
   }
 
   function providerPendingLabel(row) {
@@ -2487,7 +2816,140 @@
     return el;
   }
 
-  function renderRow(row, snapshot, env, keyForm) {
+  function appendGithubLoginFlow(el, snapshot, opts) {
+    const g = githubOf(snapshot);
+    const flow = g && g.loginFlow;
+    const status = (flow && flow.status) || (opts && opts.pending ? "starting" : "");
+    if (status !== "starting" && status !== "waiting") return;
+    const box = document.createElement("div");
+    box.className = "settings-github-flow";
+    box.dataset.status = status;
+    if (status === "starting") {
+      const heading = document.createElement("div");
+      heading.className = "settings-github-flow-heading";
+      heading.textContent = "Connecting GitHub";
+      const p = document.createElement("p");
+      p.className = "settings-github-flow-desc";
+      p.textContent = opts && opts.terminal
+        ? "A terminal opened for GitHub sign-in. When it finishes, re-check."
+        : "Asking the GitHub CLI for a sign-in code…";
+      box.appendChild(heading);
+      box.appendChild(p);
+    } else {
+      const heading = document.createElement("div");
+      heading.className = "settings-github-flow-heading";
+      heading.textContent = "Finish signing in to GitHub";
+      const p = document.createElement("p");
+      p.className = "settings-github-flow-desc";
+      p.textContent = flow.code
+        ? "Open the link, then confirm this code:"
+        : "Open the link to finish signing in.";
+      box.appendChild(heading);
+      box.appendChild(p);
+      if (flow.code) {
+        const cmd = document.createElement("div");
+        cmd.className = "settings-github-flow-cmd";
+        const code = document.createElement("code");
+        code.textContent = flow.code;
+        const copy = document.createElement("button");
+        copy.type = "button";
+        copy.className = "settings-github-flow-copy";
+        copy.textContent = "Copy";
+        copy.addEventListener("click", function (e) {
+          e.stopPropagation();
+          if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") return;
+          navigator.clipboard.writeText(flow.code).then(function () {
+            copy.textContent = "Copied";
+            setTimeout(function () { copy.textContent = "Copy"; }, 1500);
+          }).catch(function () { /* clipboard blocked */ });
+        });
+        cmd.appendChild(code);
+        cmd.appendChild(copy);
+        box.appendChild(cmd);
+      }
+      if (flow.url && /^https?:\/\//i.test(flow.url)) {
+        const open = document.createElement("a");
+        open.className = "onb-action settings-github-flow-open";
+        open.href = flow.url;
+        open.target = "_blank";
+        open.rel = "noopener noreferrer";
+        open.textContent = "Open the sign-in page";
+        box.appendChild(open);
+      }
+      const note = document.createElement("p");
+      note.className = "settings-github-flow-note";
+      note.textContent = "Keep this page open — it finishes on its own.";
+      box.appendChild(note);
+    }
+    if (opts && opts.terminal) {
+      const recheck = document.createElement("button");
+      recheck.type = "button";
+      // Deliberately NOT `settings-action`: the row binder treats that class as
+      // the row's primary control, so this button was firing Connect — opening
+      // a SECOND sign-in terminal — before its own listener could ask for a
+      // refresh. It styles itself completely, so the class bought nothing.
+      recheck.className = "settings-github-flow-recheck";
+      recheck.textContent = "Re-check connection";
+      box.appendChild(recheck);
+    }
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "settings-github-flow-cancel";
+    cancel.textContent = "Cancel";
+    box.appendChild(cancel);
+    el.appendChild(box);
+  }
+
+  function appendGithubAdvanced(el) {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "settings-github-advanced";
+    link.textContent = "Use a token instead";
+    el.appendChild(link);
+  }
+
+  function appendGithubTokenForm(el, githubTokenForm) {
+    if (!githubTokenForm || !githubTokenForm.open) return;
+    const form = document.createElement("div");
+    form.className = "settings-github-token";
+    const hint = document.createElement("p");
+    hint.className = "settings-github-token-hint";
+    fillGithubTokenHint(hint);
+    const input = document.createElement("input");
+    input.type = "password";
+    input.className = "settings-github-token-input";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.setAttribute("aria-label", "GitHub token");
+    input.value = githubTokenForm.value || "";
+    const actions = document.createElement("div");
+    actions.className = "settings-github-token-actions";
+    const submit = document.createElement("button");
+    submit.type = "button";
+    submit.className = "settings-action settings-github-token-submit";
+    submit.textContent = "Connect with token";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "settings-action settings-github-token-cancel";
+    cancel.textContent = "Cancel";
+    actions.appendChild(submit);
+    actions.appendChild(cancel);
+    form.appendChild(hint);
+    form.appendChild(input);
+    form.appendChild(actions);
+    el.appendChild(form);
+  }
+
+  function renderRow(row, snapshot, env, keyForm, githubTokenForm, githubCliStarted) {
+    if (row.kind === "providerConfigs") {
+      const el = document.createElement("details");
+      el.className = "settings-row settings-provider-configs";
+      el.dataset.id = row.id;
+      el.innerHTML = `<summary class="settings-row-title">Provider config files</summary>` +
+        [["grok", "Grok", "~/.grok/config.toml"], ["codex", "Codex", "~/.codex/config.toml"], ["claude", "Claude", "~/.claude/settings.json"]]
+          .map(([provider, name, path]) => `<div class="settings-provider-config"><div class="settings-row-copy"><div class="settings-row-title">${name}</div><div class="settings-row-desc">${path}</div></div><button type="button" class="settings-action" data-provider="${provider}" aria-label="Open ${path}">Open</button></div>`).join("");
+      return el;
+    }
     if (row.kind === "mcp") return renderMcpCatalog(snapshot, env);
     if (row.kind === "connectors") return renderConnectorsCatalog(snapshot, env, keyForm);
     if (row.kind === "routines") return renderRoutines(snapshot, env);
@@ -2495,6 +2957,13 @@
     el.className = "settings-row";
     el.dataset.id = row.id;
     el.dataset.kind = row.kind || "";
+    if (snapshot.pendingPreferences && snapshot.pendingPreferences[row.id]) {
+      el.setAttribute("aria-busy", "true");
+      const pending = document.createElement("span");
+      pending.className = "settings-pending";
+      pending.textContent = snapshot.pendingPreferences[row.id] + " — pending";
+      el.appendChild(pending);
+    }
     const enabled = rowEnabled(row, snapshot);
     if (!enabled) el.classList.add("is-disabled");
     const title = document.createElement("div");
@@ -2605,18 +3074,65 @@
       span.textContent = String(value ?? "—");
       control.appendChild(span);
     } else if (row.kind === "action") {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "settings-action";
-      const pending = providerPendingLabel(row);
-      btn.textContent = pending || rowActionLabel(row, snapshot, env);
-      if (!enabled || pending) btn.disabled = true;
-      if (pending) btn.setAttribute("aria-busy", "true");
-      control.appendChild(btn);
+      const isGithub = row.id === "githubConnection" || row.id === "githubConnectionRemote";
+      const githubStepped = isGithub && (
+        !!githubCliStarted || githubCliLive(snapshot) || !!(githubTokenForm && githubTokenForm.open)
+      );
+      const terminalStarted = !!(row.provider && PROVIDER_TERMINAL.id === row.provider
+        && !(env && env.isRemote));
+      if (terminalStarted) {
+        const busy = document.createElement("button");
+        busy.type = "button";
+        busy.className = "settings-action";
+        busy.textContent = "Connecting…";
+        busy.disabled = true;
+        busy.setAttribute("aria-busy", "true");
+        control.appendChild(busy);
+      } else if (!githubStepped) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "settings-action";
+        if (isGithub && !githubConnectedNow(snapshot)) {
+          btn.classList.add("settings-github-connect");
+        }
+        const pending = providerPendingLabel(row);
+        btn.textContent = pending || rowActionLabel(row, snapshot, env);
+        if (!enabled || pending) btn.disabled = true;
+        if (pending) btn.setAttribute("aria-busy", "true");
+        control.appendChild(btn);
+      }
     }
 
     el.appendChild(title);
     el.appendChild(control);
+    if (row.id === "githubConnection" || row.id === "githubConnectionRemote") {
+      if (githubCliLive(snapshot) || githubCliStarted) {
+        appendGithubLoginFlow(el, snapshot, {
+          pending: !!githubCliStarted && !githubCliLive(snapshot),
+          terminal: !(env && env.isRemote) && !!githubCliStarted && !githubCliLive(snapshot),
+        });
+      } else if (githubTokenForm && githubTokenForm.open) {
+        appendGithubTokenForm(el, githubTokenForm);
+      } else if (!githubConnectedNow(snapshot) && githubTokenAvailable(snapshot, env)) {
+        appendGithubAdvanced(el);
+      }
+    }
+    if (row.provider && PROVIDER_TERMINAL.id === row.provider && !(env && env.isRemote)) {
+      const bar = document.createElement("div");
+      bar.className = "settings-provider-terminal";
+      const recheck = document.createElement("button");
+      recheck.type = "button";
+      recheck.className = "settings-action settings-provider-recheck";
+      recheck.dataset.provider = row.provider;
+      recheck.textContent = "Re-check connection";
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "settings-action settings-provider-terminal-cancel";
+      cancel.dataset.provider = row.provider;
+      cancel.textContent = "Cancel";
+      bar.append(recheck, cancel);
+      el.appendChild(bar);
+    }
     return el;
   }
 
@@ -2627,6 +3143,10 @@
     let categoryId = opts.category || "general";
     let query = "";
     let keyForm = { id: "", value: "", readOnly: false };
+    let oauthWindow;
+    let githubTokenForm = { open: false, value: "" };
+    let githubCliStarted = false;
+    let providerConfigsOpen = false;
     let pendingRestore = null;
     let aboutChecked = false;
     let providersChecked = false;
@@ -2668,7 +3188,10 @@
       snapshot = applyValue(row, value, snapshot);
       const message = rowMessage(row, value, snapshot);
       const localOnly = isLocalOnly(row, previous, env);
-      if (apply) apply(row.id, value, localOnly ? null : message, snapshot);
+      if (apply) {
+        const applied = apply(row.id, value, localOnly ? null : message, snapshot);
+        if (applied && applied.pending) snapshot = applied.snapshot;
+      }
       else if (message && !localOnly) post(message);
       if (pendingRestore) pendingRestore = null;
       paint();
@@ -2714,6 +3237,44 @@
         return;
       }
       post({ type: "openUrl", url });
+    }
+
+    function openConnectorConsent(id) {
+      if (!env.isRemote) return;
+      const current = snapshot.mcpConnectorAuthorization;
+      if (current && current.id === id && current.status === "waiting" && current.url) {
+        openExternalHref(current.url);
+        return;
+      }
+      // Reserve the tab inside the user's tap, before asynchronous discovery.
+      // No opener reaches the provider; a blocked popup leaves the visible link.
+      try {
+        if (oauthWindow) oauthWindow.tab.close();
+        const tab = window.open("", "_blank");
+        if (tab) {
+          tab.opener = null;
+          tab.document.title = "Connecting…";
+          tab.document.body.textContent = "Opening sign-in…";
+          oauthWindow = { id, tab };
+        }
+      } catch { oauthWindow = undefined; }
+    }
+
+    function updateConnectorConsent() {
+      if (!oauthWindow) return;
+      const authorization = snapshot.mcpConnectorAuthorization;
+      const row = (snapshot.mcpConnectors || []).find((c) => c.id === oauthWindow.id);
+      try {
+        if (authorization && authorization.id === oauthWindow.id && authorization.status === "waiting" && authorization.url) {
+          const url = new URL(authorization.url);
+          if (url.protocol === "https:") oauthWindow.tab.location.replace(url.href);
+          else oauthWindow.tab.close();
+          oauthWindow = undefined;
+        } else if (row && row.status === "error") {
+          oauthWindow.tab.close();
+          oauthWindow = undefined;
+        }
+      } catch { oauthWindow = undefined; }
     }
 
     function maybeCheckAbout() {
@@ -2778,6 +3339,13 @@
       // and open the wizard that shows what happens next. Returning here sent
       // the message nowhere and left a dialog with nothing to report.
       const local = typeof row.local === "function" ? row.local(snapshot, env) : row.local;
+      if (local === "githubToken") {
+        githubTokenForm = { open: true, value: "" };
+        paint();
+        const input = container.querySelector(".settings-github-token-input");
+        if (input) input.focus();
+        return;
+      }
       if (local && !row.message) {
         if (onClose && !opts.standalone) onClose();
         if (onLocal) onLocal(local);
@@ -2819,6 +3387,8 @@
         pendingRestore: pendingRestore ? pendingRestore.map((row) => row.id) : null,
         phoneNav,
         keyFormId: keyForm.id,
+        githubTokenOpen: githubTokenForm.open,
+        githubCliStarted: githubCliStarted,
         // Which routine is open, and which unit its cadence is on — the two
         // pieces of local state that change the DOM without the snapshot
         // moving. Without them an expand or a unit switch computes the same
@@ -2834,11 +3404,14 @@
         // Which row is waiting on the host: local state that changes a label
         // and a disabled attribute, so the key has to carry it.
         providerPending: PROVIDER_PENDING.id + ":" + PROVIDER_PENDING.label,
+        providerTerminal: PROVIDER_TERMINAL.id,
       });
     }
 
     function paint() {
+      updateConnectorConsent();
       reconcileProviderPending(snapshot);
+      reconcileProviderTerminal(snapshot);
       const chrome = describeChrome(container);
       ensureCategory();
       maybeCheckAbout();
@@ -3041,12 +3614,12 @@
             heading.textContent = cat ? cat.title : row.category;
             body.appendChild(heading);
           }
-          body.appendChild(renderRow(row, snapshot, env, keyForm));
+          body.appendChild(renderRow(row, snapshot, env, keyForm, githubTokenForm, githubCliStarted));
         }
       } else {
         let lastSection = "";
         for (const row of rows) {
-          const section = connectorSection(row);
+          const section = connectorSection(row, env);
           if (section && section !== lastSection) {
             lastSection = section;
             const heading = document.createElement("h2");
@@ -3054,7 +3627,7 @@
             heading.textContent = section;
             body.appendChild(heading);
           }
-          body.appendChild(renderRow(row, snapshot, env, keyForm));
+          body.appendChild(renderRow(row, snapshot, env, keyForm, githubTokenForm, githubCliStarted));
         }
         if (categoryId === "about") {
           const disclaimer = document.createElement("p");
@@ -3105,12 +3678,28 @@
       body.querySelectorAll(".settings-row").forEach((el) => {
         const row = ROWS.find((r) => r.id === el.dataset.id);
         if (!row) return;
-        if (row.kind === "toggle") {
+        if (row.kind === "providerConfigs") {
+          el.open = providerConfigsOpen;
+          el.ontoggle = () => { providerConfigsOpen = el.open; };
+          el.querySelectorAll("[data-provider]").forEach((btn) => {
+            btn.onclick = () => {
+              // The standalone Settings webview owns no chat panel. Choose
+              // by this mount, never settingsEditor on the connected host:
+              // a browser driving VS Code still needs its own panel.
+              if (opts.standalone) post({ type: "openProviderConfig", provider: btn.dataset.provider });
+              else {
+                if (onClose) onClose();
+                if (onLocal) onLocal("providerConfig:" + btn.dataset.provider);
+              }
+            };
+          });
+        } else if (row.kind === "toggle") {
           const sw = el.querySelector(".settings-switch");
           if (!sw || sw.disabled) return;
           sw.onclick = (e) => {
             e.stopPropagation();
-            commit(row, !rowValue(row, snapshot));
+            const pending = snapshot.pendingPreferenceValues || {};
+            commit(row, !(Object.prototype.hasOwnProperty.call(pending, row.id) ? pending[row.id] : rowValue(row, snapshot)));
           };
         } else if (row.kind === "select") {
           const select = el.querySelector("select");
@@ -3166,7 +3755,29 @@
         } else if (row.kind === "action") {
           const btn = el.querySelector(".settings-action");
           if (!btn) return;
-          btn.onclick = (e) => { e.stopPropagation(); runAction(row); };
+          if (btn.classList.contains("settings-github-token-submit")
+            || btn.classList.contains("settings-github-token-cancel")) {
+            return;
+          }
+          btn.onclick = (e) => {
+            e.stopPropagation();
+            if ((row.id === "githubConnection" || row.id === "githubConnectionRemote")
+              && !githubConnectedNow(snapshot)) {
+              githubCliStarted = true;
+              githubTokenForm = { open: false, value: "" };
+              runAction(row);
+              paint();
+              return;
+            }
+            if (row.provider && !(env && env.isRemote)
+              && !providerConnectedNow(snapshot, row.provider)) {
+              PROVIDER_TERMINAL.id = row.provider;
+              runAction(row);
+              paint();
+              return;
+            }
+            runAction(row);
+          };
         }
       });
       function closeKeyForm() {
@@ -3182,7 +3793,7 @@
       body.querySelectorAll(".settings-connector-action").forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (env.isRemote || btn.disabled) return;
+          if (!canManageConnectors(snapshot, env) || btn.disabled) return;
           const id = btn.dataset.id;
           if (!id) return;
           if (btn.dataset.auth === "key" && btn.dataset.connected !== "true") {
@@ -3193,8 +3804,10 @@
             }
             return;
           }
+          const disconnect = btn.dataset.connected === "true";
+          if (!disconnect) openConnectorConsent(id);
           post({
-            type: btn.dataset.connected === "true" ? "disconnectMcpConnector" : "connectMcpConnector",
+            type: disconnect ? "disconnectMcpConnector" : "connectMcpConnector",
             id,
           });
         });
@@ -3202,7 +3815,7 @@
       body.querySelectorAll(".settings-connector-key-open").forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (env.isRemote || btn.disabled) return;
+          if (!canManageConnectors(snapshot, env) || btn.disabled) return;
           const id = btn.dataset.id;
           if (!id) return;
           const row = snapshot.mcpConnectors.find((c) => c && c.id === id);
@@ -3218,7 +3831,7 @@
       body.querySelectorAll(".settings-connector-key-submit").forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          if (env.isRemote || btn.disabled) return;
+          if (!canManageConnectors(snapshot, env) || btn.disabled) return;
           const id = btn.dataset.id;
           if (!id) return;
           const form = btn.closest(".settings-connector-key");
@@ -3232,6 +3845,75 @@
           paint();
         });
       });
+      body.querySelectorAll(".settings-github-advanced").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if ((githubCliStarted || githubCliLive(snapshot)) && canCancelGithubLogin(env)) {
+            post({ type: "cancelDeviceLogin", provider: "github" });
+          }
+          githubCliStarted = false;
+          githubTokenForm = { open: true, value: "" };
+          paint();
+          const input = container.querySelector(".settings-github-token-input");
+          if (input) input.focus();
+        });
+      });
+      body.querySelectorAll(".settings-github-flow-cancel").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          githubCliStarted = false;
+          if (canCancelGithubLogin(env)) post({ type: "cancelDeviceLogin", provider: "github" });
+          paint();
+        });
+      });
+      body.querySelectorAll(".settings-github-flow-recheck").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          post({ type: "refreshProviders" });
+        });
+      });
+      body.querySelectorAll(".settings-provider-recheck").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const provider = btn.dataset.provider;
+          if (provider) post({ type: "recheckConnection", provider });
+        });
+      });
+      body.querySelectorAll(".settings-provider-terminal-cancel").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (btn.dataset.provider === PROVIDER_TERMINAL.id) clearProviderTerminal();
+          paint();
+        });
+      });
+      const tokenInput = body.querySelector(".settings-github-token-input");
+      const tokenSubmit = body.querySelector(".settings-github-token-submit");
+      const tokenCancel = body.querySelector(".settings-github-token-cancel");
+      if (tokenCancel) {
+        tokenCancel.addEventListener("click", (e) => {
+          e.stopPropagation();
+          githubTokenForm = { open: false, value: "" };
+          paint();
+        });
+      }
+      if (tokenSubmit) {
+        tokenSubmit.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const token = tokenInput ? String(tokenInput.value || "") : githubTokenForm.value;
+          if (tokenInput) tokenInput.value = "";
+          githubTokenForm = { open: false, value: "" };
+          if (token.trim()) post({ type: "githubLoginWithToken", token: token.trim() });
+          paint();
+        });
+      }
+      if (tokenInput) {
+        tokenInput.addEventListener("input", () => { githubTokenForm.value = tokenInput.value; });
+        tokenInput.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          if (tokenSubmit) tokenSubmit.click();
+        });
+      }
       body.querySelectorAll(".settings-connector-key-input").forEach((input) => {
         input.addEventListener("input", () => {
           if (keyForm.id === input.dataset.id) keyForm.value = input.value;
@@ -3327,7 +4009,9 @@
           const card = btn.closest(".settings-routine");
           const id = card && card.dataset.routine;
           if (!id) return;
-          post({ type: "setRoutinePaused", id, paused: !btn.dataset.paused });
+          const pending = snapshot.pendingPreferenceValues || {};
+          const key = "routine:" + id;
+          post({ type: "setRoutinePaused", id, paused: Object.prototype.hasOwnProperty.call(pending, key) ? !pending[key] : !btn.dataset.paused });
         });
       });
       body.querySelectorAll(".settings-routine-run-now").forEach((btn) => {
@@ -3369,7 +4053,7 @@
       });
       body.querySelectorAll(".settings-connector-readonly-input").forEach((box) => {
         box.addEventListener("change", () => {
-          if (env.isRemote || box.disabled) return;
+          if (!canManageConnectors(snapshot, env) || box.disabled) return;
           const id = box.dataset.id;
           if (!id) return;
           if (keyForm.id === id) keyForm.readOnly = box.checked;
@@ -3384,6 +4068,12 @@
           e.stopPropagation();
           const url = link.dataset.href || link.href;
           if (url) openExternalHref(url);
+        });
+      });
+      body.querySelectorAll(".settings-connector-oauth-link").forEach((link) => {
+        link.addEventListener("click", (e) => {
+          e.preventDefault();
+          openExternalHref(link.href);
         });
       });
       body.querySelectorAll(".settings-mcp-web").forEach((btn) => {
@@ -3405,7 +4095,8 @@
 
     function trapTab(e) {
       if (!modal || e.key !== "Tab") return false;
-      const items = focusableControls(container);
+      const strip = document.getElementById("host-wait-strip");
+      const items = focusableControls(container).concat(strip && !strip.hidden ? focusableControls(strip) : []);
       if (!items.length) {
         e.preventDefault();
         e.stopPropagation();
@@ -3415,13 +4106,13 @@
       const last = items[items.length - 1];
       const active = container.ownerDocument && container.ownerDocument.activeElement;
       if (e.shiftKey) {
-        if (active === first || !container.contains(active)) {
+        if (active === first || !items.includes(active)) {
           e.preventDefault();
           e.stopPropagation();
           last.focus();
           return true;
         }
-      } else if (active === last || !container.contains(active)) {
+      } else if (active === last || !items.includes(active)) {
         e.preventDefault();
         e.stopPropagation();
         first.focus();
@@ -3497,6 +4188,13 @@
       update(nextSnapshot, nextEnv) {
         if (nextSnapshot) snapshot = defaultSnapshot({ ...snapshot, ...nextSnapshot });
         if (nextEnv) Object.assign(env, nextEnv);
+        if (githubConnectedNow(snapshot)) githubTokenForm = { open: false, value: "" };
+        if (nextSnapshot && Object.prototype.hasOwnProperty.call(nextSnapshot, "githubState")) {
+          // A githubState frame is not "the terminal finished". Desk sign-in
+          // cannot be observed, so keep the Re-check row until the account
+          // is actually connected or a live device-code card takes over.
+          if (githubConnectedNow(snapshot) || githubCliLive(snapshot)) githubCliStarted = false;
+        }
         // Before the key: the answer this was waiting for is usually IN this
         // snapshot, and a stale "Disconnecting…" left in the key would make
         // the repaint that clears it look like a no-op.
@@ -3532,6 +4230,10 @@
         paint();
       },
       dispose() {
+        if (oauthWindow) {
+          try { oauthWindow.tab.close(); } catch { /* already closed */ }
+          oauthWindow = undefined;
+        }
         document.removeEventListener("keydown", onKey, true);
         if (phoneMq) {
           if (typeof phoneMq.removeEventListener === "function") phoneMq.removeEventListener("change", onPhoneNavChange);
@@ -3557,10 +4259,12 @@
     CONNECTOR_LOGO_IDS,
     sortConnectorsForDisplay,
     CONNECTOR_SECTION_HERE,
+    CONNECTOR_SECTION_HERE_REMOTE,
     CONNECTOR_SECTION_GROK,
     CONNECTOR_SECTION_LOCAL,
     CONNECTOR_BLURB_HERE,
     CONNECTOR_BLURB_HERE_REMOTE,
+    CONNECTOR_BLURB_HERE_REMOTE_CONNECT,
     CONNECTOR_BLURB_GROK,
     CONNECTOR_BLURB_LOCAL,
     CONNECTOR_BLURB_LOCAL_REMOTE,
@@ -3568,6 +4272,12 @@
     GITHUB_ISSUE_FEATURE_URL,
     SUPPORT_MAILTO,
     ROWS,
+    githubOf,
+    githubKnown,
+    githubDescribe,
+    githubAction,
+    githubTokenAvailable,
+    githubCliLive,
     visibleRows,
     visibleCategories,
     filterRows,

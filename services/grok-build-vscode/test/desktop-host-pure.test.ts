@@ -109,6 +109,7 @@ import {
   registryIdFromUrlPath,
 } from "../src/desktop/resource-registry";
 import { parseWebviewMsg } from "../src/desktop/webview-msg-validate";
+import { WEBVIEW_MESSAGE_TYPES } from "../src/protocol";
 import {
   deliverSuggestedFileSave,
   planSuggestedSaveDialog,
@@ -177,12 +178,15 @@ describe("desktop ConfigStore", () => {
     const store = new ConfigStore(file);
     expect(store.getConfiguration("grok").get("cliPath", "")).toBe("");
     expect(store.getConfiguration("grok").get("showThinking", false)).toBe(false);
+    expect(store.getConfiguration("grok").get("expandDiffCard", true)).toBe(false);
 
     await store.getConfiguration("grok").update("cliPath", "/bin/fake-grok");
     expect(store.getConfiguration("grok").get("cliPath")).toBe("/bin/fake-grok");
+    await store.getConfiguration("grok").update("expandDiffCard", true, "global");
 
     const again = new ConfigStore(file);
     expect(again.getConfiguration("grok").get("cliPath")).toBe("/bin/fake-grok");
+    expect(again.getConfiguration("grok").get("expandDiffCard")).toBe(true);
   });
 
   it("persists the Codex CLI override through the desktop config store", async () => {
@@ -705,10 +709,11 @@ describe("desktop main wiring (source gates)", () => {
       sidebar.indexOf("return `<!DOCTYPE html>", sidebar.indexOf("const filePanelStyle")),
     );
     expect(assetGate).toContain("this.host.canSwitchWorkspaceFolder");
+    expect(assetGate).toContain("HOST_CAPABILITIES.editProviderConfigFiles");
     expect(assetGate).toContain('mediaUri("file-panel.css")');
     expect(assetGate).toContain('mediaUri("file-panel.js")');
-    // An empty branch means the VS Code webview receives neither tag; absence
-    // of a mount call is not the thing enforcing the product decision.
+    // VS Code loads the component for provider config files too. Project files
+    // still use its native explorer; only desktop injects that panel's mount.
     expect(assetGate.match(/:\s*"";/g)).toHaveLength(2);
 
     // First-frame desktop chrome: rail visible + files shell in getHtml so the
@@ -1251,6 +1256,46 @@ describe("app-resource serve policy (no credential leak)", () => {
   });
 });
 
+describe("webview message schema validation — every type is registered", () => {
+  // The per-message tests below were each written AFTER a type shipped dead on
+  // the desktop app, and they only ever cover the type someone remembered. On
+  // 2026-09-14 seven were missing at once — gitStatus/gitFileDiff/gitRun (the
+  // whole Changes panel), updateCodex/updateClaude, refreshContextDetails and
+  // refreshSubscriptionUsage — so the git panel and both popover refreshes were
+  // dead on desktop while VS Code, which does not load this gate, was fine.
+  //
+  // TypeScript cannot catch it: the switch ends in `default: return null`, so
+  // omitting a case is exhaustive as far as the compiler is concerned. This
+  // asserts on the SOURCE instead, which is the only place the omission exists.
+  it("gives every WebviewMsg type a case label in the validator", () => {
+    const src = fs.readFileSync(
+      fileURLToPath(new URL("../src/desktop/webview-msg-validate.ts", import.meta.url)),
+      "utf8",
+    );
+    const labelled = new Set(
+      [...src.matchAll(/case "([^"]+)":/g)].map((m) => m[1]),
+    );
+    const missing = WEBVIEW_MESSAGE_TYPES.filter((type) => !labelled.has(type));
+    expect(missing, `webview-msg-validate.ts drops these on the desktop app: ${missing.join(", ")}`)
+      .toEqual([]);
+  });
+});
+
+describe("webview message schema validation — display-preference setters", () => {
+  // The desktop app gates every webview message through parseWebviewMsg, and
+  // an unknown type is dropped silently (default: return null). A setter that
+  // VS Code accepts (no gate there) and a phone never posts (local-only) can
+  // therefore be dead on the desktop and on a cloud machine alone — which is
+  // exactly what happened to setExpandDiffCard the day it shipped.
+  it("accepts setExpandDiffCard with a boolean and refuses anything else", () => {
+    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: true }))
+      .toEqual({ type: "setExpandDiffCard", value: true });
+    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: false })?.type).toBe("setExpandDiffCard");
+    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: "yes" })).toBeNull();
+    expect(parseWebviewMsg({ type: "setExpandDiffCard" })).toBeNull();
+  });
+});
+
 describe("webview message schema validation — routines", () => {
   // This validator is a strict allowlist ending in `default: return null`, so
   // TypeScript does NOT force a new message type to be handled here. The
@@ -1322,6 +1367,9 @@ describe("webview message schema validation", () => {
     expect(parseWebviewMsg({ type: "submitDeviceLoginCode", provider: "claude" })).toBeNull();
     expect(parseWebviewMsg({ type: "cancelDeviceLogin", provider: "claude" })?.type)
       .toBe("cancelDeviceLogin");
+    expect(parseWebviewMsg({ type: "cancelDeviceLogin", provider: "github" })?.type)
+      .toBe("cancelDeviceLogin");
+    expect(parseWebviewMsg({ type: "runGrokLogin", provider: "github" })).toBeNull();
     expect(parseWebviewMsg({ type: "installCodex" })?.type).toBe("installCodex");
     expect(parseWebviewMsg({ type: "cancelCodexInstall" })?.type).toBe("cancelCodexInstall");
     expect(parseWebviewMsg({ type: "restartToUpdate" })).toEqual({ type: "restartToUpdate" });
@@ -4298,7 +4346,7 @@ describe("file tree rebind on project change (P2-3)", () => {
     expect(src).toContain("onRootChanged");
     expect(src).toContain("onScopeChanged");
     expect(src).toContain("listener(normalizeRoot(await api.root()))");
-    expect(filePanelJs).toContain("function setScope(scope)");
+    expect(filePanelJs).toContain("function setScope(scope");
     expect(filePanelJs).toContain("state = makeScopeState(scope)");
     expect(filePanelJs).toContain("scopes.set(scope.id, state)");
   });
@@ -4659,6 +4707,24 @@ describe("openFile / openDiff session roots (P2-4 / P2-5)", () => {
     const previewBody = sidebar.slice(previewStart, previewEnd);
     expect(previewBody).toContain("resolveLocalRepoTarget");
     expect(previewBody).not.toContain("this.repoCatalog()");
+    expect(previewBody).not.toContain("return undefined");
+    expect(previewBody).toContain('error: "project-unavailable"');
+    expect(previewBody).toContain('error: "sessions-unavailable"');
+
+    const remoteSendStart = sidebar.indexOf("private sendRepoSessionsPreview(", previewStart);
+    const localSendEnd = sidebar.indexOf("private async selectRepo(", remoteSendStart);
+    const sendBodies = sidebar.slice(remoteSendStart, localSendEnd);
+    expect(sendBodies).toContain("this.sendRemoteClient(clientId, msg)");
+    expect(sendBodies).toContain("this.postLocal(msg)");
+    expect(sendBodies).not.toMatch(/if \(msg\)/);
+
+    const remoteHandlerStart = sidebar.indexOf("private handleRemoteMessage(");
+    const remoteHandlerEnd = sidebar.indexOf("private handleRemoteClientReady(", remoteHandlerStart);
+    const remoteHandler = sidebar.slice(remoteHandlerStart, remoteHandlerEnd);
+    expect(remoteHandler).toContain('m.type !== "selectRepo" && m.type !== "listRepoSessions"');
+    expect(remoteHandler).toMatch(
+      /if \(m\.type === "listRepoSessions"\)[\s\S]*type: "repoSessions"[\s\S]*error: "project-unavailable"/,
+    );
 
     // Rejected setActiveWorkspaceFolder aborts — no history open / session spawn.
     const switchStart = sidebar.indexOf("private async switchLocalWorkspaceFolderExclusive(");
