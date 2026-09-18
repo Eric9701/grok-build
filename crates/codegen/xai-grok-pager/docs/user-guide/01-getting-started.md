@@ -47,18 +47,18 @@ atlas update
 ```
 
 To fetch a repository through Grove (NFS on macOS, FUSE on Linux), enable
-`grok clone` with `[clone] enabled = true` in Grove config, `GROK_CLONE=1`,
+`atlas clone` with `[clone] enabled = true` in Grove config, `GROK_CLONE=1`,
 or the enable-both convenience `GROK_GROVE=1` / `[cli] grove = true` in
-`~/.grok/config.toml`:
+`~/.atlas/config.toml`:
 
 ```bash
-grok clone <url> [dir]
+atlas clone <url> [dir]
 ```
 
 The default is a depth-1 checkout of the selected branch. Pass `--full-history`
 for a complete clone. Clone enablement is independent of session / `-w` Grove
 worktrees (the convenience above turns both on; the specific knobs still win).
-the grok.com sign-in below — see [grok clone](27-grok-clone.md#authentication)
+the grok.com sign-in below — see [atlas clone](27-atlas-clone.md#authentication)
 and [Configuration reference](26-config-reference.md).
 
 ---
@@ -166,7 +166,7 @@ Tools can be extended with [MCP servers](05-configuration.md#mcp-servers) for in
 Type `/` in the prompt to access commands. These provide quick actions without writing a full prompt:
 
 ```
-/model atlas-build                 # Switch model
+/model grok-build                 # Switch model
 /compact                          # Compress conversation history
 /always-approve                   # Toggle always-approve mode
 /new                              # Start a new session
@@ -201,7 +201,7 @@ atlas --rules "Always use TypeScript. Prefer functional components."
 atlas --yolo
 
 # Use a specific model
-atlas -m atlas-build
+atlas -m grok-build
 
 # Resume a previous session
 atlas --resume <session-id>

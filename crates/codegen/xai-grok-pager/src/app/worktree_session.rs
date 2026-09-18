@@ -286,7 +286,7 @@ pub(crate) async fn resume_session_into_worktree(
 /// the caller can reclaim it.
 pub(crate) fn note_orphaned_worktree(message: &str, worktree_root: &Path) -> String {
     format!(
-        "{message} (worktree {} was created and is still on disk; remove it with `grok worktree rm`)",
+        "{message} (worktree {} was created and is still on disk; remove it with `atlas worktree rm`)",
         worktree_root.display()
     )
 }

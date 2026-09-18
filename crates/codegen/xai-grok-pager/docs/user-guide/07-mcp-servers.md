@@ -72,14 +72,14 @@ headers = { "Authorization" = "Bearer token" }
 ```
 
 MCP data-plane requests (JSON-RPC and SSE) and the anonymous-access probe carry a
-default `User-Agent: grok-cli/<version>` header, where `<version>` is the Grok binary
+default `User-Agent: atlas-cli/<version>` header, where `<version>` is the Atlas binary
 version. OAuth discovery, client registration, and token requests are issued by the
 rmcp OAuth client and keep its own behavior (no default `User-Agent`). A valid
 `User-Agent` entry in the server's `headers` overrides the default; an invalid
 configured `User-Agent` value is dropped by header parsing (with a warning), so such a
 server still receives the default. Exception: Figma MCP servers (server name `figma`,
 legacy managed name `grok_com_figma`, or a `figma.com` host — all case-insensitive)
-send the bare token `grok-cli` with no version unless the config supplies its own
+send the bare token `atlas-cli` with no version unless the config supplies its own
 `User-Agent`.
 
 ### Streamable HTTP with Session ID
@@ -189,9 +189,9 @@ MCP tools are namespaced with the server name to avoid collisions. The catalog k
 - Server `github` with tool `create_issue` becomes `github__create_issue`
 - A tool segment may start with a digit: server `auth` with tool `2fa_enable` becomes `auth__2fa_enable`
 
-### What Grok admits
+### What Atlas admits
 
-Grok admits a listed tool into the session catalog when all of these hold (`xai-grok-mcp` `qualify_mcp_tool_name`):
+Atlas admits a listed tool into the session catalog when all of these hold (`xai-grok-mcp` `qualify_mcp_tool_name`):
 
 | Part | Rule |
 | --- | --- |
@@ -202,9 +202,9 @@ Grok admits a listed tool into the session catalog when all of these hold (`xai-
 
 A rejected tool is skipped. The log line is `Skipping MCP tool` with the reason. The rest of that server's tools still load.
 
-The **64-character** cap is a provider **function-name** budget. It applies to the meta-tools `search_tool` and `use_tool` themselves. It does **not** apply to catalog keys. A `server__tool` name longer than 64 characters stays in the catalog. The model still calls it through `use_tool` with that full name. Grok used to drop those tools at 64 characters. It no longer does.
+The **64-character** cap is a provider **function-name** budget. It applies to the meta-tools `search_tool` and `use_tool` themselves. It does **not** apply to catalog keys. A `server__tool` name longer than 64 characters stays in the catalog. The model still calls it through `use_tool` with that full name. Atlas used to drop those tools at 64 characters. It no longer does.
 
-The server name in `[mcp_servers.<name>]` / `grok mcp add` is the catalog prefix. A name that starts with a digit is a valid TOML key. Catalog admission still rejects it (`InvalidServerName`). Rename the server so it starts with a letter or underscore.
+The server name in `[mcp_servers.<name>]` / `atlas mcp add` is the catalog prefix. A name that starts with a digit is a valid TOML key. Catalog admission still rejects it (`InvalidServerName`). Rename the server so it starts with a letter or underscore.
 
 A server name that ends with `_` makes `server__tool` contain `___`. Admission skips that key (`InvalidOrAmbiguousQualifiedName`).
 
@@ -389,7 +389,7 @@ tail -f ~/.atlas/logs/mcp/filesystem.stderr.log
 
 ### Blocked by organization policy
 
-If native TOML policy or Claude `managed-settings.json` sets `deniedMcpServers`, a nonempty `allowedMcpServers`, or `allowManagedMcpServersOnly`, Grok drops non-matching servers at merge time and logs `MCP server blocked by managed settings policy`. Native grok layers bind every server; the Claude file binds foreign-defined servers only. `grok inspect` shows the lists, lockdown scope, and each remaining server. Details and examples: [Restrict which MCP servers can run](09-plugins.md#restrict-which-mcp-servers-can-run).
+If native TOML policy or Claude `managed-settings.json` sets `deniedMcpServers`, a nonempty `allowedMcpServers`, or `allowManagedMcpServersOnly`, Atlas drops non-matching servers at merge time and logs `MCP server blocked by managed settings policy`. Native atlas layers bind every server; the Claude file binds foreign-defined servers only. `atlas inspect` shows the lists, lockdown scope, and each remaining server. Details and examples: [Restrict which MCP servers can run](09-plugins.md#restrict-which-mcp-servers-can-run).
 
 ### A listed tool never appears
 
@@ -400,7 +400,7 @@ The server starts and `tools/list` returns the tool, but `/mcps` and `search_too
 3. Confirm the tool name uses only `[A-Za-z0-9_-]`. Dots and colons in the raw MCP name are skipped.
 4. Do not shorten a `server__tool` key to 64 characters. Catalog keys may be up to 256. The 64-character cap is only for `search_tool` / `use_tool` as function names. See [Tool Naming](#tool-naming).
 
-This is separate from a tool that is missing on the **first** prompt because the handshake is still running. Send a second prompt after the server is up, or run `grok mcp doctor`.
+This is separate from a tool that is missing on the **first** prompt because the handshake is still running. Send a second prompt after the server is up, or run `atlas mcp doctor`.
 
 ### Viewing Server Status
 

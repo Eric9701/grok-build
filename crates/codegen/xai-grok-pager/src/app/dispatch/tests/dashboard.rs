@@ -994,7 +994,7 @@ fn voice_off_target_surface_does_not_enable_or_record() {
     assert!(!app.voice_state.pending_cold_start());
     assert!(rx.try_recv().is_err(), "no PttPress without a target");
 }
-/// `grok dashboard` before login: the startup hook consumes the `GROK_OPEN_DASHBOARD_AT_STARTUP` env var and stashes
+/// `atlas dashboard` before login: the startup hook consumes the `GROK_OPEN_DASHBOARD_AT_STARTUP` env var and stashes
 /// `deferred_startup.open_dashboard`; `AuthComplete` must then open the dashboard view. Regression test for the silent drop where the user landed on the welcome screen / agent view instead.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
@@ -1017,7 +1017,7 @@ fn auth_complete_opens_deferred_dashboard() {
     assert!(matches!(app.auth_state, AuthState::Done));
     assert!(
         matches!(app.active_view, ActiveView::AgentDashboard),
-        "deferred `grok dashboard` must open the dashboard after login",
+        "deferred `atlas dashboard` must open the dashboard after login",
     );
     assert!(
         !app.deferred_startup.open_dashboard,
@@ -2095,7 +2095,7 @@ fn dashboard_open_detects_standalone_grok_worktree() {
     );
 }
 /// Leader-mode independence: opening the dashboard works even when NOT in leader mode. The dashboard renders local sessions regardless; leader mode only adds the roster poll. Every entry point funnels through
-/// `Action::OpenDashboard`, so this covers `/dashboard`, `Ctrl+\`, `grok dashboard`, and the startup hook.
+/// `Action::OpenDashboard`, so this covers `/dashboard`, `Ctrl+\`, `atlas dashboard`, and the startup hook.
 #[serial_test::serial(GROK_AGENT_DASHBOARD)]
 #[test]
 fn dashboard_open_works_without_leader() {

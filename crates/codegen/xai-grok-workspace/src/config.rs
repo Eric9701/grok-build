@@ -828,7 +828,7 @@ pub struct WorkspaceConfig {
     pub event_buffer_capacity: usize,
     /// Pluggable [`SessionContext`] / [`ToolRegistryBuilder`] producer.
     pub session_factory: Arc<dyn SessionContextFactory>,
-    /// Global hook sources (e.g. `~/.claude/settings.json`, `~/.grok/hooks/`).
+    /// Global hook sources (e.g. `~/.claude/settings.json`, `~/.atlas/hooks/`).
     pub hook_global_sources: Vec<HookSourceConfig>,
     /// Project-scoped hook sources (e.g. `<project>/.grok/hooks/`).
     pub hook_project_sources: Vec<HookSourceConfig>,
@@ -993,7 +993,7 @@ impl std::fmt::Debug for AgentSessionConfig {
 pub enum HookSourceConfig {
     /// A single JSON settings file (e.g. `~/.claude/settings.json`).
     SettingsFile(PathBuf),
-    /// A directory of `*.json` hook files (e.g. `~/.grok/hooks/`).
+    /// A directory of `*.json` hook files (e.g. `~/.atlas/hooks/`).
     Directory(PathBuf),
 }
 impl HookSourceConfig {

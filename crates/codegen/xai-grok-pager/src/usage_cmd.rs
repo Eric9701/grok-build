@@ -1,4 +1,4 @@
-//! `grok usage <session-id> [turn]`: persisted token/cost usage.
+//! `atlas usage <session-id> [turn]`: persisted token/cost usage.
 
 use std::io::Write;
 

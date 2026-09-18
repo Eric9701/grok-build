@@ -495,7 +495,7 @@ fn newline_finding(facts: &DiagnosticFacts) -> Option<DiagnosticFinding> {
         NewlineFact::NoKittyKeyboardProtocol => (
             "Shift+Enter can't insert a newline because the keyboard protocol is unavailable",
             "Use Alt+Enter to insert a newline. If your terminal supports the Kitty keyboard \
-             protocol, enable it and restart Grok."
+             protocol, enable it and restart Atlas."
                 .to_owned(),
         ),
     };

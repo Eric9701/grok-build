@@ -1106,7 +1106,7 @@ mod tests {
     use super::*;
     use xai_grok_plugin_marketplace::MarketplaceSource;
 
-    /// `grok plugin update` must exit nonzero when any update failed (e.g.
+    /// `atlas plugin update` must exit nonzero when any update failed (e.g.
     /// every update policy-blocked), so scripts can detect the block.
     #[test]
     fn update_failure_summary_reports_failed_outcomes() {

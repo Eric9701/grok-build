@@ -1,18 +1,18 @@
 # Authentication
 
-Grok supports several authentication methods, including interactive browser login, enterprise single sign-on (SSO), and headless CI/CD runners.
+Atlas supports several authentication methods, including interactive browser login, enterprise single sign-on (SSO), and headless CI/CD runners.
 
 ---
 
 ## Browser Login (Default)
 
-On first launch, Grok opens your browser to authenticate with atlas.com:
+On first launch, Atlas opens your browser to authenticate with atlas.com:
 
 ```bash
 atlas
 ```
 
-Grok stores credentials in `~/.atlas/auth.json` and reuses them across sessions. Grok refreshes access tokens automatically in the background. When a token can't be refreshed, Grok prompts you to sign in again. Credentials without a server-provided expiry fall back to a 30-day lifetime.
+Atlas stores credentials in `~/.atlas/auth.json` and reuses them across sessions. Atlas refreshes access tokens automatically in the background. When a token can't be refreshed, Atlas prompts you to sign in again. Credentials without a server-provided expiry fall back to a 30-day lifetime.
 
 ### Credential storage
 
@@ -117,20 +117,20 @@ When browser-based login isn't possible -- for example, on sandboxed VMs, CI run
 +--------------+               +------------------------+
 ```
 
-1. Atals runs your command via `sh -c "<command>"`
+1. Atlas runs your command via `sh -c "<command>"`
 2. Your binary runs whatever auth flow it needs (SSO, device code, certificate exchange)
-3. **stderr** carries human-readable output, such as login URLs and status messages. Atals reads stderr and surfaces it to the user; in the TUI, it turns the first `https://` URL into a clickable sign-in link.
-4. **stdout** is captured by Atals and saved as the access token
-5. Exit 0 = success; exit non-zero = Atals falls back to interactive login
+3. **stderr** carries human-readable output, such as login URLs and status messages. Atlas reads stderr and surfaces it to the user; in the TUI, it turns the first `https://` URL into a clickable sign-in link.
+4. **stdout** is captured by Atlas and saved as the access token
+5. Exit 0 = success; exit non-zero = Atlas falls back to interactive login
 
 ### The stdout / stderr Contract
 
 | Stream | What to print | Who sees it |
 |--------|---------------|-------------|
-| **stdout** | The token -- nothing else | Atals (parsed and stored in auth.json) |
-| **stderr** | Login URLs, status messages, errors | The user (Atals reads stderr and shows the sign-in URL as a clickable link in the TUI) |
+| **stdout** | The token -- nothing else | Atlas (parsed and stored in auth.json) |
+| **stderr** | Login URLs, status messages, errors | The user (Atlas reads stderr and shows the sign-in URL as a clickable link in the TUI) |
 
-**Do not print anything to stdout except the token.** No progress messages, no debug output. Atals reads stdout, trims surrounding whitespace, and parses the result as a token.
+**Do not print anything to stdout except the token.** No progress messages, no debug output. Atlas reads stdout, trims surrounding whitespace, and parses the result as a token.
 
 ### stdout Token Format
 
@@ -146,14 +146,14 @@ eyJhbGciOiJSUzI1NiIs...
 {"access_token": "eyJhbGciOi...", "refresh_token": "ref-tok", "expires_in": 3600, "issuer": "https://idp.example.com"}
 ```
 
-Use JSON if your tokens expire and you want Atals to automatically re-run the binary before expiry.
+Use JSON if your tokens expire and you want Atlas to automatically re-run the binary before expiry.
 
 JSON fields:
 
 | Field | Required | Meaning |
 |-------|----------|---------|
-| `access_token` | yes | Bearer token Atals sends to the xAI API |
-| `refresh_token` | no | Stored for reference. Atals refreshes by re-running your binary, not with an OAuth refresh grant |
+| `access_token` | yes | Bearer token Atlas sends to the xAI API |
+| `refresh_token` | no | Stored for reference. Atlas refreshes by re-running your binary, not with an OAuth refresh grant |
 | `expires_in` | no | Token lifetime in seconds; enables proactive refresh before expiry |
 | `issuer` | no | Identifies the token's issuer |
 
@@ -179,17 +179,17 @@ export GROK_AUTH_TOKEN_TTL=3600
 
 ### Token Refresh
 
-Atals runs your binary on two different contracts, and `GROK_AUTH_EXPIRED` is how
+Atlas runs your binary on two different contracts, and `GROK_AUTH_EXPIRED` is how
 it tells them apart. Each run fully replaces the stored credential, so emit the
 same JSON fields (such as `issuer`) on every invocation, including refreshes.
 
-- **`GROK_AUTH_EXPIRED=1` — a headless refresh.** Atals is re-minting over a
+- **`GROK_AUTH_EXPIRED=1` — a headless refresh.** Atlas is re-minting over a
   credential it already holds: a near-expiry rotation, or a token the server
   rejected. Nobody is watching. stdin is closed, your stderr is swallowed, and
   the binary is given a few seconds before it is killed. Mint silently or exit
   non-zero — never block.
 - **Unset — a sign-in.** `atlas login`, the sign-in screen, or the escalation
-  Atals performs when a headless run couldn't mint. A user is waiting, your
+  Atlas performs when a headless run couldn't mint. A user is waiting, your
   stderr reaches them, and you have 300 seconds — enough for a browser round
   trip or a device code.
 
@@ -293,17 +293,17 @@ Atlas resolves credentials for each request in this order, highest to lowest:
 When more than one login flow is configured, Atlas populates the session token from the first available source, highest to lowest:
 
 1. **External auth provider** (`auth_provider_command`)
-2. **Enterprise OIDC** -- when OIDC is configured, through `[atlas_com_config.oidc]` in `config.toml` or the `GROK_OIDC_ISSUER` and `GROK_OIDC_CLIENT_ID` environment variables
+2. **Enterprise OIDC** -- when OIDC is configured, through `[grok_com_config.oidc]` in `config.toml` or the `GROK_OIDC_ISSUER` and `GROK_OIDC_CLIENT_ID` environment variables
 3. **SpaceXAI OAuth2 browser login** -- the default
 
 During a session, the active method handles all mid-session refreshes.
 
 ---
 
-## Grove Git credentials (not this page's `grok login`)
+## Grove Git credentials (not this page's `atlas login`)
 
 
-**`~/.grok/auth.json` is never read for Git.** `grok login` does not create a Git credential and `grok logout` does not revoke one; the daemon builds its own credential cell from `auth_mode` in Grove config. Those credentials are managed with `grove status` and `grove reload-credentials` -- see [grok clone](27-grok-clone.md#authentication) for the failure classes and their next steps.
+**`~/.atlas/auth.json` is never read for Git.** `atlas login` does not create a Git credential and `atlas logout` does not revoke one; the daemon builds its own credential cell from `auth_mode` in Grove config. Those credentials are managed with `grove status` and `grove reload-credentials` -- see [atlas clone](27-atlas-clone.md#authentication) for the failure classes and their next steps.
 
 ---
 

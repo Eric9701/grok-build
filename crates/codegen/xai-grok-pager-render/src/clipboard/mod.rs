@@ -32,7 +32,7 @@ fn is_container_no_display() -> bool {
     *CONTAINER.get_or_init(xai_grok_shared::clipboard::is_containerized_without_display)
 }
 
-/// `grok wrap` intercepts OSC 52 onto the local clipboard and advertises it. Over SSH only `TERM` propagates, so brands look incapable.
+/// `atlas wrap` intercepts OSC 52 onto the local clipboard and advertises it. Over SSH only `TERM` propagates, so brands look incapable.
 /// `LC_GROK_OSC52_SINK` survives default OpenSSH `SendEnv`/`AcceptEnv` of `LC_*`.
 pub fn osc52_sink_active() -> bool {
     static SINK: OnceLock<bool> = OnceLock::new();
@@ -330,7 +330,7 @@ impl ClipboardFeedback {
             Self::CopiedOscContainer => "Copied via OSC 52 from the container.",
             Self::CopiedOscRemote => "Copied via OSC 52.",
             Self::UnverifiedOscRemote | Self::UnverifiedOscContainer => {
-                "Copy sent. If paste fails, use grok wrap or /minimal."
+                "Copy sent. If paste fails, use atlas wrap or /minimal."
             }
             Self::VsCodeSshNonAscii => {
                 "Copied. VS Code over SSH may garble non-ASCII; use /minimal if needed."
@@ -467,7 +467,7 @@ impl CopyDelivery {
     }
 }
 
-/// [`GROK_COPY_FILE_ENV`] or `~/.grok/last-copy.txt`. `None` skips the file rather than writing a world-visible temp path.
+/// [`GROK_COPY_FILE_ENV`] or `~/.atlas/last-copy.txt`. `None` skips the file rather than writing a world-visible temp path.
 pub fn default_copy_fallback_path() -> Option<std::path::PathBuf> {
     if let Ok(raw) = std::env::var(GROK_COPY_FILE_ENV) {
         let trimmed = raw.trim();
@@ -480,7 +480,7 @@ pub fn default_copy_fallback_path() -> Option<std::path::PathBuf> {
     xai_grok_config::user_grok_home().map(|grok_home| grok_home.join("last-copy.txt"))
 }
 
-/// Abbreviate via [`crate::util::abbreviate_path`] so toasts stay short (`~/.grok` or `~`).
+/// Abbreviate via [`crate::util::abbreviate_path`] so toasts stay short (`~/.atlas` or `~`).
 pub fn display_copy_path(path: &std::path::Path) -> String {
     crate::util::abbreviate_path(&path.to_string_lossy()).into_owned()
 }
@@ -2266,14 +2266,14 @@ mod tests {
             (
                 ClipboardFeedback::UnverifiedOscRemote,
                 ClipboardDelivery::Unverified,
-                "Copy sent. If paste fails, use grok wrap or /minimal.",
+                "Copy sent. If paste fails, use atlas wrap or /minimal.",
                 "unverified_osc_remote",
                 120,
             ),
             (
                 ClipboardFeedback::UnverifiedOscContainer,
                 ClipboardDelivery::Unverified,
-                "Copy sent. If paste fails, use grok wrap or /minimal.",
+                "Copy sent. If paste fails, use atlas wrap or /minimal.",
                 "unverified_osc_container",
                 120,
             ),
@@ -2393,7 +2393,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&custom).expect("read"), "payload");
     }
 
-    /// Without `GROK_COPY_FILE`, the default is `~/.grok/last-copy.txt`
+    /// Without `GROK_COPY_FILE`, the default is `~/.atlas/last-copy.txt`
     /// (grok home) — short and toast-friendly, unlike macOS's temp dir.
     #[test]
     #[serial_test::serial(grok_copy_file)]
@@ -2417,8 +2417,8 @@ mod tests {
         if std::env::var_os("GROK_HOME").is_none() {
             let home = xai_dirs::home_dir().expect("home resolves in tests");
             assert_eq!(
-                display_copy_path(&home.join(".grok").join("last-copy.txt")),
-                "~/.grok/last-copy.txt"
+                display_copy_path(&home.join(".atlas").join("last-copy.txt")),
+                "~/.atlas/last-copy.txt"
             );
         }
         // Non-home paths pass through untouched, including multi-byte UTF-8 components (must never slice at a non-char boundary)

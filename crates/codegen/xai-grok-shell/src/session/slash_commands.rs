@@ -570,7 +570,7 @@ pub const PAGER_COMMAND_KEYS: &[&str] = &[
     "workflows",
     "yolo",
 ];
-/// Unconditional reservations for `grok inspect`.
+/// Unconditional reservations for `atlas inspect`.
 /// Live advertising still includes currently gated-on shell builtins plus [`PAGER_COMMAND_KEYS`].
 static RESERVED_SLASH_NAMES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
     let mut taken: HashSet<&'static str> = PAGER_COMMAND_KEYS.iter().copied().collect();
@@ -1361,7 +1361,7 @@ impl BuiltinAction {
         }
     }
 }
-/// `RewriteToRun` (default): replace `/foo args` with `"run /foo args"`, matching today's Grok Build flow that calls our dedicated `skill` tool.
+/// `RewriteToRun` (default): replace `/foo args` with `"run /foo args"`, matching today's Atlas Build flow that calls our dedicated `skill` tool.
 /// `Passthrough`: leave the prompt verbatim.
 /// Some templates use this: the model is trained to spot a leading `/<name>` and look it up in the `<agent_skills>` listing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

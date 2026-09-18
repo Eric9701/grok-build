@@ -4,7 +4,7 @@
 //! workspace for trust-sensitive configs (code-exec configs and project
 //! instructions/skills), resolves the pure trust [`decide`] precedence, prompts
 //! (MVP stderr), and reads/writes the durable [`crate::trust::TrustStore`]
-//! (`~/.grok/trusted_folders.toml`). The consume/gating half (the `DECISIONS`
+//! (`~/.atlas/trusted_folders.toml`). The consume/gating half (the `DECISIONS`
 //! cache, `resolve_and_record`, `project_scope_allowed`, the loader filters)
 //! lives in `xai-grok-shell`.
 //!
@@ -103,7 +103,7 @@ pub fn decide_inputs_with_interactive(
         is_interactive,
         // An over-broad key (home / fs-root / non-absolute) can never be recorded
         // by the store, so decide() trusts it rather than prompt on a key that
-        // can't persist (Case 2: cwd IS $HOME, incl. the default `~/.grok`).
+        // can't persist (Case 2: cwd IS $HOME, incl. the default `~/.atlas`).
         key_recordable: !crate::trust::is_unsafe_trust_root(key),
     }
 }
@@ -194,17 +194,17 @@ impl fmt::Display for GrantRefuse {
             Self::NoHome => write!(
                 f,
                 "error: folder trust was not saved (no home directory for the trust store). \
-                 Set GROK_HOME to an absolute directory, or unset it, then start Grok again."
+                 Set GROK_HOME to an absolute directory, or unset it, then start Atlas again."
             ),
             Self::Unreadable => write!(
                 f,
                 "error: folder trust was not saved (trust store could not be read). \
-                 Fix or delete ~/.grok/trusted_folders.toml, then start Grok again and press y."
+                 Fix or delete ~/.atlas/trusted_folders.toml, then start Atlas again and press y."
             ),
             Self::KeyMoved => write!(
                 f,
                 "error: folder trust was not saved (folder path changed). \
-                 Start Grok again from the folder you want to trust."
+                 Start Atlas again from the folder you want to trust."
             ),
         }
     }
@@ -246,8 +246,8 @@ impl fmt::Display for GrantOutcome {
             } => write!(
                 f,
                 "error: folder trust was not saved ({error}). \
-                 Check that ~/.grok is writable and that trusted_folders.toml.lock is a file, \
-                 then run `grok --trust` in this folder."
+                 Check that ~/.atlas is writable and that trusted_folders.toml.lock is a file, \
+                 then run `atlas --trust` in this folder."
             ),
             Self::Refused { reason } => write!(f, "{reason}"),
             Self::Granted { .. } | Self::AlreadyDurable { .. } => {
@@ -1461,7 +1461,7 @@ mod tests {
         let text = unread.to_string();
         assert!(text.contains("trust store could not be read"), "{text}");
         assert!(
-            text.contains("Fix or delete ~/.grok/trusted_folders.toml"),
+            text.contains("Fix or delete ~/.atlas/trusted_folders.toml"),
             "{text}"
         );
         let no_home = GrantOutcome::Refused {

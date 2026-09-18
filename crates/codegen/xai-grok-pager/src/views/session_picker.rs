@@ -219,7 +219,7 @@ pub enum SourceFilter {
     /// Native Grok sessions only; excludes Claude/Codex/Cursor foreign rows.
     #[default]
     Grok,
-    /// `grok -p` one-shots only (`session_kind == "headless"`).
+    /// `atlas -p` one-shots only (`session_kind == "headless"`).
     Headless,
     Local,
     Remote,
@@ -231,7 +231,7 @@ pub enum SourceFilter {
 impl SourceFilter {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Grok => "Grok",
+            Self::Grok => "Atlas",
             Self::Headless => "Headless",
             Self::Local => "Local",
             Self::Remote => "Remote",

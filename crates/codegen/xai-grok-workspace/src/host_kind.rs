@@ -15,7 +15,7 @@ use crate::session::tool_config::WorkspaceSessionContextFactory;
 pub enum WorkspaceHostKind {
     /// A hosted sandbox.
     Sandbox,
-    /// A daemon on a user's or remote machine, whoever started it (Grok Desktop, the `grok` CLI,
+    /// A daemon on a user's or remote machine, whoever started it (Grok Desktop, the `atlas` CLI,
     /// or by hand). The fail-closed default for a caller that names no host.
     #[default]
     Daemon,

@@ -1,4 +1,4 @@
-//! Host clipboard image paste mediated by `grok wrap`.
+//! Host clipboard image paste mediated by `atlas wrap`.
 //!
 //! On a full remote paste miss (no image/text/file URLs) with `osc52_sink_active()`, remote emits a private OSC on stderr.
 //! Wrap injects a bracketed-paste frame on PTY stdin for the normal paste-chip path.
@@ -6,8 +6,8 @@
 //! # Trust model
 //!
 //! Answering the private request OSC is effectively an image clipboard *read* for the wrapped session.
-//! Any process that can write to the PTY (not only the inner `grok`) can solicit the host pasteboard.
-//! That is intentional and acceptable for `grok wrap`: the user opted into wrap on their own host, and the answer stays inside their session.
+//! Any process that can write to the PTY (not only the inner `atlas`) can solicit the host pasteboard.
+//! That is intentional and acceptable for `atlas wrap`: the user opted into wrap on their own host, and the answer stays inside their session.
 //! The remote also only requests when `osc52_sink_active()` (wrap already set `GROK_OSC52_SINK` / `LC_GROK_OSC52_SINK`).
 //! Do not generalize this pattern to untrusted multiplexers without an explicit allowlist.
 

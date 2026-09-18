@@ -2806,7 +2806,7 @@ mod tests {
                         url: "https://mcp.linear.app".to_string(),
                         scope: Some("team".to_string()),
                         scope_id: Some("team-uuid-123".to_string()),
-                        scope_name: Some("Grok CLI".to_string()),
+                        scope_name: Some("Atlas CLI".to_string()),
                     },
                     source_label: None,
                     setup: None,
@@ -2868,7 +2868,7 @@ mod tests {
         );
         assert_eq!(
             json.pointer("/servers/0/scopeName"),
-            Some(&serde_json::json!("Grok CLI"))
+            Some(&serde_json::json!("Atlas CLI"))
         );
         assert!(json.pointer("/servers/0/session").is_none());
         // Managed gateway connectors are not serialized as local transports.

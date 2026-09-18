@@ -173,13 +173,13 @@ fn merge_subagents(
 }
 
 /// Discover agent definitions from the filesystem. Deduplicates by name; higher priority wins.
-/// Order: project `.grok/agents/` (cwd up to repo root), user `~/.grok`, compat `~/.claude`, then bundled.
-/// `.grok` dirs resolve from `grok_home` plus legacy `~/.grok` when `GROK_HOME` points elsewhere.
+/// Order: project `.grok/agents/` (cwd up to repo root), user `~/.atlas`, compat `~/.claude`, then bundled.
+/// `.grok` dirs resolve from `grok_home` plus legacy `~/.atlas` when `GROK_HOME` points elsewhere.
 pub(crate) fn user_agent_dirs(
     home: Option<&Path>,
     grok_home: Option<&Path>,
 ) -> Vec<(std::path::PathBuf, AgentScope)> {
-    // Legacy literal ~/.grok, included only when it differs from grok_home
+    // Legacy literal ~/.atlas, included only when it differs from grok_home
     // (i.e. GROK_HOME points elsewhere) so agents left in the old location are
     // still discovered and stay consistent with scope_from_path classification.
     let legacy_grok = home
@@ -767,7 +767,7 @@ mod tests {
             .count();
         assert_eq!(
             count, 1,
-            "no duplicate ~/.grok/agents when grok_home == ~/.grok"
+            "no duplicate ~/.atlas/agents when grok_home == ~/.atlas"
         );
     }
 
@@ -1162,7 +1162,7 @@ mod tests {
 
     #[test]
     fn test_merge_user_level_builtin_name_is_skipped() {
-        // A user-level (~/.grok/agents/) agent named "explore" should NOT shadow
+        // A user-level (~/.atlas/agents/) agent named "explore" should NOT shadow
         // the built-in — only project-level can do that.
         let discovered = vec![synthetic_agent(
             "explore",

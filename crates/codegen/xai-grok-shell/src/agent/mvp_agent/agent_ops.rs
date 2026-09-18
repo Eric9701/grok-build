@@ -798,7 +798,7 @@ impl MvpAgent {
         if self.startup_session_gate_active() {
             return Err(acp::Error::auth_required().data(
                 "Sign in required before use (require_session_at_startup). \
-                 Authenticate with OAuth/OIDC, or run `atlas login` / `grok login`.",
+                 Authenticate with OAuth/OIDC, or run `atlas login` / `atlas login`.",
             ));
         }
         Ok(())

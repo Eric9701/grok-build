@@ -274,7 +274,7 @@ Credential resolution: `api_key` > `env_key` > signed-in session token > `XAI_AP
 To override a built-in model, use its name as the section key and set only the fields you need:
 
 ```toml
-[model.atlas-build]
+[model.grok-build]
 api_key = "my-api-key"
 ```
 
@@ -301,9 +301,9 @@ url = "https://mcp.example.com/api/mcp"  # HTTP/SSE transport
 headers = { "x-mcp-session-id" = "{{session_id}}" }
 ```
 
-Remote (HTTP/SSE) servers receive a default `User-Agent: grok-cli/<version>` header; a
+Remote (HTTP/SSE) servers receive a default `User-Agent: atlas-cli/<version>` header; a
 valid `User-Agent` entry in `headers` overrides it (Figma servers receive bare
-`grok-cli`). See [MCP servers](07-mcp-servers.md) for details.
+`atlas-cli`). See [MCP servers](07-mcp-servers.md) for details.
 
 MCP servers can also be set per-project in `.atlas/config.toml`. Project-scoped config contributes `[mcp_servers]`, `[plugins]`, and `[permission]` rules; every other section loads only from `~/.atlas/config.toml`.
 
@@ -643,11 +643,11 @@ auth_provider_label = "Acme Corp"
 auth_token_ttl = 3600
 
 [models]
-default = "company-grok"
+default = "company-atlas"
 
-[model.company-grok]
+[model.company-atlas]
 model = "grok-4.6"
-base_url = "https://grok-proxy.acme.com/"
+base_url = "https://atlas-proxy.acme.com/"
 name = "Atlas Build Latest (Proxy)"
 context_window = 128000
 

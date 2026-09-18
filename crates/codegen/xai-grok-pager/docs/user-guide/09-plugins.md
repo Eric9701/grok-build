@@ -122,7 +122,7 @@ In the **Marketplace** tab, browse and install from your sources:
 
 Component summaries in the Marketplace tab appear only for marketplaces that publish a [`plugin-index.json`](#add-a-catalog-optional) catalog. Destructive actions ask for confirmation: press lowercase `y` to confirm, any other key (including `Esc`) to cancel.
 
-In the **Workflows** tab (open it directly with `/workflows`, or `Tab` from the commands above), browse the saved workflows Grok discovered: built-ins, project `.grok/workflows/`, and user `~/.grok/workflows/`. Each row shows the workflow's name, source, and description; press `Enter` to expand its path and when-to-use notes, `r` to reload the list, and `/` to search. Rows are browse-only — run one with `/workflow <name>` or its own slash command.
+In the **Workflows** tab (open it directly with `/workflows`, or `Tab` from the commands above), browse the saved workflows Atlas discovered: built-ins, project `.atlas/workflows/`, and user `~/.atlas/workflows/`. Each row shows the workflow's name, source, and description; press `Enter` to expand its path and when-to-use notes, `r` to reload the list, and `/` to search. Rows are browse-only — run one with `/workflow <name>` or its own slash command.
 
 ### Turn plugins on or off in config
 
@@ -243,14 +243,14 @@ To install it for everyone automatically instead of person by person, see [Distr
 
 ## Distribute across an organization
 
-Admins control plugins, marketplaces, and MCP servers through grok's TOML layers plus an optional Claude policy file:
+Admins control plugins, marketplaces, and MCP servers through atlas's TOML layers plus an optional Claude policy file:
 
-- **`managed_config.toml` / `requirements.toml`** (and macOS MDM) are **native** policy. Put allowlists, denylists, and pins here when grok should enforce them on every server and marketplace, including ones defined in the user's own config or by plugins. `requirements.toml` / MDM is the tamper-resistant tier; user-writable `~/.grok` copies are self-imposed only.
-- **Claude `managed-settings.json`** is **advisory**. Its MCP and marketplace restrictions bind **foreign** subjects only — project files (`.grok/config.toml`, `.mcp.json`), imported Claude configs, CLI overrides, and client-injected servers. They never bind grok-native subjects (user/system `config.toml`, plugin-provided definitions, admin pins). **Adding** a marketplace or installing a new source is always treated as foreign, so an advisory strict list still refuses unlisted `marketplace add` / `plugin install` sources.
+- **`managed_config.toml` / `requirements.toml`** (and macOS MDM) are **native** policy. Put allowlists, denylists, and pins here when atlas should enforce them on every server and marketplace, including ones defined in the user's own config or by plugins. `requirements.toml` / MDM is the tamper-resistant tier; user-writable `~/.atlas` copies are self-imposed only.
+- **Claude `managed-settings.json`** is **advisory**. Its MCP and marketplace restrictions bind **foreign** subjects only — project files (`.atlas/config.toml`, `.mcp.json`), imported Claude configs, CLI overrides, and client-injected servers. They never bind atlas-native subjects (user/system `config.toml`, plugin-provided definitions, admin pins). **Adding** a marketplace or installing a new source is always treated as foreign, so an advisory strict list still refuses unlisted `marketplace add` / `plugin install` sources.
 
-Layers combine **strictest-wins**: any deny wins, every restricted source must allow, and boolean pins only tighten (`false` sticks; a later `true` cannot unpin). CamelCase Claude keys and snake_case grok keys are both accepted in TOML.
+Layers combine **strictest-wins**: any deny wins, every restricted source must allow, and boolean pins only tighten (`false` sticks; a later `true` cannot unpin). CamelCase Claude keys and snake_case atlas keys are both accepted in TOML.
 
-`grok inspect` (and `grok inspect --json`) shows the loaded MCP/marketplace lists, whether `allowManagedMcpServersOnly` is `off` / `advisory` / `enforced`, extra marketplace pins, and tighten-only pins under **Enforced by policy**.
+`atlas inspect` (and `atlas inspect --json`) shows the loaded MCP/marketplace lists, whether `allowManagedMcpServersOnly` is `off` / `advisory` / `enforced`, extra marketplace pins, and tighten-only pins under **Enforced by policy**.
 
 ### Roll a marketplace out to everyone
 
@@ -277,10 +277,10 @@ List the only git sources people may add. Any other git URL is refused. Honored 
 
 The key being **present** is what restricts: an empty list (`strict_known_marketplaces = []`), a list whose every entry is unsupported, or a key with the wrong type is a complete lockdown that refuses every add and install until it is fixed. Leave the key out to leave marketplaces unrestricted.
 
-Adding a **local path** while a binding strict list is present is refused (paths never match a git-URL allowlist; fail closed), unless an **admin** `extraKnownMarketplaces` pin names that exact path. A pin from a user-writable `~/.grok` layer cannot carve that exception. Existing git sources that fail the list are dropped at load (`Marketplace source blocked by allowlist`).
+Adding a **local path** while a binding strict list is present is refused (paths never match a git-URL allowlist; fail closed), unless an **admin** `extraKnownMarketplaces` pin names that exact path. A pin from a user-writable `~/.atlas` layer cannot carve that exception. Existing git sources that fail the list are dropped at load (`Marketplace source blocked by allowlist`).
 
 ```toml
-# /etc/grok/requirements.toml  (native: binds every marketplace)
+# /etc/atlas/requirements.toml  (native: binds every marketplace)
 [[strict_known_marketplaces]]
 source = "git"
 url = "git@github.enterprise.example:ACME/my-org-plugins.git"
@@ -290,9 +290,9 @@ source = "github"
 repo = "ACME/more-plugins"
 ```
 
-The same lists work in Claude `managed-settings.json` (advisory for already-configured grok-native sources). URL comparison folds case on the **scheme and host only**, and strips exactly one trailing `.git` (`repo.git.git` is a different repo). Use `grok inspect` to see the loaded allowlist.
+The same lists work in Claude `managed-settings.json` (advisory for already-configured atlas-native sources). URL comparison folds case on the **scheme and host only**, and strips exactly one trailing `.git` (`repo.git.git` is a different repo). Use `atlas inspect` to see the loaded allowlist.
 
-Provision extra sources from policy with `extraKnownMarketplaces` / `extra_known_marketplaces`. First pinning layer wins a name; a configured source already holding that name with a different URL is not overwritten (logged). `autoUpdate = false` on an extra pin turns **global** session-start plugin auto-update off (there is no per-marketplace grok equivalent).
+Provision extra sources from policy with `extraKnownMarketplaces` / `extra_known_marketplaces`. First pinning layer wins a name; a configured source already holding that name with a different URL is not overwritten (logged). `autoUpdate = false` on an extra pin turns **global** session-start plugin auto-update off (there is no per-marketplace atlas equivalent).
 
 ```toml
 [extra_known_marketplaces.acme]
@@ -301,7 +301,7 @@ source = { source = "git", url = "https://github.com/ACME/my-org-plugins.git", r
 
 ### Restrict which MCP servers can run
 
-Grok enforces MCP allow/deny lists from every native TOML policy layer and from Claude `managed-settings.json` (advisory; see above). `grok inspect` prints the merged lists.
+Atlas enforces MCP allow/deny lists from every native TOML policy layer and from Claude `managed-settings.json` (advisory; see above). `atlas inspect` prints the merged lists.
 
 Each allow or deny entry is one of:
 
@@ -316,12 +316,12 @@ Each allow or deny entry is one of:
 
 **Misconfiguration locks down rather than failing open.** A policy key with the wrong type (a table or string where a list belongs), a key written in both spellings with different values, an allow list whose every entry is unsupported, or a deny entry that cannot be enforced (unknown fields, a partial `serverCommand`, a `serverUrl` that can never match) locks that file's MCP policy down: every server it binds is blocked with the reason `locked down by policy (<file>)` until the file is fixed. Startup logs name the file and the offending key. An unusable **allow** entry only grants nothing.
 
-`allowManagedMcpServersOnly = true` (or `allow_managed_mcp_servers_only`) is a lockdown: a positive allow-entry match is required even when the allow list is empty. Native TOML shows as `enforced` in inspect; Claude-only shows as `advisory` (grok-native servers exempt).
+`allowManagedMcpServersOnly = true` (or `allow_managed_mcp_servers_only`) is a lockdown: a positive allow-entry match is required even when the allow list is empty. Native TOML shows as `enforced` in inspect; Claude-only shows as `advisory` (atlas-native servers exempt).
 
 `enableAllProjectMcpServers = false` drops project-scoped MCP unless the server also matches an allow entry.
 
 ```toml
-# /etc/grok/requirements.toml
+# /etc/atlas/requirements.toml
 allow_managed_mcp_servers_only = true
 enable_all_project_mcp_servers = false
 
@@ -344,13 +344,13 @@ command = "node"
 server_url = "https://mcp.untrusted.example/*"
 ```
 
-The lists apply after Grok merges user, project, plugin, and imported MCP config. A blocked server is dropped from the session (logged as `MCP server blocked by managed settings policy`) with a reason of matching `deniedMcpServers`, not in `allowedMcpServers`, locked down by policy, or the project-MCP pin, plus the policy file path (inspect/JSON/logs keep the full path; user-facing refusals show the file name).
+The lists apply after Atlas merges user, project, plugin, and imported MCP config. A blocked server is dropped from the session (logged as `MCP server blocked by managed settings policy`) with a reason of matching `deniedMcpServers`, not in `allowedMcpServers`, locked down by policy, or the project-MCP pin, plus the policy file path (inspect/JSON/logs keep the full path; user-facing refusals show the file name).
 
 The deployment can also send MCP servers to users directly. Native allowlists still bound what any configuration, managed or personal, is allowed to run.
 
 ### Turn off session-start plugin auto-update
 
-`plugin_auto_update = false` / `pluginAutoUpdate = false` is tighten-only. This global pin is Grok's own key with no Claude counterpart. When pinned, session start does not scan marketplaces or fan out per-plugin updates (no toast). Manual `grok plugin update` still works. Claude's per-marketplace `extraKnownMarketplaces.<name>.autoUpdate: false` pins the same global switch.
+`plugin_auto_update = false` / `pluginAutoUpdate = false` is tighten-only. This global pin is Atlas's own key with no Claude counterpart. When pinned, session start does not scan marketplaces or fan out per-plugin updates (no toast). Manual `atlas plugin update` still works. Claude's per-marketplace `extraKnownMarketplaces.<name>.autoUpdate: false` pins the same global switch.
 
 ### Require pinned versions
 
@@ -385,9 +385,9 @@ Marketplaces distribute Atlas content: skills, commands, agents, hooks, and MCP 
 
 **A skill or MCP server from a marketplace is missing.** Refresh the source with `atlas plugin marketplace update`, confirm the plugin is installed and enabled, and, if your organization restricts sources, check that the marketplace is still allowed (see [Distribute across an organization](#distribute-across-an-organization)). Some MCP servers require a sign-in and will not appear until you authenticate.
 
-**An MCP server is configured but never starts.** Org policy may have blocked it. `grok inspect` lists `allowedMcpServers` / `deniedMcpServers`, `mcpManagedServersOnly`, any locked-down policy files, and each server's source. A deny match, an allowlist / lockdown that does not grant the server, a locked-down policy file, or `enableAllProjectMcpServers = false` on a project-scoped server drops it before spawn. See [Restrict which MCP servers can run](#restrict-which-mcp-servers-can-run).
+**An MCP server is configured but never starts.** Org policy may have blocked it. `atlas inspect` lists `allowedMcpServers` / `deniedMcpServers`, `mcpManagedServersOnly`, any locked-down policy files, and each server's source. A deny match, an allowlist / lockdown that does not grant the server, a locked-down policy file, or `enableAllProjectMcpServers = false` on a project-scoped server drops it before spawn. See [Restrict which MCP servers can run](#restrict-which-mcp-servers-can-run).
 
-**Adding a marketplace is refused.** A `strictKnownMarketplaces` list is in effect. Only the listed git / GitHub URLs can be added; local-path adds are refused unless an admin `extraKnownMarketplaces` pin names that exact path. If `grok inspect` shows the list as locked down, the key is present but empty, malformed, or names only unsupported sources, and nothing can be added until it is fixed.
+**Adding a marketplace is refused.** A `strictKnownMarketplaces` list is in effect. Only the listed git / GitHub URLs can be added; local-path adds are refused unless an admin `extraKnownMarketplaces` pin names that exact path. If `atlas inspect` shows the list as locked down, the key is present but empty, malformed, or names only unsupported sources, and nothing can be added until it is fixed.
 
 **An install is refused as unpinned.** Your deployment requires pinned commits. Install an exact commit (`owner/repo@<sha>`), or use a marketplace whose `plugin-index.json` publishes `sha` values. See [Require pinned versions](#require-pinned-versions).
 

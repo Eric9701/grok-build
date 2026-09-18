@@ -44,7 +44,7 @@ pub use model::{
 };
 pub use view::{DiagnosticSnapshot, view};
 
-/// Passive input-device probe for `grok doctor` / `/doctor`. The TUI passes true only while voice mode is enabled.
+/// Passive input-device probe for `atlas doctor` / `/doctor`. The TUI passes true only while voice mode is enabled.
 pub fn apply_voice_probe(report: &mut DiagnosticReport, emit_missing_issue: bool) {
     if !xai_grok_voice::AUDIO_SUPPORTED {
         return;
@@ -410,7 +410,7 @@ fn sandbox_profile_conflict_warning_from(conflicts: Vec<String>) -> Option<Termi
 /// Gates (all must hold):
 /// - `is_ssh`: the session runs over SSH ([`TerminalContext::is_ssh`]);
 /// - `!osc52_sink_active`: no wrap is already capturing our output.
-///   `grok wrap` advertises its OSC 52 sink through the SSH hop via an env var (see `clipboard::osc52_sink_active`).
+///   `atlas wrap` advertises its OSC 52 sink through the SSH hop via an env var (see `clipboard::osc52_sink_active`).
 ///   Once a user adopts wrap, the hint silences itself with no further bookkeeping.
 ///   The env check is stale under tmux (panes inherit the server's env at server start).
 ///   A server started before wrap misses the sink and the hint fires despite wrap; one started under wrap keeps suppressing after wrap is gone.
@@ -879,13 +879,13 @@ pub fn color_support_warning(
             None,
             None,
         );
-        warning.note = Some("Unset `NO_COLOR`, then restart Grok.".to_string());
+        warning.note = Some("Unset `NO_COLOR`, then restart Atlas.".to_string());
         return Some(warning);
     }
 
     // Checked before the detected level is consulted at all: the level says what Grok emits, which is a different question from what survives tmux
     // A truecolor detection is not evidence that truecolor reaches the terminal
-    // A session with no color evidence (piped `grok doctor`) still has a clamping client worth reporting
+    // A session with no color evidence (piped `atlas doctor`) still has a clamping client worth reporting
     if color_passthrough == TmuxColorPassthrough::Reduced {
         let mut warning = TerminalWarning::new(
             WarningCategory::TmuxColorReduced,
@@ -935,7 +935,7 @@ pub fn color_support_warning(
         warning.note = Some(format!(
             "In the same tmux config, also add `set -g default-terminal \"tmux-256color\"`. Add \
              `export COLORTERM=truecolor` to your shell startup file. Then reload tmux with \
-             `tmux source-file {tmux_config_path}`, then detach and reattach, and restart Grok."
+             `tmux source-file {tmux_config_path}`, then detach and reattach, and restart Atlas."
         ));
         return Some(warning);
     }
@@ -948,7 +948,7 @@ pub fn color_support_warning(
     );
     warning.note = Some(
         "Add this export to your shell startup file, such as `~/.zshrc` or `~/.bashrc`, then \
-         restart Grok."
+         restart Atlas."
             .to_string(),
     );
     Some(warning)
@@ -2997,7 +2997,7 @@ mod tests {
         );
     }
 
-    /// Piped `grok doctor` has no color evidence, but the tmux client is still measurable, and `doctor fix` needs the finding to plan against.
+    /// Piped `atlas doctor` has no color evidence, but the tmux client is still measurable, and `doctor fix` needs the finding to plan against.
     #[test]
     fn color_support_warning_reports_tmux_clamp_without_color_evidence() {
         let w = color_support_warning(

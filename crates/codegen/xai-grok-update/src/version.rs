@@ -464,7 +464,7 @@ pub async fn is_version_cache_fresh() -> bool {
 pub use xai_grok_version::installed as get_installed_grok_version;
 
 /// Returns `None` when there is no parseable managed symlink (Windows copy-based installs, dev builds) or when the
-/// symlink is DANGLING — a link whose target binary was deleted (e.g. manual `~/.grok/downloads` cleanup) must not report
+/// symlink is DANGLING — a link whose target binary was deleted (e.g. manual `~/.atlas/downloads` cleanup) must not report
 /// an installed version, or every updater would claim "already up to date" forever while no runnable binary exists.
 pub fn installed_on_disk_version() -> Option<String> {
     #[cfg(unix)]
@@ -483,7 +483,7 @@ pub fn installed_on_disk_version() -> Option<String> {
 
 /// Handles the internal layout (`grok-0.1.150-macos-aarch64`) and the npm layout without a platform suffix
 /// (`grok-0.1.150`). Pre-releases parse whole: `grok-0.1.150-alpha.1-linux-x86_64` gives `0.1.150-alpha.1`. Unknown
-/// layouts (`grok-latest`, `grok-pager-*` when `bin_prefix` is `grok`) return `None` instead of garbage.
+/// layouts (`grok-latest`, `grok-pager-*` when `bin_prefix` is `atlas`) return `None` instead of garbage.
 pub(crate) fn version_from_versioned_binary_name(name: &str, bin_prefix: &str) -> Option<String> {
     const PLATFORM_OS: &[&str] = &["macos", "linux", "darwin", "windows"];
     let suffix = name.strip_prefix(bin_prefix)?.strip_prefix('-')?;
@@ -518,7 +518,7 @@ pub(crate) async fn try_fetch_stable_pointer(bases: &[String]) -> Option<String>
     .unwrap_or(None)
 }
 
-/// Read the cached stable version from `~/.grok/version.json` (sync, for display).
+/// Read the cached stable version from `~/.atlas/version.json` (sync, for display).
 ///
 /// Returns `None` if the file doesn't exist, can't be parsed, or has no `stable_version` field (e.g. written by an older binary).
 pub fn cached_stable_version() -> Option<String> {
@@ -551,7 +551,7 @@ pub fn channel_name() -> Option<&'static str> {
     })
 }
 
-/// Compares the compiled-in `VERSION` against the stable pointer stored in `~/.grok/version.json` (written by the
+/// Compares the compiled-in `VERSION` against the stable pointer stored in `~/.atlas/version.json` (written by the
 /// auto-updater): `" [alpha]"` when the current version is ahead of stable,; `" [stable]"` when at or behind stable,;
 /// `""` when no cached pointer is available (first launch, old cache format).
 pub fn channel_label() -> &'static str {

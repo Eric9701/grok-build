@@ -6,7 +6,7 @@ Memory lets Atlas recall facts, decisions, and patterns from earlier sessions. A
 
 ## What Is Memory?
 
-Without memory, each atlas session starts fresh: the model knows nothing about previous sessions. When you enable memory, Atlas can:
+Without memory, each Atlas session starts fresh: the model knows nothing about previous sessions. When you enable memory, Atlas can:
 
 - Recall project conventions you explained before.
 - Reuse debugging steps that worked.
@@ -25,9 +25,9 @@ sessions:
 enabled = true
 ```
 
-It uses `~/.grok/memory-v2/global/` and
-`~/.grok/memory-v2/workspaces/<workspace-id>/`; it never reads, migrates, or
-falls back to legacy `~/.grok/memory/`. Each scope has generated `MEMORY.md`,
+It uses `~/.atlas/memory-v2/global/` and
+`~/.atlas/memory-v2/workspaces/<workspace-id>/`; it never reads, migrates, or
+falls back to legacy `~/.atlas/memory/`. Each scope has generated `MEMORY.md`,
 `topics/`, immutable `observations/_inbox/`, `archive/`, `memory_state.sqlite`,
 and `index.sqlite`. `MEMORY.md` is a bounded generated pointer index whose
 entries are absolute paths (so the model never has to resolve a relative path

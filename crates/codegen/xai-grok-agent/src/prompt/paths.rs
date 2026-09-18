@@ -1,7 +1,7 @@
 //! `[paths]` configuration: extra directories to scan for skills and rules.
 //!
 //! These supplement the built-in scan locations (`.grok/skills/`, `.agents/skills/`,
-//! `~/.grok/skills/`, `~/.grok/rules/`, ...). `/import-claude` writes the previously
+//! `~/.atlas/skills/`, `~/.atlas/rules/`, ...). `/import-claude` writes the previously
 //! discovered Claude directories here so they survive the runtime `.claude/` cutoff.
 
 use std::path::{Path, PathBuf};

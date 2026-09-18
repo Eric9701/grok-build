@@ -64,7 +64,7 @@ fn new_filtered_debouncer<F: notify_debouncer_mini::DebounceEventHandler>(
 pub enum ConfigChangeEvent {
     AuthChanged,
     GlobalConfigChanged,
-    /// `~/.grok/models_cache.json` changed — the on-disk `/v1/models` catalog cache was rewritten, possibly by **another** grok process sharing the same `~/.grok` (the writer may also be this process; the [`ModelsManager`](crate::agent::remote_config::ModelsManager) dedupes by content before applying).
+    /// `~/.atlas/models_cache.json` changed — the on-disk `/v1/models` catalog cache was rewritten, possibly by **another** grok process sharing the same `~/.atlas` (the writer may also be this process; the [`ModelsManager`](crate::agent::remote_config::ModelsManager) dedupes by content before applying).
     ModelsCacheChanged,
     ProjectConfigChanged {
         path: PathBuf,
@@ -80,7 +80,7 @@ pub enum ConfigChangeEvent {
     HomeClaudeJsonChanged,
 }
 
-/// Watches `~/.grok/` for `auth.json`, `config.toml`, and `models_cache.json` changes, plus any extra paths (project `.grok/config.toml`, `.mcp.json`, etc.) provided at startup.
+/// Watches `~/.atlas/` for `auth.json`, `config.toml`, and `models_cache.json` changes, plus any extra paths (project `.grok/config.toml`, `.mcp.json`, etc.) provided at startup.
 /// Uses `notify-debouncer-mini` for built-in debounce that coalesces rapid editor writes (including write-then-rename patterns). Self-write suppression is intentionally omitted.
 /// When the agent writes `auth.json` or `config.toml`, the watcher fires and the [`ConfigReloader`](super::reloader::ConfigReloader) re-reads it. The reloader's own content-based deduplication (auth key hash, toml value comparison) skips the update when nothing actually changed.
 pub struct ConfigFileWatcher {
@@ -606,7 +606,7 @@ impl SkillsFileWatcher {
         let project_root = cwd.map(crate::session::workflow::registry::project_root);
         let (mut watcher, rx) =
             Self::start_with_dirs(&dirs_to_watch, &grok_home, project_root.as_deref())?;
-        // In-process bundle sync re-advertises itself; this catches a sync by another grok process
+        // In-process bundle sync re-advertises itself; this catches a sync by another atlas process
         // The `bundled` basename rule sees the root appear; the root watch sees its subdirs appear
         let bundled_root = crate::bundle::bundled_root();
         watcher

@@ -46,7 +46,7 @@ fn resolve_standalone_memory_mode(
     MemoryConfig::resolve(false, false, config, remote).mode
 }
 /// Configuration for subagent (task tool) support.
-/// Parsed from the `[subagents]` section of `~/.grok/config.toml` or `.grok/config.toml`.
+/// Parsed from the `[subagents]` section of `~/.atlas/config.toml` or `.grok/config.toml`.
 /// Enabled by default; can be disabled via the `GROK_SUBAGENTS=0` env var or `[subagents] enabled = false` in config.toml.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(default)]
@@ -624,7 +624,7 @@ pub struct ToolsConfig {
     pub respect_gitignore: bool,
     /// Restrict tools whose xAI API requires server-side artifact storage (currently just the video tools).
     /// Without a valid `[tools.zdr_video_output_s3]` bucket they stay advertised but return setup guidance at call time.
-    /// Intended for ZDR-bound teams via `~/.grok/managed_config.toml`. Defaults to `false`.
+    /// Intended for ZDR-bound teams via `~/.atlas/managed_config.toml`. Defaults to `false`.
     pub disable_zdr_incompatible_tools: bool,
     /// Optional S3 bucket config for ZDR video output. When present (and valid), video tools presign an upload URL and pass it to the API.
     /// The generated video then lands in a team-owned bucket instead of being downloaded locally. Only effective when `disable_zdr_incompatible_tools` is `true`. Populated from `[tools.zdr_video_output_s3]` in config.
@@ -908,7 +908,7 @@ fn walk_toml(
         }
     }
 }
-/// The `[skills]` table from an effective config, shared by the reload dispatch and `grok inspect`.
+/// The `[skills]` table from an effective config, shared by the reload dispatch and `atlas inspect`.
 pub(crate) use crate::config::reloader::parse_skills_config;
 /// Effective config: the layers plus the campaign overlay (remote cache and `GROK_CAMPAIGNS_OVERRIDE`).
 pub use crate::util::config::load_effective_config;
@@ -1618,7 +1618,7 @@ pub(crate) fn resolve_effective_plugins_config(
     plugins_cfg
 }
 pub use xai_grok_config::{deep_merge_toml, expand_env_vars_in_string, expand_env_vars_in_toml};
-/// Locked read-modify-write of `~/.grok/config.toml`: the whole window runs under the config-init
+/// Locked read-modify-write of `~/.atlas/config.toml`: the whole window runs under the config-init
 /// flock and lands via atomic replace; unchanged configs skip the write.
 fn update_config_toml_locked(
     grok_home: &std::path::Path,
@@ -1719,14 +1719,14 @@ pub(crate) async fn run_set_plugin_enabled(plugin_id: String, enabled: bool) -> 
     })
     .await
 }
-/// Add a plugin path to `[plugins].paths` in `~/.grok/config.toml`.
+/// Add a plugin path to `[plugins].paths` in `~/.atlas/config.toml`.
 /// Deduplicates: if the path is already present, this is a no-op.
 pub(crate) fn add_plugin_path(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     update_config_toml_locked(&crate::util::grok_home::grok_home(), |table| {
         plugins_list_add(table, "paths", path)
     })
 }
-/// Remove a plugin path from `[plugins].paths` in `~/.grok/config.toml`.
+/// Remove a plugin path from `[plugins].paths` in `~/.atlas/config.toml`.
 ///
 /// If the path is not found, this is a no-op (returns Ok).
 pub(crate) fn remove_plugin_path(path: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -1734,14 +1734,14 @@ pub(crate) fn remove_plugin_path(path: &str) -> Result<(), Box<dyn std::error::E
         Ok(plugins_list_remove(table, "paths", path))
     })
 }
-/// Add a plugin to `[plugins].disabled` in `~/.grok/config.toml`.
+/// Add a plugin to `[plugins].disabled` in `~/.atlas/config.toml`.
 /// Deduplicates: if already present, this is a no-op.
 pub fn add_disabled_plugin(plugin_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     update_config_toml_locked(&crate::util::grok_home::grok_home(), |table| {
         plugins_list_add(table, "disabled", plugin_id)
     })
 }
-/// Remove a plugin from `[plugins].disabled` in `~/.grok/config.toml`.
+/// Remove a plugin from `[plugins].disabled` in `~/.atlas/config.toml`.
 ///
 /// If the plugin is not in the disabled list, this is a no-op.
 pub fn remove_disabled_plugin(plugin_id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -1754,7 +1754,7 @@ pub fn remove_disabled_plugin(plugin_id: &str) -> Result<(), Box<dyn std::error:
 pub async fn run_add_dismissed_plugin_cta(plugin_id: String) -> Result<(), String> {
     config_write_blocking(move || add_dismissed_plugin_cta(&plugin_id)).await
 }
-/// Add a plugin to `[plugin_cta].dismissed` in `~/.grok/config.toml`.
+/// Add a plugin to `[plugin_cta].dismissed` in `~/.atlas/config.toml`.
 /// Creates the `[plugin_cta]` section and `dismissed` array if they don't exist.
 /// Deduplicates: if already present, this is a no-op.
 pub fn add_dismissed_plugin_cta(plugin_id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -1792,7 +1792,7 @@ pub fn add_dismissed_plugin_cta_to_file(
         Ok(true)
     })
 }
-/// All plugin ids listed in `[plugin_cta].dismissed` in `~/.grok/config.toml`.
+/// All plugin ids listed in `[plugin_cta].dismissed` in `~/.atlas/config.toml`.
 ///
 /// Read once (e.g. on catalog load) and cached so the matched-debounce recompute doesn't parse the config from disk on the UI thread.
 pub fn dismissed_plugin_ctas() -> std::collections::HashSet<String> {
@@ -1823,8 +1823,8 @@ pub fn dismissed_plugin_ctas_in_file(
         })
         .unwrap_or_default()
 }
-/// Validate that a hook path is safe to add to `~/.grok/hooks-paths`.
-/// CWE-427: Only paths under `~/.grok/` are allowed to prevent arbitrary hook path injection that bypasses the project trust gate.
+/// Validate that a hook path is safe to add to `~/.atlas/hooks-paths`.
+/// CWE-427: Only paths under `~/.atlas/` are allowed to prevent arbitrary hook path injection that bypasses the project trust gate.
 /// Paths are canonicalized (resolving symlinks and `..`) before checking.
 pub(crate) fn validate_hooks_path(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let candidate = std::path::Path::new(path);
@@ -1854,7 +1854,7 @@ pub(crate) fn validate_hooks_path(path: &str) -> Result<(), Box<dyn std::error::
     let canonical_home = dunce::canonicalize(&grok_home).unwrap_or_else(|_| grok_home.clone());
     if !canonical.starts_with(&canonical_home) {
         return Err(format!(
-            "Hook path must be under ~/.grok/ ({}). Got: {}",
+            "Hook path must be under ~/.atlas/ ({}). Got: {}",
             canonical_home.display(),
             canonical.display()
         )
@@ -1888,7 +1888,7 @@ pub(crate) fn auto_enable_plugins(names: &[String]) -> Vec<String> {
     }
     warnings
 }
-/// Add a plugin to `[plugins].enabled` in `~/.grok/config.toml`.
+/// Add a plugin to `[plugins].enabled` in `~/.atlas/config.toml`.
 /// Used for project-scope plugins that are disabled by default.
 /// Deduplicates: if already present, this is a no-op.
 pub fn add_enabled_plugin(plugin_id: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -1896,15 +1896,15 @@ pub fn add_enabled_plugin(plugin_id: &str) -> Result<(), Box<dyn std::error::Err
         plugins_list_add(table, "enabled", plugin_id)
     })
 }
-/// Remove a plugin from `[plugins].enabled` in `~/.grok/config.toml`.
+/// Remove a plugin from `[plugins].enabled` in `~/.atlas/config.toml`.
 pub fn remove_enabled_plugin(plugin_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     update_config_toml_locked(&crate::util::grok_home::grok_home(), |table| {
         Ok(plugins_list_remove(table, "enabled", plugin_id))
     })
 }
-/// Add a hook path to `~/.grok/hooks-paths` (one path per line).
+/// Add a hook path to `~/.atlas/hooks-paths` (one path per line).
 /// If the path is already present (exact string match), this is a no-op.
-/// CWE-427: The path is validated to be under `~/.grok/` before writing.
+/// CWE-427: The path is validated to be under `~/.atlas/` before writing.
 pub(crate) fn add_hooks_path(path: &str) -> Result<(), Box<dyn std::error::Error>> {
     validate_hooks_path(path)?;
     add_hooks_path_to_file(
@@ -1932,7 +1932,7 @@ pub(crate) fn add_hooks_path_to_file(
     writeln!(file, "{}", path)?;
     Ok(())
 }
-/// The user-registered hook directories (`~/.grok/hooks-paths` lines) —
+/// The user-registered hook directories (`~/.atlas/hooks-paths` lines) —
 /// exactly what `remove_hooks_path` can remove (same exact-string match).
 pub(crate) fn registered_hook_paths() -> std::collections::HashSet<String> {
     let path = crate::util::grok_home::grok_home().join("hooks-paths");
@@ -1946,7 +1946,7 @@ pub(crate) fn registered_hook_paths() -> std::collections::HashSet<String> {
         Err(_) => std::collections::HashSet::new(),
     }
 }
-/// Remove a hook path from `~/.grok/hooks-paths`.
+/// Remove a hook path from `~/.atlas/hooks-paths`.
 /// Returns whether the path was present (exact string match, like `add_hooks_path`).
 /// On `false` nothing was removed and callers must not claim success.
 pub(crate) fn remove_hooks_path(path: &str) -> Result<bool, Box<dyn std::error::Error>> {

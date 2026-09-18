@@ -4,7 +4,7 @@
 //! That prefix contains `<user_info>`, `<git_status>`, an optional workspace overview, and optional rules / skills / MCP listings.
 //!
 //! `UserMessageTemplate` selects the rendering strategy:
-//! - `Default`: the legacy Grok Build prefix (built by the shell layer).
+//! - `Default`: the legacy Atlas Build prefix (built by the shell layer).
 //! - `Custom`: caller-supplied MiniJinja template string (same delimiters as the system prompt templates).
 //!
 //! The shell layer gathers session-scoped inputs (cwd, vcs status, rule files, skill registry, MCP servers).
@@ -139,7 +139,7 @@ pub fn normalize_git_status(status: &str) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UserMessageTemplate {
-    /// Legacy Grok Build prefix (`<user_info>` and optional `<git_status>`), built directly by the shell layer.
+    /// Legacy Atlas Build prefix (`<user_info>` and optional `<git_status>`), built directly by the shell layer.
     /// The renderer returns `None` and the caller uses its own legacy path.
     #[default]
     Default,
@@ -247,7 +247,7 @@ pub struct UserMessageContext {
     pub terminals_folder: Option<PathBuf>,
     /// Workspace-scoped rule files (cwd / repo root / optional workspace user dir).
     pub workspace_rules: Vec<RuleEntry>,
-    /// User-scoped rule files (~/.grok/, ~/.claude/).
+    /// User-scoped rule files (~/.atlas/, ~/.claude/).
     pub user_rules: Vec<RuleEntry>,
     /// Skill registry snapshot (already deduped).
     /// Rendered through the shared budget-tier renderer.

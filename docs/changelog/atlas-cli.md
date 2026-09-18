@@ -4,6 +4,20 @@
 
 ## 2026-09
 
+### 2026-09-18 — CLI 提示/帮助/升级文案 Grok 改为 Atlas
+
+- **状态**：已落地
+- **会话**：[CLI 展示文案](f4655f99-7132-406e-a676-0a06ba292453)
+- 用户可见异常、帮助、提示、升级信息改为 Atlas / `atlas`（含 `atlas update`、`atlas login`、doctor、inspect、MCP、插件）。家目录展示 `~/.atlas`。
+- 未改 `GROK_*`、`--grok-ws-url`、模型 id、`grok.com`、SuperGrok、crate / 配置键名。
+
+### 2026-09-18 — 内置用户指南 Grok 文案改为 Atlas
+
+- **状态**：已落地
+- **会话**：[Pager 文档品牌](f4655f99-7132-406e-a676-0a06ba292453)
+- `/docs` 抽出的 user-guide / tutorial：家目录与系统目录改为 `~/.atlas`、`.atlas/`、`/etc/atlas`；产品名与 CLI 示例改为 Atlas / `atlas`；章节 `27-atlas-clone.md`。
+- 未改 `GROK_*` 环境变量、`grok_com_config` 配置键、模型 id、`grok.com` / crate 路径。
+
 ### 2026-09-15 — 合入 origin/main
 
 - **状态**：已落地

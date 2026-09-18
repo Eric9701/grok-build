@@ -659,11 +659,11 @@ pub const MAX_USER_ERROR_BODY_CHARS: usize = 280;
 pub fn status_user_message(status: StatusCode) -> String {
     match status.as_u16() {
         code @ 502..=504 => {
-            format!("Grok is temporarily unavailable. Please try again in a moment. (HTTP {code}).")
+            format!("Atlas is temporarily unavailable. Please try again in a moment. (HTTP {code}).")
         }
         // Upstream capacity, not an edge failure; see [`SamplingError::is_overloaded`]
         code @ 529 => {
-            format!("Grok is temporarily overloaded. Please try again in a moment. (HTTP {code}).")
+            format!("Atlas is temporarily overloaded. Please try again in a moment. (HTTP {code}).")
         }
         // Cloudflare edge: origin unreachable or timed out (520-524), or an edge-side 1xxx failure (530)
         code @ 520..=524 | code @ 530 => {

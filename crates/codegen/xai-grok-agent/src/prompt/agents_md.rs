@@ -1,10 +1,10 @@
 //! AGENTS.md / Claude.md / rules directory discovery and loading.
 //!
-//! Searches from cwd to repo root, plus `~/.grok/`. Also discovers
+//! Searches from cwd to repo root, plus `~/.atlas/`. Also discovers
 //! `*.md` files in rules directories: vendor-prefixed `.grok/rules/`,
 //! `.claude/rules/`, and `.cursor/rules/` in project directories, a
 //! plain `rules/` directly under the vendor-qualified home-scope roots
-//! (`~/.grok/rules/`, `~/.claude/rules/`, `~/.cursor/rules/`), and any
+//! (`~/.atlas/rules/`, `~/.claude/rules/`, `~/.cursor/rules/`), and any
 //! user-configured `[paths] extra_rule_dirs` (scanned as home-scope rules).
 
 use std::path::{Path, PathBuf};
@@ -28,7 +28,7 @@ pub struct AgentConfigFile {
 }
 
 /// Where a discovery root (and every file found under it) comes from; decides folder-trust gating, whether the
-/// repo's gitignore applies, and how the prompt and `grok inspect` scope the file.
+/// repo's gitignore applies, and how the prompt and `atlas inspect` scope the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstructionSource {
@@ -165,7 +165,7 @@ fn add_discovered_candidate(
     });
 }
 
-/// Read Agents.md from ~/.grok/, git repo root, and session cwd.
+/// Read Agents.md from ~/.atlas/, git repo root, and session cwd.
 /// `compat` gates which vendor directories are scanned. `CompatConfig::default()` preserves all-vendors behavior.
 /// `project_trusted` omits project-scope files when false.
 /// Each `[paths] extra_rule_dirs` entry is scanned for direct `*.md` rules at home scope, after the built-in home

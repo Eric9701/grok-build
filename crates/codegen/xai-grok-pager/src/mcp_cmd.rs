@@ -631,7 +631,7 @@ async fn run_set_enabled(name: &str, enabled: bool) -> Result<()> {
         if !available.is_empty() {
             eprintln!("Available servers: {}", available.join(", "));
         } else {
-            eprintln!("No MCP servers configured. Run `grok mcp add --help` to get started.");
+            eprintln!("No MCP servers configured. Run `atlas mcp add --help` to get started.");
         }
         std::process::exit(1);
     }
@@ -1316,7 +1316,7 @@ mod tests {
 
     #[test]
     fn grok_com_known_only_with_toml_definition() {
-        // Unique name: `grok_home()` is process-wide OnceLock, so GROK_HOME. `grok_com_*` in the real ~/.grok disabled
+        // Unique name: `grok_home()` is process-wide OnceLock, so GROK_HOME. `grok_com_*` in the real ~/.atlas disabled
         // list would fail an orphan assertion on a well-known name.
         let name = format!("grok_com_orphan_{}", uuid::Uuid::new_v4().as_simple());
 

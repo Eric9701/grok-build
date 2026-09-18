@@ -1,4 +1,4 @@
-//! Headless single-turn mode (`grok -p "prompt"`).
+//! Headless single-turn mode (`atlas -p "prompt"`).
 //!
 //! Runs the agent in-process via `spawn_grok_shell` and drives the ACP lifecycle (init, auth, session, prompt).
 //! Streams to stdout and exits via `CancellationToken`.
@@ -1460,7 +1460,7 @@ pub async fn run_single_turn(
     }
 
     if track_active {
-        // Non-blocking flock so a slow/network ~/.grok can't hang exit.
+        // Non-blocking flock so a slow/network ~/.atlas can't hang exit.
         let _ = xai_grok_active_sessions::try_unregister(&session_id);
     }
     let outcome: Result<()> = match prompt_result {

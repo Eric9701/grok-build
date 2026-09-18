@@ -29,7 +29,7 @@ atlas models refresh
 ### CLI Flag
 
 ```bash
-atlas -p "Hello" -m atlas-build
+atlas -p "Hello" -m grok-build
 ```
 
 ### Slash Command
@@ -37,13 +37,13 @@ atlas -p "Hello" -m atlas-build
 In the TUI, switch models during a session:
 
 ```
-/model atlas-build
+/model grok-build
 ```
 
 Or use the alias:
 
 ```
-/m atlas-build
+/m grok-build
 ```
 
 ### Model Picker (Ctrl+M)
@@ -196,11 +196,11 @@ You can override specific fields of built-in models without redefining everythin
 
 ```toml
 # Override only the API key for a default model
-[model.atlas-build]
+[model.grok-build]
 api_key = "my-api-key"
 
 # Override temperature and add a custom API key
-[model.atlas-build]
+[model.grok-build]
 temperature = 0.5
 api_key = "sk-custom"
 ```
@@ -258,7 +258,7 @@ api_backend = "responses"
 env_key = "OPENAI_API_KEY"
 ```
 
-On the Responses API, Grok asks for a `concise` reasoning summary by default; that is what the reasoning text shown in the UI comes from. `reasoning_summary` changes the request: `detailed` or `auto` for a fuller summary, or `none` to omit the field for gateways that reject it.
+On the Responses API, Atlas asks for a `concise` reasoning summary by default; that is what the reasoning text shown in the UI comes from. `reasoning_summary` changes the request: `detailed` or `auto` for a fuller summary, or `none` to omit the field for gateways that reject it.
 
 ### AWS Bedrock (Mantle)
 
@@ -343,7 +343,7 @@ atlas
 models_base_url = "https://api.acme.com/v1"
 
 # Override only the API key for a specific model
-[model.atlas-build]
+[model.grok-build]
 api_key = "my-api-key"
 ```
 
@@ -423,7 +423,7 @@ auth_token_ttl = 3600
 default = "company-atlas"
 
 [model.company-atlas]
-model = "atlas-build"
+model = "grok-build"
 base_url = "https://atlas-proxy.acme.com/"
 name = "Atlas Build Latest (Proxy)"
 context_window = 128000

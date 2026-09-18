@@ -152,7 +152,7 @@ fn default_btw_attempts() -> u32 {
 
 // Local feedback persistence types
 
-/// A feedback entry persisted to `~/.grok/sessions/.../feedback.jsonl`.
+/// A feedback entry persisted to `~/.atlas/sessions/.../feedback.jsonl`.
 ///
 /// Uses a tagged enum so different feedback types are self-describing in the JSONL file (currently only `UserFeedback`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -385,7 +385,7 @@ fn session_exists_for_cwd_in_root(session_id: &str, cwd: &str, sessions_root: &P
 
 /// Find the local child session id that was previously restored from `remote_session_id` in the given `cwd`.
 /// When a remote session is restored, a new local child is created with `summary.parent_session_id == remote_session_id`.
-/// On a second `grok -r <remote_id>` in the same cwd, this function returns the already-restored child so no duplicate restore is performed.
+/// On a second `atlas -r <remote_id>` in the same cwd, this function returns the already-restored child so no duplicate restore is performed.
 pub fn find_local_child_for_remote(remote_session_id: &str, cwd: &str) -> Option<String> {
     let sessions_root = crate::util::grok_home::grok_home().join("sessions");
     find_local_child_for_remote_in_root(remote_session_id, cwd, &sessions_root)
@@ -478,7 +478,7 @@ fn find_local_child_for_remote_in_root(
     }
 
     // Collect all matching children
-    // Multiple can exist from older versions that restored a duplicate on each `grok -r <remote_id>`
+    // Multiple can exist from older versions that restored a duplicate on each `atlas -r <remote_id>`
     // Tuple: (updated_at, dir_mtime_nanos, session_id), all sorted descending
     let mut candidates: Vec<(String, u128, String)> = Vec::new();
 
@@ -521,7 +521,7 @@ fn find_local_child_for_remote_in_root(
     candidates.into_iter().next().map(|(_, _, id)| id)
 }
 
-/// Searches across ALL cwd directories under `~/.grok/sessions/`.
+/// Searches across ALL cwd directories under `~/.atlas/sessions/`.
 /// Use `session_exists_for_cwd` instead when the target cwd is known to avoid false-positive matches.
 /// Unlike [`resolve_local_session`] which only checks a single CWD, this scans every encoded-CWD subdirectory.
 pub fn resolve_local_session_any_cwd(session_id: &str) -> Option<String> {
@@ -1254,7 +1254,7 @@ impl Summary {
         self.num_messages == 0 && self.display_title().trim().is_empty()
     }
 
-    /// Whether this is a one-shot `grok -p` session.
+    /// Whether this is a one-shot `atlas -p` session.
     /// Deliberately not part of [`Self::is_hidden`]: headless sessions stay listable (the picker's Headless page, the search index).
     /// Unstamped summaries (`session_kind` absent) are interactive, including pre-stamp one-shots and remote twins the registry has not classified.
     pub fn is_headless(&self) -> bool {
@@ -2465,7 +2465,7 @@ impl SessionPersistence {
     }
 }
 
-/// Collect MCP server stderr logs from `~/.grok/logs/mcp/` for inclusion in the session archive.
+/// Collect MCP server stderr logs from `~/.atlas/logs/mcp/` for inclusion in the session archive.
 fn collect_mcp_stderr_logs(files: &mut Vec<CopiedSessionFile>) {
     let mcp_log_dir = xai_grok_config::grok_home().join("logs").join("mcp");
     let Ok(entries) = std::fs::read_dir(&mcp_log_dir) else {
@@ -2683,7 +2683,7 @@ pub(crate) fn io_error_to_acp(e: &io::Error) -> acp::Error {
 mod io_error_to_acp_tests;
 
 /// Best-effort worktree liveness touch: stamp `last_accessed_at` on the worktree containing this session's cwd.
-/// `grok worktree gc` then expires by last use, not creation time.
+/// `atlas worktree gc` then expires by last use, not creation time.
 /// Lives here (not in a `StorageAdapter`) so every session create/load path shares it regardless of backend.
 fn spawn_worktree_touch(info: &Info) -> tokio::task::JoinHandle<()> {
     let cwd = info.cwd.clone();

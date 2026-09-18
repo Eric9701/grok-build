@@ -22,7 +22,7 @@ use xai_grok_workspace::permission::types::{PatternMode, PermissionRule, RuleAct
 /// Scope for an import operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportScope {
-    /// User-level: writes to `~/.grok/config.toml`.
+    /// User-level: writes to `~/.atlas/config.toml`.
     Global,
     /// Project-level: writes to `<repo>/.grok/config.toml`.
     Project,
@@ -63,7 +63,7 @@ pub enum ImportableItem {
 /// A plan describing what would be imported and where.
 #[derive(Debug, Clone, Default)]
 pub struct ImportPlan {
-    /// Items to write to `~/.grok/config.toml`.
+    /// Items to write to `~/.atlas/config.toml`.
     pub global_items: Vec<ImportableItem>,
     /// Items to write to `<repo>/.grok/config.toml`.
     pub project_items: Vec<ImportableItem>,
@@ -89,7 +89,7 @@ impl ImportPlan {
         let mut out = String::from("Found Claude settings to import:\n");
 
         if !self.global_items.is_empty() {
-            out.push_str("\nGlobal (~/.grok/config.toml):\n");
+            out.push_str("\nGlobal (~/.atlas/config.toml):\n");
             out.push_str(&format_item_summary(&self.global_items));
         }
 
@@ -464,7 +464,7 @@ pub fn find_project_root(cwd: &Path) -> PathBuf {
         .unwrap_or_else(|| cwd.to_path_buf())
 }
 
-// Import Marker (Read Side) The marker `[claude_compat] imported = true` in `~/.grok/config.toml` is the signal that runtime fallback paths should stop reading `.claude/`.
+// Import Marker (Read Side) The marker `[claude_compat] imported = true` in `~/.atlas/config.toml` is the signal that runtime fallback paths should stop reading `.claude/`.
 // The reader lives here so the hook, path, and permission gates all consult the same cached marker The writer is `mark_claude_imported` below
 
 /// Cached result of [`is_claude_import_marked`]; see its doc for the caching rationale and trade-offs.
@@ -472,7 +472,7 @@ pub fn find_project_root(cwd: &Path) -> PathBuf {
 /// The fast path is a read lock and a cached `bool`, far below the cost of the uncached `read_to_string` and TOML parse.
 static MARKER_CACHE: std::sync::RwLock<Option<bool>> = std::sync::RwLock::new(None);
 
-/// Whether the current user has already imported Claude settings. Reads `[claude_compat] imported = true` from `~/.grok/config.toml` once per process and caches the result.
+/// Whether the current user has already imported Claude settings. Reads `[claude_compat] imported = true` from `~/.atlas/config.toml` once per process and caches the result.
 /// When the marker is set, runtime fallbacks that read `.claude/` should be skipped; the user has migrated to native config. Resilient: returns `false` on missing file, missing section, parse error, or any other failure.
 /// Trade-off: a user who manually flips the marker mid-session must restart to see the change, acceptable because reverting after import is rare. That variant logs one line so users can see the cutoff fired.
 pub(crate) fn is_claude_import_marked() -> bool {
@@ -531,7 +531,7 @@ pub(crate) fn is_claude_import_marked_at(config_path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Write `[claude_compat] imported = true` to `~/.grok/config.toml`.
+/// Write `[claude_compat] imported = true` to `~/.atlas/config.toml`.
 /// Uses the same atomic write pattern as `save_mcp_server_config` (write to `.tmp`, then rename).
 /// Creates the file and parent directory if missing. Existing content in the file is preserved.
 fn write_import_marker(config_path: &Path) -> anyhow::Result<()> {
@@ -607,7 +607,7 @@ pub fn apply_import(plan: &ImportPlan, cwd: &Path) -> anyhow::Result<ImportResul
                 .push(global_path.to_string_lossy().to_string());
         }
 
-        // Hooks are written separately to ~/.grok/hooks/imported-from-claude.json.
+        // Hooks are written separately to ~/.atlas/hooks/imported-from-claude.json.
         let hooks_dir = crate::util::grok_home::grok_home().join("hooks");
         let hook_count = apply_hooks_to_dir(&hooks_dir, &plan.global_items)?;
         result.global_count += hook_count;
@@ -1716,7 +1716,7 @@ mod tests {
         .unwrap();
 
         // Identify the probe by its unique raw command so real global hooks on the
-        // test host (from the non-injectable ~/.claude, ~/.grok) don't interfere.
+        // test host (from the non-injectable ~/.claude, ~/.atlas) don't interfere.
         let has_probe = |reg: &xai_grok_hooks::discovery::HookRegistry| {
             reg.all_hooks().iter().any(|h| {
                 h.command_raw
@@ -2058,9 +2058,9 @@ extra_rule_dirs = ["/c/rules"]
         )
         .unwrap();
 
-        // Note: `resolve_permissions_with_provenance` ALSO reads requirements, managed settings, and the developer's real `~/.grok/config.toml`.
+        // Note: `resolve_permissions_with_provenance` ALSO reads requirements, managed settings, and the developer's real `~/.atlas/config.toml`.
         // We can't isolate `grok_home()` because it's `OnceLock`-cached.
-        // Instead, assert on rule *provenance*: no rule should originate from our tempdir's `.claude/settings.json`. The dev's real ~/.grok config rules (if any) are out of scope for this test.
+        // Instead, assert on rule *provenance*: no rule should originate from our tempdir's `.claude/settings.json`. The dev's real ~/.atlas config rules (if any) are out of scope for this test.
         let resolved =
             xai_grok_workspace::permission::resolution::resolve_permissions_with_provenance(
                 dir.path(),
@@ -2105,7 +2105,7 @@ extra_rule_dirs = ["/c/rules"]
     #[serial]
     fn gate_marker_cache_unset_means_uses_disk() {
         // Sanity test: with the cache reset, `is_claude_import_marked()` must (a) not panic and (b) populate the cache for subsequent reads
-        // We intentionally **do not** assert a specific cached value: the dev's real `~/.grok/config.toml` may legitimately have the marker set during local testing, and we can't override `grok_home()`
+        // We intentionally **do not** assert a specific cached value: the dev's real `~/.atlas/config.toml` may legitimately have the marker set during local testing, and we can't override `grok_home()`
         // It's `OnceLock`-cached, so any prior test that calls it locks the value in for the entire process The `MarkerGuard` resets the cache after this test, so subsequent gate tests start clean
         let _g = MarkerGuard;
         reset_marker_cache_for_test();

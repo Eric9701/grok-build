@@ -97,7 +97,7 @@ pub fn worktree_type() -> WorktreeType {
 /// Distinct from [`WorktreeType`] (`linked` | `standalone` | `git`).
 pub const ENV_WORKTREE_TYPE: &str = "GROK_WORKTREE_TYPE";
 
-/// Convenience that enables both `grok clone` and session / `-w` Grove when specific knobs are unset.
+/// Convenience that enables both `atlas clone` and session / `-w` Grove when specific knobs are unset.
 pub const ENV_GROVE: &str = "GROK_GROVE";
 
 fn grove_from_str(s: &str) -> Option<bool> {

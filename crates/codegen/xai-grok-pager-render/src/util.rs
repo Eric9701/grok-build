@@ -7,7 +7,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub use xai_grok_config::grok_home;
 pub use xai_grok_tools::util::format_bytes;
 
-/// A closed stdout (`grok du | head`) is a clean stop, not a failure.
+/// A closed stdout (`atlas du | head`) is a clean stop, not a failure.
 pub fn ignore_broken_pipe(result: std::io::Result<()>) -> std::io::Result<()> {
     match result {
         Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
@@ -20,8 +20,7 @@ pub fn pager_toml_path() -> PathBuf {
     grok_home().join("pager.toml")
 }
 
-/// User-facing label for the user Atlas directory (``~/.atlas``, legacy
-/// ``~/.grok``, or ``$GROK_HOME``).
+/// User-facing label for the Atlas home directory (``~/.atlas``, or ``$GROK_HOME``).
 ///
 /// Derived from resolved [`grok_home()`] vs `xai_grok_config::default_grok_home()`,
 /// not from whether `GROK_HOME` is set in the environment.
@@ -32,11 +31,7 @@ pub fn display_grok_home_prefix() -> String {
 pub fn display_grok_home_prefix_for(home: &Path) -> String {
     let default = xai_grok_config::default_grok_home();
     if home == default || home == dunce::canonicalize(&default).unwrap_or(default) {
-        if home.file_name().and_then(|n| n.to_str()) == Some(".grok") {
-            "~/.grok".to_string()
-        } else {
-            "~/.atlas".to_string()
-        }
+        "~/.atlas".to_string()
     } else {
         "$GROK_HOME".to_string()
     }
@@ -455,7 +450,7 @@ mod tests {
         if home.as_os_str().is_empty() {
             return;
         }
-        // Stay outside grok_home so this hits the $HOME branch, not ~/.grok.
+        // Stay outside grok_home so this hits the $HOME branch, not ~/.atlas.
         let full = home.join("not-grok-home").join("file.txt");
         let full_str = full.to_string_lossy();
         let abbreviated = abbreviate_path(&full_str);

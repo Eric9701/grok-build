@@ -1541,7 +1541,7 @@ fn trust_folder_quits_when_store_unreadable() {
         "unread store must record a post-exit error: {msg}"
     );
     assert!(
-        msg.contains("Fix or delete ~/.grok/trusted_folders.toml"),
+        msg.contains("Fix or delete ~/.atlas/trusted_folders.toml"),
         "unread store must name the next step: {msg}"
     );
 }

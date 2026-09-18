@@ -1364,7 +1364,7 @@ impl SessionActor {
 }
 const PROMPT_CONTEXT_FILENAME: &str = "prompt_context.json";
 /// Persist the structured prompt context to `{session_dir}/prompt_context.json`.
-/// The saved JSON enables deterministic re-rendering and `grok prompt --json` inspection.
+/// The saved JSON enables deterministic re-rendering and `atlas prompt --json` inspection.
 fn save_prompt_context(session_info: &SessionInfo, prompt_context: &xai_grok_agent::PromptContext) {
     let dir = match crate::session::persistence::ensure_owner_only_session_dir(session_info) {
         Ok(dir) => dir,

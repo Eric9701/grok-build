@@ -842,9 +842,9 @@ fn default_prompt_mode() -> PromptMode {
 pub enum AgentScope {
     /// .grok/agents/ (project-level, highest priority)
     Project,
-    /// ~/.grok/agents/ (user-level)
+    /// ~/.atlas/agents/ (user-level)
     User,
-    /// ~/.grok/bundled/agents/ (lowest-priority bundled cache)
+    /// ~/.atlas/bundled/agents/ (lowest-priority bundled cache)
     Bundled,
     /// Built-in agent (e.g., default_grok_build(), browser_use()).
     #[default]
@@ -1059,7 +1059,7 @@ where
 #[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum MemoryScope {
-    /// `~/.grok/agent-memory/<name>/`
+    /// `~/.atlas/agent-memory/<name>/`
     User,
     /// `<project>/.grok/agent-memory/<name>/`
     Project,
@@ -1452,7 +1452,7 @@ impl AgentDefinition {
             tool_config: default_grok_build_toolset(),
             ..Self::base(
                 BuiltinAgentName::GrokBuild,
-                "Grok Build agent for software engineering tasks.",
+                "Atlas Build agent for software engineering tasks.",
             )
         }
     }
@@ -1463,7 +1463,7 @@ impl AgentDefinition {
             agents_md: false,
             ..Self::base(
                 BuiltinAgentName::GrokBuildConcise,
-                "Grok Build agent with concise output format.",
+                "Atlas Build agent with concise output format.",
             )
         }
     }
@@ -1472,7 +1472,7 @@ impl AgentDefinition {
             tool_config: grok_build_plan_toolset(),
             ..Self::base(
                 BuiltinAgentName::GrokBuildPlan,
-                "Grok Build agent with plan mode support.",
+                "Atlas Build agent with plan mode support.",
             )
         }
     }
@@ -1481,7 +1481,7 @@ impl AgentDefinition {
             tool_config: grok_build_plan_no_subagents_toolset(),
             ..Self::base(
                 BuiltinAgentName::GrokBuildPlanNoSubagents,
-                "Grok Build agent with plan mode (no subagents).",
+                "Atlas Build agent with plan mode (no subagents).",
             )
         }
     }
@@ -1490,7 +1490,7 @@ impl AgentDefinition {
             tool_config: grok_build_ask_user_toolset(),
             ..Self::base(
                 BuiltinAgentName::GrokBuildAskUser,
-                "Grok Build agent with ask-user-question tool.",
+                "Atlas Build agent with ask-user-question tool.",
             )
         }
     }

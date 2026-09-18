@@ -29,7 +29,7 @@ pub(crate) fn base_template() -> Zeroizing<String> {
     decrypt(BASE_PROMPT_ENC, PROMPT_SEEDS[0])
 }
 
-/// The base prompt template source, exposed for `grok prompt --section template`.
+/// The base prompt template source, exposed for `atlas prompt --section template`.
 pub fn base_template_source() -> Zeroizing<String> {
     base_template()
 }
@@ -38,7 +38,7 @@ pub(crate) fn apply_patch_template() -> Zeroizing<String> {
     decrypt(CODEX_PROMPT_ENC, PROMPT_SEEDS[1])
 }
 
-/// Apply-patch prompt template source, exposed for `grok prompt --section apply-patch-template`.
+/// Apply-patch prompt template source, exposed for `atlas prompt --section apply-patch-template`.
 pub fn apply_patch_template_source() -> Zeroizing<String> {
     apply_patch_template()
 }
@@ -730,15 +730,15 @@ mod tests {
         );
         assert!(
             prompt.contains("~/.atlas/docs/user-guide/"),
-            "interactive prompt must point at Atlas user-guide, not ~/.grok"
+            "interactive prompt must point at Atlas user-guide, not ~/.atlas"
         );
         assert!(
             prompt.contains(".atlas/config.toml"),
             "interactive prompt must name project-local .atlas/config.toml"
         );
         assert!(
-            !prompt.contains("~/.grok/docs/user-guide/"),
-            "interactive prompt must not send the agent to ~/.grok/docs"
+            !prompt.contains("~/.atlas/docs/user-guide/"),
+            "interactive prompt must not send the agent to ~/.atlas/docs"
         );
         assert!(
             !prompt.contains(".grok/"),

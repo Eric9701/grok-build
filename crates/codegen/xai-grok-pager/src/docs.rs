@@ -178,10 +178,10 @@ pub static USER_GUIDE: &[Doc] = &[
     // Direct include_str! so gazelle can put this file in compile_data.
     // `guide!` hides the path inside concat!($file) and gazelle cannot see it.
     Doc {
-        filename: "27-grok-clone.md",
-        title: "grok clone",
+        filename: "27-atlas-clone.md",
+        title: "atlas clone",
         description: "Depth-1 Grove clone, --full-history, and safe deepen/switch commands",
-        content: include_str!("../docs/user-guide/27-grok-clone.md"),
+        content: include_str!("../docs/user-guide/27-atlas-clone.md"),
     },
 ];
 
@@ -323,6 +323,44 @@ mod tests {
         assert!(
             doc.content.contains("--scope project"),
             "MCP guide must document project scope"
+        );
+    }
+
+    #[test]
+    fn user_guide_uses_atlas_home_not_legacy_grok_dirs() {
+        for doc in USER_GUIDE.iter().chain(REFERENCE_DOCS.iter()) {
+            assert!(
+                !doc.content.contains("~/.atlas"),
+                "{} still names ~/.atlas",
+                doc.filename
+            );
+            assert!(
+                !doc.content.contains(".grok/"),
+                "{} still names .grok/",
+                doc.filename
+            );
+            assert!(
+                !doc.content.contains("/etc/grok"),
+                "{} still names /etc/grok",
+                doc.filename
+            );
+        }
+    }
+
+    #[test]
+    fn clone_guide_is_named_atlas_clone() {
+        let doc = USER_GUIDE
+            .iter()
+            .find(|d| d.filename == "27-atlas-clone.md")
+            .expect("atlas clone guide");
+        assert_eq!(doc.title, "atlas clone");
+        assert!(
+            doc.content.contains("`atlas clone`"),
+            "clone guide must document the atlas clone command"
+        );
+        assert!(
+            !doc.content.contains("`grok clone`"),
+            "clone guide must not still say grok clone"
         );
     }
 

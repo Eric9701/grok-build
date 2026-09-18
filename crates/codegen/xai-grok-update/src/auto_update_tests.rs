@@ -338,7 +338,7 @@ async fn test_sweep_stale_tmp_links_removes_stale_keeps_fresh_and_active() {
     std::os::unix::fs::symlink(&target, &leftover_old).unwrap();
     std::os::unix::fs::symlink(&target, &leftover_new).unwrap();
 
-    // max_age = ZERO: every leftover is stale and removed; the active `grok` link (no `.tmp-link` suffix) is untouched
+    // max_age = ZERO: every leftover is stale and removed; the active `atlas` link (no `.tmp-link` suffix) is untouched
     sweep_stale_tmp_links(&link, Duration::ZERO).await;
     assert!(!leftover_old.exists() && !leftover_new.exists());
     assert!(link.is_symlink(), "active link must be preserved");
@@ -442,7 +442,7 @@ fn test_relative_symlink_target_cross_tree_stays_absolute() {
 #[cfg(unix)]
 #[tokio::test]
 async fn test_relative_symlink_survives_directory_move() {
-    // Simulates Docker bind-mount: create ~/.grok/ layout at path A,
+    // Simulates Docker bind-mount: create ~/.atlas/ layout at path A,
     // then move it to path B and verify the symlink still resolves.
     let dir = tempfile::tempdir().unwrap();
 
@@ -1630,7 +1630,7 @@ fn test_user_facing_constants_are_stable() {
     );
     assert_eq!(
         MSG_RUN_UPDATE_MANUAL,
-        "Run `grok update` to get the latest version."
+        "Run `atlas update` to get the latest version."
     );
 }
 

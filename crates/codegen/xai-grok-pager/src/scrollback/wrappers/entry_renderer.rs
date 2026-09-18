@@ -1568,7 +1568,7 @@ mod tests {
         assert_eq!(h_on, h_off + 1, "the affordance row adds exactly one row");
 
         // The off-screen estimate accounts for the affordance row (one per diagram) and so never under-reserves vs the realized height
-        // That is the invariant a bulk load (`grok -r`) relies on to avoid clipping
+        // That is the invariant a bulk load (`atlas -r`) relies on to avoid clipping
         let est_on = r.estimate_height(80);
         assert_eq!(
             est_on,

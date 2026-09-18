@@ -142,7 +142,7 @@ pub(crate) fn build_screen_mode_relaunch_args(
             continue;
         }
 
-        // Bare positional prompt (e.g. `grok "fix the bug"`), which must not re-fire on resume.
+        // Bare positional prompt (e.g. `atlas "fix the bug"`), which must not re-fire on resume.
         // Clap positionals never start with `-`
         // Values for earlier flags were already consumed above, so any remaining bare word here is the prompt
         continue;
@@ -266,7 +266,7 @@ pub(crate) fn parse_screen_mode(value: Option<&str>) -> Option<super::ScreenMode
 }
 
 /// Consume the one-shot screen-mode override env (see [`GROK_SCREEN_MODE_ENV`]).
-/// Every spawned child (tool shells, workers, nested `grok` invocations) would otherwise inherit a forced screen mode the user never asked for.
+/// Every spawned child (tool shells, workers, nested `atlas` invocations) would otherwise inherit a forced screen mode the user never asked for.
 /// That way `/fullscreen` reopens in alt-screen fullscreen (not inline) even under Zellij, `alt_screen = never`, or a preserved `--no-alt-screen`.
 pub(crate) fn take_screen_mode_env_override() -> Option<super::ScreenMode> {
     let raw = std::env::var_os(GROK_SCREEN_MODE_ENV);
@@ -537,7 +537,7 @@ mod tests {
 
     #[test]
     fn double_dash_and_following_positionals_dropped() {
-        // `grok --no-leader -- "fix the bug"`: everything after `--` is the prompt
+        // `atlas --no-leader -- "fix the bug"`: everything after `--` is the prompt
         // The separator itself must go too, or the appended `--resume <id>` would be parsed as positional prompt words
         let out = build_screen_mode_relaunch_args(
             args(&["grok", "--no-leader", "--", "fix the bug"]),

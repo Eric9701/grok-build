@@ -253,7 +253,7 @@ fn limited_color_output_is_stable() {
             "\n",
             "  ! terminal.limited-color  This terminal reports 256 color, so truecolor themes are unavailable\n",
             "      Run: `export COLORTERM=truecolor`\n",
-            "      Note: Add this export to your shell startup file, such as `~/.zshrc` or `~/.bashrc`, then restart Grok.\n",
+            "      Note: Add this export to your shell startup file, such as `~/.zshrc` or `~/.bashrc`, then restart Atlas.\n",
         )
     );
 }

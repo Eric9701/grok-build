@@ -1,4 +1,4 @@
-//! Persist cloud-managed model catalog entries into `~/.grok|atlas/config.toml`.
+//! Persist cloud-managed model catalog entries into `~/.atlas|atlas/config.toml`.
 
 use crate::agent::config::ModelEntryConfig;
 use crate::sampling::ApiBackend;

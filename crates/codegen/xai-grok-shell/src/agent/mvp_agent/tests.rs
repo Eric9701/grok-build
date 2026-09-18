@@ -2944,7 +2944,7 @@ async fn ensure_plugin_registry_lazily_populates_snapshot() {
 }
 /// Regression: the shared snapshot was built from the boot-time in-memory `[plugins]` config, which
 /// `config.toml` edits never refresh. A plugin toggled after the agent started (marketplace install,
-/// `grok plugin enable|disable`, a client editing the file) kept its boot-time `enabled` for
+/// `atlas plugin enable|disable`, a client editing the file) kept its boot-time `enabled` for
 /// session-less `x.ai/plugins/list` / `x.ai/skills/list` callers until restart, while per-session
 /// registries, which read disk, were right. The shared rebuild must read disk too.
 ///
