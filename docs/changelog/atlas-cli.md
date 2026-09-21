@@ -4,6 +4,14 @@
 
 ## 2026-09
 
+### 2026-09-22 — 合入 origin/main
+
+- **状态**：已落地
+- **会话**：[合入 origin/main](f4655f99-7132-406e-a676-0a06ba292453)
+- 合入上游 `a28ee2b2`、`4247f661`（shell 1.0.33–1.0.38）。overlay 仍用 `~/.atlas`、`atlas`、`atlas login` / `atlas inspect` / `atlas clone`。
+- 接上游：memory 组织与 legacy 笔记 carryover、`/flush` `/dream` 回报、MCP 真实握手状态、config.toml 符号链接保存、skill `read_file` 预算、folder-trust 写失败不退出、trace 无凭证改为本地导出。
+- 未改 `GROK_*`、`--grok-ws-url`、`grok_com_config`。
+
 ### 2026-09-21 — 主会话 Task Report `tokensUsed` 一直为 0
 
 - **状态**：已落地

@@ -45,13 +45,16 @@ To block specific files (e.g. `.env` or credential paths) on top of a profile, d
 
 **strict** -- The most restrictive profile, for reviewing untrusted code. The agent can read the current working directory, essential system paths, and `~/.atlas`. Writes are limited to CWD, `~/.atlas/sessions`, and temp directories — not the whole `~/.atlas` tree. Child-process network access is blocked on Linux (no-op on macOS).
 
-### Direct global hook write protection
+### Direct global write protection
 
-Under `workspace`, `read-only`, and `strict` (and custom profiles that extend those bases), the kernel **write-denies** the Atlas-owned direct disk paths used as user-global hook sources (they stay readable when granted). Built-in `strict` can read `~/.atlas` (hooks stay readable); writes are CWD + `~/.atlas/sessions` + temp, not the whole tree. Write-deny still applies where the profile grants write:
+Under `workspace`, `read-only`, and `strict` (and custom profiles that extend those bases), the kernel **write-denies** the Atlas-owned direct disk paths used as user-global hook sources, plus its configuration and trust files (they stay readable when granted). Built-in `strict` can read `~/.atlas` (they stay readable); writes are CWD + `~/.atlas/sessions` + temp, not the whole tree. Write-deny still applies where the profile grants write:
 
 - `~/.atlas/hooks/` (hook directory)
 - `~/.atlas/hooks-paths` (registry file; not loaded as hook JSON — only its absolute targets are)
 - Absolute targets listed in `hooks-paths` (relative lines are ignored; missing targets refuse sandbox start)
+- `~/.atlas/config.toml`, `~/.atlas/trusted_folders.toml`, `~/.atlas/managed_config.toml`, `~/.atlas/requirements.toml`, `~/.atlas/sandbox.toml` (settings, folder trust, managed policy, requirements, and sandbox profiles)
+
+Because these files are read-only under these profiles, a change that would be saved to them applies to the current session only. Accepting a folder-trust prompt, switching the model with `/model`, and changing the permission mode (`/auto` or Shift+Tab) take effect for the session but are not saved. To save folder trust, run `atlas --trust` in the directory before starting the sandbox. To change the default model or permission mode, edit `~/.atlas/config.toml` directly.
 
 On first launch under these profiles, Atlas creates a real empty `hooks/` directory and empty `hooks-paths` file when they are missing (never symlinks or wrong types). Claude/Cursor global settings are **not** covered by this write-deny; discovery of those vendors remains separately gated by compatibility settings.
 
