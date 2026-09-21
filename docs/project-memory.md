@@ -161,6 +161,7 @@ Relay Demo 运维：
 
 - CLI：`cargo build -p xai-grok-pager-bin --release`，产物 `xai-grok-pager`，安装改名为 `atlas`。版本靠 `GROK_VERSION`。
 - Windows Rust：`PROTOC=bin/protoc-win64/bin/protoc.exe`。`ring` 必须在 `[dependencies]`。
+- Windows 后台升级报 `0xc00000fd` 是栈溢出（不是权限）。新 CLI 已把 PE/Tokio 栈加到 8MiB。旧 `atlas.exe` 不能靠自己升上来，须手动替换 `~/.atlas/bin/atlas.exe`。
 - Linux **官方 x86_64 包用 musl**。Ubuntu 上默认 gnu 链出来的二进制在 CentOS 7（glibc 2.17）会 `GLIBC_2.xx not found`。musl 下 `sqlite-vec` 缺 `u_int8_t`：用仓库 `.cargo/config.toml` 的 `CFLAGS_*`。
 - vendor 必须完整（缺 `vendor/nucleo` 会编不过）。Release 拉 ripgrep 需要 GitHub 或 `GROK_TOOLS_BUNDLE_RG_PATH`。
 - atlas-server：`CGO_ENABLED=0`；Windows `go build -o atlas-server.exe ./cmd/server`；Linux `scripts/build-linux.sh`。Go 1.25+。

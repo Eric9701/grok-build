@@ -1743,6 +1743,12 @@ fn configure_process_env(mut args: PagerArgs) -> Result<PagerArgs> {
     Ok(args)
 }
 const RUNTIME_SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+/// Worker / blocking-thread stack. Windows PE default is 1 MiB; `atlas update`
+/// rustls + the pager future overflow that (`0xC00000FD`). Same size as the
+/// agent-worker thread in `xai_grok_pager::acp::spawn`.
+const RUNTIME_THREAD_STACK_SIZE: usize = 8 * 1024 * 1024;
+/// Windows `STATUS_STACK_OVERFLOW`. `ExitStatus::code()` is the NTSTATUS as i32.
+const WINDOWS_STATUS_STACK_OVERFLOW: i32 = 0xC00000FD_u32 as i32;
 const GROK_WORKER_THREADS_ENV: &str = "GROK_WORKER_THREADS";
 /// tokio defaults to one worker per logical CPU.
 /// On a host with hundreds of CPUs that can exhaust a cgroup thread budget at startup and abort under `panic = "abort"`.
@@ -2065,13 +2071,16 @@ fn main() {
     }
     let workers = cli_worker_threads();
     let mut builder = tokio::runtime::Builder::new_multi_thread();
-    builder.worker_threads(workers.get()).enable_all();
+    builder
+        .worker_threads(workers.get())
+        .thread_stack_size(RUNTIME_THREAD_STACK_SIZE)
+        .enable_all();
     let runtime =
         xai_tty_utils::runtime::build_with_blocking_pool(&mut builder).unwrap_or_else(|e| {
             eprintln!("atlas: failed to start tokio runtime: {e}");
             shutdown_and_flush_telemetry(1);
         });
-    let result = run_and_shutdown(runtime, async_main(args), RUNTIME_SHUTDOWN_GRACE);
+    let result = run_and_shutdown(runtime, Box::pin(async_main(args)), RUNTIME_SHUTDOWN_GRACE);
     xai_grok_telemetry::debug_log::flush();
     if let Err(e) = result {
         xai_tty_utils::restore_native_stderr();
@@ -2515,6 +2524,13 @@ async fn finish_update_on_exit(
             eprintln!("Waiting for the update download to finish...");
             match handle.await {
                 Ok(Ok(status)) if status.success() => true,
+                Ok(Ok(status)) if is_windows_stack_overflow_exit(&status) => {
+                    eprintln!(
+                        "Background update exited with {status} (stack overflow); \
+                         retrying in-process..."
+                    );
+                    run_update_in_process(update_config).await
+                }
                 Ok(Ok(status)) => {
                     run_blocking(Some(format!(
                         "Background update exited with {status}; retrying..."
@@ -2538,6 +2554,27 @@ async fn finish_update_on_exit(
         None => run_blocking(None).await,
     }
 }
+
+fn is_windows_stack_overflow_exit(status: &std::process::ExitStatus) -> bool {
+    status.code() == Some(WINDOWS_STATUS_STACK_OVERFLOW)
+}
+
+/// Run the installer in this process instead of spawning `atlas update`.
+/// Used when the background child died with Windows `STATUS_STACK_OVERFLOW`:
+/// another child of the same binary would hit the same 1 MiB stack.
+async fn run_update_in_process(update_config: &UpdateConfig) -> bool {
+    let mut update_config = update_config.clone();
+    auto_update::run_update(
+        false,
+        None,
+        None,
+        &mut update_config,
+        auto_update::CliUpdateTrigger::UserCommand,
+    )
+    .await
+    .is_ok()
+}
+
 /// Build an [`UpdateConfig`] from the current environment and config files.
 fn build_update_config() -> UpdateConfig {
     let environment = xai_grok_shell::env::GrokBuildEnvironment::from_flags(false, false);
@@ -2807,6 +2844,16 @@ mod tests {
         let nz = |n| NonZeroUsize::new(n).unwrap();
         assert_eq!(default_worker_threads(nz(360)), DEFAULT_MAX_WORKER_THREADS);
         assert_eq!(default_worker_threads(nz(4)), nz(4));
+    }
+    #[test]
+    fn windows_stack_overflow_exit_code_is_status_stack_overflow() {
+        assert_eq!(WINDOWS_STATUS_STACK_OVERFLOW as u32, 0xC00000FD);
+        assert!(!is_windows_stack_overflow_exit(
+            &std::process::Command::new(env!("CARGO"))
+                .args(["--version"])
+                .status()
+                .expect("cargo --version")
+        ));
     }
     #[test]
     fn worker_threads_from_selects_default_or_override() {

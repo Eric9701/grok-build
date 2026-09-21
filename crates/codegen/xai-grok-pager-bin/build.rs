@@ -45,5 +45,9 @@ fn main() {
     {
         println!("cargo:rustc-link-arg=/DELAYLOAD:ProjectedFSLib.dll");
         println!("cargo:rustc-link-arg=delayimp.lib");
+        // rust-lld / link.exe default reserve is 1 MiB. Background `atlas update`
+        // block_on's the pager future + rustls on that stack and dies with
+        // STATUS_STACK_OVERFLOW (0xC00000FD). Match the 8 MiB agent-worker stack.
+        println!("cargo:rustc-link-arg=/STACK:8388608");
     }
 }

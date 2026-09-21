@@ -1,7 +1,7 @@
 use super::attempt_runner::{
     InitialChildPromptReadiness, OneTurnAttemptInput, OneTurnAttemptOutcome, OneTurnTraceCapture,
-    OneTurnUsageInput, capture_and_fold_one_turn_usage, run_one_turn_attempt,
-    wait_initial_child_prompt_readiness,
+    OneTurnUsageInput, capture_and_fold_one_turn_usage, resolve_subagent_report_tokens,
+    run_one_turn_attempt, wait_initial_child_prompt_readiness,
 };
 use super::prompt_turn_receipt::{
     ACTIVE_MESSAGE_RECEIPT_CAPACITY, AdmissionSettlement, FinalPromptTurnReceipt,
@@ -2274,6 +2274,14 @@ pub(crate) async fn run_shell_child(
     };
     spawn_timer.write_event_phases(&mut completed);
     xai_grok_telemetry::session_ctx::log_event(completed);
+    let billed_turn = final_turn_tokens
+        .map(|(input, _, output)| input.saturating_add(output))
+        .unwrap_or(0);
+    result.tokens_used = resolve_subagent_report_tokens(
+        result.tokens_used.max(result.total_tokens_used),
+        billed_turn,
+        telemetry_tokens,
+    );
     // Best-effort structured task/agent/artifact report to atlas-server. Fire
     // and forget: never blocks or fails subagent completion.
     //
@@ -2462,6 +2470,7 @@ pub(crate) async fn run_shell_child(
             "duration_ms": result.duration_ms,
             "turns": result.turns,
             "tool_calls": result.tool_calls,
+            "tokens_used": result.tokens_used,
             "output_preview": preview,
             "error": &result.error,
         })),

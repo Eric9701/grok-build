@@ -259,6 +259,13 @@ impl TurnSampling {
         self.output_tokens += round.output_tokens.max(0) as u64;
         self.cache_read_tokens += round.cache_read_tokens.max(0) as u64;
     }
+
+    /// Main-loop billed tokens for this turn (prompt + completion). Cache
+    /// reads are already inside `input_tokens`. Nested subagent spend is
+    /// excluded so Task Report aggregates do not double-count child posts.
+    pub(super) fn billed_tokens(&self) -> u64 {
+        self.input_tokens.saturating_add(self.output_tokens)
+    }
 }
 impl TurnSpanTotals {
     /// Fold one model response into the totals and update the span.
@@ -1640,6 +1647,7 @@ impl SessionActor {
             turn_model_routing_for_report,
             current_prompt_index as u64,
             &turn_started_at,
+            turn_sampling.billed_tokens(),
         )
         .await;
         let doom_tally = std::mem::take(&mut *self.doom_loop_turn_tally.lock());
@@ -2484,6 +2492,7 @@ impl SessionActor {
     /// `turn_model_id` is the Catalog ID (picker / config.toml key).
     /// `turn_model_routing` is the Routing Name (`info.model`); omitted when
     /// the catalog cannot resolve it.
+    /// `tokens_used` is this turn's main-loop billed tokens ([`TurnSampling::billed_tokens`]).
     async fn maybe_post_main_turn_task_report(
         &self,
         prompt_id: &str,
@@ -2496,6 +2505,7 @@ impl SessionActor {
         turn_model_routing: Option<String>,
         turn_number: u64,
         turn_started_at: &str,
+        tokens_used: u64,
     ) {
         if self.tool_context.subagent_depth > 0 {
             return;
@@ -2512,14 +2522,14 @@ impl SessionActor {
             return;
         }
 
-        let (status, success, error, mut artifacts, artifact_lines_added, tokens_used) = match result {
+        let (status, success, error, mut artifacts, artifact_lines_added) = match result {
             Ok(TurnOutcome::Completed { .. }) | Ok(TurnOutcome::StationarityEnded) => {
                 let snap = self.signals_handle().take_artifacts_this_turn().await;
-                ("completed", true, None, snap.paths, snap.lines_added, 0)
+                ("completed", true, None, snap.paths, snap.lines_added)
             }
             Ok(TurnOutcome::Cancelled { .. }) => {
                 let snap = self.signals_handle().take_artifacts_this_turn().await;
-                ("cancelled", false, None, snap.paths, snap.lines_added, 0)
+                ("cancelled", false, None, snap.paths, snap.lines_added)
             }
             Ok(TurnOutcome::MaxTurnsReached { limit }) => {
                 let snap = self.signals_handle().take_artifacts_this_turn().await;
@@ -2529,12 +2539,17 @@ impl SessionActor {
                     Some(format!("max turns reached ({limit})")),
                     snap.paths,
                     snap.lines_added,
-                    0,
                 )
             }
             Err(err) => {
                 let snap = self.signals_handle().take_artifacts_this_turn().await;
-                ("error", false, Some(err.to_string()), snap.paths, snap.lines_added, 0)
+                (
+                    "error",
+                    false,
+                    Some(err.to_string()),
+                    snap.paths,
+                    snap.lines_added,
+                )
             }
         };
         artifacts.sort();
@@ -4398,9 +4413,22 @@ mod structured_output_validation_tests {
 }
 #[cfg(test)]
 mod main_turn_task_report_gate_tests {
-    use super::{main_turn_task_report_subagent_type, should_post_main_turn_task_report};
+    use super::{
+        TurnSampling, main_turn_task_report_subagent_type, should_post_main_turn_task_report,
+    };
     use crate::session::PromptOrigin;
     use crate::session::plan_mode::PromptMode;
+
+    #[test]
+    fn billed_tokens_sums_input_and_output_not_cache() {
+        let sampling = TurnSampling {
+            input_tokens: 1_200,
+            output_tokens: 80,
+            cache_read_tokens: 900,
+        };
+        assert_eq!(sampling.billed_tokens(), 1_280);
+        assert_eq!(TurnSampling::default().billed_tokens(), 0);
+    }
 
     #[test]
     fn user_and_plan_resume_post_task_report() {

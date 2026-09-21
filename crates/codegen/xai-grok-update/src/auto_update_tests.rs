@@ -2286,6 +2286,29 @@ async fn test_windows_replace_exe_sweeps_accumulated_asides() {
     );
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn test_windows_replace_exe_replaces_symlink_dest_with_real_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("new-binary.exe");
+    let dest = dir.path().join("atlas.exe");
+    let target = dir.path().join("grok.exe");
+    std::fs::write(&src, b"new").unwrap();
+    std::fs::write(&target, b"old").unwrap();
+    if std::os::windows::fs::symlink_file(&target, &dest).is_err() {
+        return;
+    }
+
+    windows_replace_exe(&src, &dest).await.unwrap();
+
+    let meta = std::fs::symlink_metadata(&dest).unwrap();
+    assert!(
+        !meta.file_type().is_symlink(),
+        "dest must become a regular file, not a reparse point"
+    );
+    assert_eq!(std::fs::read(&dest).unwrap(), b"new");
+}
+
 #[cfg(unix)]
 fn assert_decoded_executable(path: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;

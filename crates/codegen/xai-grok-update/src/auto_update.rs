@@ -799,6 +799,9 @@ async fn run_update_subcommand(
     if let Some(mode) = xai_grok_telemetry::client::current_mode() {
         cmd.env("GROK_TELEMETRY_ENABLED", mode.to_string());
     }
+    // Spawned threads only (not the PE main thread). Helps older binaries
+    // whose tokio workers still use the 2 MiB default.
+    cmd.env("RUST_MIN_STACK", "8388608");
     match run_mode {
         UpdateRunMode::Blocking => {
             // stderr must be null, not piped: `.status()` does not drain pipes, so if the child writes more than the OS pipe buffer
@@ -2010,6 +2013,20 @@ async fn sweep_stale_tmp_links(link_path: &std::path::Path, max_age: Duration) {
 /// ones survive until a later update runs after those processes exit.
 #[cfg(windows)]
 async fn windows_replace_exe(src: &std::path::Path, dest: &std::path::Path) -> Result<()> {
+    // Copying through a reparse point can raise STATUS_STACK_OVERFLOW (0xC00000FD)
+    // when bin/atlas.exe and bin/grok.exe are a circular symlink pair. Drop the
+    // dest link first so the copy writes a regular file.
+    if let Ok(meta) = tokio::fs::symlink_metadata(dest).await
+        && meta.file_type().is_symlink()
+    {
+        tokio::fs::remove_file(dest).await.with_context(|| {
+            format!("removing reparse point {} before replace", dest.display())
+        })?;
+    }
+    if src == dest {
+        return Ok(());
+    }
+
     let file_name = dest
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("destination has no filename: {}", dest.display()))?
@@ -2186,7 +2203,23 @@ async fn reconcile_agent_to_grok(bin_dir: &std::path::Path) {
 async fn promote_legacy_grok_exe_to_atlas(bin_dir: &std::path::Path) {
     let grok_exe = bin_dir.join(legacy_grok_bin_name());
     let atlas_exe = bin_dir.join(managed_cli_bin_name());
-    if tokio::fs::metadata(&grok_exe).await.is_err() {
+    // symlink_metadata does not follow reparse points; metadata() on a
+    // grok.exe ↔ atlas.exe loop can itself STATUS_STACK_OVERFLOW.
+    let Ok(grok_meta) = tokio::fs::symlink_metadata(&grok_exe).await else {
+        return;
+    };
+    if grok_meta.file_type().is_symlink() {
+        if tokio::fs::symlink_metadata(&atlas_exe).await.is_ok() {
+            let _ = tokio::fs::remove_file(&grok_exe).await;
+            return;
+        }
+        match windows_replace_exe(&grok_exe, &atlas_exe).await {
+            Ok(()) => {
+                tracing::info!("promoted grok.exe symlink to atlas.exe");
+                let _ = tokio::fs::remove_file(&grok_exe).await;
+            }
+            Err(e) => tracing::warn!("failed to promote grok.exe symlink to atlas.exe: {e:#}"),
+        }
         return;
     }
     match agent_exe_differs(&grok_exe, &atlas_exe).await {
@@ -2211,7 +2244,7 @@ async fn reconcile_agent_exe_to_grok(bin_dir: &std::path::Path) {
     let grok_exe = bin_dir.join(managed_cli_bin_name());
     let agent_exe = bin_dir.join(managed_agent_bin_name());
 
-    if tokio::fs::metadata(&grok_exe).await.is_err() {
+    if tokio::fs::symlink_metadata(&grok_exe).await.is_err() {
         return;
     }
     match agent_exe_differs(&grok_exe, &agent_exe).await {

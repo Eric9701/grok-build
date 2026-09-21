@@ -4,6 +4,23 @@
 
 ## 2026-09
 
+### 2026-09-21 — 主会话 Task Report `tokensUsed` 一直为 0
+
+- **状态**：已落地
+- **会话**：[Task Report tokens](f4655f99-7132-406e-a676-0a06ba292453)
+- 主会话每轮上报把 `tokensUsed` 写死成 `0`。现改为该轮主循环账单（input + output）。子 agent 仍走自己的 session usage，不叠进主会话以免双计。
+- 子 agent 会 POST 报告，但只读 session ledger；ledger 为空或查询超时就是 0。现改为 ledger、本轮 input+output、上下文占用三者取账单优先。
+- 上游响应里没有 `usage` 时仍可能是 0。已入库的旧行为 0，不会回填。
+- 未跑起来就失败的 spawn（未知类型、校验失败）不报。`GROK_DISABLE_TASK_REPORT` 仍跳过。
+
+### 2026-09-20 — Windows 后台升级 `0xc00000fd` 栈溢出
+
+- **状态**：已落地
+- **会话**：[Windows 升级栈溢出](f4655f99-7132-406e-a676-0a06ba292453)
+- `Background update exited with exit code: 0xc00000fd` 是 `STATUS_STACK_OVERFLOW`。后台 `atlas update` 在默认 1MiB 主线程栈上 `block_on` 整条升级 Future（含 rustls）。
+- CLI 链接 `/STACK:8MiB`，Tokio worker 同步到 8MiB，主 Future 改 `Box::pin`。子进程再崩时改为进程内重试，不再拉同样会溢出的子进程。
+- 已装的旧 `atlas.exe` **不能**靠自己升级到这份修复，须手动替换二进制后再 `atlas update`。
+
 ### 2026-09-18 — CLI 提示/帮助/升级文案 Grok 改为 Atlas
 
 - **状态**：已落地

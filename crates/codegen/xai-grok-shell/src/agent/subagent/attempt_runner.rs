@@ -271,6 +271,22 @@ pub(super) async fn run_one_turn_attempt(
 pub(super) fn canonical_total_tokens(totals: &xai_chat_state::UsageTotals) -> u64 {
     totals.total_tokens()
 }
+
+/// Task Report tokens for a finished child. Prefer billed spend (session
+/// ledger or this turn's input+output). Context occupancy is only a fallback
+/// when the provider omitted `usage` and both bills are 0.
+pub(super) fn resolve_subagent_report_tokens(
+    billed_ledger: u64,
+    billed_turn: u64,
+    context_tokens: u64,
+) -> u64 {
+    let billed = billed_ledger.max(billed_turn);
+    if billed > 0 {
+        billed
+    } else {
+        context_tokens
+    }
+}
 pub(super) fn usage_is_incomplete(
     ledger_incomplete: bool,
     cancellation_may_hide_usage: bool,
@@ -353,12 +369,19 @@ pub(super) async fn capture_and_fold_one_turn_usage(
 }
 #[cfg(test)]
 mod trace_turn_tests {
-    use super::subagent_trace_prefix;
+    use super::{resolve_subagent_report_tokens, subagent_trace_prefix};
     #[test]
     fn child_attempts_use_toolbox_discoverable_turn_paths() {
         assert_eq!(subagent_trace_prefix("child", 0), "child/turn_0");
         assert_eq!(subagent_trace_prefix("child", 1), "child/turn_1");
         assert_eq!(subagent_trace_prefix("child", 2), "child/turn_2");
+    }
+    #[test]
+    fn report_tokens_prefer_billed_over_context_occupancy() {
+        assert_eq!(resolve_subagent_report_tokens(1_200, 80, 9_999), 1_200);
+        assert_eq!(resolve_subagent_report_tokens(0, 1_280, 9_999), 1_280);
+        assert_eq!(resolve_subagent_report_tokens(0, 0, 4_000), 4_000);
+        assert_eq!(resolve_subagent_report_tokens(0, 0, 0), 0);
     }
 }
 fn base_result(
