@@ -415,11 +415,6 @@ pub enum Action {
     DemoteToBackground,
     /// Request current bundle cache status via `x.ai/bundle/status`.
     RequestBundleStatus,
-    /// View a catalog entry's raw content in the block viewer.
-    ViewCatalogEntry {
-        kind: String,
-        name: String,
-    },
     /// Hide the announcements banner.
     AnnouncementsHide,
     /// Show the announcements banner.
@@ -458,6 +453,11 @@ pub enum Action {
     SetRememberToolApprovals(bool),
     /// Toggle the ask_user_question timeout. SHELL-owned; persisted to `[toolset.ask_user_question].timeout_enabled`. Applies to new sessions.
     SetAskUserQuestionTimeoutEnabled(bool),
+    /// Save `[features].subagent_model_inheritance` as an explicit override. SHELL-owned; agents latch it when built, so it applies on restart.
+    SetSubagentModelInheritance(bool),
+    /// Delete the saved `[features].subagent_model_inheritance` key so the remote setting or the default applies again.
+    /// The reset path uses this instead of writing the compiled default.
+    ClearSubagentModelInheritance,
     /// SHELL-owned `keep_text_selection` (`flash` | `hold`); cache and persist.
     SetKeepTextSelection(crate::appearance::TextSelection),
     /// Set the mouse-wheel scroll speed multiplier (1-100).
@@ -791,7 +791,7 @@ pub enum Action {
     OpenDashboard,
     /// Close the dashboard, returning to the previous `ActiveView`.
     ExitDashboard,
-    /// Attach to a dashboard row: switches to the parent agent and (for subagent rows) sets the parent's `active_subagent`.
+    /// Attach to a dashboard row: switches to that agent's view.
     DashboardAttach(crate::views::dashboard::DashboardRowId),
     DashboardCloseSessionPicker,
     DashboardPickSession(usize),
@@ -945,8 +945,6 @@ pub enum Action {
     RewindCancelOffer,
     RewindDismiss,
     RewindDismissError,
-    /// Submit an inline edit: conversation-only rewind to that prompt, then resubmit the edited text (state lives on `AgentView::inline_edit`).
-    InlineEditSubmit,
     /// Open the `/jump` turn picker.
     JumpShowPicker,
     /// Jump to a turn by its prompt's stable id and close the picker.
@@ -1673,6 +1671,12 @@ pub enum Effect {
         value: crate::settings::SettingValue,
         rollback_value: crate::settings::SettingValue,
     },
+    /// Write the user `[features]` key of `feature`, or delete it for `saved == None`; completes as
+    /// [`TaskResult::FeatureOverridePersisted`]. A row issues one of these at a time so the disk follows toggle order.
+    PersistFeatureOverride {
+        feature: xai_grok_shell::agent::config::Feature,
+        saved: Option<bool>,
+    },
     /// Toggle mouse reporting off and on to unwedge xterm.js's button tracker
     /// (see `AgentView::reset_wedged_mouse_reporting`). An effect so it rides the escape
     /// writer; `process_effects` re-checks capture so a toggle-off in the same batch wins.
@@ -1968,8 +1972,6 @@ pub enum Effect {
     },
     /// Fetch current bundle cache status via `x.ai/bundle/status`.
     FetchBundleStatus,
-    /// Fetch a bundled entry's raw content via `x.ai/bundle/entry/get`.
-    FetchCatalogEntry { kind: String, name: String },
     /// Send feedback about the current session (fire-and-forget POST).
     /// `origin` rides through to the completion so a modal send's parked consent can be matched or dropped.
     SendFeedback {
@@ -2064,6 +2066,10 @@ pub enum Effect {
     /// Re-check subscription status via `x.ai/auth/check_subscription`.
     /// `verify` scopes the result to a deferred-gate verification (see [`crate::app::subscription`]); `None` for generic checks.
     CheckSubscription { verify: Option<u64> },
+    /// `x.ai/auth/hydrate_team_capability` for `identity`; the answer is dropped if the account changed meanwhile.
+    HydrateTeamCapability {
+        identity: crate::app::app_view::AuthIdentity,
+    },
     /// One-shot subscription re-check triggered by a credit-limit 403.
     /// If the tier changed, the stashed prompt is retried instead of showing the upsell modal.
     CreditLimitRecheck { agent_id: AgentId },
@@ -3009,16 +3015,6 @@ pub enum TaskResult {
     BundleStatusFailed {
         error: String,
     },
-    /// Catalog entry content fetched successfully.
-    CatalogEntryReady {
-        kind: String,
-        name: String,
-        content: String,
-    },
-    /// Catalog entry fetch failed.
-    CatalogEntryFailed {
-        error: String,
-    },
     /// Side question (/btw) response received.
     BtwResponse {
         agent_id: AgentId,
@@ -3070,6 +3066,11 @@ pub enum TaskResult {
     CheckSubscriptionComplete {
         verify: Option<u64>,
         meta: Option<serde_json::Value>,
+    },
+    /// `None` is unresolved or a failed RPC; the next launch asks again.
+    TeamCapabilityHydrated {
+        identity: crate::app::app_view::AuthIdentity,
+        can_administer_team: Option<bool>,
     },
     /// Result of the credit-limit subscription re-check.
     /// If the tier changed the stashed prompt is retried; otherwise the upsell is shown.
@@ -3209,6 +3210,11 @@ pub enum TaskResult {
     SettingPersistFailedBestEffort {
         key: crate::settings::SettingKey,
         error: String,
+    },
+    /// One [`Effect::PersistFeatureOverride`] write finished; `Ok` carries what it left on disk.
+    FeatureOverridePersisted {
+        feature: xai_grok_shell::agent::config::Feature,
+        result: Result<Option<bool>, String>,
     },
     /// Off-thread clipboard attachment probe finished (see [`Effect::ProbeClipboardAttachment`]); dispatch attaches the chip.
     ClipboardAttachmentProbed {

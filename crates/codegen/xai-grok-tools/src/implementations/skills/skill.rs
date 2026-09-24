@@ -677,6 +677,7 @@ Grok knows when to auto-invoke it. Grok will invoke it.";
             when_to_use: None,
             has_user_specified_description: true,
             paths: None,
+            origin: None,
             enabled: true,
             body: Some("---\n\nParagraph after a markdown HR.".to_string()),
         };
@@ -711,6 +712,7 @@ Grok knows when to auto-invoke it. Grok will invoke it.";
             when_to_use: None,
             has_user_specified_description: true,
             paths: None,
+            origin: None,
             enabled: true,
             body: None,
         };
@@ -746,6 +748,7 @@ Grok knows when to auto-invoke it. Grok will invoke it.";
             when_to_use: None,
             has_user_specified_description: false,
             paths: None,
+            origin: None,
             enabled: true,
             body: None,
         };
@@ -776,6 +779,7 @@ Grok knows when to auto-invoke it. Grok will invoke it.";
             when_to_use: None,
             has_user_specified_description: false,
             paths: None,
+            origin: None,
             enabled: true,
             body: None,
         };
@@ -809,6 +813,7 @@ Grok knows when to auto-invoke it. Grok will invoke it.";
             when_to_use: None,
             has_user_specified_description: false,
             paths: None,
+            origin: None,
             enabled: true,
             body: None,
         };
@@ -848,6 +853,7 @@ Grok knows when to auto-invoke it. Grok will invoke it.";
             when_to_use: None,
             has_user_specified_description: false,
             paths: None,
+            origin: None,
             enabled: true,
             body: None,
         };

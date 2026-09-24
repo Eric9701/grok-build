@@ -1,8 +1,11 @@
 //! Mutation handlers for the ChatStateActor.
 
+use std::collections::HashMap;
+
 use xai_grok_sampling_types::{
     ContentPart, ConversationItem, DanglingToolCallReason, dedup_duplicate_tool_results,
-    repair_dangling_tool_calls, rewrite_duplicate_tool_call_ids,
+    repair_dangling_tool_calls_with, rewrite_duplicate_tool_call_ids,
+    synthetic_dangling_result_text,
 };
 
 use super::ChatStateActor;
@@ -90,6 +93,14 @@ impl ChatStateActor {
         &mut self,
         reason: DanglingToolCallReason,
     ) {
+        self.ensure_conversation_integrity_answering(reason, HashMap::new());
+    }
+
+    fn ensure_conversation_integrity_answering(
+        &mut self,
+        reason: DanglingToolCallReason,
+        mut answers: HashMap<String, String>,
+    ) {
         self.rewrite_history(HistoryRewrite::IntegrityRepair, |conversation| {
             let rewritten = rewrite_duplicate_tool_call_ids(conversation);
             if rewritten > 0 {
@@ -105,7 +116,11 @@ impl ChatStateActor {
                     "Removed duplicate tool results in conversation"
                 );
             }
-            let repaired = repair_dangling_tool_calls(conversation, reason);
+            let repaired = repair_dangling_tool_calls_with(conversation, |id, name| {
+                answers
+                    .remove(id)
+                    .unwrap_or_else(|| synthetic_dangling_result_text(name, reason))
+            });
             if repaired > 0 || deduped > 0 || rewritten > 0 {
                 tracing::info!(
                     repaired_count = repaired,
@@ -115,15 +130,26 @@ impl ChatStateActor {
             }
             repaired + deduped + rewritten
         });
+        if !answers.is_empty() {
+            tracing::debug!(
+                leftover = answers.len(),
+                "answers for tool calls that already had a result were not written"
+            );
+        }
     }
 
     /// Repair dangling tool calls after a harness-initiated halt so the on-disk tail is clean.
     /// The next push repairs the same way lazily as a backstop.
-    pub(super) fn repair_dangling_after_harness_halt(&mut self, class: &'static str) {
+    pub(super) fn repair_dangling_after_harness_halt(
+        &mut self,
+        class: &'static str,
+        answers: HashMap<String, String>,
+    ) {
         self.pop_stranded_continue_reminder();
-        self.ensure_conversation_integrity_with_reason(DanglingToolCallReason::HarnessHalted {
-            class,
-        });
+        self.ensure_conversation_integrity_answering(
+            DanglingToolCallReason::HarnessHalted { class },
+            answers,
+        );
     }
 
     /// Drop a trailing continue reminder whose continuation will never sample.
