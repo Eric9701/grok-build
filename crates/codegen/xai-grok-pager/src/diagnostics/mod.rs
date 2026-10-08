@@ -260,7 +260,7 @@ pub(crate) fn collect_startup_warnings_from(
     {
         let message = match fullscreen_active {
             Some(true) => "Fullscreen may be unreliable in tmux control mode",
-            Some(false) => "Grok is using inline mode because tmux control mode limits fullscreen",
+            Some(false) => "Atlas is using inline mode because tmux control mode limits fullscreen",
             None => "Display may be limited in tmux control mode",
         };
         let mut warning = TerminalWarning::new(WarningCategory::ControlMode, message, None, None);
@@ -354,7 +354,7 @@ pub(crate) fn wezterm_kitty_keyboard_warning_from(
             None,
         );
         warning.note = Some(
-            "For this session, type `\\` and then press Enter. Grok can't negotiate the Kitty \
+            "For this session, type `\\` and then press Enter. Atlas can't negotiate the Kitty \
              keyboard protocol over SSH yet. `enable_kitty_keyboard = true` applies only to \
              local WezTerm sessions."
                 .to_string(),
@@ -540,7 +540,7 @@ pub(crate) fn collect_notification_warnings_with_method(
     {
         let mut warning = TerminalWarning::new(
             WarningCategory::NotificationProtocolFallback,
-            "Grok is using the terminal bell because the terminal was not recognized",
+            "Atlas is using the terminal bell because the terminal was not recognized",
             None,
             None,
         );

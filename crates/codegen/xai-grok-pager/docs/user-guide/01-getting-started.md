@@ -46,14 +46,14 @@ Update to the latest version at any time:
 atlas update
 ```
 
-If you installed Grok Build with WinGet, update it with WinGet instead. Quit
-Grok first, then run:
+If you installed Atlas with WinGet, update it with WinGet instead. Quit
+Atlas first, then run:
 
 ```powershell
 winget upgrade --id xAI.GrokBuild -e
 ```
 
-On a WinGet install, `grok update` prints this command and changes nothing.
+On a WinGet install, `atlas update` prints this command and changes nothing.
 The WinGet package tracks the stable channel, and new releases can take a few
 days to reach it.
 

@@ -18,6 +18,12 @@ import (
 //go:embed web/index.html
 var chatHTML []byte
 
+//go:embed web/m.html
+var mobileHTML []byte
+
+//go:embed web/chat.js
+var chatJS []byte
+
 //go:embed web/slash.js
 var slashJS []byte
 
@@ -92,28 +98,37 @@ func main() {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		_, _ = w.Write(mdJS)
 	})
+	mux.HandleFunc("/chat.js", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		_, _ = w.Write(chatJS)
+	})
 	mux.HandleFunc("/ws", serveWS(h, roleAgent))
 	mux.HandleFunc("/ws/agent", serveWS(h, roleAgent))
 	mux.HandleFunc("/ws/client", serveWS(h, roleClient))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" && r.URL.Path != "/build" {
+		switch r.URL.Path {
+		case "/", "/build":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(chatHTML)
+		case "/m", "/h5":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(mobileHTML)
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write(chatHTML)
 	})
 
 	fmt.Fprintf(os.Stderr, `
 Atlas relay demo  http://%s/build
+手机 H5             http://%s/m
 listen %s
 
 CLI（出站，建议带身份）:
 %s
 
-浏览器打开 /build，可在顶栏选择 Agent。不要改 atlas-server。
+浏览器打开 /build；手机打开 /m（或 /h5）。不要改 atlas-server。
 
-`, public, listen, cliExample(public))
+`, public, public, listen, cliExample(public))
 
 	log.Fatal(http.ListenAndServe(listen, mux))
 }

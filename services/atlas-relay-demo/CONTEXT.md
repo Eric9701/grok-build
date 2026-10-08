@@ -1,6 +1,6 @@
 # Atlas Relay Demo
 
-独立出站中继：浏览器聊天页与一台或多台本机 `atlas agent headless` 对话。不改 atlas-server，也不改 CLI。
+独立出站中继：浏览器聊天页与一台或多台本机 `atlas agent headless` 对话。不改 atlas-server，也不改 CLI。连接与 ACP 方法见 [docs/协议.md](./docs/协议.md)。
 
 ## Language
 
@@ -9,8 +9,12 @@
 _Avoid_: 客户端、Client（口语里常把「那台机器」叫客户端，但本上下文里 Client 是浏览器）
 
 **Relay Client**:
-连 `/ws/client` 的浏览器聊天页，扮演 ACP Client。
+连 `/ws/client` 的浏览器聊天页，扮演 ACP Client。桌面是 `/build`，手机是 `/m`（别名 `/h5`）。
 _Avoid_: 把聊天页叫 Agent；用「客户端」同时指 CLI 和浏览器
+
+**Mobile Page**:
+`/m` 上的手机聊天页。布局按触控和安全区排，会话逻辑与 `/build` 共用 `chat.js`。
+_Avoid_: 为手机再写一套 bind / prompt
 
 **Agent Identity**:
 一个 Relay Agent 的稳定登记名。优先取握手 URL 的 `agent_id`；缺省用 `x-userid`；再缺省为 `anonymous-<短号>`。

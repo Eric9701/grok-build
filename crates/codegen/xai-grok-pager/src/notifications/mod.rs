@@ -668,7 +668,6 @@ mod tests {
         svc.clear_permission_notification();
         assert!(!svc.should_suppress_permission_notification());
     }
-    }
 
     #[test]
     fn notify_with_suppression_still_allows_non_permission_events() {

@@ -46,7 +46,7 @@ Location: `~/.atlas/config.toml`. If the file is missing, Atlas uses its built-i
 auto_update = true                     # check for updates on launch
 
 [agent]
-# name = "grok-build"                  # default agent on interactive `grok` (no --plan / --agent-profile)
+# name = "grok-build"                  # default agent on interactive `atlas` (no --plan / --agent-profile)
 # definition = "/path/to/agent.md"     # path wins over name if both are set
 
 [models]
@@ -119,7 +119,7 @@ respect_gitignore = false              # default: false; set true to make every 
 
 ### Default agent
 
-Interactive `grok` uses `[agent]` in `config.toml` when you do not pass `--plan`, `--ask-user`, or `--agent-profile`:
+Interactive `atlas` uses `[agent]` in `config.toml` when you do not pass `--plan`, `--ask-user`, or `--agent-profile`:
 
 ```toml
 [agent]

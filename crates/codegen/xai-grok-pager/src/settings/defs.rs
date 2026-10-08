@@ -865,8 +865,8 @@ pub fn default_settings() -> Vec<SettingMeta> {
             category: SettingCategory::Models,
             owner: SettingOwner::Shell,
             label: "Subagent model inheritance",
-            description: "On: Grok cannot set models for subagents\n\
-                          Off: Grok may choose a different model for a subagent. Takes effect \
+            description: "On: Atlas cannot set models for subagents\n\
+                          Off: Atlas may choose a different model for a subagent. Takes effect \
                           after restart.\n\
                           NOTE: This setting only applies when all models are xAI \
                           \"model_family\". You likely don't need to configure this setting.",

@@ -211,7 +211,7 @@ fn tmux_fix_registry_resolves_every_short_and_canonical_id() {
         assert_eq!(resolve_fix_id(&id.to_string()).unwrap(), id);
         assert_eq!(
             human_fix_command(id).unwrap(),
-            format!("grok doctor fix {handle}")
+            format!("atlas doctor fix {handle}")
         );
     }
 }

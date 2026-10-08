@@ -463,7 +463,7 @@ fn clipboard_findings(
             FindingDisposition::Recommendation,
             "iTerm2 may block OSC 52 clipboard access",
             "In iTerm2, open Settings → General → Selection and turn on “Applications in \
-             terminal may access clipboard.” Grok can't read this setting, so check it there if \
+             terminal may access clipboard.” Atlas can't read this setting, so check it there if \
              copies don't paste.",
         ));
     }

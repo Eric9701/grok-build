@@ -2,10 +2,11 @@
 
 独立的 **出站 WebSocket 中继 + 聊天页**，用来验证一台或多台 `atlas agent headless` 与浏览器对话。
 
-**不改 atlas-server，不改 CLI。** 只做 ACP 透传：CLI 当 Relay Agent，本页当 Relay Client。术语见 [CONTEXT.md](./CONTEXT.md)。
+**不改 atlas-server，不改 CLI。** 只做 ACP 透传：CLI 当 Relay Agent，本页当 Relay Client。术语见 [CONTEXT.md](./CONTEXT.md)。连接、ACP 调用和命令见 [docs/协议.md](./docs/协议.md)。
 
 ```
 浏览器  http://<本机IP>:2420/build?agent=laptop-a
+手机    http://<本机IP>:2420/m?agent=laptop-a
    │  /ws/client   +  atlas.relay/bind
    ▼
 relay-demo  （按 Agent Identity 分槽）
@@ -82,12 +83,14 @@ atlas agent --always-approve headless \
 
 `--grok-ws-origin` 必须与浏览器打开的 `http://<本机IP>:端口` 同源。
 
-浏览器打开启动日志里的 `http://<本机IP>:2420/build`（或 `/build?agent=laptop-a`）。
+浏览器打开启动日志里的 `http://<本机IP>:2420/build`（或 `/build?agent=laptop-a`）。手机打开同一主机的 `/m`（别名 `/h5`），例如 `http://<本机IP>:2420/m?agent=laptop-a`。两页协议相同；`?agent=` 都会带上。桌面页顶栏有「手机版」，手机页顶栏有「桌面版」。手机上会话、模型和派工收在「会话与派工」里；触控时回车换行，点「发送」发出。斜杠菜单开着时，回车仍是选中当前项。
 
 1. 只有一个 Agent 在线时自动绑上；多个时用顶栏下拉选择  
 2. 填写 **该 Agent 机器上的绝对路径** 作为 cwd（按身份分别记住）  
-3. 圆点变绿、状态为「就绪」后发消息，或用「云端派工」三轮执行  
-4. 输入 `/` 可补全该 Agent 已加载的斜杠（builtin + skill）。点「命令」或发送 `/skills` 打开本页面板；点一项即填入 `/name`，再 Enter 发给 CLI 
+3. **模型**是下拉列表，内容与 `atlas /model` 相同（Agent 的 `modelState` / `x.ai/models/list`）。显示名，提交 Catalog ID。会话已就绪时点「应用」发 `session/set_model`；选「默认」则用 Agent 启动时的 `-m` 或默认模型。新建和载入也会带上这里的模型  
+4. **会话 id** 填 UUID。点「新建」走 `session/new`，id 写入 `_meta.sessionId`（空则由 Agent 生成）。点「载入」走 `session/load`。点「历史」拉 `x.ai/session/list`（含 headless），点一条即填入并载入。会话 id 框为空时，绑定后仍会自动新建  
+5. 圆点变绿、状态为「就绪」后发消息，或用「云端派工」三轮执行  
+6. 输入 `/` 可补全该 Agent 已加载的斜杠（builtin + skill）。点「命令」或发送 `/skills` 打开本页面板；点一项即填入 `/name`，再 Enter 发给 CLI 
 
 ## 云端派工（URL → Role 4 → 回执）
 
@@ -116,7 +119,8 @@ Agent 机器必须能访问这些 URL（示例挂在本 demo 上时，CLI 要能
 
 | 路径 | 谁连 |
 |---|---|
-| `/build` 或 `/` | 聊天页 |
+| `/build` 或 `/` | 桌面聊天页 |
+| `/m` 或 `/h5` | 手机 H5 聊天页（同一套 ACP） |
 | `/ws`、`/ws/agent` | CLI headless（用 `?agent_id=` 登记身份） |
 | `/ws/client` | 聊天页 |
 | `/status`、`/healthz` | 探活；`/status` 列出在线 Agent |
@@ -124,6 +128,7 @@ Agent 机器必须能访问这些 URL（示例挂在本 demo 上时，CLI 要能
 | `/sample-docs/…` | 示例需求 / 设计 / 验收 |
 | `/slash.js` | 聊天页斜杠匹配逻辑 |
 | `/md.js` | 聊天页 Markdown 渲染 |
+| `/chat.js` | 桌面页与手机页共用的会话逻辑 |
 
 - **Agent Identity**：`agent_id` → `x-userid` → `anonymous-<序号>`  
 - 同一身份再连：**新连接顶掉旧连接**  

@@ -1,0 +1,155 @@
+# Atlas CLI（xai-grok-pager-bin）多平台打包。
+# 依据 docs/github-actions-多平台打包调研.md。
+# 只产出 grok-{ver}-{os}-{arch}，不编译 VS Code / atlas-server。
+# 不创建 GitHub Release；仅当该 tag 已有已发布 Release 时才上传资产。
+name: CLI release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "semver，写入 GROK_VERSION，例如 0.2.131"
+        required: true
+        type: string
+      release_tag:
+        description: "已存在的 GitHub Release tag。留空则只上传 artifact，不创建 Release"
+        required: false
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            triple: x86_64-pc-windows-msvc
+            os: windows
+            arch: x86_64
+            ext: .exe
+          # 2026-10-08 的 ubuntu-latest 就是 ubuntu-24.04。
+          # 镜像公告写 ubuntu-latest 将于 2026 年 11 月改指向 Ubuntu 26.04，故这里钉死 24.04。
+          - runner: ubuntu-24.04
+            triple: x86_64-unknown-linux-musl
+            os: linux
+            arch: x86_64
+            ext: ""
+          # 未签名 CLI。不要改成 Electron 流水线里的 macos-15。
+          # 若不想跟随 macos-latest 迁移，改成 macos-26（同一张 arm64 镜像）。
+          - runner: macos-latest
+            triple: aarch64-apple-darwin
+            os: macos
+            arch: aarch64
+            ext: ""
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v2
+        with:
+          # 不传 toolchain，让 action 安装 rust-toolchain.toml（当前 1.94.0）。
+          # 不传 rustflags，避免盖掉 .cargo/config.toml 里分 target 的链接参数。
+          cache: true
+
+      - name: Add musl target
+        if: matrix.triple == 'x86_64-unknown-linux-musl'
+        run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Linux packages
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools musl-dev build-essential pkg-config protobuf-compiler
+
+      - name: macOS protobuf
+        if: matrix.os == 'macos'
+        run: brew install protobuf
+
+      # bin/protoc-win64 被 .gitignore 的 /bin/ 与 *.exe 排除，checkout 里没有。
+      # 版本与仓库 bin/protoc（DotSlash）锁定的 v29.3 一致。不要用 Unix 的 bin/protoc。
+      - name: Windows protoc
+        if: matrix.os == 'windows'
+        shell: bash
+        run: |
+          proto_dir="$RUNNER_TEMP/protoc"
+          mkdir -p "$proto_dir"
+          curl -fsSL -o "$RUNNER_TEMP/protoc.zip" \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-win64.zip"
+          tar -xf "$RUNNER_TEMP/protoc.zip" -C "$proto_dir"
+          echo "PROTOC=$(cygpath -m "$proto_dir/bin/protoc.exe")" >> "$GITHUB_ENV"
+
+      - name: GROK_VERSION
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            ver="$INPUT_VERSION"
+          else
+            ver="${GITHUB_REF#refs/tags/}"
+            ver="${ver#v}"
+          fi
+          echo "GROK_VERSION=$ver" >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: bash
+        run: cargo build -p xai-grok-pager-bin --release --target ${{ matrix.triple }}
+
+      - name: Name the artifact
+        shell: bash
+        run: |
+          src="target/${{ matrix.triple }}/release/xai-grok-pager${{ matrix.ext }}"
+          dest="dist/grok-${GROK_VERSION}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          mkdir -p dist
+          cp "$src" "$dest"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: grok-${{ env.GROK_VERSION }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          path: dist/grok-${{ env.GROK_VERSION }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          if-no-files-found: error
+          archive: false
+
+  attach-release:
+    needs: build
+    if: >-
+      ${{ needs.build.result == 'success' &&
+          (github.event_name == 'push' || inputs.release_tag != '') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Upload to an existing release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          status=$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${tag}")
+          if [ "$status" = "200" ]; then
+            gh release upload "$tag" dist/grok-* --clobber
+          elif [ "$status" = "404" ]; then
+            echo "已发布的 Release ${tag} 不存在，只保留 artifact，不创建 Release"
+          else
+            echo "查询 Release 失败：HTTP ${status}"
+            exit 1
+          fi

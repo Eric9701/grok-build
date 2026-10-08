@@ -309,25 +309,25 @@ Resume a session in a fresh worktree with `atlas -w -r <session-id>`.
 A Grove worktree can redirect ignored artifact directories such as `target` and `node_modules` to storage outside the projected tree. The redirect commands take the mount path as their first argument.
 
 ```bash
-grok worktree redirect list /path/to/worktree
-grok worktree redirect list /path/to/worktree --json
-grok worktree redirect add /path/to/worktree target bind
-grok worktree redirect del /path/to/worktree target
-grok worktree redirect fixup /path/to/worktree
-grok worktree redirect unmount /path/to/worktree target
+atlas worktree redirect list /path/to/worktree
+atlas worktree redirect list /path/to/worktree --json
+atlas worktree redirect add /path/to/worktree target bind
+atlas worktree redirect del /path/to/worktree target
+atlas worktree redirect fixup /path/to/worktree
+atlas worktree redirect unmount /path/to/worktree target
 ```
 
 `list` prints `repo_path`, `type`, `mechanism`, `target`, `source`, and `state`. Run `unmount` without a repo-relative path to take down every redirect on the mount. Use `fixup --force` to replace Grove-owned residue. Use `fixup --strict` to refuse a populated plain directory.
 
 
 ```bash
-grok clone https://example.com/org/repo.git --redirect-ignored
-grok clone https://example.com/org/repo.git \
+atlas clone https://example.com/org/repo.git --redirect-ignored
+atlas clone https://example.com/org/repo.git \
   --redirect-ignored --redirect-dir build --redirect-dir '**/node_modules'
-grok clone https://example.com/org/repo.git --no-redirects
+atlas clone https://example.com/org/repo.git --no-redirects
 ```
 
-`GROVE_REDIRECTS=0` remains a runtime kill switch. Grok does not save the kill switch as the clone's redirect choice.
+`GROVE_REDIRECTS=0` remains a runtime kill switch. Atlas does not save the kill switch as the clone's redirect choice.
 
 ### Checking Disk Usage
 

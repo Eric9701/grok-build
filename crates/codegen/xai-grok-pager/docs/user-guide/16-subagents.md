@@ -27,10 +27,10 @@ Manage both in the agents modal. Open it with `/config-agents` (alias `/agents`)
 
 ## Disabling Subagents
 
-Disable subagents with a CLI flag, an environment variable, or the config file (highest priority first). The same rules apply to the interactive `grok` TUI, `grok agent stdio`, and headless runs.
+Disable subagents with a CLI flag, an environment variable, or the config file (highest priority first). The same rules apply to the interactive `atlas` TUI, `atlas agent stdio`, and headless runs.
 
 ```bash
-grok --no-subagents                  # This session only
+atlas --no-subagents                  # This session only
 export GROK_SUBAGENTS=0              # Environment variable
 ```
 
@@ -286,8 +286,8 @@ The `spawn_subagent` tool offers the agent a `model` argument, and its descripti
 
 You can also toggle it from `/settings` → Models → **Subagent model inheritance**:
 
-- On: Grok cannot set models for subagents
-- Off: Grok may choose a different model for a subagent. Takes effect after restart.
+- On: Atlas cannot set models for subagents
+- Off: Atlas may choose a different model for a subagent. Takes effect after restart.
 - NOTE: This setting only applies when all models are xAI "model_family". You likely don't need to configure this setting.
 
 The row shows the value that applies after restart. Toggling writes `[features] subagent_model_inheritance = true` or `= false` (an explicit `false` overrides a remote `true`); `d` (reset) deletes the key so `managed_config.toml`, remote settings, or the default apply again. Agents already running keep the mode they started with. When a layer your `config.toml` cannot override decides the value — a `requirements.toml`/MDM pin, the environment variable, the `GROK_CONFIG` overlay, or an active campaign — both the toggle and the reset are refused with a toast that names that layer.

@@ -342,13 +342,13 @@ impl std::fmt::Display for FixError {
             {
                 write!(
                     formatter,
-                    "Grok found an existing SSH alias or function in {} and did not change it: {detail}",
+                    "Atlas found an existing SSH alias or function in {} and did not change it: {detail}",
                     path.display()
                 )
             }
             Self::ExistingCustomization { path, detail } => write!(
                 formatter,
-                "Grok found an existing customization in {} and did not change it: {detail}",
+                "Atlas found an existing customization in {} and did not change it: {detail}",
                 path.display()
             ),
             Self::Managed(error) => write!(

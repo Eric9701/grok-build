@@ -44,8 +44,8 @@ use super::session::picker_routing::PickerRequest;
 use super::settings::ui::{apply_setting_rollback, refresh_open_settings_modals};
 use super::status::{
     handle_coding_data_sharing_failed, handle_coding_data_sharing_updated,
-    handle_context_info_complete, handle_session_usage_result, toast_persist_failure,
-    usage_modal_state_mut,
+    handle_context_info_complete, handle_session_usage_result, scrub_error_for_toast,
+    toast_persist_failure, usage_modal_state_mut,
 };
 use super::transcript::{
     handle_hooks_list_loaded, handle_marketplace_list_loaded, handle_marketplace_updates_available,
@@ -180,7 +180,7 @@ fn apply_workspace_transition(
                 ));
             }
             WorkspaceNotice::ReadOnly => {
-                app.show_toast("Dashboard workspace is read-only in this Grok version");
+                app.show_toast("Dashboard workspace is read-only in this Atlas version");
             }
             WorkspaceNotice::WriterFailed { error } => {
                 tracing::error!(error = %error, "dashboard workspace writer failed");

@@ -2,6 +2,16 @@
 
 可执行文件 `atlas` / `atlas.exe`（crate 仍是 `xai-grok-pager-bin`）。家目录 **Atlas Home**（`~/.atlas`）。记法见 [README](./README.md)。
 
+## 2026-10
+
+### 2026-10-08 — GitHub Actions 打包 Atlas CLI
+
+- **状态**：已落地
+- **会话**：创建 CLI 多平台打包 workflow
+- 新增 `.github/workflows/cli-release.yml`。手动填写 semver，或推送 `v*` tag。三台原生 runner 只编译 `xai-grok-pager-bin`：Windows x64、Ubuntu 24.04 musl、macOS ARM。产物名 `grok-{ver}-{os}-{arch}`。
+- 不创建 GitHub Release。该 tag 已有已发布 Release 时才 `gh release upload`。不走 atlas-server 的发布通道。
+- Windows 的 `bin/protoc-win64` 不在 git 里。流水线下载与 `bin/protoc` 相同的 protoc 29.3 win64，并写成 `PROTOC`。
+
 ## 2026-09
 
 ### 2026-09-22 — 合入 origin/main

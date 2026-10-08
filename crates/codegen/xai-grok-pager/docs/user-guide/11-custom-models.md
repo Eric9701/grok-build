@@ -127,7 +127,7 @@ The `context_window` value tells Atlas when to trigger auto-compaction. When you
 
 ### Request Size Limit
 
-`max_request_bytes` is the largest request body your endpoint accepts. Grok evicts older inline images from the conversation to stay under it, so a session with many screenshots keeps working instead of being rejected. When you omit it, Grok picks the default for the `api_backend`: 30 MB for `messages`, and 50 MiB for `chat_completions` and `responses`. Set it only when your host enforces a different cap.
+`max_request_bytes` is the largest request body your endpoint accepts. Atlas evicts older inline images from the conversation to stay under it, so a session with many screenshots keeps working instead of being rejected. When you omit it, Atlas picks the default for the `api_backend`: 30 MB for `messages`, and 50 MiB for `chat_completions` and `responses`. Set it only when your host enforces a different cap.
 
 The cap is a property of the endpoint, so it also works on a shared `[model_providers.<id>]` block, where every model pointing at that provider inherits it; a `max_request_bytes` on the model itself overrides the provider's value.
 

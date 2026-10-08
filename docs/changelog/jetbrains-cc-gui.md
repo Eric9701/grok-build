@@ -6,6 +6,13 @@
 
 ## 2026-09
 
+### 2026-09-30 — Windows 打包脚本
+
+- **状态**：已落地
+- **会话**：打包 IDEA 插件
+- 新增 `services/jetbrains-cc-gui/scripts/build-plugin.bat`。用 `local.properties` 的 JDK，Gradle 官方源超时时改从国内镜像写入 Wrapper 缓存，再执行 `buildPlugin`。
+- 所选 JDK 不是 17 时自动跳过 `checkstyleMain`（`build.gradle` toolchain 固定为 17；本机 JDK 21 会在这一步失败）。
+
 ### 2026-09-03 — 默认模式 PowerShell 不再误报「用户拒绝」
 
 - **状态**：已落地

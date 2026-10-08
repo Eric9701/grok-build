@@ -213,7 +213,7 @@ reports `terminal.newline-fallback` with the detected explanation and workaround
 
 ### Cmd+Enter is not an advertised send or newline chord
 
-`Cmd+Enter` is not an advertised send or newline chord. Grok advertises
+`Cmd+Enter` is not an advertised send or newline chord. Atlas advertises
 only `Shift+Enter` and `Alt+Enter` as newline. Many terminals bind
 Cmd+Enter to fullscreen, so `SUPER` is excluded from the newline matcher,
 and a delivered `SUPER+Enter` does not match the agent's bare-Enter send
