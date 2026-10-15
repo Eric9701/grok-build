@@ -87,17 +87,19 @@ jobs:
 
       # bin/protoc-win64 被 .gitignore 的 /bin/ 与 *.exe 排除，checkout 里没有。
       # 版本与仓库 bin/protoc（DotSlash）锁定的 v29.3 一致。不要用 Unix 的 bin/protoc。
+      # Git Bash 的 tar 是 GNU tar：D: 会被当成远程主机，--force-local 之后又读不了 zip。
       - name: Windows protoc
         if: matrix.os == 'windows'
-        shell: bash
+        shell: pwsh
         run: |
-          proto_dir="$RUNNER_TEMP/protoc"
-          mkdir -p "$proto_dir"
-          curl -fsSL -o "$RUNNER_TEMP/protoc.zip" \
-            "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-win64.zip"
-          # Windows runner 的 RUNNER_TEMP 在 D:。Git Bash 的 tar 看到盘符冒号会当成远程主机。
-          tar --force-local -xf "$RUNNER_TEMP/protoc.zip" -C "$proto_dir"
-          echo "PROTOC=$(cygpath -m "$proto_dir/bin/protoc.exe")" >> "$GITHUB_ENV"
+          $protoDir = Join-Path $env:RUNNER_TEMP 'protoc'
+          New-Item -ItemType Directory -Force -Path $protoDir | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'protoc.zip'
+          curl.exe -fsSL -o $zip "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-win64.zip"
+          Expand-Archive -Path $zip -DestinationPath $protoDir -Force
+          $protoc = Join-Path $protoDir 'bin\protoc.exe'
+          if (-not (Test-Path -LiteralPath $protoc)) { throw "protoc not found at $protoc" }
+          "PROTOC=$protoc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8NoBOM
 
       - name: GROK_VERSION
         shell: bash

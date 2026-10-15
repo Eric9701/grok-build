@@ -4,6 +4,12 @@
 
 ## 2026-10
 
+### 2026-10-15 — CLI Actions 的 Windows protoc 改用 Expand-Archive
+
+- **状态**：已落地
+- **会话**：修复 Actions 三平台打包
+- `tar --force-local` 能打开 `D:` 上的文件，但 Git Bash 的 GNU tar 读不了 zip（`This does not look like a tar archive`）。Windows 步改为 `pwsh` + `Expand-Archive`。
+
 ### 2026-10-15 — CLI Actions 打包：Windows tar 与缺失的 vendor/nucleo
 
 - **状态**：已落地
