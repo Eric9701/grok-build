@@ -4,6 +4,13 @@
 
 ## 2026-10
 
+### 2026-10-15 — CLI Actions 打包：Windows tar 与缺失的 vendor/nucleo
+
+- **状态**：已落地
+- **会话**：修复 Actions 三平台打包
+- Windows 解压 protoc 时 Git Bash 的 `tar` 把 `D:` 当成远程路径（`Cannot connect to D: resolve failed`）。改为 `tar --force-local`。
+- `Cargo.toml` 把 `nucleo` patch 到 `vendor/nucleo`，而 `/vendor/` 不入库。macOS / Ubuntu 因此读不到 `Cargo.toml`。打包前按 rev `5b74652` 检出该仓库。
+
 ### 2026-10-14 — MiniMax thinking 块缺 signature 读不了响应
 
 - **状态**：已落地
