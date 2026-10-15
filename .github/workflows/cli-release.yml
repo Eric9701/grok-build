@@ -51,6 +51,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Cargo.toml 用 path patch 指向 vendor/nucleo，但 /vendor/ 被 gitignore。
+      # 这是给访问不了 GitHub 的本机用的；Actions 上按同一 rev 检出。
+      - name: Checkout vendored nucleo
+        shell: bash
+        run: |
+          if [ -f vendor/nucleo/Cargo.toml ]; then
+            exit 0
+          fi
+          mkdir -p vendor
+          git init vendor/nucleo
+          git -C vendor/nucleo remote add origin https://github.com/helix-editor/nucleo.git
+          git -C vendor/nucleo fetch --depth 1 origin 5b74652e482f7c07d827f18c6d21e7540c242c69
+          git -C vendor/nucleo checkout --detach FETCH_HEAD
+
       - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           # 不传 toolchain，让 action 安装 rust-toolchain.toml（当前 1.94.0）。
@@ -81,7 +95,8 @@ jobs:
           mkdir -p "$proto_dir"
           curl -fsSL -o "$RUNNER_TEMP/protoc.zip" \
             "https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-win64.zip"
-          tar -xf "$RUNNER_TEMP/protoc.zip" -C "$proto_dir"
+          # Windows runner 的 RUNNER_TEMP 在 D:。Git Bash 的 tar 看到盘符冒号会当成远程主机。
+          tar --force-local -xf "$RUNNER_TEMP/protoc.zip" -C "$proto_dir"
           echo "PROTOC=$(cygpath -m "$proto_dir/bin/protoc.exe")" >> "$GITHUB_ENV"
 
       - name: GROK_VERSION
