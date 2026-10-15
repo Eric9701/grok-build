@@ -129,6 +129,9 @@ pub enum ContentBlock {
     },
     Thinking {
         thinking: String,
+        /// Streamed `content_block_start` omits this; the value arrives later as `signature_delta`.
+        /// MiniMax and Anthropic both send the start block without it. Missing must not fail the response.
+        #[serde(default)]
         signature: String,
     },
     /// Encrypted reasoning the model chose to redact: an opaque `data` blob, never plaintext.
@@ -494,6 +497,63 @@ mod tests {
             Some(&serde_json::json!("redacted_thinking"))
         );
         assert_eq!(json.get("data"), Some(&serde_json::json!("abc")));
+    }
+
+    /// A streamed thinking block starts as `{"type":"thinking","thinking":""}` with no
+    /// `signature`. MiniMax and Anthropic both do this; the signature arrives later as
+    /// `signature_delta`. Requiring the field fails the whole response with
+    /// `serialization error: missing field `signature``.
+    #[test]
+    fn thinking_content_block_without_signature_parses() {
+        let event: MessageStreamEvent = serde_json::from_str(
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+        )
+        .expect("thinking content_block_start without signature must deserialize");
+        match event {
+            MessageStreamEvent::ContentBlockStart { content_block, .. } => match content_block {
+                ContentBlock::Thinking {
+                    thinking,
+                    signature,
+                } => {
+                    assert_eq!(thinking, "");
+                    assert_eq!(signature, "");
+                }
+                other => panic!("expected Thinking, got {other:?}"),
+            },
+            other => panic!("expected ContentBlockStart, got {other:?}"),
+        }
+
+        let block: ContentBlock =
+            serde_json::from_str(r#"{"type":"thinking","thinking":"let me think"}"#)
+                .expect("non-streaming thinking block without signature must deserialize");
+        match block {
+            ContentBlock::Thinking {
+                thinking,
+                signature,
+            } => {
+                assert_eq!(thinking, "let me think");
+                assert_eq!(signature, "");
+            }
+            other => panic!("expected Thinking, got {other:?}"),
+        }
+
+        let kept: ContentBlock = serde_json::from_str(
+            r#"{"type":"thinking","thinking":"","signature":"real-signature"}"#,
+        )
+        .unwrap();
+        match kept {
+            ContentBlock::Thinking { signature, .. } => {
+                assert_eq!(signature, "real-signature");
+            }
+            other => panic!("expected Thinking, got {other:?}"),
+        }
+
+        let json = serde_json::to_value(ContentBlock::Thinking {
+            thinking: "t".into(),
+            signature: "sig".into(),
+        })
+        .unwrap();
+        assert_eq!(json.get("signature"), Some(&serde_json::json!("sig")));
     }
 
     #[test]

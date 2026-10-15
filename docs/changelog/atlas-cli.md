@@ -4,6 +4,13 @@
 
 ## 2026-10
 
+### 2026-10-14 — MiniMax thinking 块缺 signature 读不了响应
+
+- **状态**：已落地
+- **会话**：MiniMax missing signature
+- MiniMax（以及 Anthropic 流式）的 `content_block_start` thinking 块不带 `signature`，签名在后面的 `signature_delta`。`ContentBlock::Thinking` 把该字段当成必填，整段响应变成 `Couldn't read the response: serialization error: missing field signature`。
+- 缺省时按空字符串解析。已有签名仍保留；后续 `signature_delta` 照旧覆盖。请求回放仍会写出 `signature`。
+
 ### 2026-10-08 — GitHub Actions 打包 Atlas CLI
 
 - **状态**：已落地
