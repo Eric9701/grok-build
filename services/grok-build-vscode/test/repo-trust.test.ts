@@ -13,7 +13,11 @@
 import { describe, expect, it } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { alwaysApproveSource, configForcesAlwaysApprove } from "../src/grok-config";
+import {
+  ALWAYS_APPROVE_NOTICE_KEY,
+  alwaysApproveSource,
+  configForcesAlwaysApprove,
+} from "../src/grok-config";
 import { sessionScopedRoots } from "../src/auth-roots";
 import { resolveTreePath, writeTreeFile } from "../src/desktop/file-tree";
 
@@ -114,6 +118,23 @@ describe("consent gate wiring", () => {
   });
 });
 
+describe("global always-approve notice", () => {
+  it("survives a process restart, not just the current activation", () => {
+    // Desktop turns showInformationMessage into a blocking dialog, so "once
+    // per activation" was every app launch. The flag has to live in the
+    // host memento or the same person is trained to click Cancel.
+    const src = sidebarSrc();
+    const start = src.indexOf("private noticeAlwaysApproveOnce(");
+    expect(start).toBeGreaterThan(0);
+    const body = src.slice(start, src.indexOf("private setPlanActive", start));
+    expect(body).toContain("ALWAYS_APPROVE_NOTICE_KEY");
+    expect(body).toContain("this.state.get");
+    expect(body).toContain("this.state.update");
+    expect(body).toContain("shouldShowAlwaysApproveNotice");
+    expect(ALWAYS_APPROVE_NOTICE_KEY).toBe("grok.alwaysApproveNoticeShown");
+  });
+});
+
 describe("desktop file roots are session-scoped", () => {
   const A = path.resolve("/work/repo-a");
   const B = path.resolve("/work/repo-b");
@@ -187,9 +208,9 @@ describe("desktop file roots are session-scoped", () => {
 });
 
 describe("host confirmation on the messages that run something", () => {
-  it("guards both execute-class handlers", () => {
+  it("guards the execute-class handlers", () => {
     const src = sidebarSrc();
-    for (const handler of ['case "runInstallCmd"', 'case "updateGrok"']) {
+    for (const handler of ['case "runInstallCmd"', 'case "runMuseInstallCmd"', 'case "updateGrok"']) {
       const start = src.indexOf(handler);
       expect(start).toBeGreaterThan(0);
       const body = src.slice(start, start + 700);

@@ -53,6 +53,9 @@ function harness(provider: "codex" | "claude") {
   };
   Object.assign(host, {
     focused: local, pool: new Set([local, phone, background, other]),
+    // Shared per-provider history process: the update path tears it down
+    // before replacing the binary, the way it drains the throwaway probes.
+    adapterHistoryClients: new Map(),
     providerCliVersions: { [provider]: "0.149.0" }, providerCliUpdates: {},
     [`${provider}VersionProbe`]: Promise.resolve("0.149.0"),
     providerConnections: () => ({ [provider]: true }),
@@ -111,6 +114,8 @@ describe.each(["codex", "claude"] as const)("%s explicit CLI update", (provider)
     const updating = host.updateProviderCliOnDemand(provider);
     await vi.waitFor(() => expect(local.client).toBeUndefined());
     expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"]]);
+    // The waiting conversation says it is updating, not stuck starting.
+    expect(host.emit).toHaveBeenCalledWith(local, expect.objectContaining({ type: "startupStatus", stage: "updating" }));
     exits[0].resolve(); exits[1].resolve();
     await Promise.resolve();
     expect(exec.mock.calls.map((c) => c[1])).toEqual([["--version"]]);
@@ -387,6 +392,7 @@ describe("grok explicit CLI update", () => {
       focused,
       pool: new Set([focused]),
       providerCliVersions: {},
+      providerConnections: () => ({ grok: true }),
       locateProvider: vi.fn(() => "/installed/grok"),
       host: { appendLine: vi.fn(), showWarningMessage: vi.fn(), showInformationMessage: vi.fn() },
       post: vi.fn(),

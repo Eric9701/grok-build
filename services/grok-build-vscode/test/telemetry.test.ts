@@ -614,6 +614,7 @@ function sidebarMethodBody(signature: string): string {
 
 function makeTelemetrySidebar(cwd = "/repo"): any {
   const instance = Object.create(GrokSidebar.prototype) as any;
+  instance.startTurnDiffBaseline = vi.fn();
   instance.lastProviderConnected = { grok: true, codex: false, claude: false };
   instance.lastVoiceConfiguredByCwd = new Map([[normalizeRepoPath(cwd), true]]);
   instance.locatedProviders = vi.fn(() => {
@@ -773,7 +774,7 @@ describe("remote telemetry at the host send seam", () => {
     expect(post).toHaveBeenCalledTimes(1);
     expect(post.mock.calls[0][1]).toMatchObject({
       eventName: "remote_portal_opened",
-      props: { installId: "install-wired", hostKind: "vscode", withHint },
+      props: { installId: "install-wired", hostKind: "vscode", withHint, source: "topbar" },
     });
     expect(Object.keys(post.mock.calls[0][1].props).sort()).toEqual([...REMOTE_PORTAL_OPENED_ALLOWED_KEYS].sort());
   });
@@ -864,7 +865,7 @@ describe("lean remote payload builders and sanitizers", () => {
   const cases = [
     { build: buildRemotePortalOpenedEvent, sanitize: telemetry.sanitizeRemotePortalOpenedProps,
       name: "remote_portal_opened", keys: REMOTE_PORTAL_OPENED_ALLOWED_KEYS,
-      props: { installId: "install-1", hostKind: "sprite", withHint: false } },
+      props: { installId: "install-1", hostKind: "sprite", withHint: false, source: "settings" } },
     { build: buildSessionRemoteStartedEvent, sanitize: telemetry.sanitizeSessionRemoteStartedProps,
       name: "session_remote_started", keys: SESSION_REMOTE_STARTED_ALLOWED_KEYS,
       props: { installId: "install-1", hostKind: "sprite", clientDevice: "mobile", sessionOrigin: "local", provider: "codex" } },

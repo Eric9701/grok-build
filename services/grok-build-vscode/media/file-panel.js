@@ -303,7 +303,7 @@
    * State A (fits): folder+name title, every tab is icon+name and its own X.
    * State B (tight): inactive tabs demote to icon-only (dirty dot kept) BEFORE
    *   any tab is hidden; active keeps icon+name+X; title may drop to icon-only.
-   * State C (minimal): folder icon + the active tab + one "…" chip of the rest.
+   * State C (minimal): folder icon + the active tab + one chip ("2" and a chevron) holding the rest.
    *
    * `preferChip` SKIPS B. On a touch screen an icon-only tab is an anonymous
    * square — three open files became three identical glyphs, and the strip
@@ -427,15 +427,15 @@
     const files = Array.isArray(snap.files) ? snap.files : [];
     const conflicts = files.filter((file) => file && file.status === "U").length;
     if (conflicts) {
-      return { tone: "warn", text: conflicts === 1 ? "1 file has conflicts" : conflicts + " files have conflicts" };
+      return { tone: "warn", text: conflicts === 1 ? "1 file has conflicts" : conflicts.toLocaleString("en-US") + " files have conflicts" };
     }
     if (files.length) {
       // Deliberately NOT the warning tone — see the note on .gfp-changes-warn.
-      return { tone: "note", text: files.length === 1 ? "1 file not committed" : files.length + " files not committed" };
+      return { tone: "note", text: files.length === 1 ? "1 file not committed" : files.length.toLocaleString("en-US") + " files not committed" };
     }
     const ahead = Number(snap.ahead) || 0;
     if (ahead > 0) {
-      const noun = ahead === 1 ? "1 commit" : ahead + " commits";
+      const noun = ahead === 1 ? "1 commit" : ahead.toLocaleString("en-US") + " commits";
       return { tone: "note", text: noun + " saved here but not pushed" };
     }
     if (snap.unborn) return { tone: "ok", text: "Nothing committed yet" };
@@ -506,7 +506,7 @@
     }
     const ahead = Number(snap.ahead) || 0;
     if (ahead > 0 && canPush) {
-      return { op: "push", label: ahead === 1 ? "Push 1 commit" : "Push " + ahead + " commits", disabled: false, hint: "" };
+      return { op: "push", label: ahead === 1 ? "Push 1 commit" : "Push " + ahead.toLocaleString("en-US") + " commits", disabled: false, hint: "" };
     }
     if (ahead > 0) {
       const hint = !snap.hasRemote
@@ -588,6 +588,24 @@
     return rows;
   }
 
+  /** Adapt parsed patch rows to chat.js's shared inline diff renderer. */
+  function patchRowsToDiffHunks(rows) {
+    const hunks = [];
+    let hunk = null;
+    for (const row of rows) {
+      if (row.kind === "hunk") { hunk = null; continue; }
+      if (row.kind !== "add" && row.kind !== "del" && row.kind !== "ctx") continue;
+      if (!hunk) {
+        hunk = { site: {}, result: { lines: [] } };
+        hunks.push(hunk);
+      }
+      if (hunk.site.oldLine == null && row.oldNo != null) hunk.site.oldLine = row.oldNo;
+      if (hunk.site.newLine == null && row.newNo != null) hunk.site.newLine = row.newNo;
+      hunk.result.lines.push({ type: row.kind, text: row.text });
+    }
+    return hunks;
+  }
+
   /**
    * The +N −M pair as DOM, in the product's diff palette.
    *
@@ -630,8 +648,8 @@
     const deleted = typeof entry.deleted === "number" ? entry.deleted : null;
     if (added === null && deleted === null) return "";
     const parts = [];
-    if (added) parts.push("+" + added);
-    if (deleted) parts.push("\u2212" + deleted);
+    if (added) parts.push("+" + added.toLocaleString("en-US"));
+    if (deleted) parts.push("\u2212" + deleted.toLocaleString("en-US"));
     return parts.join(" ");
   }
 
@@ -1104,7 +1122,21 @@
       title.textContent = "";
       const icon = doc.createElement("span");
       icon.className = "gfp-title-icon";
-      renderFileIcon(icon, label, "dir");
+      // The project's own mark when the mount can name one, so the folder above
+      // the files and the project's row in the rail are the same glyph in the
+      // same colour. A mount that supplies no hook — the provider-config panel,
+      // whose scope is a config directory rather than a project — keeps the
+      // folder, and so does a project with no mark of its own.
+      const cwd = scopeCwd(currentScope);
+      const mark = typeof ui.projectMark === "function" && cwd ? ui.projectMark(cwd) : "";
+      if (mark) {
+        icon.innerHTML = mark;
+        icon.classList.add("gfp-title-icon-mark");
+        const tint = typeof ui.projectMarkColor === "function" ? ui.projectMarkColor(cwd) : "";
+        if (tint) icon.dataset.repoColor = tint;
+      } else {
+        renderFileIcon(icon, label, "dir");
+      }
       const name = doc.createElement("span");
       name.className = "gfp-title-label";
       name.textContent = label;
@@ -1292,11 +1324,19 @@
           chip.type = "button";
           chip.className = "gfp-overflow-chip";
           chip.setAttribute("aria-haspopup", "menu");
-          chip.setAttribute("aria-label", "More open files");
-          chip.textContent = "…";
           chip.addEventListener("click", () => openOverflowMenu(chip));
           tabsEl.appendChild(chip);
         }
+        // A count and a drop-down chevron, never a bare "…": on a phone the
+        // file viewer's own action menu is a "⋯" a thumb's reach away, and the
+        // two do different things.
+        const count = String(overflowRelPaths.length);
+        if (chip.dataset.count !== count) {
+          chip.dataset.count = count;
+          chip.innerHTML = '<span class="gfp-overflow-count"></span>' + ICON.chevronDown;
+          chip.querySelector(".gfp-overflow-count").textContent = count;
+        }
+        chip.setAttribute("aria-label", count + " more open " + (count === "1" ? "file" : "files"));
         // On a phone the chip IS the rest of the strip, so anything unsaved in
         // there has no other way to say so — the dot lives on the menu ROW,
         // which is one tap past the point of noticing. Nothing is lost either
@@ -1540,6 +1580,24 @@
      */
     async function setScope(scope) {
       if (destroyed) return;
+      // "The host did not say which project is current" is not "there is no
+      // project". A remote's wake snapshot can arrive before the host has
+      // rebound its workspace, and every field the scope is built from
+      // coerces absent to "" on the way here (chat.js: `msg.cwd || ""`,
+      // `msg.activeCwd || ""`), so a momentary silence used to arrive as a
+      // null scope indistinguishable from a closed folder.
+      //
+      // Below, that read as a project SWITCH, which leaves Changes and resets
+      // to Folders; and the switch replaced the scope-state object, which
+      // fenced the answer to any read in flight. The owner hit exactly that on
+      // a phone while his machine woke: thrown out of Changes, and an open
+      // diff stuck on "Reading the diff..." that nothing would ever finish.
+      //
+      // Keeping the last scope is the honest degradation: the panel has
+      // nothing better to show, and the cwd arrives a frame later. The price,
+      // stated plainly: close the last project and the panel keeps listing it
+      // until a real scope replaces it or the page is refreshed.
+      if (!scope && currentScope) return;
       const nextState = scope ? scopeState(scope) : null;
       const switched = currentState !== nextState;
       if (switched) { cancelOperations(); abortPending(); }
@@ -2234,7 +2292,7 @@
       changesCount.hidden = !count;
       changesCount.textContent = count > 99 ? "99+" : String(count);
       changesBtn.title = count
-        ? (count === 1 ? "Changes — 1 file not committed" : "Changes — " + count + " files not committed")
+        ? (count === 1 ? "Changes — 1 file not committed" : "Changes — " + count.toLocaleString("en-US") + " files not committed")
         : "Changes";
       // Same number, same rule, on the panel toggle — and gone with the
       // Changes button when there is no repository to count.
@@ -2296,6 +2354,15 @@
       // on entry; it is two cheap commands and the whole point of the view is
       // that the number is true.
       void loadChanges({});
+      // And the same argument for the file you were reading when you left. It
+      // was only ever applied to the list, so re-entering Changes on an open
+      // diff showed whatever the last connection left there — including a
+      // "Reading the diff..." belonging to a read that died with that socket.
+      // This is the whole of the owner's workaround: he had to go back to all
+      // changes and open the file a second time to make this request happen.
+      // Status and diff are different request keys, so neither waits on the
+      // other.
+      if (currentState.changes.diffPath) void openChangeDiff(currentState.changes.diffPath, false);
     }
 
     async function loadChanges(opts) {
@@ -2373,8 +2440,14 @@
       } catch (err) {
         result = { ok: false, reason: String((err && err.message) || err || "Could not read the diff.") };
       }
+      // `diffSeq` still ours means no NEWER read has taken the flag over, so
+      // whatever happens next this read is the one that owns it and must put
+      // it down. Returning with it raised is what made the subview say
+      // "Reading the diff..." with nothing in flight behind it, and the
+      // suppression in refreshDisplayed then read that flag as proof a request
+      // was still coming.
+      if (seq === state.changes.diffSeq) state.changes.diffLoading = false;
       if (destroyed || seq !== state.changes.diffSeq || currentState !== state || state.changes.diffPath !== path) return;
-      state.changes.diffLoading = false;
       finishOperation(operation, result, () => openChangeDiff(path));
       if (result && result.ok) {
         state.changes.diffPatch = result.patch || "";
@@ -2472,7 +2545,7 @@
       if (request.op === "commit") {
         if (request.push) return "Committed and pushed.";
         return ahead > 0
-          ? "Committed. " + (ahead === 1 ? "1 commit is" : ahead + " commits are") + " still only on this machine."
+          ? "Committed. " + (ahead === 1 ? "1 commit is" : ahead.toLocaleString("en-US") + " commits are") + " still only on this machine."
           : "Committed.";
       }
       if (request.op === "push") return "Pushed.";
@@ -2675,7 +2748,7 @@
         if (files.length > rowLimit) {
           const more = doc.createElement("p");
           more.className = "gfp-changes-more";
-          more.textContent = "and " + (files.length - rowLimit) + " more";
+          more.textContent = "and " + (files.length - rowLimit).toLocaleString("en-US") + " more";
           list.appendChild(more);
         }
         changesEl.appendChild(list);
@@ -4022,6 +4095,14 @@
       isOpen: () => open,
       isOverlay: () => rootEl.classList.contains("gfp-overlay"),
       setScope,
+      /** Redraw the title. The host calls this when the project's mark or tint
+       *  changed underneath us — the scope did not, so setScope would be a
+       *  full reload for a one-glyph change. */
+      repaintTitle() {
+        if (destroyed) return;
+        paintTitle();
+        applyStripShrink();
+      },
       /**
        * A connection ended and a new one is up. The caller is the only thing
        * that can know that, which is the whole reason this is a call and not
@@ -4167,6 +4248,7 @@
     changeCountLabel,
     changeTotalLabel,
     parseUnifiedDiff,
+    patchRowsToDiffHunks,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;

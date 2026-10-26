@@ -183,7 +183,7 @@ try {
   qa = buildQaFixture();
   userData = fs.mkdtempSync(path.join(os.tmpdir(), "grok-timing-ud-"));
   logPath = path.join(userData, "logs", "desktop.log");
-  fs.writeFileSync(path.join(userData, "test-config.json"), JSON.stringify({ "grok.cliPath": fixtureCli }), "utf8");
+  fs.writeFileSync(path.join(userData, "test-config.json"), JSON.stringify({ "atlas.cliPath": fixtureCli }), "utf8");
   writeHeavyMeta(qa);
   const filler = writeFillerSessions(qa);
   if (filler) log(`wrote ${filler} synthesised conversations beside the fixture's ${qa.sessions.length}`);

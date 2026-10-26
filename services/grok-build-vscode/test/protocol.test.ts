@@ -18,6 +18,11 @@ const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.me
 const sorted = (a: readonly string[]) => [...a].sort();
 
 describe("host <-> webview message contract (src/protocol.ts is the source of truth)", () => {
+  it("contributes the phone handoff command and routes it through the chat host", () => {
+    expect(packageJson.contributes.commands).toContainEqual({ command: "atlas.continueOnPhone", title: "Continue on Phone", category: "Atlas" });
+    const extension = readFileSync(new URL("../src/extension.ts", import.meta.url), "utf8");
+    expect(extension).toContain('registerCommand("atlas.continueOnPhone", () => sidebar.continueOnPhone())');
+  });
   it("pins the interrupted-send error code so harnesses do not match copy", () => {
     expect(INTERRUPTED_SEND_CODE).toBe("interrupted-send");
     expect(chatSrc).toContain('el.setAttribute("data-error-code", code)');
@@ -32,6 +37,8 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
 
   it("advertises remote voice as a host protocol capability", () => {
     expect(HOST_CAPABILITIES).toEqual({
+      museNativeModes: true,
+      installMuse: true,
       uploadFile: true,
       remoteVoice: true,
       // Older hosts refuse to delete the conversation the requester is reading,
@@ -67,6 +74,8 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
       // everyone who has not updated yet.
       remoteRewind: true,
       remoteSteering: true,
+      // A New's composer waits for this reply; an older host never sends it.
+      composerDraftSession: true,
     });
   });
 
@@ -102,7 +111,8 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
   it("contributes find-in-conversation as a palette command and a Cmd/Ctrl+F fallback", () => {
     expect(packageJson.contributes.commands).toContainEqual({
       command: "atlas.findInSession",
-      title: "Atlas: Find in Conversation",
+      title: "Find in Conversation",
+      category: "Atlas",
     });
     expect(packageJson.contributes.keybindings).toContainEqual({
       command: "atlas.findInSession",
@@ -115,7 +125,8 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
   it("contributes a native title-bar settings command on the chat view", () => {
     expect(packageJson.contributes.commands).toContainEqual({
       command: "atlas.settings",
-      title: "Atlas: Settings",
+      title: "Settings",
+      category: "Atlas",
       icon: "$(gear)",
     });
     expect(packageJson.contributes.menus["view/title"]).toContainEqual({
@@ -125,14 +136,16 @@ describe("host <-> webview message contract (src/protocol.ts is the source of tr
     });
   });
 
-  it("uses findable AFK Pilot titles without changing the remote command ids", () => {
+  it("uses findable Atlas titles for the remote link commands", () => {
     expect(packageJson.contributes.commands).toContainEqual({
       command: "atlas.linkRemote",
-      title: "AFK Pilot: Link this device",
+      title: "Link this device",
+      category: "Atlas",
     });
     expect(packageJson.contributes.commands).toContainEqual({
       command: "atlas.unlinkRemote",
-      title: "AFK Pilot: Unlink this device",
+      title: "Unlink this device",
+      category: "Atlas",
     });
   });
 

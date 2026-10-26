@@ -33,7 +33,7 @@ const REPO = process.env.GH_UNAUTH_REPO || "https://github.com/phuryn/client-con
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "grok-unauth-"));
 const fixtureCli = path.join(root, "test", "fixtures", "fake-grok-acp.cmd");
-fs.writeFileSync(path.join(tmp, "test-config.json"), JSON.stringify({ "grok.cliPath": fixtureCli }), "utf8");
+fs.writeFileSync(path.join(tmp, "test-config.json"), JSON.stringify({ "atlas.cliPath": fixtureCli }), "utf8");
 
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;

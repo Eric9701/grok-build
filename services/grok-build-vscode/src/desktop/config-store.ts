@@ -16,14 +16,17 @@ import type {
   HostConfigurationChangeEvent,
   HostDisposable,
 } from "../host";
-import type { SafeStorageLike } from "./safe-secrets";
-import { writeFileAtomic } from "./safe-secrets";
+import type { EncryptionDiagnosticsEnv, SafeStorageLike } from "./safe-secrets";
+import { secureStorageDiagnosis, writeFileAtomic } from "./safe-secrets";
 
 /** Defaults for keys the sidebar actually reads (mirrors package.json contributes). */
 export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "atlas.cliPath": "",
   "atlas.codexCliPath": "",
   "atlas.claudeCliPath": "",
+  "atlas.museShellSandbox": true,
+  "atlas.museSandboxNetwork": "proxy-only",
+  "atlas.museTrustWorkspaces": false,
   "atlas.defaultModel": "",
   "atlas.defaultMode": "",
   "atlas.includeActiveFileByDefault": true,
@@ -39,6 +42,7 @@ export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "atlas.expandDiffCard": false,
   "atlas.steerByDefault": false,
   "atlas.promptNav": true,
+  "atlas.pinLiveWorkflows": true,
   "atlas.soundNotifications": false,
   "atlas.processingSound": false,
   "atlas.readRepliesAloud": false,
@@ -46,6 +50,10 @@ export const CONFIG_DEFAULTS: Readonly<Record<string, unknown>> = {
   "atlas.remote.keepAwake": true,
   "atlas.thumbsFeedback": false,
   "atlas.telemetry.enabled": true,
+  // Desktop-only, so deliberately NOT in package.json contributes: VS Code
+  // has no tray and must not show a setting that does nothing there (#174).
+  "atlas.desktop.tray": true,
+  "atlas.desktop.trayNoticeShown": false,
   "atlas.chatFontScale": 100,
   "atlas.voiceApiKey": "",
   "atlas.ffmpegPath": "",
@@ -73,6 +81,7 @@ export class SensitiveConfigStore {
   constructor(
     private readonly filePath: string,
     private readonly safeStorage: SafeStorageLike,
+    private readonly diagnostics: EncryptionDiagnosticsEnv = {},
   ) {
     this.load();
   }
@@ -112,7 +121,8 @@ export class SensitiveConfigStore {
 
   private persist(): void {
     if (!this.safeStorage.isEncryptionAvailable()) {
-      throw new Error("OS secure storage is unavailable; cannot store credentials");
+      throw new Error("OS secure storage is unavailable; cannot store credentials."
+        + secureStorageDiagnosis(this.safeStorage, this.diagnostics));
     }
     const entries: Record<string, string> = {};
     for (const [k, plain] of Object.entries(this.cache)) {

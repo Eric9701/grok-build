@@ -1,7 +1,7 @@
 /**
  * Pure desktop helpers (no Electron process) — safe for npm test / CI.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -568,6 +568,74 @@ describe("createSafeStorageSecrets", () => {
     if (fs.existsSync(file)) {
       expect(fs.readFileSync(file, "utf8")).not.toContain("plain-token-value");
     }
+  });
+
+  // #209: Ubuntu with gnome-keyring unlocked still got a bare "unavailable".
+  // The backend Electron picked and the desktop it saw are the diagnosis.
+  function unavailableOnLinux(backend: () => string): SafeStorageLike {
+    return {
+      isEncryptionAvailable: () => false,
+      encryptString: (s) => Buffer.from(s, "utf8"),
+      decryptString: (b) => b.toString("utf8"),
+      getSelectedStorageBackend: backend,
+    };
+  }
+
+  it("names Electron's password store, the desktop, and the launch flag on Linux", async () => {
+    const secrets = createSafeStorageSecrets(file, unavailableOnLinux(() => "basic_text"), {
+      platform: "linux",
+      env: { XDG_CURRENT_DESKTOP: "ubuntu:GNOME" },
+    });
+    const error = await secrets.store("grok.remoteControl.deviceToken", "plain-token-value").catch((e) => e);
+    expect(error).toBeInstanceOf(EncryptionUnavailableError);
+    expect(error.message).toContain("OS secure storage is unavailable.");
+    expect(error.message).toContain('Electron chose the "basic_text" password store (XDG_CURRENT_DESKTOP=ubuntu:GNOME).');
+    expect(error.message).toContain("--password-store=gnome-libsecret (GNOME)");
+    expect(error.message).toContain("--password-store=kwallet6 / kwallet5 (KDE)");
+    // Diagnosis only: still no plaintext on disk.
+    expect(fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "").not.toContain("plain-token-value");
+  });
+
+  it("keeps the diagnosis when the backend cannot be read and the desktop is unset", async () => {
+    const secrets = createSafeStorageSecrets(file, unavailableOnLinux(() => { throw new Error("not ready"); }), {
+      platform: "linux",
+      env: {},
+    });
+    await expect(secrets.store("k", "v")).rejects.toThrow(
+      'Electron chose the "unknown" password store (XDG_CURRENT_DESKTOP=unset).',
+    );
+  });
+
+  it("does not ask for a Linux backend on other platforms", async () => {
+    const backend = vi.fn(() => "basic_text");
+    const secrets = createSafeStorageSecrets(file, unavailableOnLinux(backend), { platform: "darwin", env: {} });
+    await expect(secrets.store("k", "v")).rejects.toThrow(
+      /^OS secure storage is unavailable\. Device credentials cannot be stored safely on this machine\.$/,
+    );
+    expect(backend).not.toHaveBeenCalled();
+  });
+
+  it("carries the same diagnosis into the sensitive-config failure", () => {
+    const sensitive = new SensitiveConfigStore(
+      path.join(dir, "sensitive.enc.json"),
+      unavailableOnLinux(() => "basic_text"),
+      { platform: "linux", env: { XDG_CURRENT_DESKTOP: "KDE" } },
+    );
+    expect(() => sensitive.set("atlas.voiceApiKey", "k")).toThrow(
+      /cannot store credentials\. Electron chose the "basic_text" password store \(XDG_CURRENT_DESKTOP=KDE\)/,
+    );
+  });
+
+  it("never forces a password store or turns on plaintext encryption", () => {
+    // A forced --password-store breaks KDE and orphans ciphertext stored under
+    // the other backend; setUsePlainTextEncryption is the plaintext fallback by
+    // another name. #209 is diagnostics only.
+    const sources = ["main.ts", "safe-secrets.ts", "config-store.ts"].map((name) => fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "desktop", name),
+      "utf8",
+    )).join("\n");
+    expect(sources).not.toMatch(/appendSwitch\(\s*["']password-store/);
+    expect(sources).not.toContain("setUsePlainTextEncryption");
   });
 
   it("writes secrets via temp file then rename (crash-safe)", async () => {
@@ -1287,12 +1355,11 @@ describe("webview message schema validation — display-preference setters", () 
   // VS Code accepts (no gate there) and a phone never posts (local-only) can
   // therefore be dead on the desktop and on a cloud machine alone — which is
   // exactly what happened to setExpandDiffCard the day it shipped.
-  it("accepts setExpandDiffCard with a boolean and refuses anything else", () => {
-    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: true }))
-      .toEqual({ type: "setExpandDiffCard", value: true });
-    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: false })?.type).toBe("setExpandDiffCard");
-    expect(parseWebviewMsg({ type: "setExpandDiffCard", value: "yes" })).toBeNull();
-    expect(parseWebviewMsg({ type: "setExpandDiffCard" })).toBeNull();
+  it.each(["setExpandDiffCard", "setPinLiveWorkflows"])("accepts %s with a boolean and refuses anything else", type => {
+    expect(parseWebviewMsg({ type, value: true })).toEqual({ type, value: true });
+    expect(parseWebviewMsg({ type, value: false })?.type).toBe(type);
+    expect(parseWebviewMsg({ type, value: "yes" })).toBeNull();
+    expect(parseWebviewMsg({ type })).toBeNull();
   });
 });
 
@@ -4290,7 +4357,9 @@ describe("local workspace switch serialization (P1-2)", () => {
     const openStart = sidebar.indexOf("private async openSession(id: string");
     const openEnd = sidebar.indexOf("private localTrustedSessionCwds(", openStart);
     const openBody = sidebar.slice(openStart, openEnd);
-    const reserveAt = openBody.indexOf("this.reserveSessionLoad(id)");
+    // The click takes the reservation (waiting behind another view's load if
+    // one holds it) before it enters the workspace queue.
+    const reserveAt = openBody.indexOf("await this.reserveBehindInFlightLoad(");
     const queueAt = openBody.indexOf("this.localWorkspaceSwitchQueue.run(open)");
     expect(reserveAt).toBeGreaterThanOrEqual(0);
     expect(queueAt).toBeGreaterThan(reserveAt);

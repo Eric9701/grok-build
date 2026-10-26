@@ -12,6 +12,8 @@ out-integration/**
 .vscode-test.mjs
 .vscode-test/**
 tsconfig.json
+tsconfig.muse-adapter.json
+adapters/**
 # ALLOWLIST — this excludes every dependency and re-includes them one by one.
 # out/ is plain tsc output, not a bundle, so anything `require`d at runtime must
 # be named here or the extension installs and then fails to load. Adding a
@@ -19,6 +21,8 @@ tsconfig.json
 node_modules/**
 !node_modules/ws/**
 !node_modules/jpeg-js/**
+!node_modules/qrcode-generator/package.json
+!node_modules/qrcode-generator/dist/qrcode.js
 # Adapter files only. `!…/codex-acp/**` would also pack its nested
 # node_modules (diff@9, open@11 — vsce: a later exclude cannot undo a negate).
 # @openai/codex's platform binaries hoist to node_modules/@openai and are kept
@@ -37,6 +41,9 @@ node_modules/**
 !node_modules/@agentclientprotocol/sdk/package.json
 !node_modules/@agentclientprotocol/sdk/dist/**
 !node_modules/@agentclientprotocol/sdk/LICENSE-APACHE
+!node_modules/@muse-code/sdk/package.json
+!node_modules/@muse-code/sdk/dist/src/**/*.js
+!node_modules/@muse-code/sdk/LICENSE*
 !node_modules/@anthropic-ai/claude-agent-sdk/package.json
 !node_modules/@anthropic-ai/claude-agent-sdk/*.mjs
 !node_modules/@anthropic-ai/claude-agent-sdk/*.js
@@ -55,6 +62,7 @@ node_modules/**
 # Do NOT use `!out/**/*.js` — that also un-ignores out/desktop/** and a later
 # `out/desktop/**` rule does not re-exclude those files under vsce's matcher.
 !out/*.js
+!out/muse-adapter/*.mjs
 # Desktop Electron app — never ship in the VS Code extension vsix.
 out/desktop/**
 # …except the two modules the EXTENSION itself requires at runtime. Not a

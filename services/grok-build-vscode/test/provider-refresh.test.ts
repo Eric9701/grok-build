@@ -45,39 +45,39 @@ function makeSidebar(connections: Record<string, boolean>): AnySidebar {
   return sidebar;
 }
 
-const refresh = (sidebar: AnySidebar): Promise<void> =>
-  (GrokSidebar.prototype as AnySidebar).refreshProviderStates.call(sidebar);
+const refresh = (sidebar: AnySidebar, opts?: { credentials?: boolean }): Promise<void> =>
+  (GrokSidebar.prototype as AnySidebar).refreshProviderStates.call(sidebar, opts);
 
 describe("Settings → Providers refresh", () => {
-  it("probes every INSTALLED agent, not just the ones marked connected", async () => {
+  it("does not probe installed agents without a saved connection", async () => {
     // The reported bug: approve Grok in a browser, press Refresh, nothing
     // happens — because the stale flag said "not connected" so it was skipped.
     const sidebar = makeSidebar({ grok: false, codex: false, claude: false });
-    await refresh(sidebar);
+    await refresh(sidebar, { credentials: true });
     const probed = sidebar.reprobeProviderCredentials.mock.calls.map(([id]: [string]) => id);
-    expect(probed.sort()).toEqual(["claude", "codex", "grok"]);
+    expect(probed).toEqual([]);
   });
 
   it("skips an agent whose CLI is not installed — nothing to run", async () => {
     const sidebar = makeSidebar({ grok: true });
     sidebar.locatedProviders = vi.fn(() => ({ grok: true, codex: false, claude: false }));
-    await refresh(sidebar);
+    await refresh(sidebar, { credentials: true });
     const probed = sidebar.reprobeProviderCredentials.mock.calls.map(([id]: [string]) => id);
     expect(probed).toEqual(["grok"]);
   });
 
-  it("promotes an agent that signed in elsewhere, once the probe proves it", async () => {
+  it("never promotes an agent that signed in elsewhere", async () => {
     const sidebar = makeSidebar({ grok: false, codex: false, claude: false });
     sidebar.locatedProviders = vi.fn(() => ({ grok: true, codex: false, claude: false }));
     sidebar.reprobeProviderCredentials = vi.fn(async () => true);
-    await refresh(sidebar);
-    expect(sidebar.setProviderConnected).toHaveBeenCalledWith("grok", true);
+    await refresh(sidebar, { credentials: true });
+    expect(sidebar.setProviderConnected).not.toHaveBeenCalled();
   });
 
   it("a failed probe never invents a connection", async () => {
     const sidebar = makeSidebar({ grok: false, codex: false, claude: false });
     sidebar.reprobeProviderCredentials = vi.fn(async () => false);
-    await refresh(sidebar);
+    await refresh(sidebar, { credentials: true });
     expect(sidebar.setProviderConnected).not.toHaveBeenCalled();
     expect(sidebar.providerConnectionState).toEqual({ grok: false, codex: false, claude: false });
   });
@@ -85,7 +85,7 @@ describe("Settings → Providers refresh", () => {
   it("does not re-persist an agent that was already connected", async () => {
     const sidebar = makeSidebar({ grok: true, codex: true, claude: true });
     sidebar.reprobeProviderCredentials = vi.fn(async () => true);
-    await refresh(sidebar);
+    await refresh(sidebar, { credentials: true });
     expect(sidebar.setProviderConnected).not.toHaveBeenCalled();
   });
 
@@ -96,7 +96,7 @@ describe("Settings → Providers refresh", () => {
       pathsAtProbe = [sidebar.cliPath, sidebar.codexCliPath, sidebar.claudeCliPath];
       return true;
     });
-    await refresh(sidebar);
+    await refresh(sidebar, { credentials: true });
     expect(pathsAtProbe).toEqual([undefined, undefined, undefined]);
   });
 
@@ -104,7 +104,7 @@ describe("Settings → Providers refresh", () => {
     const sidebar = makeSidebar({ grok: true });
     sidebar.testForceMissingGrokCli = true;
     sidebar.cliPath = "/cached/grok";
-    await refresh(sidebar);
+    await refresh(sidebar, { credentials: true });
     expect(sidebar.cliPath).toBe("/cached/grok");
   });
 
@@ -116,7 +116,7 @@ describe("Settings → Providers refresh", () => {
     sidebar.reprobeProviderCredentials = vi.fn(() => new Promise<boolean>((resolve) => {
       release = () => resolve(true);
     }));
-    const done = refresh(sidebar);
+    const done = refresh(sidebar, { credentials: true });
     expect(sidebar.providerRefreshInFlight).toBe(true);
     expect(sidebar.postedChecking).toEqual([true]);
     release!();
@@ -130,7 +130,7 @@ describe("Settings → Providers refresh", () => {
   it("stops checking even when a probe rejects", async () => {
     const sidebar = makeSidebar({ grok: true, codex: true });
     sidebar.reprobeProviderCredentials = vi.fn(async () => { throw new Error("CLI exploded"); });
-    await expect(refresh(sidebar)).resolves.toBeUndefined();
+    await expect(refresh(sidebar, { credentials: true })).resolves.toBeUndefined();
     expect(sidebar.providerRefreshInFlight).toBe(false);
     expect(sidebar.postedChecking.at(-1)).toBe(false);
   });
@@ -142,8 +142,8 @@ describe("Settings → Providers refresh", () => {
     sidebar.reprobeProviderCredentials = vi.fn(() => new Promise<boolean>((resolve) => {
       release = () => resolve(true);
     }));
-    const first = refresh(sidebar);
-    await refresh(sidebar);
+    const first = refresh(sidebar, { credentials: true });
+    await refresh(sidebar, { credentials: true });
     expect(sidebar.reprobeProviderCredentials).toHaveBeenCalledTimes(1);
     release!();
     await first;
@@ -174,6 +174,87 @@ describe("Settings → Providers refresh", () => {
     for (const tier of ["read-only", "propose", "full"] as const) {
       expect(allowFromRemote("refreshProviders", tier)).toBe(false);
     }
+  });
+});
+
+/**
+ * #171 — "opening the settings page starts Claude Code and talks to Anthropic".
+ *
+ * The reporter was right about the mechanism and it was worse than they knew:
+ * every INSTALLED agent was proved this way, including accounts they had never
+ * connected to this extension. Proving one is not a lightweight ping — it
+ * starts the vendor's ACP adapter, which starts the vendor's binary and creates
+ * a real session (measured: ~14 connections to api.anthropic.com, 5 to
+ * mcp-proxy.anthropic.com, one to telemetry, ~3s, the person's MCP connectors
+ * started along with it). No prompt is sent, so nothing is billed — but none of
+ * that was asked for.
+ *
+ * Re-reading what is INSTALLED is the cheap half and stays on page open. The
+ * expensive half now needs someone to have pressed something.
+ */
+describe("Providers refresh: the local half never contacts anybody (#171)", () => {
+  it("proves no accounts when the page merely opened", async () => {
+    const sidebar = makeSidebar({ grok: false, codex: false, claude: false });
+    await refresh(sidebar, { credentials: false });
+    expect(sidebar.reprobeProviderCredentials).not.toHaveBeenCalled();
+  });
+
+  it("still re-runs the locators, so a CLI installed since boot appears", async () => {
+    const sidebar = makeSidebar({ grok: true });
+    await refresh(sidebar, { credentials: false });
+    expect([sidebar.cliPath, sidebar.codexCliPath, sidebar.claudeCliPath])
+      .toEqual([undefined, undefined, undefined]);
+  });
+
+  it("still re-reads the versions — a spawn, and nothing on the wire", async () => {
+    const sidebar = makeSidebar({ grok: true, codex: true, claude: true });
+    // Same seam the version tests above use: one level below
+    // reprobeProviderVersion, so this asserts the real path runs.
+    const seen: string[] = [];
+    sidebar.probeProviderVersion = vi.fn(async (provider: string) => {
+      seen.push(provider);
+      return "9.9.9";
+    });
+    await refresh(sidebar, { credentials: false });
+    expect(seen.sort()).toEqual(["claude", "codex"]);
+  });
+
+  it("promotes nothing, because it learned nothing", async () => {
+    const sidebar = makeSidebar({ grok: false, codex: false, claude: false });
+    // Would have said yes to all three. It is never asked.
+    sidebar.reprobeProviderCredentials = vi.fn(async () => true);
+    await refresh(sidebar, { credentials: false });
+    expect(sidebar.setProviderConnected).not.toHaveBeenCalled();
+    expect(sidebar.providerConnectionState).toEqual({ grok: false, codex: false, claude: false });
+  });
+
+  it("demotes nothing either — a row keeps what the last real probe found", async () => {
+    const sidebar = makeSidebar({ grok: true, codex: true, claude: true });
+    await refresh(sidebar, { credentials: false });
+    expect(sidebar.providerConnectionState).toEqual({ grok: true, codex: true, claude: true });
+    expect(sidebar.setProviderConnected).not.toHaveBeenCalled();
+  });
+
+  it("still ends idle, so the button cannot be left spinning", async () => {
+    const sidebar = makeSidebar({ grok: true });
+    await refresh(sidebar, { credentials: false });
+    expect(sidebar.providerRefreshInFlight).toBe(false);
+    expect(sidebar.postedChecking.at(-1)).toBe(false);
+  });
+
+  // The direction of the default is load-bearing. An older client — a relay
+  // still serving a vendored client from before this change — sends no field at
+  // all, and its Refresh button has to keep proving accounts. The cost of that
+  // pairing is only that the fix arrives with the client, which is the
+  // fast-moving surface anyway.
+  it.each([
+    ["no options at all", undefined, 0],
+    ["an empty options object", {}, 0],
+    ["credentials: true", { credentials: true }, 3],
+  ])("only explicit credential refresh proves connected accounts: %s", async (_label, opts, count) => {
+    const sidebar = makeSidebar({ grok: true, codex: true, claude: true });
+    await refresh(sidebar, opts as { credentials?: boolean } | undefined);
+    expect(sidebar.reprobeProviderCredentials).toHaveBeenCalledTimes(count);
   });
 });
 
@@ -243,7 +324,7 @@ describe("Refresh re-reads the CLI version", () => {
   it("re-probes Codex and Claude, with the stale memo already cleared", async () => {
     const sidebar = makeSidebar({ codex: true, claude: true });
     const seen = withVersionSpy(sidebar);
-    await refresh(sidebar);
+    await refresh(sidebar, { credentials: true });
     expect(seen.map((s) => s.provider).sort()).toEqual(["claude", "codex"]);
     // Cleared BEFORE the fresh read, or the fresh read would return the memo.
     for (const s of seen) expect(s.memo, s.provider).toBeUndefined();
@@ -259,7 +340,7 @@ describe("Refresh re-reads the CLI version", () => {
     const sidebar = makeSidebar({ codex: true, claude: true });
     const seen = withVersionSpy(sidebar);
     sidebar.providerCliUpdate = { provider: "codex", done: Promise.resolve() };
-    await refresh(sidebar);
+    await refresh(sidebar, { credentials: true });
     expect(seen.map((s) => s.provider)).toEqual(["claude"]);
   });
 
@@ -269,7 +350,7 @@ describe("Refresh re-reads the CLI version", () => {
     const sidebar = makeSidebar({ grok: true });
     const seen = withVersionSpy(sidebar);
     sidebar.locatedProviders = vi.fn(() => ({ grok: true, codex: false, claude: false }));
-    await refresh(sidebar);
+    await refresh(sidebar, { credentials: true });
     expect(seen).toEqual([]);
   });
 });

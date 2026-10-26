@@ -1,22 +1,22 @@
-# Atlas for VS Code (Community)
+# Atlas for VS Code
 
-[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](https://github.com/phuryn/grok-build-vscode/blob/main/LICENSE) ![Agents](https://img.shields.io/badge/Agents-Atlas%20%C2%B7%20Codex%20%C2%B7%20Claude%20Code-000000) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Cursor](https://badgen.net/badge/Cursor/Extension/007ACC)](https://cursor.com) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
+[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](https://github.com/phuryn/grok-build-vscode/blob/main/LICENSE) ![Agents](https://img.shields.io/badge/Agents-Atlas%20%C2%B7%20Codex%20%C2%B7%20Claude%20Code%20%C2%B7%20Muse%20Code%20%C2%B7%20Antigravity-000000) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Cursor](https://badgen.net/badge/Cursor/Extension/007ACC)](https://cursor.com) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
 
-> **GUI for Atlas CLI (incl. Atlas 4.6)** — not affiliated with or endorsed by SpaceXAI (formerly xAI). *Atlas* and *xAI* are trademarks of xAI; this project uses those names only to describe what it's compatible with.
+> **One place for the Atlas CLI (Grok 4.7) and Muse Code (Muse Wonder)** — plus Codex (GPT-6 Astra), Claude Code (Opus 5.5) and Google Antigravity (Gemini 4 Argon, experimental). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, OpenAI, Anthropic or Google. *Grok* and *xAI* are trademarks of xAI; *Muse Code* of Meta; *Codex* of OpenAI; *Claude* and *Claude Code* of Anthropic. *Antigravity* and *Gemini* are trademarks of Google. This project uses those names only to describe what it is compatible with.
 
-The GUI for **Atlas CLI** (incl. **Atlas 4.6**), right in your editor — with **Remote Control**: pair **[AFK Pilot](https://afkpilot.com)** once and watch, approve, and steer your agent from your phone or any browser while away from your desk. Drop open files in as `@`-context, run **multiple sessions** at once, keep **resumable chat history**, generate **images & video inline**, and dictate by **voice**. If you'd rather stay in VS Code than a terminal, this brings Atlas into your sidebar.
+The GUI for **Atlas CLI** (incl. **Grok 4.7**) and **Meta's Muse Code**, right in your editor. It drives **OpenAI's Codex** and **Anthropic's Claude Code** too — and, experimentally, **Google's Antigravity** on your own computer: one window, one model picker, and every conversation keeps the agent it started with. **Remote Control** is built in: pair your phone at **[afkpilot.com](https://afkpilot.com)** once and watch, approve, and steer your agent from your phone or any browser while away from your desk. Drop open files in as `@`-context, run **multiple sessions** at once, keep **resumable chat history**, generate **images & video inline**, and dictate by **voice**. If you'd rather stay in VS Code than a terminal, this brings Atlas into your sidebar.
 
-No manual setup: the extension **walks you through installing the `atlas` CLI and signing in** — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key** — right from the sidebar, one click per step.
+No manual setup: the extension **walks you through installing the `atlas` CLI and signing in** — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key** — right from the sidebar, one click per step. The other agents connect from **Settings → Providers**, each with its own account.
 
-![Atlas in the VS Code sidebar, running Atlas](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/grok_4.5.png)
+![Atlas in VS Code, choosing Grok 4.7 and its reasoning effort](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/grok_4.7.png)
 
-![Generated image rendered inline from /imagine](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/imagine.webp)
+![The Projects rail beside a conversation running a deep-research workflow, with context and subscription usage open](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/rail.png)
 
 ---
 
 ## Why use this?
 
-If you live in your editor, this puts Atlas right next to your code — a graphical workflow on top of the CLI: the **native diff editor** on every proposed edit, your **open files and selection as context**, **parallel sessions** with status dots, **resumable history**, **inline images & video**, and **voice dictation**. The CLI does the heavy lifting; this is the GUI for when you'd rather not be in a terminal.
+If you live in your editor, this puts Atlas right next to your code — a graphical workflow on top of the CLIs: the **native diff editor** on every proposed edit, your **open files and selection as context**, **parallel sessions** with status dots, **resumable history**, **inline images & video**, and **voice dictation**. The CLIs do the heavy lifting; this is the GUI for when you'd rather not be in a terminal.
 
 ### Features & capabilities
 
@@ -27,6 +27,8 @@ _Click any feature to expand._
 
 When Atlas proposes an edit, hit **open diff →** to review the whole file in VS Code's native diff editor, focused on the first changed line, then *Allow once / always* or *Reject*. The file is written only **after** you approve.
 
+For Grok, Codex and Claude, a card for a **command** offers a third answer: **Yes, and allow `npm` this session**, naming the program it would allow — grant `npm` once and `npm test`, `npm run build` and `npm ci` stop asking for the rest of the conversation. The grant is deliberately narrow: it lasts the conversation and is gone when it ends, a chained command is judged one segment at a time (so `npm test && rm -rf build` does not ride in on an `npm` grant), a command we cannot take apart with confidence still asks, and nothing is auto-approved at all while you are in Plan mode. Every command allowed this way still appears in the transcript as an answered card. For Grok grants that outlive the conversation, its own `[permission]` rules in `.grok/config.toml` take glob patterns.
+
 ![Permission card with a native VS Code diff preview before approval](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/permission_diff.png)
 
 </details>
@@ -34,7 +36,7 @@ When Atlas proposes an edit, hit **open diff →** to review the whole file in V
 <details>
 <summary><strong>Modes — Agent, Plan & Auto accept</strong></summary>
 
-Switch from the bottom toolbar — even mid-turn, so you can flip to **Auto accept** to stop approving cards without stopping Atlas. **Plan** is enforced by the *extension*, not the CLI — workspace writes and non-read-only commands are genuinely blocked until you approve the plan (see [How it works](#how-it-works)). **Auto accept** approves actions automatically; approving a plan returns you to whichever mode you were in before planning.
+Switch from the bottom toolbar — even mid-turn, so you can flip to **Auto accept** to stop approving cards without stopping Grok. **Grok Plan** combines the CLI's own edit refusal with the extension's gate on delegated writes and non-read-only commands until you approve the plan (see [How it works](#how-it-works)). Codex and Claude enforce planning in their adapter/CLI. Claude also offers its own **Auto mode**, where Claude decides which actions are safe and asks you about the rest; a new Claude conversation starts in it unless you have picked another mode (a model without Auto keeps the conversation in Agent mode). Muse offers its native approval modes: **Allow all**, **Prompt unmatched**, and **On request** (desktop only), with no Plan. Cloud machines use the isolated VM instead of Muse's shell sandbox and omit On request. **Auto accept** approves actions automatically; approving a plan returns you to whichever mode you were in before planning.
 
 ![The mode picker — Agent, Plan, and Auto accept](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/agent_modes.png)
 
@@ -59,9 +61,9 @@ Type `/imagine <prompt>` (or `/imagine-video <prompt>`) and the result renders *
 <details>
 <summary><strong>Voice control</strong> — hands-free dictation with live transcription</summary>
 
-The **microphone button** dictates speech through [SpaceXAI's](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text) or OpenAI's speech-to-text — words appear live as you talk. Say **"atlas send"** to submit hands-free and keep dictating; messages spoken while Atlas responds queue and flush when it finishes.
+The **microphone button** dictates speech through [xAI's](https://docs.x.ai/developers/model-capabilities/audio/speech-to-text) or OpenAI's speech-to-text — words appear live as you talk. Say **"atlas send"** to submit hands-free and keep dictating; messages spoken while the agent responds queue and flush when it finishes.
 
-Use your existing Atlas sign-in or an OpenAI API key. Auto prefers OpenAI for Codex and xAI for Atlas/Claude, with credential-based fallback. Local recording requires [`ffmpeg`](https://ffmpeg.org). Setup, devices, and costs: **[docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md)**.
+Use your existing Atlas sign-in or an OpenAI API key. Auto prefers OpenAI for Codex and xAI for Grok/Claude/Muse, with credential-based fallback. Local recording requires [`ffmpeg`](https://ffmpeg.org). Setup, devices, and costs: **[docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md)**.
 
 ![Voice control with live transcription in the composer](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/voice_mode.png)
 
@@ -70,7 +72,7 @@ Use your existing Atlas sign-in or an OpenAI API key. Auto prefers OpenAI for Co
 <details>
 <summary><strong>File chips</strong> — your editor and selection as <code>@file</code> context</summary>
 
-The active editor rides along automatically; add more by **typing `@` in the composer** (a workspace file picker opens — arrow keys + Enter, fuzzy-matched), dragging from the Explorer, right-click → **Add to Atlas chat** (one file or a whole selection), **Alt+G**, or the **+** button. Chips send as `@/path` references, so content stays current and history stays small. **Shift-drag from outside the editor** embeds the file inline instead; dragging out of VS Code's own Explorer needs Shift held mid-drag (press it after the drag starts — Shift+click there selects a range) just to reach the panel at all, so those always attach as chips.
+The active editor rides along automatically; add more by **typing `@` in the composer** (a workspace file picker opens — arrow keys + Enter, fuzzy-matched), dragging from the Explorer, right-click → **Add to Atlas chat** (one file or a whole selection), **Alt+G**, or the **+** button. Whole-file chips send as path references in a context envelope, so content stays current and history stays small. **Shift-drag from outside the editor** embeds the file inline instead; dragging out of VS Code's own Explorer needs Shift held mid-drag (press it after the drag starts — Shift+click there selects a range) just to reach the panel at all, so those always attach as chips.
 
 ![Composer with an image, a file, and a selection chip attached](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/file_chips.png)
 
@@ -79,7 +81,7 @@ The active editor rides along automatically; add more by **typing `@` in the com
 <details>
 <summary><strong>Session history</strong> — parallel sessions with status dots; resume, rename, search & clear</summary>
 
-The clock icon lists this project's sessions, newest first. Click a row to resume — images, plans, and reasoning intact — or hover to rename or delete it. The **search box** filters your whole history, older sessions load as you scroll, and **Clear all history** sweeps everything but the current session.
+The clock icon lists this project's sessions from the last 30 days, newest first (older ones stay on disk, unlisted). Click a row to resume — images, plans, and reasoning intact — or hover to rename it or, where supported, delete it. The **search box** filters that whole list, older sessions load as you scroll, and **Clear all history** clears this project's supported provider histories while keeping open conversations. Muse history cannot be deleted here and is kept.
 
 Sessions run in **parallel**: start a new one with **+** while another is mid-turn and switch between them from this list — the one you leave keeps working in the background, and switching back is instant, with no reload. Each row's **status dot** tells you what it's doing:
 
@@ -102,7 +104,7 @@ The green/red dot is an **unread badge** — it survives a VS Code restart and c
 
 A message you send mid-turn **never cancels** anything. By default it **queues** — a pending block at the end of the chat (Edit / Remove), sent the moment the turn ends; type more and it merges into the same message. Hit **Steer** on it to redirect the agent *now* instead: the text goes straight into the running turn without losing the tool work in flight. Prefer that always? Turn on **Steer by default** (Settings).
 
-**Atlas** and **OpenAI Codex** both take a mid-turn correction; **Claude Code** does not, so there the Steer button never appears and anything you send while it works simply queues. A steer carries your text and the files you attached to that message — images included, where that agent accepts them; where it doesn't, the whole message is queued rather than sent without its pixels, and the chat tells you so. What it leaves out is the ambient editor selection: the running turn already has the version it started with.
+**Grok** and **OpenAI Codex** both take a mid-turn correction; **Claude Code** and **Muse Code** do not, so there the Steer button never appears and anything you send while it works simply queues. A steer carries your text and the files you attached to that message — images included, where that agent accepts them; where it doesn't, the whole message is queued rather than sent without its pixels, and the chat tells you so. What it leaves out is the ambient editor selection: the running turn already has the version it started with.
 
 ![A queued message with the Steer button](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/steer.png)
 
@@ -120,7 +122,7 @@ The conversation's ⋯ menu → *Continue in a new chat* → **Use this workspac
 <details>
 <summary><strong>Worktree session</strong> — isolate code edits in a git worktree</summary>
 
-**Atlas: New Worktree Session** (the conversation's ⋯ menu → *Continue in a new chat* → **Use a new worktree**, or the Command Palette) creates an isolated git worktree under `~/.atlas/worktrees/` and opens a fresh session whose cwd is that checkout — so agent edits don't touch your main tree until you **Apply worktree**. **Remove worktree** deletes the isolated checkout. History rows for worktree sessions show a `WT <label>` badge and reopen with the correct cwd.
+**Atlas: New Worktree Session** (the conversation's ⋯ menu → *Continue in a new chat* → **Use a new worktree**, or the Command Palette) creates an isolated git worktree under `~/.atlas/worktrees/` (legacy `~/.grok/worktrees/`) and opens a fresh session whose cwd is that checkout — so agent edits don't touch your main tree until you **Apply worktree**. **Remove worktree** deletes the isolated checkout. History rows for worktree sessions show a `WT <label>` badge and reopen with the correct cwd.
 
 </details>
 
@@ -139,16 +141,18 @@ Hover a message you sent → **Rewind** (or **Atlas: Rewind Conversation**), con
 </details>
 
 <details>
-<summary><strong>Deep Research / Workflow progress</strong> — a live progress card with Pause / Resume / Stop</summary>
+<summary><strong>Deep Research / Workflow progress</strong> — a card that pins above the composer while it runs</summary>
 
-When Atlas runs a Deep Research, Workflow, or Goal task, a progress card streams its steps live and gives you **Pause**, **Resume**, and **Stop** controls, so long autonomous runs stay visible and interruptible.
+When an agent runs a workflow — Grok's Deep Research and Workflow tools, Claude Code's workflows, Muse Code's workflows — the chat shows a workflow card with its reported progress. Grok's Goal tasks keep a progress card of their own. Named Grok workflows offer **Pause**, **Resume** and **Stop** while the run's state allows them.
+
+Every workflow card has one quiet header: an icon, "Workflow", the run's name, a dot per step (per agent on Muse; past four, three dots around where the run is), the status and the elapsed time. The dots, the steps and the agent rows share one colour code: green done, blue in progress, grey next, red failed. A running workflow that reports its progress pins its card just above the composer, so it cannot scroll out of reach, and the place where it started keeps a one-line trace. The pin button at the end of the opened card puts the card back where it started instead, and the choice is remembered (`atlas.pinLiveWorkflows`; a phone keeps its own). Grok's Pause, Resume and Stop are on whichever copy is live. Cards start closed. Open one for the steps, drawn as rings on a track, with each agent grouped under its step and its tokens where the agent reports them, and the result, which reads like a reply and has a copy button. While a running workflow is live in this view, two minutes without an update shows as "no update for 2 min". When the run finishes the pin goes and the card lands where the run started, with the outcome. A Grok finish missed while nobody was watching is reconciled from the CLI's saved workflow state, and reopening older turns keeps the card where the run happened. How each agent's workflows and subagents differ: [docs/subagents-and-workflows.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/subagents-and-workflows.md).
 
 </details>
 
 <details>
 <summary><strong>Context & cost</strong> — what's in the window, and what the turns actually bill</summary>
 
-Click the **context donut** for `used / window (%)` — said in thousands, with the exact count still on the donut's own tooltip — plus what the conversation has **billed** — input, cache read, output, and the CLI-reported **USD cost** — as a session total and a per-turn split with its model calls. **Compact conversation** lives here too, right next to the number that tells you when you need it. The same popover answers the other usage question — **how much of your plan's window is left**, as labelled windows with a meter, a reset time, and when the reading was taken. Atlas asks the account, Codex reads what Codex itself records, and Claude's arrives with your next reply.
+Click the **context donut** for `used / window (%)` — said in thousands (millions for a million-token window), with the exact count still on the donut's own tooltip — plus what the conversation has **billed** — input, cache read, output, and the CLI-reported **USD cost** — as a session total and a per-turn split with its model calls. **Compact conversation** lives here too, right next to the number that tells you when you need it. For Grok, a **Context window** dropdown picks among the sizes the CLI offers (256K or 500K for Grok 4.7), as does `/context-window 500k`; switching to a smaller size the conversation already fills past 70% asks first, because Grok will (or may) auto-compact on your next message. The same popover answers the other usage question — **how much of your plan's window is left**, as labelled windows with a meter, a reset time, and when the reading was taken. Grok asks the account, Codex reads what Codex itself records, and Claude's arrives with your next reply.
 
 ![The context popover — window usage, billed totals, and Compact](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/context.png)
 
@@ -157,7 +161,7 @@ Click the **context donut** for `used / window (%)` — said in thousands, with 
 <details>
 <summary><strong>Subagents</strong> — delegated tasks render as cards with their result</summary>
 
-When Atlas delegates work to a subagent, the chat shows a card with the task and a live timer, then the subagent's output when it finishes — background subagents included, whose result folds back into the card when it lands.
+When Grok, Claude Code, Codex or Antigravity delegates work to a subagent, the chat shows a card with the same quiet header as a workflow: an icon, "Subagent", the task, its status and a timer. Open it for the subagent's activity where the agent streams it (Grok, Codex, and Antigravity's tool calls), its result — which reads like a reply and has a copy button — and the tokens it used where the agent reports them. Background subagents included: their result folds back into the card when it lands. Antigravity reports no result of its own, so its card settles when the turn ends. Muse Code delegates through workflows instead.
 
 ![A subagent call rendered as a card in the chat](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/subagents.png)
 
@@ -166,7 +170,7 @@ When Atlas delegates work to a subagent, the chat shows a card with the task and
 <details>
 <summary><strong>Tool calls</strong> — every read, edit & command inline; expand for full details</summary>
 
-Every action appears as a category-iconed row, batched and summarized ("Explored 5 items", "Edited 2 files"); a failed tool turns red with the reason. Edits show a `+N −M` change count and expand to an inline diff at the file's real line numbers; shell commands expand to an **IN/OUT block** with the full command and its complete output — exactly what Atlas received, exit code included. In Coding purpose, a turn that changed files ends with a **Changed N files** card rolling up every path and its `+N −M`; tap a row for that file's diff. The card starts collapsed; click its header to reveal the file list and, where available, the Open Changes button. **Expand diff card** (`atlas.expandDiffCard`) sets its own default independently of tool details, and applies live to existing cards. On a phone or browser the choice is stored on that device. To audit an Auto-accept run, pre-expand everything with `atlas.expandCommandOutputs`, or **Atlas: Expand All Tool Details** from the Command Palette.
+Every action appears as a category-iconed row, batched and summarized ("Explored 5 items", "Edited 2 files"); a failed tool turns red with the reason. Edits show a `+N −M` change count and expand to an inline diff at the file's real line numbers; shell commands expand to an **IN/OUT block** with the full command and its complete output — exactly what the agent received, exit code included. In Coding purpose, a turn that changed files ends with a **Changed N files** card rolling up every path and its `+N −M`; tap a row for **one diff covering everything the turn did to that file** — taken against what the file looked like before the agent touched it, not before its last edit — and on a desk **open diff** puts that in its own editor tab. Where a diff cannot be taken honestly (a folder that is not a git repository, a repository busy with another command, a project you switched away from between sending and tapping) the row falls back to the tool call that made the edit; a turn from a conversation you have reloaded says so at the foot of the card instead, because the before-state is kept only while the session stays open. The card starts collapsed; click its header to reveal the file list and, where available, the Open Changes button. **Expand diff card** (`atlas.expandDiffCard`) sets its own default independently of tool details, and applies live to existing cards. On a phone or browser the choice is stored on that device. To audit an Auto-accept run, pre-expand everything with `atlas.expandCommandOutputs`, or **Atlas: Expand All Tool Details** from the Command Palette.
 
 ![A tool batch with a command expanded to its IN/OUT block](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/tool_calls.png)
 
@@ -193,18 +197,25 @@ A ` ```mermaid ` block renders as a real diagram via [Mermaid](https://mermaid.j
 <details>
 <summary><strong>Model picker</strong> — switch models live, no restart</summary>
 
-Click the model chip in the composer to open the model picker. The list comes from your CLI; switching is live in most cases. (A few models belong to a different agent and need a quick restart — the extension detects that and carries your context forward.)
+Click the model chip in the composer to open the model picker (it opens once the conversation's models have loaded). The list comes from your CLI; switching is live in most cases. (A few models belong to a different agent and need a quick restart — the extension detects that and carries your context forward.)
 
 </details>
 
 <details>
-<summary><strong>Multi-provider</strong> — built for Atlas, works with other ACP agents</summary>
+<summary><strong>Multi-provider</strong> — built for Atlas, works with Codex, Claude Code, Muse Code and (experimental) Antigravity</summary>
 
-The host talks **ACP** (JSON-RPC over stdio), not an Atlas-specific protocol, so the same UI drives any agent that speaks it — **OpenAI Codex** and **Claude Code** included. Connect them in **Settings → Providers**; each signs in through its own CLI. Atlas is the default and the one everything is tuned against, but every connected agent shares one model picker, and each conversation keeps the agent it started with, so all three can run side by side with the same chat, diffs, permission cards, and history. Providers also offers to **update each CLI in place** when yours is older than the version this app is built against — installed the way you installed it (npm, Homebrew, or the vendor's own installer), never switching you to a different one — and the conversations you had open reopen when it finishes.
+The host talks **ACP** (JSON-RPC over stdio), not an Atlas-specific protocol, with packaged adapters for **OpenAI Codex** and **Claude Code**. **Muse Code** speaks Meta's own protocol instead, and reaches the same UI through a small adapter this extension ships. Connect them in **Settings → Providers**; each signs in through its own CLI. Atlas is the default and the one everything is tuned against, but every connected agent shares one model picker, and each conversation keeps its agent once it has history, so all four can run side by side with shared chat, tool and permission cards, and history. Muse's picker uses its own names: **Allow all** (no prompts), **Prompt unmatched** (prompt when no rule matches), and **On request** (sandboxed tools, prompts only for explicit permission requests). Allow all starts with the shell sandbox off and the workspace trusted. On desktop, the other modes use the sandbox/network/trust settings in **Settings → Providers → Muse Code (Meta) settings** (collapsed under the Muse row), with On request always forcing the sandbox on at process start. On request is disabled with an explanation in an already running desktop process without a sandbox. On cloud machines, the isolated VM is the sandbox: Muse's shell sandbox is off for every available mode, Prompt unmatched retains its approval rules, and On request is omitted. Existing On request conversations cannot open on cloud; new cloud conversations use Prompt unmatched if On request was the remembered default. Approval switches apply from the next action; sandbox and trust change on reopen or a new conversation. Muse remembers its last selected mode separately from the other providers; reopening follows Muse's replayed mode. Deny unmatched is temporarily hidden because it delays every turn in Muse; saved conversations and remembered defaults in that mode use Prompt unmatched. Older hosts retain their two-entry picker. Steering, compaction, history deletion and host-managed connectors are unavailable for it. Providers also offers to **update the Atlas, Codex and Claude CLIs in place** when yours is older than the version this app is built against — installed the way you installed it (npm, Homebrew, or the vendor's own installer), never switching you to a different one — and the conversations you had open reopen when it finishes. **Antigravity** is the experimental fifth: see below.
 
-**Settings → Connectors** has three sections: apps you connect here (Connect / Disconnect — available to Atlas, Codex, and Claude), Atlas connectors that follow your Atlas account, and local Atlas connectors declared in this machine's config files. Connecting an app is not desk-only: it works from a phone, and on a cloud machine where there is no desk at all. Project-file servers stay off this page. Atlas connectors are edited at [Atlas/connectors](https://Atlas/connectors).
+**Settings → Connectors** has three sections: apps you connect here (Connect / Disconnect — available to Grok, Codex, and Claude), grok.com connectors that follow your Grok account, and local Grok connectors declared in this machine's config files. Connecting an app is not desk-only: it works from a phone, and on a cloud machine where there is no desk at all. Project-file servers stay off this page. grok.com connectors are edited at [grok.com/connectors](https://grok.com/connectors).
 
-Settings → Providers → **Provider config files** opens the file each CLI actually reads — `~/.atlas/config.toml` (legacy `~/.atlas/config.toml`), `~/.codex/config.toml`, `~/.claude/settings.json` — and edits it in place, from a phone as readily as at the desk. Those three are the whole list: the credentials that live beside them are not reachable from here. A CLI reads its config once at startup, so the panel offers to **restart the conversation you have open** after you save, and states the limit rather than hiding it — other sessions already running keep the settings they started with.
+Settings → Providers → **Provider config files** opens the file each CLI actually reads — `~/.atlas/config.toml` (legacy `~/.grok/config.toml`), `~/.codex/config.toml`, `~/.claude/settings.json` — and edits it in place, from a phone as readily as at the desk. Those three are the whole list: the credentials that live beside them are not reachable from here. A CLI reads its config once at startup, so the panel offers to **restart the conversation you have open** after you save, and states the limit rather than hiding it — other sessions already running keep the settings they started with.
+
+</details>
+
+<details>
+<summary><strong>Antigravity (experimental)</strong> — Google's agent, on your own computer</summary>
+
+Turn on **Settings → Advanced → Experimental: Antigravity** to add Google's Antigravity as an agent. It runs on the computer in front of you, not on cloud machines, and is signed in there, not from a phone. Install it and connect it in **Settings → Providers**: **Sign in with Google**, or paste a **Gemini API key**. The key stays in the app's secure storage and reaches Google only through a small relay on this computer — never the agent's own environment — and a key also offers **Gemini 4 Argon**. Antigravity has Agent and Auto accept, but no Plan mode and no connectors yet. How it works, and the choices behind it: [research/antigravity-acp.md](https://github.com/phuryn/grok-build-vscode/blob/main/research/antigravity-acp.md).
 
 </details>
 
@@ -216,13 +227,18 @@ Click the composer model chip, then choose a stop on the effort strip. The avail
 </details>
 
 <details>
-<summary><strong>Remote Control (AFK Pilot)</strong> — watch and steer your sessions from a phone or any browser</summary>
+<summary><strong>Remote Control</strong> — watch and steer your sessions from a phone or any browser</summary>
 
-**Sign in (link this device)** under Remote control in the VS Code **+** menu (or the Desktop rail gear) pairs this machine with **[AFK Pilot](https://afkpilot.com)** (its relay server + web client are [open source](https://github.com/phuryn/afkpilot)), a companion web client that mirrors this chat in the browser: follow a running turn, approve permissions, answer questions, and send or steer messages from your phone while away from your desk. **Connecting an agent** works from there too — the CLI's headless sign-in runs on the linked computer and the page shows you the link (and, for Atlas and Codex, the short code) to confirm, from the onboarding card or from Settings → Providers. So does **connecting an app** under Settings → Connectors: its sign-in runs on the linked computer too, and the browser lands back on the page instead of a localhost address you would have to copy across. **Atlas**, **OpenAI Codex**, and **Claude Code** all sign in this way. Codex needs device-code login enabled on your OpenAI account first, and the flow walks you through it. Claude Code is paste-code: you open the link, sign in, and paste the code Anthropic shows you back into the page. The extension dials **out** to the service — no inbound port, no port forwarding — and **Sign out** unlinks the device again. The mobile view renders the retained chat window in full fidelity (diffs, images, equations, diagrams) with touch-sized controls; on reconnect, the remote snapshot is capped at the last 10 user messages while the VS Code view keeps the complete buffer. Its own **+** picker attaches a photo or a document (`.md`/`.txt`/`.pdf`/`.csv`/`.xlsx`/`.docx`) straight from your phone. You can **dictate** there too — say *"atlas send"* to submit hands-free — **rewind or edit a message** you already sent, **connect GitHub** — from Settings or while cloning — and pick a private repository from a list rather than typing its URL, give each browser tab its **own conversation and repository**, and pick up the very conversation VS Code has open, live in both. A conversation follows the tab you are using: asking for it from a second tab moves it there and tells the first, which can take it back with one tap.
+The **Remote control** phone button in the chat’s top bar is always available on the desk. Choose **Sign in and link this machine** to pair your phone at **[afkpilot.com](https://afkpilot.com)**; the built-in remote view mirrors this chat in the browser: follow a running turn, approve permissions, answer questions, and send or steer messages from your phone while away from your desk. **Connecting an agent** works from there too — the CLI's headless sign-in runs on the linked computer and the page shows you the link (and, for Grok, Codex and Muse, the short code) to confirm, from the onboarding card or from Settings → Providers. So does **connecting an app** under Settings → Connectors: its sign-in runs on the linked computer too, and the browser lands back on the page instead of a localhost address you would have to copy across. **Grok**, **OpenAI Codex**, **Claude Code**, and **Muse Code** all sign in this way. Codex needs device-code login enabled on your OpenAI account first, and the flow walks you through it. Claude Code is paste-code: you open the link, sign in, and paste the code Anthropic shows you back into the page. The extension dials **out** to the service — no inbound port, no port forwarding — and **Unlink this device** in desktop Settings (with confirmation), or **Atlas: Unlink this device** in the VS Code Command Palette, unlinks it again. The mobile view renders the retained chat window in full fidelity (diffs, images, equations, diagrams) with touch-sized controls; on reconnect, the remote snapshot is capped at the last 10 user messages while the VS Code view keeps the complete buffer. Its own **+** picker attaches a photo or a document (`.md`/`.txt`/`.pdf`/`.csv`/`.xlsx`/`.docx`) straight from your phone. You can **dictate** there too — say *"atlas send"* to submit hands-free — **rewind or edit a message** you already sent, **connect GitHub** — from Settings or while cloning — and pick a private repository from a list rather than typing its URL, give each browser tab its **own conversation and repository**, and pick up the very conversation VS Code has open, live in both. A conversation follows the tab you are using: asking for it from a second tab moves it there and tells the first, which can take it back with one tap.
 
-A **projects rail** lists every repository with Atlas history and its newest conversations, with pinned conversations lifted above them across all projects and a search over both. You can start a session in any project without switching to it first, and rename, delete or clear history from the row — from the ⋯ button or by right-clicking it. Give a project a **colour** and its folder is tinted everywhere the rail appears, including your phone. Projects you put away — and any left untouched for 30 days — fold into **Archived**, and come back on their own the moment you work in one again. Expand Archive to open a conversation or move a project back to Projects on VS Code, desktop, cloud, or your phone. Archiving keeps every project reachable. On a phone the rail is a drawer behind the handle in the header.
+Once linked, click **Remote control** and scan the QR code to continue **this conversation** on your phone. **Copy link** and **Open in browser** use the same conversation link, including its project and worktree directory. The code is generated on this machine; session coordinates stay in the URL fragment. A green dot means a phone or browser is connected. Keep this app open while you are away; it stays awake, and AFK Pilot never stores prompts or code. Until the relay has supplied this machine's identity, the popover shows "Generating QR code…"; **Open in browser** then opens AFK Pilot itself (one linked machine goes straight to its chat, more than one stops on the device picker). If another window of the app holds the link, the popover says so.
 
-While a device is linked, the extension also **keeps the machine awake** (`caffeinate` on macOS, `SetThreadExecutionState` on Windows, `systemd-inhibit` on Linux) so a turn you kicked off from your phone isn't cut short by idle sleep. The display still sleeps — only system sleep is blocked — and the lock is released the moment you sign out. Turn it off with `atlas.remote.keepAwake`. A **closed laptop lid still suspends** on every OS; no application can override that.
+**Continue on phone…** in a desktop or VS Code Projects session menu opens the code for that row, even when another chat is focused. Settings → Remote control shows **This machine** live and **Continue on phone → Show code** for the focused conversation; the Command Palette also has **Atlas: Continue on Phone**. Account management and the existing sign-in explainer remain available there. Remotes do not offer the desk’s handoff button.
+
+
+A **projects rail** lists your projects — the folders you open, create, clone or add, never just any folder an agent once ran in ([docs/projects.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/projects.md)) — and each one's newest conversations, with **Recent** (what you sent in or recently opened, across every folder) and pinned conversations lifted above them and a search over both. With VS Code as the host, the first time you send in a conversation whose folder is not a project — at the desk or from your phone — Atlas offers to add it (`atlas.askToAddProjects`); "Never for this folder" stops the question for that folder. You can start a session in any project without switching to it first, and rename, delete or clear history from the row — from the ⋯ button or by right-clicking it. Give a project a **colour** and an **icon** and it carries them everywhere it is named — its row in the rail, the chip above the message box, the project switcher, the file panel — on VS Code, desktop, cloud, or your phone. Projects you put away — and any left untouched for 30 days — fold into **Archived**, and come back on their own the moment you work in one again. Expand Archive to open a conversation or move a project back to Projects on VS Code, desktop, cloud, or your phone. Archiving keeps every project reachable. On a phone the rail is a drawer behind the handle in the header.
+
+While a device is linked or a local agent turn is in flight, the extension also **keeps the machine awake** (`caffeinate` on macOS, `SetThreadExecutionState` on Windows, `systemd-inhibit` on Linux) so a turn you kicked off from your phone isn't cut short by idle sleep. The display still sleeps — only system sleep is blocked — and the lock is released when neither a linked device nor an active local turn needs it. Turn it off with `atlas.remote.keepAwake`. A **closed laptop lid can still suspend** the machine; these wake locks do not change the operating system's lid-close policy.
 
 ![AFK Pilot — your Atlas agent from any browser](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/remote.webp)
 
@@ -232,20 +248,27 @@ While a device is linked, the extension also **keeps the machine awake** (`caffe
 
 ## Requirements
 
-- **VS Code** 1.106+ (or a compatible editor on the same base — Cursor 3.x qualifies; Antigravity is still on base 1.104 and keeps the last compatible extension version).
-- **The Atlas CLI** (`grok`) on macOS, Linux, or Windows. The CLI ships a native Windows build, so the extension runs natively on all three — no WSL required (WSL2 + Remote-WSL still works if you prefer it).
-- **A login:** either a **SuperGrok or X Premium+** subscription (`atlas login`) or an xAI API key. Either subscription unlocks **Atlas**; with an API key you also get the **grok-4.x** models and **grok-imagine**. (Atlas's free tier does **not** include the CLI agent.)
+- **VS Code** 1.106+ (or a compatible editor on the same base — Cursor 3.x qualifies; an editor on an older base keeps the last extension version that supports it).
+- **A supported provider CLI** on macOS, Linux, or Windows: Atlas CLI (`atlas`), Codex, Claude Code or Muse Code. The Atlas CLI and Muse ship native Windows installers, so the extension runs natively on all three — no WSL required (WSL2 + Remote-WSL still works if you prefer it).
+- **A login:** any X or Grok account tries the **Atlas CLI** free, with usage limits (`atlas login`). For sustained use, a **SuperGrok or X Premium+** subscription or an xAI API key; with an API key you also get the **grok-4.x** models and **grok-imagine**.
 - **Voice control** is optional and uses Atlas sign-in or an OpenAI API key (Codex sign-in alone does not include transcription) — it just needs [`ffmpeg`](https://ffmpeg.org) to record. Setup + advanced options: [docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md).
 
 ---
 
 ## Install
 
+**Muse Code:** choose **Connect** in Settings → Providers. If Muse is missing, the sidebar offers **Install Muse Code**, with a confirmation before Meta's installer runs in a visible terminal. Afterwards, click **Re-check**, then **Connect Muse Code**. You can also install manually:
+
+- **Windows (PowerShell):** `irm https://dev.meta.ai/install.ps1 | iex` — installs to `%LOCALAPPDATA%\Programs\muse\muse.cmd` and adds that directory to your user PATH.
+- **macOS / Linux:** `curl -fsSL https://dev.meta.ai/install.sh | bash` — installs to `~/.local/bin/muse`.
+
+On a phone or remote browser, Muse must be installed on the machine running the workspace; the remote view cannot launch the desk installer.
+
 **1. Install the extension.** In VS Code or Cursor, open **Extensions** (`Ctrl/Cmd+Shift+X`) and search **"Atlas for VS Code"**.
 
 **2. Open Atlas and sign in.** Press `Ctrl/Cmd+;`. The sidebar **walks you through installing the `atlas` CLI and signing in** — one click per step, with your SuperGrok / X Premium+ subscription or an xAI API key. That's the whole setup.
 
-Atlas opens in the **Secondary Side Bar** (right side, next to other AI tools). Prefer it elsewhere? Gear → **Config & debug** → **Move view** relocates it to the Panel or Primary Side Bar in one click.
+Atlas defaults to the **Secondary Side Bar** (right side, next to other AI tools). Cursor refuses that container, so a first installation moves the view to the Primary Side Bar. Use the editor's own Move View controls to relocate it; where the secondary container is unavailable, Settings → Advanced → **Move view…** opens that picker.
 
 > Prefer the terminal, building from source, or installing into several IDEs at once? See the project [INSTALL docs](https://github.com/phuryn/grok-build-vscode/blob/main/docs/INSTALL.md).
 
@@ -254,8 +277,8 @@ Atlas opens in the **Secondary Side Bar** (right side, next to other AI tools). 
 ## Quick start
 
 1. **Open** the Atlas view (`Ctrl/Cmd+;`, or **Atlas: Open** from the command palette) — it lives in the Secondary Side Bar by default.
-2. **Type a prompt** and press **Enter**. Atlas streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in Settings.
-3. **Approve actions.** When Atlas wants to write a file or run a command it may raise a permission card — preview an edit in the native **diff editor**, with full-file context focused on the first changed line, then *Allow once / always / Reject*.
+2. **Type a prompt** and press **Enter**. Grok streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in Settings.
+3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — preview an edit in the native **diff editor**, with full-file context focused on the first changed line, then *Allow once / always / Reject*.
 4. **Pick your mode** (Agent / Plan / Auto accept), **model**, and **reasoning effort** from the bottom toolbar and model chip.
 5. **Resume anytime** — the clock icon lists past sessions for this project.
 
@@ -268,28 +291,31 @@ Atlas opens in the **Secondary Side Bar** (right side, next to other AI tools). 
 
 | Setting | Default | Notes |
 |---|---|---|
-| `atlas.cliPath` | `""` | Path to the `grok` binary. Empty = auto-discover (`~/.atlas/bin/atlas` → `~/.atlas/bin/grok` → PATH). |
+| `atlas.cliPath` | `""` | Path to the Atlas binary. Empty = auto-discover (`~/.atlas/bin/atlas` → `~/.grok/bin/grok` → PATH). |
+| `atlas.experimentalAntigravity` | `false` | Offer Google's Antigravity as an agent on this computer (not on cloud machines). Also the switch in Settings → Advanced. |
+| `atlas.agyServerPath` | `""` | Path to Google's Antigravity ACP server (`agy_acp_server`). Empty = the copy this app installs. |
+| `atlas.askToAddProjects` | `true` | The first time you send in a conversation whose folder is not one of your projects, offer to add it to Projects. Another conversation in that folder asks again; "Never for this folder" stops it for that folder. |
 | `atlas.defaultModel` | `""` | Model ID for new sessions. Empty = CLI default. |
 | `atlas.defaultEffort` | `""` | Reasoning effort forwarded as `--reasoning-effort` (`none` / `minimal` / `low` / `medium` / `high` / `xhigh`). Empty = CLI default. Applies live on recent CLIs; older CLIs (and resetting to the model default) restart the session. |
-| `atlas.defaultMode` | `""` | Mode for new sessions, remembered automatically from your last Agent / Auto accept switch (Plan is never remembered). Empty = Agent. |
+| `atlas.defaultMode` | `""` | Mode for new sessions, remembered automatically from your last Agent / Auto / Auto accept switch (Plan is never remembered). Empty = Auto mode where the agent has one (Claude), Agent mode elsewhere. |
 | `atlas.includeActiveFileByDefault` | `true` | Auto-add the active editor as a context chip. Sends the file **path** (not its contents) unless you have text selected, in which case the selected lines are included. Click the chip to toggle it off — that choice is remembered across file switches and restarts. |
 | `atlas.mentionIndexLimit` | `5000` | How many workspace files the composer's **@** autocomplete indexes. Raise it (no upper limit) if files are missing from the `@` list in a large repo; applies on the next `@`. Files you have open as tabs are always mentionable regardless of this cap. |
 | `atlas.acp.promptIdleTimeoutMs` | `1800000` | Silence before a live turn is treated as hung (`ACP request timed out: session/prompt`). Any ACP traffic resets the idle clock. `0` disables. Applies to new sessions. |
 | `atlas.acp.promptAbsoluteTimeoutMs` | `86400000` | Hard wall-clock cap for one turn, even while it is still streaming. `0` disables. Applies to new sessions. |
 | `atlas.acp.requestTimeoutMs` | `120000` | Timeout for ACP methods other than `session/prompt` (`initialize`, `session/new`, …). |
 | `atlas.useCtrlEnterToSend` | `false` | When true, Enter inserts a newline and Ctrl/Cmd+Enter sends. |
-| `atlas.showThinking` | `false` | Show Atlas's reasoning (thinking) traces in chat. Off shows a *Thinking…* stand-in. Also toggleable live from Settings. |
+| `atlas.showThinking` | `false` | Show the agent's reasoning (thinking) traces in chat. Off shows a *Thinking…* stand-in. Also toggleable live from Settings. |
 | `atlas.expandCommandOutputs` | `false` | Expand tool details by default — each shell command's IN/OUT block and each edit's inline diff (useful for auditing Auto-accept sessions). With this setting on, groups containing command or edit details open too; read/explore-only groups stay collapsed, and a lone command outside a group opens its details. Edit rows always show a `+N −M` change count, even when their diff is closed. Toggle live from Settings → **Expand tool details**. (Setting key kept for compatibility.) |
 | `atlas.expandDiffCard` | `false` | Open each coding turn's Changed-files card by default. Click a header to toggle that card; changing this preference updates all existing cards. Independent of Expand tool details and Expand/Collapse All. Host-backed on desktop and IDEs; stored per device on a phone or browser. |
-| `atlas.steerByDefault` | `false` | Send straight into the running turn instead of queueing. Off: a message sent mid-turn waits and flushes when the turn ends (steer it on demand with the **Steer** button). On: it skips the queue and redirects the agent immediately. Applies wherever that agent takes a mid-turn correction — **Atlas** and **OpenAI Codex** do, **Claude Code** does not and keeps queueing. Never cancels the turn or discards work in progress; carries your text and its attachments, not the ambient editor selection. Toggle live from Settings → **Steer by default**. |
-| `atlas.soundNotifications` | `false` | Play a short tone when Atlas finishes a turn or errors — a rising chime for done, a lower tone for errors — but **only when the Atlas panel isn't focused**, so it notifies you when you've stepped away. Toggle live from Settings → **Sound notifications**. |
-| `atlas.thumbsFeedback` | `false` | Show thumbs on a finished Atlas turn so you can send a rating to SpaceXAI. Off by default. On, thumbs appear only when this Atlas session supports feedback — never on Codex or Claude. Toggle from Settings → General → **Thumbs feedback to SpaceXAI**. |
+| `atlas.steerByDefault` | `false` | Send straight into the running turn instead of queueing. Off: a message sent mid-turn waits and flushes when the turn ends (steer it on demand with the **Steer** button). On: it skips the queue and redirects the agent immediately. Applies wherever that agent takes a mid-turn correction — **Grok** and **OpenAI Codex** do, **Claude Code** and **Muse Code** do not and keep queueing. Never cancels the turn or discards work in progress; carries your text and its attachments, not the ambient editor selection. Toggle live from Settings → **Steer by default**. |
+| `atlas.soundNotifications` | `false` | Play a short tone when the agent finishes a turn or errors — a rising chime for done, a lower tone for errors — but **only when the Atlas panel isn't focused**, so it notifies you when you've stepped away. Toggle live from Settings → **Sound notifications**. |
+| `atlas.thumbsFeedback` | `false` | Show thumbs on a finished Grok turn so you can send a rating to SpaceXAI. Off by default. On, thumbs appear only when this Grok session supports feedback — never on Codex, Claude or Muse. Toggle from Settings → General → **Thumbs feedback to SpaceXAI**. |
 | `atlas.telemetry.enabled` | `true` | Send anonymous, privacy-first usage telemetry (see [Privacy](#privacy)). Also honors VS Code's global `telemetry.telemetryLevel`. |
 | `atlas.chatFontScale` | `100` | Zoom for the chat panel only, as a percent (`150`, `200`, …). Scales the whole chat UI without rescaling the rest of VS Code (unlike `Ctrl/Cmd+Shift+=`). Applies live; supports User (global) and Workspace (local) scope. |
 | `atlas.voiceBackend` | `"auto"` | Prefer the agent vendor when its credential is available, otherwise use the other. Explicit `xai` / `openai` choices require that credential. |
 | `atlas.voiceOpenAiApiKey` | `""` | OpenAI API-platform key override; empty uses `OPENAI_API_KEY`. Codex / ChatGPT sign-in does not include transcription API access. |
 | `atlas.voiceOpenAiModel` | `"gpt-live-transcribe"` | OpenAI Realtime transcription model. |
-| `atlas.voiceApiKey` | `""` | Optional xAI key override. Empty = `GROK_VOICE_API_KEY` / `XAI_API_KEY` from `.env` or the host environment, then your cached `atlas login` token (`~/.atlas/auth.json`, legacy `~/.atlas/auth.json`). See [docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md). |
+| `atlas.voiceApiKey` | `""` | Optional xAI key override. Empty = `GROK_VOICE_API_KEY` / `XAI_API_KEY` from `.env` or the host environment, then your cached `atlas login` token (`~/.atlas/auth.json`, legacy `~/.grok/auth.json`). See [docs/voice-setup.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/voice-setup.md). |
 | `atlas.ffmpegPath` | `""` | Path to `ffmpeg` for microphone recording. Empty = use `ffmpeg` from `PATH`. |
 | `atlas.voiceInputDevice` | `""` | Microphone device override. Empty = system default (Windows auto-detects the first DirectShow audio device). |
 | `atlas.voiceSendPhrase` | `"atlas send"` | Spoken phrase that auto-submits when it ends a transcription. Empty = disable hands-free sending. |
@@ -320,12 +346,13 @@ VS Code commands (not Atlas slash commands):
 | `Atlas: Insert @-Mention` | Insert an `@`-mention for the active file into the composer |
 | `Atlas: Expand All Tool Details (This Session)` | Open every tool group, command IN/OUT box, and edit inline diff, and keep new ones open — this session only |
 | `Atlas: Collapse All Tool Details (This Session)` | Collapse them all, and keep new ones collapsed — this session only |
+| `Atlas: Rebuild Projects from recent activity` | Redo the one-time pass that added the folders you sent messages in during the last 30 days. Keeps every project you added, created or cloned, and every pin, colour, icon and archive |
 | `Atlas: Show Logs` | Open the Atlas output channel (ACP messages, errors) |
-| `Atlas: Log Out` | Sign out of the Atlas CLI (`atlas logout`) and return to the sign-in screen |
+| `Atlas: Log Out` | Sign an agent's CLI out on this machine (`atlas logout`, `codex logout`, `claude auth logout`; for Antigravity, its Google sign-in or saved Gemini API key) — the way to switch accounts. **Settings → Providers → Disconnect** only turns an agent off here and leaves its CLI signed in |
 
 | Key | Action |
 |---|---|
-| `Ctrl+;` / `Cmd+;` | Open Atlas sidebar |
+| `Ctrl+;` / `Cmd+;` | Open the Atlas sidebar |
 | `Alt+G` | Insert `@`-mention for the active file (when the editor is focused) |
 
 Atlas's own **slash commands** (`/imagine`, `/compact`, …) autocomplete in the composer when you type `/`, sourced live from your installed CLI version. Reference snapshot: [docs/SLASH-COMMANDS.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/SLASH-COMMANDS.md).
@@ -346,30 +373,31 @@ Full diagram, message flow, module map, and design notes: **[docs/architecture.m
 
 ## Known limits
 
-- **Diff preview semantics.** The native editor reconstructs both full-file sides from Atlas's replaced-region metadata and the current file on disk, then opens on the first changed line. If the file is unreadable, oversized, or has moved on so the region cannot be located, it safely falls back to the region-only diff. The write happens only after approval.
-- **View placement.** The view defaults to the **Secondary Side Bar** (requires VS Code 1.106+, the extension's engine floor). Relocate it anytime via Settings → **Move view** (one click: Panel / Primary Side Bar / Secondary Side Bar) — useful in Cursor, whose side-bar context menu hides the built-in "Move To" entry.
+- **Diff preview semantics.** The native editor reconstructs both full-file sides from the agent's replaced-region metadata and the current file on disk, then opens on the first changed line. If the file is unreadable, oversized, or has moved on so the region cannot be located, it safely falls back to the region-only diff. The write happens only after approval.
+- **View placement.** The view defaults to the **Secondary Side Bar** (requires VS Code 1.106+, the extension's engine floor). Use the editor's Move View controls to relocate it. Where the secondary container is unavailable, including Cursor, Settings → Advanced → **Move view…** opens the editor's picker; a first installation there defaults to the Primary Side Bar.
 
 ---
 
 ## Companion apps
 
-This extension is complete on its own. Two optional companions share the same
-chat UI and the same Atlas CLI:
+This extension is complete on its own, Remote Control included: pair your phone
+at **[afkpilot.com](https://afkpilot.com)** from the **Remote control** phone
+button in the chat's top bar. **[AFK Pilot](https://afkpilot.com)** is the phone
+and browser companion: watch, approve, and steer this extension's agent while
+you are away from the desk. One optional desktop companion shares the same chat
+UI and the same agents:
 
-- **[AFK Pilot](https://afkpilot.com)** — watch, approve, and steer this
-  extension's agent from your phone or any browser. Pair once from **Remote
-  control** in the **+** menu.
 - **[Atlas Desktop](https://afkpilot.com/desktop)** — the same
-  agent as a standalone app for Windows and macOS, for machines where you would
-  rather not install an editor. Free.
+  agent as a standalone app for Windows, macOS and Linux, for machines where you
+  would rather not install an editor. Free.
 
-Neither is required, and nothing here depends on them.
+It is not required, and nothing here depends on it.
 
 ---
 
 ## Privacy
 
-**Privacy by design** — no message content, code, or file paths leave your machine automatically. The only automatic report is an anonymous, opt-out `session_start` (turn it off with `atlas.telemetry.enabled: false` or VS Code's global `telemetry.telemetryLevel`). It carries an install id plus a low-cardinality settings snapshot, including mode / model / effort, host kind, UI preferences, whether voice input is available, and which agents are connected — **never** message content, code, paths, or free-text settings. The full field list is in [docs/privacy.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/privacy.md). Data leaves only through features you explicitly enable or invoke: Voice input sends audio to the selected SpaceXAI or OpenAI backend for transcription; the optional **Read simplified summaries** switch in VS Code or AFK Pilot sends the cleaned spoken reply to SpaceXAI for a brief version; optional **Thumbs feedback to SpaceXAI** (off by default) sends a rating on a finished Atlas turn; Remote Control relays the chat to your linked devices. Each is disclosed separately from telemetry.
+**Privacy by design** — no message content, code, or file paths leave your machine automatically. Automatic reports are anonymous, opt-out `session_start`, `remote_portal_opened`, `remote_handoff_shown`, `remote_link_started`, `remote_link_completed` and `session_remote_started` events (turn it off with `atlas.telemetry.enabled: false` or VS Code's global `telemetry.telemetryLevel`). The session-start event carries an install id plus a low-cardinality settings snapshot, including mode / model / effort, host kind, UI preferences, whether voice input is available, and which agents are connected — **never** message content, code, paths, or free-text settings. The remote handoff events carry only the anonymous install id and `hostKind`, plus `source` (`topbar`, `rail`, `projects`, `settings`, or `palette`) on portal-open, handoff-shown and link-start events, `withHint` on portal-open, and `linked` on handoff-shown; link-completed has only install id and `hostKind`. Remote-session-start adds `clientDevice`, `sessionOrigin`, and `provider`. No URL, device id, conversation id, title, project path, or working directory is reported. The full field list is in [docs/privacy.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/privacy.md). Data leaves only through features you explicitly enable or invoke: Voice input sends audio to the selected xAI or OpenAI backend for transcription; the optional **Read simplified summaries** switch in VS Code or AFK Pilot sends the cleaned spoken reply to SpaceXAI for a brief version; optional **Thumbs feedback to SpaceXAI** (off by default) sends a rating on a finished Grok turn; Remote Control relays the chat to your linked devices. Each is disclosed separately from telemetry.
 
 More: [docs/privacy.md](https://github.com/phuryn/grok-build-vscode/blob/main/docs/privacy.md).
 

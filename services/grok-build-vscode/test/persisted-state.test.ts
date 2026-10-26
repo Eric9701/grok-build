@@ -108,6 +108,23 @@ describe("PersistedState", () => {
     expect(JSON.parse(fs.files.get(installFile)!)).toBe("abc-123");
   });
 
+  it("reads the welcome-tips file, a map of tip id to day, without calling it malformed (#214)", () => {
+    const tipsFile = `${DIR}/${DISK_KEYS["atlas.welcomeTipsShown"]}`;
+    const { state, logs } = make((f) => f.setFile(tipsFile, JSON.stringify({ providers: "2026-10-16" })));
+    expect(state.get("atlas.welcomeTipsShown")).toEqual({ providers: "2026-10-16" });
+    expect(logs.join("\n")).not.toMatch(/unexpected JSON shape/);
+  });
+
+  it("reads and writes the dismissed-tips file, a map of tip id to true, on disk", async () => {
+    const dismissedFile = `${DIR}/${DISK_KEYS["atlas.welcomeTips"]}`;
+    const { state, fs, logs } = make((f) => f.setFile(dismissedFile, JSON.stringify({ providers: true })));
+    expect(state.get("atlas.welcomeTips")).toEqual({ providers: true });
+    await state.update("atlas.welcomeTips", { providers: true, remote: true });
+    await state.flush();
+    expect(JSON.parse(fs.files.get(dismissedFile)!)).toEqual({ providers: true, remote: true });
+    expect(logs.join("\n")).not.toMatch(/unexpected JSON shape/);
+  });
+
   it("prefers the file over globalState once it exists", () => {
     const { state } = make((f, m) => {
       f.setFile(metaFile, JSON.stringify({ s1: { customName: "from disk" } }));
@@ -203,12 +220,12 @@ describe("PersistedState", () => {
     expect(state.get<Record<string, { archived: boolean }>>("atlas.repoArchives", {})["/r"].archived).toBe(true);
   });
 
-  it("maps grok.repoColors onto a client-state file like pins/archives", () => {
+  it("maps atlas.repoColors onto a client-state file like pins/archives", () => {
     expect(DISK_KEYS["atlas.repoColors"]).toBe("repo-colors.json");
     expect(DISK_KEYS["atlas.mcpConnectors"]).toBe("mcp-connectors.json");
   });
 
-  it("serializes grok.mcpConnectors as ids and endpoints, never a key", async () => {
+  it("serializes atlas.mcpConnectors as ids and endpoints, never a key", async () => {
     const { connectConnector } = await import("../src/mcp-connectors");
     const { state, fs, memento } = make();
     const planted = "ghp_TESTSECRET_do_not_store";

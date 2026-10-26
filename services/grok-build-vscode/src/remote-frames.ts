@@ -1,3 +1,5 @@
+import { isInternalProvider } from "./acp-backend";
+import { isModeId } from "./mode-prefs";
 // Extension <-> relay wire contract (Phase 1, topology B — the extension dials
 // OUT to a relay; browsers connect to the same relay; the relay ferries the
 // existing HostMsg/WebviewMsg protocol between them).
@@ -62,10 +64,18 @@ export type UplinkFrame =
    * does not recognise the frame, drops it, and says nothing. Sending it is
    * therefore safe against every relay this extension can reach.
    */
-  | { t: "working" };
+  | { t: "working" }
+  /**
+   * "I am about to exit to update myself. Keep this machine running until my uplink comes back, or holdMs."
+   * Clamp holdMs to (0, 3_600_000]. Release on a new uplink hello or at the cap.
+   * Additive: older relays drop it silently; REMOTE_PROTO_VERSION does not move.
+   * The relay learns only "hold this machine", never why or whether it is idle.
+   */
+  | { t: "maintenance"; holdMs: number };
 
 /** relay -> extension */
 export type RelayFrame =
+  | { t: "self"; deviceId: string }
   | { t: "client-ready"; clientId: string; tabToken?: string }
   | { t: "client-left"; clientId: string }
   | { t: "msg"; clientId: string; msg: WebviewMsg }
@@ -109,6 +119,9 @@ export function parseRelayFrame(raw: string): RelayFrame | null {
   if (typeof obj !== "object" || obj === null) return null;
   const f = obj as Record<string, unknown>;
   switch (f.t) {
+    case "self":
+      return typeof f.deviceId === "string" && f.deviceId.trim().length > 0 && f.deviceId.length <= 256
+        ? { t: "self", deviceId: f.deviceId } : null;
     case "client-ready":
       if (typeof f.clientId !== "string") return null;
       if (
@@ -129,7 +142,8 @@ export function parseRelayFrame(raw: string): RelayFrame | null {
         return msg ? { t: "msg", clientId: f.clientId, msg } : null;
       }
     case "clients":
-      return typeof f.count === "number" ? { t: "clients", count: f.count } : null;
+      return typeof f.count === "number" && Number.isSafeInteger(f.count) && f.count >= 0
+        ? { t: "clients", count: f.count } : null;
     default:
       return null;
   }
@@ -193,6 +207,10 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
   const value = msg as Record<string, unknown>;
   if (typeof value.type !== "string" || !WEBVIEW_TYPE_SET.has(value.type)) return null;
   switch (value.type) {
+    case "setMode":
+      return isModeId(value.modeId) ? { type: "setMode", modeId: value.modeId } : null;
+    case "cloudHostUpdate":
+      return Object.keys(value).length === 1 ? { type: "cloudHostUpdate" } : null;
     case "connectMcpConnector":
       if (typeof value.id !== "string" || (value.key !== undefined && typeof value.key !== "string")
         || (value.readOnly !== undefined && typeof value.readOnly !== "boolean")) return null;
@@ -224,6 +242,8 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
         (typeof value.submissionId !== "string" ||
           !REMOTE_TAB_TOKEN_RE.test(value.submissionId))
       ) return null;
+      const chips = value.chips === undefined ? undefined : parseRemoteWebviewMsg({ type: "queueSend", text: "", chips: value.chips });
+      if (value.chips !== undefined && (!chips || chips.type !== "queueSend")) return null;
       // Reconstruct this newly-extended payload instead of passing the remote
       // object wholesale. That keeps future send fields outside the host until
       // this boundary explicitly validates and copies them.
@@ -233,6 +253,7 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
         ...(value.bare !== undefined ? { bare: value.bare } : {}),
         ...(value.queuedSendId !== undefined ? { queuedSendId: value.queuedSendId } : {}),
         ...(value.submissionId !== undefined ? { submissionId: value.submissionId } : {}),
+        ...(chips?.type === "queueSend" ? { chips: chips.chips } : {}),
       };
     }
     case "remotePreferences":
@@ -286,6 +307,13 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
       return isRemoteCwd(value.cwd) && typeof value.color === "string"
         ? msg as WebviewMsg
         : null;
+    case "setRepoIcon":
+      // Shape only, exactly as for the colour above: the host allowlists the
+      // mark id against REPO_ICON_IDS and re-checks the cwd against the live
+      // catalog. Empty string is a valid "default folder".
+      return isRemoteCwd(value.cwd) && typeof value.icon === "string"
+        ? msg as WebviewMsg
+        : null;
     // Shape-checked here like its repo-level sibling rather than riding the
     // `default` passthrough: the host validates too, but a malformed message
     // that reaches the host has already crossed the boundary this parser exists
@@ -293,9 +321,13 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
     case "toggleSessionPin":
       return isRemoteSessionId(value.id) &&
         typeof value.pinned === "boolean" &&
+        (value.requestId === undefined || (typeof value.requestId === "string" && value.requestId.length <= 128)) &&
         (value.cwd === undefined || isRemoteCwd(value.cwd))
         ? msg as WebviewMsg
         : null;
+    case "newSession":
+      if (value.draftId !== undefined && (typeof value.draftId !== "string" || !REMOTE_TAB_TOKEN_RE.test(value.draftId))) return null;
+      return { type: "newSession", ...(value.draftId !== undefined ? { draftId: value.draftId } : {}) };
     case "resumeSession": {
       if (!isRemoteSessionId(value.id)) return null;
       if (value.cwd !== undefined && !isRemoteCwd(value.cwd)) return null;
@@ -338,7 +370,7 @@ function parseRemoteWebviewMsg(msg: unknown): WebviewMsg | null {
     case "readProviderConfig":
       return ["grok", "codex", "claude"].includes(value.provider as string) ? msg as WebviewMsg : null;
     case "restartProviderSession":
-      return ["grok", "codex", "claude"].includes(value.provider as string) && isRemoteSessionId(value.sessionId)
+      return isInternalProvider(value.provider) && isRemoteSessionId(value.sessionId)
         ? msg as WebviewMsg : null;
     case "writeProviderConfig":
     case "writeProjectFile": {

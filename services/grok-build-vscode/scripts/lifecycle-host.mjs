@@ -55,7 +55,7 @@
 // this wrapper still forwards the variable into Electron so a restart
 // (fresh process + same orchestrator env) can read it again.
 //
-// Fake ACP: grok.cliPath → test/fixtures/fake-grok-acp.{cmd,sh}. A configured
+// Fake ACP: atlas.cliPath → test/fixtures/fake-grok-acp.{cmd,sh}. A configured
 // path is never followed by a PATH search (locateGrokCli), so an installed
 // grok cannot leak in. FAKE_UNIQUE_SESSION_IDS is set so two workspaces
 // cannot share fake-session-1 (the host looks up by id before cwd).
@@ -355,16 +355,25 @@ function writeProfile(userData, workspaces, fakeCli) {
     workspaceRoots: abs,
     discoverySeedCompleted: true,
     config: {
-      "grok.cliPath": fakeCli,
-      "grok.telemetry.enabled": false,
-      "grok.remote.keepAwake": false,
+      "atlas.cliPath": fakeCli,
+      "atlas.telemetry.enabled": false,
+      "atlas.remote.keepAwake": false,
     },
   };
   fs.writeFileSync(path.join(userData, "config.json"), JSON.stringify(prefs, null, 2), "utf8");
+  // The person pressed Connect for Grok. Since #171 nothing infers a
+  // connection, so without this the host never starts the fake CLI and the
+  // first turn never arrives. Same key as PROVIDER_CONNECTIONS_KEY in
+  // src/sidebar.ts -- test/harness-consent-key.test.ts fails if they drift.
+  fs.writeFileSync(
+    path.join(userData, "globalState.json"),
+    JSON.stringify({ "atlas.providerConnections.v2": { grok: true } }, null, 2),
+    "utf8",
+  );
   const sessionOverrides = path.join(userData, "lifecycle-config.json");
   fs.writeFileSync(
     sessionOverrides,
-    JSON.stringify({ "grok.cliPath": fakeCli, "grok.telemetry.enabled": false }, null, 2),
+    JSON.stringify({ "atlas.cliPath": fakeCli, "atlas.telemetry.enabled": false }, null, 2),
     "utf8",
   );
   return sessionOverrides;

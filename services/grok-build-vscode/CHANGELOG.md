@@ -1,5 +1,391 @@
 # Changelog
 
+## 4.15.3 — 2026-10-19
+
+**See a Grok Stop hook run, and fold long thinking from the bottom.**
+
+### Added
+
+- **A running Grok Stop hook shows at the end of the turn (#215).** While a Stop hook runs after Grok's reply (for example one that reads the reply aloud), the chat shows "Running Stop hook". If it succeeds the line disappears; if it fails, a "Stop hook failed" row stays with Grok's own message, e.g. `stop hook (name) failed, ignored: exit code 1: …`, listing only the hooks that failed ("Stop hook blocked" when a hook stopped the turn). A subagent's hook stays inside its subagent card. Thanks to FireInWinter.
+- **Show Less at the bottom of an expanded thinking block (#216).** After reading a long trace to the end, fold it from there; its header stays in view. The header also works with Enter and Space. Thanks to FireInWinter.
+
+## 4.15.2 — 2026-10-18
+
+**A faster start on Windows when only some agents are installed.**
+
+### Fixed
+
+- **VS Code no longer freezes for half a minute on start when an agent isn't installed (#214).** On Windows, looking for an agent that isn't installed (Codex, Claude Code or Muse Code on a Grok-only machine) ran a slow system search every time, and AFK Pilot looks once per project, so VS Code reported the extension host as unresponsive and the panel sat on "Starting" for 30–60 seconds. Measured in VS Code with the same projects: the first conversation opened after 37 seconds before, 7 seconds now. Thanks to FireInWinter for the timed report.
+- **In VS Code, View all on a command opens in a tab named "# Command"** ("REM Command" when your shell is cmd) instead of a cut-off start of the command (#175). Tool arguments, file reads and command output open unchanged. Thanks to padixa.
+- **Dismissed tips stay dismissed on your other devices.** A tip you closed on your computer could come back on your phone; the start-up log no longer reports the tip settings as unreadable.
+- **Settings → Remote control → Device manager** opens your device list again on a phone or browser.
+- **An empty subscription usage popup now says why in the log (#202).** When Grok's usage reply can't be read, the AFK Pilot output channel shows one `[billing]` line naming the reply's fields and your plan, never your numbers. Thanks to padixa.
+
+## 4.15.1 — 2026-10-16
+
+**Muse Code sees pictures and shows its reasoning.**
+
+### Added
+
+- **Muse Code's reasoning shows with Show thinking traces (#207).** When Muse summarises its reasoning, the summary now appears as thinking, like the other agents', both live and when you reopen the conversation. Muse writes these summaries on harder work at higher effort; nothing needs to change in Muse's own settings. Thanks to zpanos74 for the request.
+
+### Changed
+
+- **A command you are asked to approve shows up to 10 lines** instead of 4, so most commands can be read before you answer (#208). The rest is still one click away under View all, and the card still doesn't scroll inside the chat. Thanks to padixa.
+
+### Fixed
+
+- **Muse Code sees an attached picture (#211).** Sending an image to a Muse conversation failed with a red "Internal error" before Muse was even asked; the picture now reaches Muse, and a model that reads images (Muse Wonder) answers about it. Thanks to zpanos74 for the report.
+- **The desktop app no longer crashes when the terminal it was started from closes (#212).** On Linux, starting the app from a terminal and then closing that terminal showed "A JavaScript error occurred in the main process" (`write EIO`) at the next log line. The log file still records everything. Thanks to ajkessel.
+
+## 4.15.0 — 2026-10-16
+
+**AFK Pilot is the name, Antigravity joins as a fifth agent, and Projects is the folders you chose.**
+
+### Added
+
+- **Google Antigravity, experimental, on your own computer.** Turn it on in Settings → Advanced, then connect with your Google account or a Gemini API key. With a key you get every Gemini chat model the key can reach, Gemini 4 Argon included, and a new conversation starts on Argon unless its project remembers another model; the key stays inside AFK Pilot and never reaches the agent. Commands show what ran and its output, and a subagent's work sits inside its own card. Not available on cloud machines, and Gemini 2 models are not offered.
+
+### Changed
+
+- **The extension is now called AFK Pilot** (previously Grok Build (Community)). It runs Grok Build, Muse Code, Codex, Claude Code and, experimentally, Antigravity. Your settings, keybindings and conversations are unchanged.
+- **Messages about the agent name the one you are using.** "Sends when Codex finishes", "Claude is thinking", "Antigravity is mid-turn", and the diff tab "Codex proposed: …" follow the conversation's agent instead of always saying Grok. (The banner when an agent's process exits still says "Grok exited".)
+- **Claude Code starts new conversations in its own Auto mode**, unless you picked a mode. "YOLO" now names only Grok Build's auto-accept: Claude's is "Bypass permissions", Codex's "Full access" and Muse's "Allow all".
+- **Claude's default model says which model it is**, for example "Default (Opus 5.5)".
+- **Muse Code's settings sit in their own group** under Muse in Settings → Providers, folded by default.
+- **Projects are the folders you chose.** In VS Code the Projects list used to include every folder any agent had run in, and benchmark runs and scripts had filled it with folders you never worked in. It now holds the folder VS Code has open, the folders you added, created or cloned, and any folder you pinned, coloured, gave an icon or archived. Once, on upgrade, it adds the folders you sent a message in through AFK Pilot in the last 30 days. After that, the first time you send in a conversation whose folder is not a project, a small strip offers **Add**, **Not now** or **Never for this folder** (on your phone too, and the `grok.askToAddProjects` setting turns it off), and Recent's `⋯` offers **Add to Projects**. **AFK Pilot: Rebuild Projects from recent activity** runs the one-time pass again without touching anything you chose. The desktop app and Cloud machines already listed only the folders they open.
+- **Recent shows what you actually did.** It lists the conversations you sent a message in through AFK Pilot, plus those you opened here in the last three days, across every folder, newest first. Conversations that only appear in an agent's own history no longer fill it, and neither do automated runs (headless Grok, `codex exec`, Claude Code SDK scripts, routines).
+- **Conversations older than 30 days are no longer listed.** Recent, each project's conversations and history search show the last 30 days of activity, for every agent. Older conversations stay on disk exactly as they were, a pinned one still opens from Pinned, and continuing one in its CLI brings it back. Skipping them before anything is read also makes long histories list faster.
+- **The context meter shows large windows in millions** ("1.05M", "1M"), and an Antigravity conversation starts at its real window instead of the previous conversation's.
+
+### Fixed
+
+- **Projects fill at once.** On a computer with many projects and a long history, each project's conversations took about a second to list, one project after another, so the rail filled over a minute. They now arrive together in a second or two, and VS Code waits a few seconds for them before drawing Projects, so a quiet project normally goes straight to Project Archive instead of appearing under Projects first.
+- **The rail on the phone and in the desktop app files projects the way VS Code does.** It lists every project's conversations, folded or not, so Project Archive matches across your devices; a project you fold stays folded.
+- **A new conversation shows in the rail while it starts.** Its "New session" row stays while the agent starts, for up to a minute, and an empty project you start one in no longer disappears meanwhile.
+- **A project's conversations no longer flash "Couldn't load"** when the computer answers slowly or a browser tab reconnects; the rail waits one more round before saying so.
+- **The model chip waits for the models.** While a conversation is starting, and its agent has not yet said which models it offers (Antigravity can take over a minute on Windows), the model and effort chip reads "Loading models…" and does not open, instead of opening on the previous conversation's models or a placeholder. It opens as soon as the models arrive, and also when the start fails or the agent needs signing in, so recovery stays one click away. Applies on every surface, including the phone and the Pick Model command.
+- **A click on a conversation always opens it.** Clicking a conversation that a phone or browser tab was still loading was refused with "already being opened in another tab or view", and the selection jumped back. The click now waits for that load and lands on the conversation, with the row reading "opening…" meanwhile. A slow open (Antigravity can take over a minute) no longer snaps the selection back after a few seconds either.
+- **Muse Code says why a turn failed**, for example when your subscription's limit is reached, instead of "Internal error".
+
+## 4.14.3 — 2026-10-14
+
+**Choose how much context Grok keeps.**
+
+### Added
+
+- **Grok's context window (#202).** In a Grok conversation, the context popup has a **Context window** dropdown with the sizes the Grok CLI offers — 256K or 500K for Grok 4.7 — and `/context-window 500k` does the same (`/context-window` alone opens the popup). Switching to a smaller size the conversation already fills past 70% asks first: Grok will auto-compact the conversation on your next message if it no longer fits, and may if it is close. It appears when the model offers more than one size, with Grok CLI 1.0.46 or newer. Thanks to [@zfzfg](https://github.com/zfzfg) ([#205](https://github.com/phuryn/grok-build-vscode/pull/205)), and to [@FireInWinter](https://github.com/FireInWinter) for finding the CLI feature.
+
+### Changed
+
+- **Compact conversation** in the context popup is a primary button, so it reads as the popup's action in every theme.
+
+## 4.14.2 — 2026-10-13
+
+**Disconnect an agent without signing its CLI out, and a context meter that remembers a compaction.**
+
+### Changed
+
+- **Settings → Providers → Disconnect (#203).** On your own machine, the button for a connected agent now turns it off in this app and leaves its CLI signed in, so Connect brings it back without signing in again. It asks first only while that agent is replying. To sign a CLI out, for example to switch accounts, use **Grok: Log Out** in VS Code or the CLI's own logout command. On a cloud environment the button still reads **Sign out** and clears the CLI's sign-in, because nothing else on that machine will.
+
+### Fixed
+
+- **The context meter after `/compact` (#195).** In Codex and Claude Code conversations the meter drops to the compacted size when the compaction finishes and keeps it after a reload; before, it stayed at the old figure until the next turn. A Grok conversation no longer shows its pre-compact figure first when it reopens.
+- **Quotes, dividers and more heading levels render (#198).** `>` quote lines (nested ones too), `---` dividers, headings underlined with `===` or `---`, and `#####` / `######` headings render in replies, plans and workflow output and in the desktop file preview, instead of showing their raw characters. Thanks to [@wayneadams](https://github.com/wayneadams) and [@zfzfg](https://github.com/zfzfg) ([#201](https://github.com/phuryn/grok-build-vscode/pull/201)).
+- **Linux: "OS secure storage is unavailable" says why (#209).** In Grok Build Desktop the error now names the password store Electron picked and your `XDG_CURRENT_DESKTOP`, and suggests starting the app with `--password-store=gnome-libsecret` (GNOME) or `--password-store=kwallet6` / `kwallet5` (KDE).
+
+## 4.14.1 — 2026-09-29
+
+**See what a starting conversation is waiting for, and read a workflow as a process.**
+
+### Added
+
+- **Startup status above the composer.** While a conversation starts, a line above the composer says what it is waiting for: updating the CLI, starting the agent, opening the conversation, or loading its messages. Past 20 seconds it says the start is taking longer than usual and, in VS Code, offers Show output; a CLI update, which can take minutes, only counts its seconds. Send stays disabled until the conversation is ready, and its tooltip says why. The welcome panel no longer repeats the same status.
+- **Workflow steps as a process.** An open workflow card draws its steps as rings on a track across the full width of the card, with each agent grouped under its step. Tap a step's ring to open its agents; a step that has not started and has no agents is only a marker. A long run folds to five slots so it fits a phone.
+
+### Changed
+
+- **Grok's own conversation names appear as soon as Grok sets them**, in the rail and the header, without waiting for a reload.
+- **Listing a folder that does not exist yet is a grey row**, like a read of a missing file. Other failures stay red.
+- **On phones**, the composer's menus keep a gap from the screen edge, a long message's Show more chip shows without hover, and the file tabs' overflow chip shows how many tabs it holds, so it no longer looks like the file's own menu.
+
+### Fixed
+
+- **Text typed while a conversation loads** is no longer wiped when the load finishes. Typed into an empty composer, it is kept, after any draft that conversation already had; text that was already in the box stays with the conversation you left.
+
+## 4.14.0 — 2026-09-28
+
+**Hand the conversation to your phone in one scan, and Muse Code in its own modes.**
+
+### Added
+
+- **Remote control, one button.** A phone button in the top bar. On a linked machine it shows a QR code that opens the conversation on screen on your phone; on one that is not linked yet it offers to sign in and link it. The desktop rail's and VS Code Projects view's session menus have **Continue on phone** for any conversation. After linking, the browser page that approved it shows the same kind of code. If another window of the app already holds the link, the popover says so instead of waiting.
+- **Muse Code in its own approval modes (#192).** A Muse conversation offers Muse's modes under Muse's names: **Allow all** (Muse's full access, the same as `muse --yolo`), **Prompt unmatched** (Muse asks for anything no rule matches) and, on the desk, **On request** (tools run in Muse's sandbox, and it asks only when a tool requests it). Settings → Providers → Muse Code adds Shell sandbox, Sandbox network and Trust workspaces for new conversations. Approval changes apply at once; sandbox and trust change when the conversation reopens or a new one starts. Deny unmatched is held back until Muse fixes a bug that keeps every turn open for about a minute in that mode ([meta-models/muse-code-sdk#63](https://github.com/meta-models/muse-code-sdk/issues/63)).
+- **Unsent text stays with its conversation (#187).** Switching conversations keeps each one's draft, including on a phone and in a new conversation. Thanks to [@mateolafalce](https://github.com/mateolafalce) ([#188](https://github.com/phuryn/grok-build-vscode/pull/188)).
+- **Editing a sent message brings back its files.** Thanks to [@fiko942](https://github.com/fiko942) ([#157](https://github.com/phuryn/grok-build-vscode/pull/157)).
+
+### Changed
+
+- **Claude Code's background subagents** show as running in the background, instead of taking Claude's launch receipt for their result.
+- **Every mode has its own icon**, so the mode button alone shows which is on, and Auto accept's lightning is no longer orange.
+- **Mode descriptions show on phones too.**
+- **A read of a file that does not exist yet is a grey "doesn't exist yet" row**, not a red failure. Agents check before they create a file. Other read failures stay red.
+
+### Fixed
+
+- **Muse Code on cloud machines can run shell commands.** Muse's sandbox cannot start inside a cloud machine, and Muse then refused every command in every mode but full access. The machine is already an isolated VM, so there Muse now runs without its own sandbox; its approvals still apply.
+- **Switching an empty conversation to another agent** no longer shows the previous agent's modes and models under the new one's name while it starts.
+- **A reopened Codex subagent that was cut off by a disconnect** shows as stopped, instead of running forever.
+- **A Muse Code workflow's JSON result** no longer carries Muse's internal "Returned value:" label.
+
+## 4.13.3 — 2026-09-28
+
+**One card for a running workflow, and steps you can read at a glance.**
+
+### Changed
+
+- **One card for a running workflow.** It is pinned above the message box, and the place where it started keeps a one-line trace instead of a second copy. When the run finishes, the card lands where it started.
+- **Unpin a workflow.** The pin button at the end of an opened workflow card puts the card back where the workflow started, with its controls, and the choice is remembered. A phone keeps its own choice.
+- **Colours and words that mean something.** A workflow's header dots, steps and agents share one marker: green done, blue in progress, grey next, red failed. The steps run across with arrows, and the one in progress is bold. Every agent's rows use the same status words (done, running, failed, stopped), whichever agent reports them.
+
+### Fixed
+
+- **A reopened Grok workflow sits after the row that launched it**, not above it.
+- **A Grok workflow that returns JSON shows it in the card**, instead of no result.
+- **"Sending your message" clears once the message has gone through.** On a phone or browser it could stay up, "waiting for confirmation", after the message had already been sent and answered, until the next one.
+
+## 4.13.2 — 2026-09-27
+
+**Subagents and workflows show up for every agent, and cloud machines can update themselves.**
+
+### Added
+
+- **Subagents and workflows for every agent.** Claude Code workflows show their progress live, with the steps a workflow declares listed from the start. Muse Code workflows get a card with a dot for each agent and what the run returned. Codex subagents get a card with what the subagent answered. A reopened Claude Code conversation shows a finished background task as a short notice instead of raw XML.
+- **Update a cloud machine from your phone.** When a newer release is out, a phone connected to a cloud machine offers **Update now**; an update marked as required applies by itself. Either way the machine waits until no agent is working — a workflow still running in the background counts — then updates and reconnects. If the new version can't be installed, it comes back on the version it had and says so.
+
+### Changed
+
+- **One quiet card for subagents and workflows.** Both kinds share one header: icon, kind, name, step dots for a workflow, status and time. Cards start closed. Open one for what it did (a subagent's activity, a workflow's steps and agents), the tokens where the agent reports them, and the result, which reads like a reply and has a copy button. A long workflow shows three dots around where the run is instead of every dot.
+- **Cloud machines keep Claude Code, Codex and Muse Code current**, as they already did Grok.
+
+### Fixed
+
+- **A paused workflow's message keeps its formatting** (#189).
+- **Messages sent while Muse Code posts a workflow's result go through.** They used to fail with "Internal error". Muse now queues them behind its own reply and runs them next.
+- **Reopening a Muse Code conversation no longer fails with "already in use"** when another Muse window touched it a moment before.
+- **Find opens a closed subagent or workflow card** when the match is inside it.
+- **Muse Code's history no longer lists blank "Untitled" conversations** that were never used.
+
+## 4.13.1 — 2026-09-26
+
+**Connect uses the sign-in your agent's CLI already has.**
+
+### Fixed
+
+- **Connecting an agent no longer makes you sign in again** (#171). At the computer, Connect, in the agent chooser or in Settings → Providers, now checks whether Grok, Codex, Claude Code or Muse Code is already signed in on this machine, and if it is, connects with that sign-in. Before, it started a fresh sign-in anyway (for Grok, Codex and Claude Code, a terminal running the CLI's login, which opens your browser) and showed a sign-in panel even when the CLI was signed in. It shows "Checking…" while it looks. If the CLI isn't signed in, you get that agent's sign-in panel, and nothing opens until you press its sign-in button.
+- **Muse Code's sign-in page opens only when you click it.** At the desk it used to open in your browser by itself, and clicking the link on its card did nothing. The link now opens it, and nothing else does.
+
+## 4.13.0 — 2026-09-26
+
+**Muse Code works properly now.** Muse arrived in 4.11, but much of it didn't work: the mode button did nothing, usage never showed, and a failed tool never said why. This release fixes those.
+
+### Added
+
+- **Agent and Auto accept for Muse Code.** The mode button on a Muse session now works. It offers **Agent** and **Auto accept**, the same two Codex offers. Plan isn't offered on Muse, because this app can't make Muse hold back file edits.
+  - **Agent** leaves Muse's own approval settings in charge of what it asks you.
+  - **Auto accept** approves each request Muse makes with a one-time allow. If Muse offers only a lasting allow, you're asked instead. It never gives Muse a lasting "always allow", so switching back to Agent leaves no permission behind.
+  - A new Muse session starts in the mode you last chose, like the other agents. A reopened one starts in Agent.
+- **Muse Code subscription usage.** The usage popover now shows Muse's current usage window and its weekly window. They appear once Muse reports them, usually after your first reply.
+
+### Fixed
+
+- **A failed Muse tool says why.** The row used to say only "Muse tool ended with status: failed". It now shows the reason Muse gave. If Muse gave none, it shows Muse's summary, or else the last lines the command printed.
+- **Muse commands show their output.** A command that completes shows what it printed. When you reopen a conversation, every command shows its output, including failed ones.
+- **Links to files in folders with spaces.** A link to a full path containing spaces is now a link instead of raw text, in paragraphs, lists and headings. That covers `[README.md](/home/me/My Project/README.md)` and the `[README.md](</home/me/My Project/README.md>)` form. A relative path with spaces stays plain text. From a phone or a browser, links to files on your machine still show as plain text, because they can't be opened from there. In VS Code and the desktop app, they open the file.
+- **`####` headings** now render as headings instead of showing the hashes.
+
+### Changed
+
+- **Contributor models in the Muse model picker.** Where you can hover, with a mouse or trackpad, Meta's data-use notice is now in the tooltip. On a touch screen with no hover, it stays under the model name.
+
+## 4.12.1 — 2026-09-25
+
+**A workaround for Muse Code 1.4.0 failing to save a sign-in.**
+
+### Fixed
+
+- **Connecting Muse Code on Windows and Linux no longer fails because Muse can't store the sign-in.** Muse Code 1.4.0 can fail right after you approve the sign-in code, with `keychain write failed`, and Connect then ended in "sign-in did not complete". We've seen it on Windows 11 and on headless Linux, both from this app and from a plain terminal. On Windows and Linux, when this app signs you in to Muse or starts it, it now asks Muse to keep the sign-in in its own file, `~/.config/muse/auth.json` (where Muse 1.3.0 kept it), instead of the system keychain. It doesn't do this if you've set `TBH_CREDENTIAL_BACKEND` yourself. We've confirmed on Windows and on Linux that this lets 1.4.0 save the sign-in normally. macOS is unchanged. We've reported the bug to Meta ([meta-models/muse-code-sdk#38](https://github.com/meta-models/muse-code-sdk/issues/38)). Until it's fixed, `muse login` in your own terminal may still fail. Connect from the app instead, or run `TBH_CREDENTIAL_BACKEND=file muse login` (PowerShell: `$env:TBH_CREDENTIAL_BACKEND='file'; muse login`).
+
+## 4.12.0 — 2026-09-25
+
+**Links you can click, and Muse Code you can install.** Pull request and web addresses in a reply's text open from the chat, and a machine without Muse Code now offers to install it instead of doing nothing when you press Connect. The extension is also listed under a new name, **GUI for Grok Build & Muse Code**, because it is not only for VS Code and it drives four agents.
+
+### Added
+
+- **A pull request address is a button, and other web addresses are links.** A GitHub pull URL renders as a chip with the PR number and the repository, whether it stands alone or sits in a sentence (`abierto: https://github.com/owner/repo/pull/17`). Any other bare `http` or `https` address in the text is a link. Clicking either opens it in the browser. An address inside a code span or a code block stays literal; one in bold, or written as `<https://…>`, becomes a clean link without the markup leaking into it; and a Markdown link whose label contains an address stays one link, to its target. Thanks to [@mateolafalce](https://github.com/mateolafalce) ([#185](https://github.com/phuryn/grok-build-vscode/pull/185)), who also reported it (#184).
+- **Install Muse Code from the app.** In VS Code, Cursor and the desktop app, when Muse is not installed its panel shows Meta's install command and an **Install Muse Code** button that runs Meta's official installer in a terminal after you confirm — on macOS and Linux, and on Windows too, where Meta's PowerShell installer puts `muse` on your PATH. Then click **Re-check** and **Connect**. From a phone or browser, the panel says Muse is not installed on that machine, since the install has to run there. On every surface, pressing Connect on a machine without Muse now says so, instead of briefly showing something and leaving you where you were.
+
+### Changed
+
+- **Listed as "GUI for Grok Build & Muse Code".** The two agents it names are the ones with no graphical interface of their own; the listing now names Codex and Claude Code as well, since all four run in the same window. The extension's ID is unchanged, so it keeps updating in place.
+
+### Fixed
+
+- **Ctrl/Cmd + mouse wheel no longer resizes the desktop chat** — including in the installed app, not only in development builds. Ctrl/Cmd + / − / 0 still zoom, and pinch-to-zoom in a browser is untouched. Thanks to [@fiko942](https://github.com/fiko942) ([#155](https://github.com/phuryn/grok-build-vscode/pull/155)).
+- **Desktop updater: CVE-2026-54673.** The updater's HTTP library could forward credentials across a redirect; it is now on the patched `builder-util-runtime` 9.7.0. This app's update feed sends no credentials, so exposure was minimal, but the component is no longer the vulnerable version. Thanks to [@anupamme](https://github.com/anupamme) ([#182](https://github.com/phuryn/grok-build-vscode/pull/182)).
+- **The GitHub Re-check in the Projects panel works** (#186). It did nothing at all; it now refreshes your GitHub sign-in the way the same button in the chat does, and still cannot start an agent you have not connected.
+- **An agent that fails to start is reported, not thrown.** If the short check that reads Codex's or Claude Code's model list could not launch the agent at all, the failure surfaced as an unhandled error in the editor's log instead of a one-line message.
+
+## 4.11.1 — 2026-09-25
+
+**An agent you have not connected is never run.** Connecting an agent is now something you say, not something the extension works out by starting your CLI and seeing what happens.
+
+### Fixed
+
+- **An agent you never connected is never started (#171).** Being "connected" used to be inferred: a credential check that succeeded marked the agent connected and saved that permanently, and everything afterwards followed from that flag — reading conversation history when a window opened, re-reading the model list when a CLI's version changed, housekeeping and cleanup. For Claude Code and Codex, "checking" means opening a full session, which is why opening a settings page produced requests to a vendor nobody had signed up for. 4.10.0 closed the first of those doors and we believed it was the last one; it was not.
+
+  Connecting is now a fact you state by pressing **Connect**, read from storage and never guessed. Nothing the extension does on its own runs an agent's binary without it: not history, not model catalogs, not version reads, not credential checks, not cleanup, not login retries. Detecting that a CLI is *installed* is still a look at the disk and still works, because otherwise there would be nothing to offer Connect for.
+
+  **Existing connections start clean.** The saved flags cannot tell a deliberate Connect from one the extension assigned itself, so they are all cleared once. Any agent you actually use is one press to reconnect, and **your sign-ins are untouched** — nothing logs you out of anything.
+
+- **"Open Muse sign-in" opens the browser.** Grok, Codex and Claude Code open one themselves; Muse's CLI prints a sign-in address and waits, so at the desk the button opened a terminal and left the address sitting in it. Muse now uses the same headless flow the phone does, and the computer opens that address for you. The link and short code stay on screen either way, and signing in from a phone is unchanged.
+
+### Changed
+
+- **Grok 4.7.** The README, the Marketplace listing and the project description name the current model (#183).
+
+## 4.11.0 — 2026-09-23
+
+**A fourth agent to talk to, and a workflow that knows when it is finished.** Muse Code joins Grok, Codex and Claude Code. A running workflow stays within reach; a finished one leaves a report where it happened, including when nobody was watching it finish.
+
+### Added
+
+- **Muse Code is a fourth provider.** Connect Meta's coding agent in **Settings → Providers**, then pick its model and reasoning effort, follow streaming replies, approve tools and resume conversations from history. Sign-in works from the editor, a browser or your phone: the computer running Muse starts its own login, and your screen shows Meta's link and short code. macOS and Linux install it with Meta's own script; on Windows that script does not run, so the CLI has to be put on PATH by hand — the extension no longer treats Windows as impossible, and starts Muse normally once it is there. About shows the installed CLI version once it has been read. Approval choices belong to Muse. Mode switching, steering, compaction, history deletion and the connectors managed here are not offered for it.
+
+  Some of the models Muse offers are marked as contributing your data, including one of its own defaults. Meta's description is passed to the picker exactly as Meta writes it — “Your content, including inter-session messages, may be used for product improvement.” Worth reading before you pick one.
+
+### Changed
+
+- **A workflow stays in reach while it runs, and gets out of the way when it finishes (#163).** The live card pins above the composer, collapsed by default: its name, reported phase dots, current phase, elapsed time and when an update last arrived. Pause, Resume and Stop stay reachable. Open it for the phase strip and one row per agent; while it is closed, agents that have failed or are waiting on a permission prompt are COUNTED by state — “1 agent failed” — which is the smallest thing that distinguishes a stuck run from a quiet one without putting the roster back on the card. An arriving update is not proof that an agent is making progress, so the card keeps those two facts separate.
+
+  When the run ends, the pin goes and its transcript marker becomes a **collapsed report**. The header shows the outcome, reported duration and phase dots without asking you to open it. Open it for the result and agent detail. A finish missed while nobody was watching is recovered from the saved workflow state; reopening an older conversation puts the report where the run happened, without reviving the pin or appending a second copy at the bottom.
+
+- **The conversation list no longer starts a process for every project.** Codex, Claude and Muse each reuse one history connection across repositories. Opening several projects no longer multiplies the same background work, and the shared process starts outside the project folders so closing one releases it on Windows.
+
+- **Counts read as counts.** Large counts use separators in the workflow card, file panel, settings routines and turn summary.
+
+### Fixed
+
+- **A Windows install path with spaces can start an agent again.** A command shim installed under a name such as `C:\Users\Jane Smith\…` was split at the space before the CLI could start. Signing in now preserves that path across all four providers, and Muse’s Windows launcher can start the agent from it too.
+
+- **Clear all history says what it can clear.** The confirmation names the providers it can actually clear and says open conversations are kept; Muse is reported separately afterwards, as history that was not cleared. Muse rows no longer offer a Delete that cannot work.
+
+## 4.10.0 — 2026-09-21
+
+**This release is mostly about things the app was doing without being asked.** Closing the desktop window killed the agent you had left running. Opening Settings opened a real session with every agent you had connected, to learn something the page already knew. And in two places the app had the information you wanted and showed you something else — a document in a code fence you had to scroll sideways to read, and a context meter that threw away the number first.
+
+### Added
+
+- **Close the desktop window without quitting (#174).** On Windows and Linux the window now hides to a tray icon instead of ending the process. Closing used to mean "get this off my screen" and "stop being reachable from my phone" at the same time, with only the destructive reading available; now your agent keeps working and a linked phone keeps reaching it. The first time it happens you are told once, so the app does not simply vanish. **Quit** in the tray menu ends it, and **Settings → General** turns the behaviour off. **macOS is not covered.** Closing the window still quits the app there. The answer on macOS is its own convention — the app outliving its last window, with the dock icon bringing it back — rather than a menu-bar item, and that is a separate change from this one.
+
+  If the tray icon cannot be created — a Linux session with no status-notifier host, for instance — closing quits exactly as it used to. Hiding a window that nothing can bring back would be worse than the problem being solved.
+
+### Changed
+
+- **Opening Settings no longer signs in to your agents (#171).** The Providers page proved every connected account the moment you opened it, which meant opening a settings page made around twenty network connections, started your MCP connectors, and built a throwaway session for each provider. Nothing was billed and no account was at risk — but nothing was learned either, because the page already knew what it was showing you. Detection is now local: it re-runs the CLI locators, and re-reads the Codex and Claude Code versions, so a CLI you installed or upgraded since launch still shows up and an available update is still offered. None of that contacts anybody. Proving an account now happens only where you ask for it: **Refresh**, or the **Re-check connection** a row offers once you have signed that provider in from a terminal.
+
+- **Long lines wrap in a prose code fence (#181).** A fenced block with no language, or one marked `md`, `markdown`, `text` or `txt`, now wraps instead of scrolling sideways. Those fences are how an agent shows you a document rather than a program — an `AGENTS.md` it is proposing, a commit message it has drafted — and a document you have to scroll horizontally to read is not really being shown to you. Real code still scrolls, because wrapping breaks the indentation you read it by. Every block keeps a toggle, so where the guess is wrong you can overrule it per block.
+
+- **The context number is the last thing a narrow composer gives up (#172).** As the composer narrowed it dropped the token count first — at the widest breakpoint of all — so the one number two people independently asked to be able to see was the first thing to go, while the model name and the effort level survived it. That order is now inverted: the effort chip goes first, then the mode label, then the model name is trimmed, and the count is last to be given up. Hovering it now shows the exact figures and the percentage, which previously meant opening the popover.
+
+### Fixed
+
+- **The "always-approve is set in your grok config.toml" dialog no longer appears every time you open the app (#177).** It was meant to explain, once, why the mode button says Auto accept when that setting lives in `~/.grok/config.toml` rather than in this session. The flag lived only in memory, so a desktop launch (and a new VS Code window) showed the same dialog again. It is now remembered, and a project that ships its own always-approve config does not get this notice on top of the consent dialog it already has. Thanks to [@mateolafalce](https://github.com/mateolafalce) ([#173](https://github.com/phuryn/grok-build-vscode/pull/173)).
+
+- **Closing to the tray no longer holds up a Windows shutdown or sign-out.** Windows does not tell an app to quit the way the tray's own **Quit** does, so the window hid instead of closing and the machine waited on an app you thought you had already closed. It now recognises the session ending and gets out of the way.
+
+- **The desktop log no longer fills with worktree capability lines.** Every time the conversation list was rebuilt, the app re-asked a CLI that had already said no whether it supported listing worktrees — a round trip and a log line each time, several per millisecond in bursts. It asks once per run now. A CLI cannot grow the feature while it is running.
+
+## 4.9.0 — 2026-09-18
+
+**This release is about being asked less and being told more.** A turn that edited five files made you open five tool rows to see what happened to one of them; a permission card asked the same question forty times a session because answering "don't ask again" granted almost nothing; and a workflow reported its progress as a percentage that was really a count of agents spent. Each of those is a place where the app had the information and handed you something else.
+
+### Added
+
+- **See a whole turn's changes to one file, in one diff (#168).** The Changes summary on a finished turn now expands each file into a single diff covering everything the turn did to it, instead of one diff per edit spread across the tool rows. The baseline is taken the moment the turn starts, so it is what the file looked like before the agent touched it — not before its last edit. It works wherever the card does: the VS Code side bar, the desktop app, a browser and your phone.
+
+  Where a diff cannot be taken honestly, it is not taken at all. A folder that is not a git repository, a turn from a conversation you have reloaded, a project you switched away from between sending and clicking, a repository busy with another command — each of those falls back to the per-edit tool rows exactly as before, rather than showing you a diff of the wrong state.
+
+- **Stop being asked about a command you have already approved (#61, #123).** A terminal permission card now offers **"Yes, and allow this program this session"**, naming the program it would allow. Grant `npm` once and `npm test`, `npm run build` and `npm ci` stop asking for the rest of the conversation.
+
+  This is the part that was actually broken. The agent's own "don't ask again" remembers the **exact command string**, so approving `npm test -- users` does nothing for `npm test -- orders`; in a session where nearly every command differs by a path or a flag, nearly every one is a fresh question. That is why the setting felt like it was not working — it was working, on one string at a time.
+
+  The grant is deliberately narrow. It lasts for the conversation and is gone when it ends; nothing is granted until you grant it; a chained command is judged one segment at a time, so `npm test && rm -rf build` does not ride in on an `npm` grant; a command we cannot take apart with confidence still asks; and while you are in Plan mode nothing is auto-approved at all. Every command allowed this way still appears in the transcript as an answered card, because "it stopped asking" must never mean "I could not see what it did".
+
+  For a grant that outlives the conversation, the agent's own `[permission]` rules in `.grok/config.toml` take glob patterns and are enforced before the request ever reaches us.
+
+### Fixed
+
+- **The permission card asks one question with three answers, not four (#154).** It offered four rows of equal weight, two of which remembered your answer in ways that mostly did not help. Now: yes, yes-and-allow-this-program, no. The row that was removed is the one the two reports above are about — it promised to remember and remembered one exact string.
+
+- **Agent edits stop closing your open editor tabs (#167).** Opening the diff for a proposed change took VS Code's preview slot — the italic tab a single click in the Explorer produces — and whatever was sitting there was gone at that instant. It read as the agent closing your files; it never closed anything, it took the seat. The diff now opens as its own tab and never asks for that slot. (3.19.2 fixed the same report's other half, which is why it came back.)
+
+  One consequence worth knowing: a turn with many edits now leaves a diff tab each rather than reusing one. They close as you answer each card, so they only accumulate where cards go unanswered — which is the case where you wanted the tabs anyway.
+
+- **A workflow no longer reports how much of its budget it has spent as though it were progress (#163).** A deep-research or workflow run drew `agents used / agent budget` as a percentage, in the same place a Goal card draws real completion — so "2%" meant "one agent of fifty gone", and a run doing an hour of useful work inside a single agent sat at the same number the whole time. It now reads `3/50 agents`: the same fact, in a form that cannot be mistaken for a finish line. The card also shows elapsed time while a run is working, so a long quiet stretch is visibly *working* rather than possibly wedged.
+
+- **Pausing or stopping a workflow now changes the card that reports it.** Pause printed its confirmation and the card carried on as though nothing had happened: the button still said Pause, the phase still named the step it had stopped in, and the three dots kept pulsing beside a run that was no longer running. A run reports its lifecycle (`active`, paused, cancelled) separately from its position within that lifecycle, and the card was reading only the position — which a pause never changes. It now says **paused**, offers **Resume**, stops the dots, and keeps the step name on the line below, because where a paused run will resume from is worth knowing. A stopped run is marked ended and its controls are taken away.
+
+- **The run card says words, not the machine's vocabulary.** Labels like `phase_entered` and `user_paused` reached the card exactly as the CLI spells them internally. Anything it sends is now shown as ordinary English, including names we have never seen, and an event that only repeats what the card already says is dropped instead of printed twice. The liveness dots also moved off the end of the run's name, where they were indistinguishable from the "…" of a name too long to fit.
+
+- **Controls that could not work are no longer offered on a phone.** An "open diff" on a tool row posted a request only a desk machine can answer, so on a phone or in a browser it did nothing at all — while the diff it would have opened was already on screen directly above it.
+
+- **A turn from a reloaded conversation explains itself instead of opening the wrong edit.** The per-turn diff baseline lives in memory and does not survive reloading the window, and those rows were quietly falling back to whichever single edit touched the file last — so a file the turn changed three times offered you the third change while the row's own `+/−` counts described all three. Those rows are now plain text, with a line at the bottom of the card saying the diffs are kept only while the session stays open. Hosts without per-turn baselines keep the behaviour they have always had, and say nothing.
+
+- **Waking your machine no longer strands the Changes view on a phone.** A reconnect snapshot that arrives before the machine has rebound its project reached the panel as "no project", which it read as a project *switch*: it left Changes for Folders, and the file diff you were reading was left saying "Reading the diff…" for a request that had died with the old connection and would never be asked again. The panel now keeps the project it had until a real one replaces it, and entering Changes re-reads the open diff the same way it already re-reads the file list.
+
+## 4.8.0 — 2026-09-17
+
+**A project can now wear an icon, so you can find it without reading.** Colour told two projects apart; it could not say which was which, and a rail of six tinted folders is still six folders. Each project now carries a mark you choose, drawn everywhere the project is named.
+
+### Added
+
+- **Give a project an icon (#165).** **Set icon**, on a project's ⋯ menu or its right-click menu, opens a grid of ninety-five marks in six groups — Shapes, Build, Work, Talk, People, Play — with a search over their names and the plain folder at the top to go back to none. What you pick is drawn on the project's row in the rail, on the chip above the message box, in the project switcher and above the file panel, and it is the same glyph in every one of them. It belongs to the project rather than to the machine you set it on, so it follows you from VS Code to the desktop app to a Cloud machine to your phone.
+
+### Fixed
+
+- **Menus on a project row stop closing themselves.** In VS Code every popover on a project row — the ⋯ menu, the colour swatches, the new icon grid — closed itself every second or two. The rail rebuilds whenever the conversation files behind it change, and another extension writing its own transcripts is enough to drive that indefinitely; the rebuild now waits until you are finished with the menu. It was always this way — a menu you dismiss in two seconds tolerates it, a grid of marks you are reading does not.
+
+- **Conversations sit under their project on your phone and in the desktop app.** A project's row indents for its fold arrow and its conversations did not, so a conversation sat to the left of the project it belongs to and the rail read as a flat list. The VS Code side bar had already been fixed for this; the phone, which is where it was reported, had not.
+
+## 4.7.0 — 2026-09-16
+
+**Linux is a platform we offer, not just one we use.** The desktop app has built a Linux AppImage on every release since 4.5.2 — it is what Cloud machines run — but it was never offered to anyone, and the few people who found it got no updates. Both halves are fixed. Nothing changes in the VS Code extension itself; this release is the desktop app and the download page.
+
+### Added
+
+- **Grok Build Desktop for Linux, offered properly.** The download page recognises a Linux machine and gives you the AppImage, with the two things you actually need to run one: make it executable, and have FUSE installed (`libfuse2` on Debian and Ubuntu). A phone gets told an AppImage will not run there rather than being handed one — every Android browser calls itself Linux, and Chrome OS cannot run one either.
+
+- **Linux desktop builds keep themselves up to date.** Packaged Linux builds now use the same update feed Windows and macOS have had since the feature shipped: a new version downloads quietly in the background and installs when you quit, or when you click **Restart to update**. Before this there was no Linux feed at all, so the app fell back to a notice that sent you to a page which did not recognise the operating system it had sent you from — a dead end that looked like a download link.
+
+  **If you are already running it, one manual replace gets you onto that.** A build can only update itself if it carries the feed, and no release before this one did. So on 4.6.1 or earlier: download the AppImage once more and replace the file you have. After that it stays current on its own. **Windows and macOS are unaffected** — they have had a real feed all along.
+
+  If you run the AppImage **extracted** rather than as a file — what you do when your distro has no `libfuse2` — nothing can install itself in place, so the app tells you a new version is out and you replace it by hand, exactly as before.
+
+## 4.6.1 — 2026-09-16
+
+Four fixes, each one the same shape: something the app recorded once and kept trusting after it had stopped being true.
+
+### Fixed
+
+- **The reasoning effort you pick is the one you get (#162, #164).** If your `~/.grok/config.toml` sets `models.default_reasoning_effort`, that value quietly won over the level you chose — every new conversation started at the config's level whatever the picker showed, and the strip snapped back a second later. Your choice is now applied to the session itself before the picker ever reads it. (4.5.2 fixed a different cause of this same symptom — a workspace setting outranking a global one. This is the one that was left, and it is why the report reopened.)
+
+- **AFK Pilot can open a conversation again after you close a project at the desk.** A browser connecting after the folder it had been using was closed inherited that closed folder and was refused — including when it asked for a conversation in a project that was still open. New tabs now follow the folders that are actually open, reconnecting tabs recheck what they restored before using it, and asking for a specific conversation in an open project gets you there from a stale tab. A refusal now says so, instead of leaving the page waiting on a conversation it would never receive.
+
+- **An old conversation with nothing in it lets you change agent.** Opening a saved conversation assumed it had history, and history is what pins it to the agent that made it. One that turns out to be empty now offers your other connected agents; one that fails to load keeps the lock rather than guessing.
+
+- **Pinning and unpinning answer the click.** The row waited for the desk to write the change and report back, which read as a dead control and invited a second click that undid the first. It now moves when you click it and reconciles with the host's answer afterwards, so a slow reply cannot undo a newer click, and a change that fails to save puts the row back where it was.
+
 ## 4.6.0 — 2026-09-14
 
 **When an agent's sign-in expires in the middle of a conversation, the app now helps you fix it where it broke.** Until now the vendor simply started refusing turns, and every way back to a sign-in was somewhere else — the onboarding card deliberately refuses to paint over a live conversation, so the one screen that explains how to connect an agent was the one screen you could not get to. Alongside that: voice typing no longer needs an xAI key if you already pay OpenAI, and the context donut now shows how much of your subscription window is left.
@@ -603,7 +989,7 @@ Almost everything here is about **cloud machines** — the hosted environment yo
 
 ### Added
 
-- **Three more connectors, and connectors that take a key.** **GitHub**, **Calendly** and **Airtable** join Settings → Connectors. GitHub is the first that authorises with a personal access token you paste on the row itself (fine-grained recommended) rather than a browser round trip — the token goes to the platform secret store, never into `grok.mcpConnectors` and never into a settings file you might share. Connecting it in one editor now takes effect in the others instead of disconnecting them.
+- **Three more connectors, and connectors that take a key.** **GitHub**, **Calendly** and **Airtable** join Settings → Connectors. GitHub is the first that authorises with a personal access token you paste on the row itself (fine-grained recommended) rather than a browser round trip — the token goes to the platform secret store, never into `atlas.mcpConnectors` and never into a settings file you might share. Connecting it in one editor now takes effect in the others instead of disconnecting them.
 - **A long conversation opens in a fifth of a second ([#102](https://github.com/phuryn/grok-build-vscode/issues/102)).** Opening a conversation with hundreds of turns took the better part of a minute and left the panel unusable while it worked. It now renders the most recent turns first and fills in the rest as you scroll back: 46 seconds became 191 milliseconds on the conversation that prompted the report, and resizing the panel went from a quarter of a second to ten milliseconds.
 
 ### Fixed
@@ -1281,7 +1667,7 @@ Almost everything here is about **cloud machines** — the hosted environment yo
 
 ### Added
 
-- **Keep this machine awake while an [AFK Pilot](https://afkpilot.com) device is linked**, so a turn you started from your phone isn't cut off by idle sleep — `caffeinate` on macOS, `SetThreadExecutionState` on Windows, `systemd-inhibit` on Linux. Only system sleep is blocked (the display still sleeps), the lock is released the moment you sign out, and it never survives closing VS Code. Turn it off with `grok.remote.keepAwake`. A closed laptop lid still suspends on every OS.
+- **Keep this machine awake while an [AFK Pilot](https://afkpilot.com) device is linked**, so a turn you started from your phone isn't cut off by idle sleep — `caffeinate` on macOS, `SetThreadExecutionState` on Windows, `systemd-inhibit` on Linux. Only system sleep is blocked (the display still sleeps), the lock is released the moment you sign out, and it never survives closing VS Code. Turn it off with `atlas.remote.keepAwake`. A closed laptop lid still suspends on every OS.
 
 ---
 

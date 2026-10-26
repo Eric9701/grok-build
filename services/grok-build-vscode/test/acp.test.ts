@@ -15,6 +15,7 @@ import {
 import type { AcpBackend } from "../src/acp-backend";
 import { ClaudeBackend } from "../src/claude-backend";
 import { CodexBackend } from "../src/codex-backend";
+import { MuseBackend } from "../src/muse-backend";
 
 // Unit tests for AcpClient internals that don't need a real subprocess. We
 // stand up the client with a fake writable proc and drive `request`/`onLine`
@@ -321,12 +322,60 @@ describe("AcpClient subscription usage", () => {
     expect(log).toHaveBeenCalledWith("[billing] CLI does not support _x.ai/billing");
   });
 
+  /**
+   * Same latch as billing above, and it earns it harder: `refreshWorktreeCache()`
+   * runs on every `listSessions()`, so before this a CLI without the method paid
+   * a round trip and wrote a log line every time the session list was built. The
+   * owner saw the desktop log filling with identical "CLI does not support"
+   * lines, several per millisecond (2026-09-21).
+   */
+  it("asks for the worktree list once and latches unsupported quietly", async () => {
+    const { client } = clientWithFakeProc();
+    const log = vi.fn();
+    (client as any).opts.log = log;
+    const request = vi.fn().mockRejectedValue({ code: -32601, message: "Method not found" });
+    (client as any).request = request;
+    await expect(client.listWorktrees({})).resolves.toBe("unsupported");
+    await expect(client.listWorktrees({})).resolves.toBe("unsupported");
+    await expect(client.listWorktrees({})).resolves.toBe("unsupported");
+    expect(request).toHaveBeenCalledOnce();
+    expect(log).toHaveBeenCalledOnce();
+  });
+
+  /**
+   * The latch must not swallow a real failure: only -32601 settles the
+   * question. A transport error is a this-time problem and the next call has to
+   * ask again, or one blip would hide worktrees for the life of the process.
+   */
+  it("does not latch on a non -32601 failure", async () => {
+    const { client } = clientWithFakeProc();
+    const request = vi.fn().mockRejectedValue({ code: -32603, message: "Internal error" });
+    (client as any).request = request;
+    await expect(client.listWorktrees({})).rejects.toMatchObject({ code: -32603 });
+    await expect(client.listWorktrees({})).rejects.toMatchObject({ code: -32603 });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
   it("returns no measurement for malformed billing without inventing zero", async () => {
     const { client } = clientWithFakeProc();
     (client as any).request = vi.fn().mockResolvedValue({ config: {} });
     await expect(client.getSubscriptionUsage()).resolves.toEqual([]);
     (client as any).request = vi.fn().mockRejectedValue({ code: -32602 });
     await expect(client.getSubscriptionUsage()).rejects.toMatchObject({ code: -32602 });
+  });
+
+  it("logs a failed billing call readably, and still logs a later unreadable reply's shape (#202)", async () => {
+    const { client } = clientWithFakeProc();
+    const log = vi.fn();
+    (client as any).opts.log = log;
+    (client as any).request = vi.fn().mockRejectedValue({ code: -32603, message: "Internal error" });
+    await expect(client.getSubscriptionUsage()).rejects.toMatchObject({ code: -32603 });
+    expect(log).toHaveBeenCalledWith("[billing] _x.ai/billing failed: Internal error (code -32603)");
+    (client as any).request = vi.fn().mockResolvedValue({ config: { creditUsagePercent: 7 }, subscription_tier: "X Premium+" });
+    await expect(client.getSubscriptionUsage()).resolves.toEqual([]);
+    const shape = log.mock.calls.map(([line]) => line).find((line: string) => line.includes("no usage window"));
+    expect(shape).toBe('[billing] no usage window in the _x.ai/billing reply: reply {config, subscription_tier} config {creditUsagePercent} currentPeriod undefined tier="X Premium+"');
+    expect(shape).not.toContain("7");
   });
 
   it.each([new ClaudeBackend(), new CodexBackend()])("does not pull billing from %s", async (backend) => {
@@ -355,6 +404,44 @@ describe("AcpClient subscription usage", () => {
         periodEnd: new Date(rate.resetsAt * 1000).toISOString(), observedAt: expect.any(String),
       }]);
     } else expect(observed).not.toHaveBeenCalled();
+  });
+
+  it("emits Muse subscription usage only for the matching Muse session", () => {
+    const usage = {
+      tier: "hidden-tier",
+      observedAtMs: Date.parse("2026-09-14T00:00:00.000Z"),
+      window: { usedPercent: 12, resetsAtMs: Date.parse("2026-09-14T05:00:00.000Z"), windowDurationMins: 300 },
+      weekly: { usedPercent: 140, resetsAtMs: Date.parse("2026-09-21T00:00:00.000Z") },
+    };
+    const { client } = clientWithFakeProc({ backend: new MuseBackend() });
+    client.sessionId = "session";
+    const observed = vi.fn();
+    client.on("subscriptionUsage", observed);
+    const send = (sessionId: string) => (client as any).onLine(JSON.stringify({
+      jsonrpc: "2.0", method: "_muse/subscription_usage", params: { sessionId, usage },
+    }));
+    send("other");
+    expect(observed).not.toHaveBeenCalled();
+    send("session");
+    expect(observed).toHaveBeenCalledOnce();
+    const windows = observed.mock.calls[0][0];
+    expect(windows).toEqual([
+      { usedPercent: 12, label: "5-hour", periodType: "window_300m",
+        periodEnd: new Date(usage.window.resetsAtMs).toISOString(), observedAt: windows[0].observedAt },
+      { usedPercent: 100, label: "Weekly", periodType: "weekly",
+        periodEnd: new Date(usage.weekly.resetsAtMs).toISOString(), observedAt: windows[0].observedAt },
+    ]);
+    expect(JSON.stringify(windows)).not.toContain("hidden-tier");
+    expect(Number.isFinite(Date.parse(windows[0].observedAt))).toBe(true);
+
+    const other = clientWithFakeProc({ backend: new ClaudeBackend() }).client;
+    other.sessionId = "session";
+    const claude = vi.fn();
+    other.on("subscriptionUsage", claude);
+    (other as any).onLine(JSON.stringify({
+      jsonrpc: "2.0", method: "_muse/subscription_usage", params: { sessionId: "session", usage },
+    }));
+    expect(claude).not.toHaveBeenCalled();
   });
 });
 
@@ -912,9 +999,16 @@ describe("acpClientCapabilities", () => {
     });
   });
 
-  it("keeps the delegated handshake for Codex", () => {
-    expect(acpClientCapabilities("codex")).toEqual(ACP_DELEGATED_FS_CAPABILITIES);
-    expect(acpClientCapabilities("codex", "1.0.4", true)).toEqual(ACP_DELEGATED_FS_CAPABILITIES);
+  it("adds native subagents only for Codex, retaining delegated fs", () => {
+    expect(acpClientCapabilities("codex")).toEqual({ ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {},
+      _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } });
+    expect(acpClientCapabilities("codex", "1.0.4", true)).toEqual({ ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {},
+      _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } });
+    expect(acpClientCapabilities("claude")).toEqual({ ...ACP_DELEGATED_FS_CAPABILITIES,
+      _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } });
+    for (const provider of ["grok", "muse"] as const) {
+      expect(acpClientCapabilities(provider)).toEqual(ACP_DELEGATED_FS_CAPABILITIES);
+    }
   });
 
   it("keeps the delegated handshake when the grok version is unknown", () => {

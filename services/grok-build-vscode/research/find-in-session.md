@@ -7,7 +7,7 @@ In-webview find over the active transcript. One implementation serves VS Code, d
 - ⋯ → **Find in conversation** (next to Export as Markdown) on every surface.
 - Ctrl/Cmd+F in the VS Code sidebar and the desktop app only. Gated on `!IS_REMOTE` — the browser owns that key on afkpilot.com.
 - On Mac, find is **Cmd+F**. Ctrl+F stays `grok.composerForward` (`when: isMac && grok.composerFocus`). Do not change that binding.
-- Command Palette `grok.findInSession` posts `{type:"findInSession"}`. Host-local, transient (`post`, not `emit`). The keystroke inside a `WebviewView` is untested; the command must work without it.
+- Command Palette `atlas.findInSession` posts `{type:"findInSession"}`. Host-local, transient (`post`, not `emit`). The keystroke inside a `WebviewView` is untested; the command must work without it.
 
 ## Search
 

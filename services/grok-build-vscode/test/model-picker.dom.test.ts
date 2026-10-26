@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { bootWebview, click, dispatch } from "./webview-harness";
+import { normalizeClaudeSessionResponse } from "../src/claude-backend";
 
 const $ = (doc: Document, id: string) => doc.getElementById(id) as HTMLElement;
 const modelBtn = (doc: Document) => doc.querySelector(".model-picker-row") as HTMLButtonElement;
@@ -24,6 +25,79 @@ function openModelPicker(h: ReturnType<typeof bootWebview>, models: object[], ex
 }
 
 describe("model picker provider marks and manage-providers", () => {
+  it.each([false, true])("keeps untagged legacy Muse rows with their supplying provider during a preview, remote=%s", async remote => {
+    const h = bootWebview({ remote });
+    dispatch(h.window, { type: "providerState", providers: [
+      { id: "muse", connected: true }, { id: "grok", connected: true },
+    ] });
+    dispatch(h.window, { type: "session", sessionId: "muse", provider: "muse", currentModelId: "muse-spark-1.3", models: [
+      { modelId: "muse-spark-1.3", name: "muse-spark-1.3" },
+      { modelId: "muse-spark-1.2", name: "muse-spark-1.2" },
+      { provider: "grok", modelId: "grok-4.7", name: "Atlas 4.7" },
+    ] });
+    dispatch(h.window, { type: "modeChanged", modeId: "onRequest", modes: ["yolo", "agent", "onRequest", "denyUnmatched"] });
+    click(h.window, $(h.doc, "gear-btn"));
+    click(h.window, [...h.doc.querySelectorAll(".model-picker-row")].find(row => row.textContent?.includes("Atlas 4.7"))!);
+    expect($(h.doc, "gear-btn").textContent).toContain("Atlas 4.7");
+    let heading = "";
+    for (const row of h.doc.querySelectorAll(".model-picker-list > *")) {
+      if (row.classList.contains("model-provider-heading")) heading = row.textContent ?? "";
+      else if (row.textContent?.includes("muse-spark")) expect(heading).toBe("Muse Code");
+    }
+    click(h.window, $(h.doc, "mode-btn"));
+    expect($(h.doc, "mode-btn").textContent).toBe("Agent mode");
+    expect($(h.doc, "mode-popover").textContent).not.toMatch(/Unknown mode|On request|Deny unmatched/);
+    expect(h.posted).toContainEqual({ type: "setModel", modelId: "grok-4.7", provider: "grok" });
+    // Until Grok's session exists no mode can take effect, so none is clickable.
+    const planRow = [...h.doc.querySelectorAll(".mode-popover-item")].find(row => row.textContent?.includes("Plan mode"))!;
+    expect(planRow.textContent).toContain("Available once Atlas has started");
+    click(h.window, planRow as HTMLElement);
+    expect(h.posted).not.toContainEqual({ type: "setMode", modeId: "plan" });
+    // Older hosts omit modes and row providers. Their original fallbacks still
+    // apply after the confirmed provider arrives, in startup's mode-first order.
+    dispatch(h.window, { type: "modeChanged", modeId: "agent" });
+    dispatch(h.window, { type: "session", sessionId: "grok", provider: "grok", currentModelId: "grok-4.7", models: [
+      { modelId: "grok-4.7", name: "Atlas 4.7" },
+    ] });
+    expect([...h.doc.querySelectorAll(".mode-item-label")].map(row => row.textContent)).toEqual(["Agent mode", "Plan mode", "Auto accept"]);
+    expect($(h.doc, "gear-btn").textContent).toContain("Atlas 4.7");
+    await h.window.happyDOM.close();
+  });
+
+  it("preserves all four Muse modes when previewing another Muse model", async () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "providerState", providers: [{ id: "muse", connected: true }] });
+    openModelPicker(h, [
+      { provider: "muse", modelId: "muse-spark-1.3", name: "muse-spark-1.3" },
+      { provider: "muse", modelId: "muse-spark-1.2", name: "muse-spark-1.2" },
+    ], { provider: "muse", currentModelId: "muse-spark-1.3" });
+    dispatch(h.window, { type: "modeChanged", modeId: "denyUnmatched", modes: ["yolo", "agent", "onRequest", "denyUnmatched"] });
+    click(h.window, h.doc.querySelectorAll(".model-picker-row")[1]);
+    click(h.window, $(h.doc, "mode-btn"));
+    expect($(h.doc, "mode-btn").textContent).toBe("Deny unmatched");
+    expect([...h.doc.querySelectorAll(".mode-item-label")].map(row => row.textContent)).toEqual(["Allow all", "Prompt unmatched", "On request", "Deny unmatched"]);
+    await h.window.happyDOM.close();
+  });
+
+  it("restores Muse's modes when a cross-provider preview returns to the original pick", async () => {
+    const h = bootWebview();
+    dispatch(h.window, { type: "providerState", providers: [{ id: "muse", connected: true }, { id: "grok", connected: true }] });
+    openModelPicker(h, [
+      { provider: "muse", modelId: "muse-spark-1.3", name: "muse-spark-1.3" },
+      { provider: "grok", modelId: "grok-4.7", name: "Atlas 4.7" },
+    ], { provider: "muse", currentModelId: "muse-spark-1.3" });
+    dispatch(h.window, { type: "modeChanged", modeId: "onRequest", modes: ["yolo", "agent", "onRequest", "denyUnmatched"], disabledModes: { denyUnmatched: "Test restriction" } });
+    const pick = (name: string) => click(h.window, [...h.doc.querySelectorAll(".model-picker-row")].find(row => row.textContent?.includes(name))!);
+    pick("Atlas 4.7");
+    pick("muse-spark-1.3");
+    click(h.window, $(h.doc, "mode-btn"));
+    expect(h.posted.filter(m => m.type === "setModel")).toEqual([]);
+    expect($(h.doc, "mode-btn").textContent).toBe("On request");
+    expect([...h.doc.querySelectorAll(".mode-item-label")].map(row => row.textContent)).toEqual(["Allow all", "Prompt unmatched", "On request", "Deny unmatched"]);
+    expect(h.doc.querySelector(".mode-item-disabled-note")?.textContent).toBe("Test restriction");
+    await h.window.happyDOM.close();
+  });
+
   it("puts a provider mark on every model row even when only one agent is connected", () => {
     const h = bootWebview();
     dispatch(h.window, {
@@ -89,6 +163,27 @@ describe("model picker provider marks and manage-providers", () => {
     const sonnet = [...h.doc.querySelectorAll("#gear-popover .model-picker-row")]
       .find((el) => el.textContent?.includes("Sonnet 5"));
     expect(sonnet?.querySelector(".provider-glyph.provider-claude")).toBeTruthy();
+  });
+
+  // The owner, 2026-10-15: "'Default (recommended)' is not the information."
+  // The live catalog of a fresh Claude install, through the host's own
+  // normalisation: the default row says which model it resolves to, and keeps
+  // its value.
+  it("names the model Claude's default row resolves to, in the row and the chip", () => {
+    const live = JSON.parse(readFileSync(fileURLToPath(new URL("./fixtures/smoke-live-catalogs.json", import.meta.url)), "utf8")).claude.session;
+    const { models } = normalizeClaudeSessionResponse({ sessionId: "c", ...live });
+    const h = bootWebview();
+    dispatch(h.window, { type: "providerState", providers: [{ id: "claude", connected: true }] });
+    openModelPicker(h, models.availableModels.map((model: object) => ({ provider: "claude", ...model })),
+      { provider: "claude", currentModelId: models.currentModelId });
+    const rows = [...h.doc.querySelectorAll("#gear-popover .model-picker-row")];
+    const active = rows.find((row) => row.classList.contains("active"));
+    expect(active?.querySelector(".model-picker-name")?.textContent).toBe("Default (Opus 5.5)");
+    expect($(h.doc, "gear-btn").textContent).toContain("Default (Opus 5.5)");
+    expect(h.doc.getElementById("gear-popover")!.textContent).not.toContain("recommended");
+    // Only the label changed: the row is still the vendor's `default` value.
+    expect(models.currentModelId).toBe("default");
+    expect(models.availableModels[0]).toMatchObject({ modelId: "default", name: "Default (Opus 5.5)" });
   });
 });
 

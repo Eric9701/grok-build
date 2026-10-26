@@ -191,6 +191,16 @@ export function fileTreePanelBootSource(_iconsDir?: string): string {
           : undefined,
         revealLabel: ${JSON.stringify(revealLabel)},
         fileIcons: { baseUrl: iconBase },
+        // The docked tree is injected into the CHAT document, so the renderer
+        // that owns the project catalog is already on the page and publishes
+        // these. Absent on a chat.js too old to publish them, which just leaves
+        // the title its folder.
+        projectMark: typeof window.__grokProjectMark === "function"
+          ? window.__grokProjectMark
+          : undefined,
+        projectMarkColor: typeof window.__grokProjectMarkColor === "function"
+          ? window.__grokProjectMarkColor
+          : undefined,
       },
       // No gitEnabled option here, deliberately. The panel decides on evidence
       // — it withholds Changes when the host reports no git or not-a-repo —

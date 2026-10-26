@@ -71,13 +71,13 @@ describe("multi-provider review regressions", () => {
     instance.sendRemoteClient = vi.fn();
     instance.scheduleCodexHistoryRefresh = vi.fn();
     instance.codexSessionCache = new Map([["sentinel", [{ id: "keep" }]]]);
-    instance.codexSessionCacheAt = new Map([["sentinel", 123]]);
+    instance.adapterHistoryStamps = new Map([["codex", { at: 123 }]]);
 
     instance.installTestHooks().fromRemote({ type: "listSessions", offset: 0, query: "" }, "phone");
 
     expect(instance.scheduleCodexHistoryRefresh).not.toHaveBeenCalled();
     expect(instance.codexSessionCache.get("sentinel")).toEqual([{ id: "keep" }]);
-    expect(instance.codexSessionCacheAt.get("sentinel")).toBe(123);
+    expect(instance.adapterHistoryStamps.get("codex")).toEqual({ at: 123 });
     expect(instance.sendRemoteClient).toHaveBeenCalledWith("phone", {
       type: "sessions",
       entries: [],
@@ -98,7 +98,9 @@ describe("multi-provider review regressions", () => {
     const previousHome = process.env.GROK_HOME;
     try {
       process.env.GROK_HOME = grokHome;
-      for (const [id, mtime] of [["mtime-new", 2_000], ["mtime-old", 1_000]] as const) {
+      // Inside the 30-day history horizon: older rows are not listed at all.
+      const now = Date.now();
+      for (const [id, mtime] of [["mtime-new", now - 1_000], ["mtime-old", now - 2_000]] as const) {
         const dir = path.join(catalog, id);
         fs.mkdirSync(dir, { recursive: true });
         const summary = path.join(dir, "summary.json");
@@ -153,7 +155,7 @@ describe("multi-provider review regressions", () => {
 
   it("observes Codex logout success before entering the synchronous logout reset", () => {
     const body = sidebar.slice(sidebar.indexOf("async logout("), sidebar.indexOf("dispose(): void"));
-    const exec = body.indexOf("await execGrokCli(cliPath, logoutArgs");
+    const exec = body.indexOf("await this.execProviderCli(provider, cliPath, logoutArgs");
     // Matched without its argument list: the invariant is the ORDER — the CLI is
     // observed to succeed before the reset — not the call's exact shape. Pinning
     // the full literal broke when a `report` callback was threaded through so a
@@ -185,7 +187,7 @@ describe("multi-provider review regressions", () => {
     expect(warm).toContain("model-cache warm-up failed");
     const reprobe = methodBody("private async reprobeProviderCredentials(");
     expect(reprobe).toContain('if (provider === "codex" || provider === "claude")');
-    expect(reprobe).toContain("this.warmConnectedCodexModels()");
+    expect(reprobe).toContain("this.warmConnectedCodexModels(requireProof)");
     const recheck = sidebar.slice(sidebar.indexOf('case "recheckConnection":'), sidebar.indexOf('case "logout":'));
     expect(recheck).toContain("await this.reprobeProviderCredentials(provider)");
   });
@@ -232,12 +234,49 @@ describe("multi-provider review regressions", () => {
   });
 
   it("freezes adapter listing time on first discovery for Codex and Claude", () => {
-    const body = methodBody("private async refreshAdapterHistory(");
-    expect(body).toContain("if (typeof previous.activeAt === \"number\") continue");
+    // The listing moved out of `refreshAdapterHistory` when history stopped
+    // spawning a process per repo: that method now only queues, and this is
+    // the half that reads the catalog. The assertions are unchanged — no
+    // provider carve-out on the pin — only the method that must satisfy them.
+    const body = methodBody("private async listAdapterHistory(");
+    // Rows older than the history horizon are not stamped at all (and are
+    // listed nowhere); a stamp, once there, is never moved.
+    expect(body).toContain("if (typeof previous.activeAt === \"number\" || !stampable(entry)) continue");
     expect(body).toContain("activeAt: adapterListEntry(entry, {}, provider, Date.now()).updatedAt");
     // No provider carve-out — Claude restamps on load, same pin Codex already had.
     expect(body).not.toContain('if (provider === "codex")');
     expect(body).not.toContain("...(provider === \"codex\"");
+  });
+
+  it("starts the shared history process in the home directory, never in a project", () => {
+    // The spawn cwd carries no meaning — codex sends no cwd on the wire and
+    // claude takes it per call — so a process born in whichever project
+    // listed first would hold that folder for nothing. It now OUTLIVES the
+    // project, and on Windows that is a folder the user cannot delete after
+    // closing it. Home is the one directory that is never a project.
+    const body = methodBody("private async adapterHistoryClient(");
+    expect(body).toContain("cwd: this.projectHomeDir()");
+    // The listing cwd still reaches `session/list` as an argument; only the
+    // process's own birthplace changed.
+    expect(methodBody("private async listAdapterHistory(")).toContain("client.listSessions(cwd, process.platform)");
+  });
+
+  it("gives every provider the same teardown budget, and bounds the muse child wait", () => {
+    // One provider waiting longer than the others buys nothing: the ceiling is
+    // only reached by a process that will not exit, and then it is the user's
+    // app-quit that hangs. Muse's slow half is its `muse serve` child, so the
+    // wait is bounded inside the adapter that knows about it — not paid for by
+    // every teardown out here.
+    const acp = fs.readFileSync(path.join(root, "src", "acp.ts"), "utf8").replace(/\r\n/g, "\n");
+    expect(acp).toContain("dispose(timeoutMs = 3000): Promise<void> {");
+    expect(acp).not.toMatch(/dispose\(timeoutMs = this\.provider/);
+
+    const session = fs.readFileSync(path.join(root, "adapters", "muse", "session.mts"), "utf8").replace(/\r\n/g, "\n");
+    expect(session).toContain("Promise.race([handshake.exited, childExitTimeout()])");
+    // And the host's own ceiling must stay the outer bound of the adapter's.
+    expect(session).toMatch(/CHILD_EXIT_BUDGET_MS = (\d+)/);
+    const budget = Number(/CHILD_EXIT_BUDGET_MS = (\d+)/.exec(session)![1]);
+    expect(budget).toBeLessThan(3000);
   });
 
   it("puts minimal provider state in every remote client snapshot", () => {
@@ -246,10 +285,12 @@ describe("multi-provider review regressions", () => {
     instance.locatedProviders = vi.fn(() => ({ grok: true, codex: false, claude: false }));
     expect(instance.providerStateMessage()).toEqual({
       type: "providerState",
+      // keepsCliSignIn: a desk host's account button disconnects (#203).
       providers: [
-        { id: "grok", connected: true },
-        { id: "codex", connected: false },
-        { id: "claude", connected: false },
+        { id: "muse", connected: false, keepsCliSignIn: true },
+        { id: "grok", connected: true, keepsCliSignIn: true },
+        { id: "codex", connected: false, keepsCliSignIn: true },
+        { id: "claude", connected: false, keepsCliSignIn: true },
       ],
     });
 
@@ -270,7 +311,10 @@ describe("multi-provider review regressions", () => {
     const session = new Session();
     session.provider = "grok";
     session.activeSessionId = "empty-grok";
-    session.client = { setModel: vi.fn() } as any;
+    const client = { setModel: vi.fn(), dispose: vi.fn(async () => {}) };
+    session.client = client as any;
+    instance.clearPendingHumanRequests = vi.fn();
+    instance.drainPendingConfirms = vi.fn();
     instance.connectedProviders = vi.fn(() => ["grok", "codex"]);
     instance.sessionCwd = vi.fn(() => "/repo");
     instance.rememberProjectProvider = vi.fn(async () => {});
@@ -283,7 +327,9 @@ describe("multi-provider review regressions", () => {
     expect(instance.rememberProjectProvider).toHaveBeenCalledWith("/repo", "codex", "gpt-5.6-sol");
     expect(instance.startSession).toHaveBeenCalledWith(undefined, session);
     expect(instance.discardRestartedEmptySession).toHaveBeenCalledWith("empty-grok", session);
-    expect(session.client.setModel).not.toHaveBeenCalled();
+    expect(client.setModel).not.toHaveBeenCalled();
+    expect(client.dispose).toHaveBeenCalledOnce();
+    expect(session.client).toBeUndefined();
   });
 
   it("infers an old client's cross-provider model and returns a targeted backstop", async () => {

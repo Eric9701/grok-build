@@ -311,7 +311,7 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
     expect(line).toContain('"reasoningEffort":"low"'); // switch re-sends the override
   });
 
-  it("startup: a valid default effort is forwarded as --reasoning-effort before stdio", async () => {
+  it.each(["low", "medium"])("startup: explicit effort overrides a %s Grok TOML default", async (configuredEffort) => {
     const logs: string[] = [];
     const effortClient = new AcpClient({
       cliPath: fixtureCli(),
@@ -321,14 +321,21 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
         GROK_HOME: path.join(planHome, ".grok"),
         FAKE_WORKSPACE_ROOT: workspace,
         FAKE_PLAN_PATH: path.join(planHome, ".grok", "sessions", "cwd-x", "sess-effort", "plan.md"),
+        FAKE_CONFIG_EFFORT: configuredEffort,
       },
       effort: "high",
       log: (msg) => logs.push(msg),
     });
 
     try {
+      const advertised: (string | undefined)[] = [];
+      effortClient.on("session", () => advertised.push(effortClient.availableModels[0]?.reasoningEffort));
       await effortClient.start();
       await effortClient.newSession();
+      expect(effortClient.currentReasoningEffort).toBe("high");
+      expect(advertised).toEqual(["high"]);
+      await waitForStderr(logs, /SET_MODEL:/);
+      expect(logs.join("\n")).toContain('"reasoningEffort":"high"');
 
       // The fixture exits 2 on any argv it doesn't recognize, so a successful
       // session proves the forwarded shape (`agent --reasoning-effort high stdio`)
@@ -391,6 +398,11 @@ describe("ACP integration (real subprocess, fake CLI)", () => {
     expect(blocked).toHaveLength(1);
     expect(blocked[0].kind).toBe("write");
     expect(blocked[0].target).toBe("relative-file.ts");
+    // `mutationBlocked` fires host-side; the CLI's WRITE_RESPONSE still has to
+    // come back down the pipe and be flushed. Asserting straight off `blocked`
+    // is a race, and it is the sibling test above that shows the wait is the
+    // point rather than a formality.
+    await waitForStderr(stderr, /WRITE_RESPONSE.*"error"/);
     expect(stderr.join("")).toMatch(/WRITE_RESPONSE.*"error"/);
     expect(fs.existsSync(path.join(workspace, "relative-file.ts"))).toBe(false);
   });

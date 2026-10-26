@@ -30,21 +30,37 @@
      nested corners visually concentric and matches the 8px icon buttons. */
   --chat-radius-message: 12px;
   --chat-radius-code: 8px;
-  /* Project folder colours (rail). No raw hex ÔÇö blue IS the theme link token;
-     the other five are fixed oklch hues mixed with --vscode-foreground so
-     contrast polarity follows the theme without a light/dark branch (same
-     reason as --chat-surface-user above: a pure token can vanish when themes
-     map surfaces onto each other). Swatch picker and folder stroke both read
-     these, so a seventh colour is one custom property + one palette id. */
-  --repo-color-blue: var(--vscode-textLink-foreground);
-  --repo-color-teal: color-mix(in oklab, oklch(0.68 0.12 200) 72%, var(--vscode-foreground) 28%);
-  --repo-color-green: color-mix(in oklab, oklch(0.68 0.15 145) 72%, var(--vscode-foreground) 28%);
-  --repo-color-amber: color-mix(in oklab, oklch(0.76 0.14 85) 72%, var(--vscode-foreground) 28%);
-  --repo-color-coral: color-mix(in oklab, oklch(0.68 0.15 30) 72%, var(--vscode-foreground) 28%);
-  --repo-color-purple: color-mix(in oklab, oklch(0.64 0.15 305) 72%, var(--vscode-foreground) 28%);
+  /* Project colours (rail). Six hues dealt out at even intervals around the
+     wheel, at full chroma, with a light-theme branch below.
+
+     They used to be mixed 28% into --vscode-foreground so one set of values
+     would serve both themes without a branch. That bought theme-proofing with
+     chroma and the bill came due: six hues compressed toward one grey, close
+     enough that people could not tell their projects apart — and blue was the
+     worst of it, because blue WAS the link token, about 20° from teal.
+
+     Same six names, so nothing anybody has already picked is thrown away. Mark
+     and swatch picker both read these, so a seventh colour is still one custom
+     property + one palette id. Keep in step with projects-rail.css. */
+  --repo-color-blue: oklch(0.70 0.16 250);
+  --repo-color-teal: oklch(0.75 0.13 195);
+  --repo-color-green: oklch(0.76 0.17 145);
+  --repo-color-amber: oklch(0.80 0.16 80);
+  --repo-color-coral: oklch(0.70 0.19 25);
+  --repo-color-purple: oklch(0.68 0.19 305);
 }
 
 body.vscode-light {
+  /* Darker and more saturated on a light ground — the same hue at the same
+     lightness washes out on white. Amber is the weakest of the twelve at about
+     3.8:1, which clears the 3:1 WCAG asks of a graphical object; it cannot go
+     much darker without turning olive. Keep in step with projects-rail.css. */
+  --repo-color-blue: oklch(0.55 0.17 250);
+  --repo-color-teal: oklch(0.56 0.12 195);
+  --repo-color-green: oklch(0.55 0.15 145);
+  --repo-color-amber: oklch(0.62 0.15 75);
+  --repo-color-coral: oklch(0.56 0.18 25);
+  --repo-color-purple: oklch(0.52 0.20 305);
   --e1: #1a8f7d;
   --e2: #1a85ff;
   --e3: #8250df;
@@ -164,7 +180,22 @@ body {
   --rail-repo-line-height: 1.45;
   --rail-repo-min-height: 34px;
   --rail-indent: 16px;
+  /* Conversations under a PROJECT sit one tier deeper than those under
+     Pinned or Recent, which have no parent to tuck under. The number is
+     not a taste: the project row now leads with a chevron, so its mark
+     moved right by that chevron's width, and a child that did not follow
+     would land LEFT of its own parent and flatten the tree into a list.
+     Same 32px as the VS Code rail, because the two heads are the same
+     geometry -- 4px of head padding, a 16px chevron, a 2px gap, then a
+     26px mark box. Change the chevron and this has to follow. */
+  --rail-indent-nested: 32px;
   --rail-icon-size: 14px;
+  /* The project's mark is sized on its own, not off --rail-icon-size, because
+     it is an IDENTITY rather than an affordance: it is the thing the eye finds
+     when scanning for a project, and the design it comes from draws it at 16.
+     --rail-icon-size stays 14 for what it still feeds -- the worktree branch
+     glyph, and the side bar's action icons. */
+  --rail-mark-size: 16px;
   --rail-row-radius: 5px;
   --rail-hover-bg: var(--vscode-list-hoverBackground);
 }
@@ -587,16 +618,59 @@ body.rail-resizing * {
   border: 0;
   border-radius: 4px;
 }
-/* Folder is an open/closed indicator ÔÇö the whole head is the hit target. */
+/* The disclosure control, split off the mark so the mark could become an
+   identity: a rocket has no open variant. The whole head is still the hit
+   target, so neither of these takes pointer events. 16px is the width the
+   nested indent is calculated from -- change one and --rail-indent-nested
+   has to follow. Without this rule the chevron is a bare inline span and
+   the two states size themselves: chevronRight is 14px and chevronDown is
+   12px, so the mark and the name shifted 2px sideways on every expand. */
+.rail-chevron {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 16px;
+  height: 28px;
+  color: var(--vscode-descriptionForeground);
+  cursor: inherit;
+  pointer-events: none;
+}
+.rail-chevron svg { width: 12px; height: 12px; }
 .rail-twisty { cursor: inherit; pointer-events: none; }
-/* Stroke tint only (SVGs use currentColor). None / missing attr keeps the
-   descriptionForeground from .rail-twisty. */
-.rail-twisty[data-repo-color="blue"] { color: var(--repo-color-blue); }
-.rail-twisty[data-repo-color="teal"] { color: var(--repo-color-teal); }
-.rail-twisty[data-repo-color="green"] { color: var(--repo-color-green); }
-.rail-twisty[data-repo-color="amber"] { color: var(--repo-color-amber); }
-.rail-twisty[data-repo-color="coral"] { color: var(--repo-color-coral); }
-.rail-twisty[data-repo-color="purple"] { color: var(--repo-color-purple); }
+@media (hover: none), (pointer: coarse) {
+  .rail-head-btn { min-height: 36px; }
+  .rail-repo-head { min-height: max(36px, var(--rail-repo-min-height)); }
+}
+/* One hue, every surface that draws the project's mark: the rail, the
+   composer chip, the switcher rows and the file panel's title. The marks are
+   currentColor, so tinting the host is the whole mechanism. On the chip the
+   attribute sits on the BUTTON, so the rule has to reach the icon rather than
+   the button, or the project name beside it takes the hue too. A missing
+   attribute keeps each host's own descriptionForeground. */
+.rail-twisty[data-repo-color="blue"],
+.repo-chip[data-repo-color="blue"] .repo-chip-icon,
+.repo-row-icon[data-repo-color="blue"],
+.gfp-title-icon[data-repo-color="blue"] { color: var(--repo-color-blue); }
+.rail-twisty[data-repo-color="teal"],
+.repo-chip[data-repo-color="teal"] .repo-chip-icon,
+.repo-row-icon[data-repo-color="teal"],
+.gfp-title-icon[data-repo-color="teal"] { color: var(--repo-color-teal); }
+.rail-twisty[data-repo-color="green"],
+.repo-chip[data-repo-color="green"] .repo-chip-icon,
+.repo-row-icon[data-repo-color="green"],
+.gfp-title-icon[data-repo-color="green"] { color: var(--repo-color-green); }
+.rail-twisty[data-repo-color="amber"],
+.repo-chip[data-repo-color="amber"] .repo-chip-icon,
+.repo-row-icon[data-repo-color="amber"],
+.gfp-title-icon[data-repo-color="amber"] { color: var(--repo-color-amber); }
+.rail-twisty[data-repo-color="coral"],
+.repo-chip[data-repo-color="coral"] .repo-chip-icon,
+.repo-row-icon[data-repo-color="coral"],
+.gfp-title-icon[data-repo-color="coral"] { color: var(--repo-color-coral); }
+.rail-twisty[data-repo-color="purple"],
+.repo-chip[data-repo-color="purple"] .repo-chip-icon,
+.repo-row-icon[data-repo-color="purple"],
+.gfp-title-icon[data-repo-color="purple"] { color: var(--repo-color-purple); }
 .rail-action-btn { cursor: pointer; }
 /* Hover controls sit on the row's own hover surface ÔÇö no darker per-icon chip
    (Codex-style). Focus outline remains for keyboard; active pin is colour-only. */
@@ -604,7 +678,7 @@ body.rail-resizing * {
 .rail-action-btn.active { color: var(--vscode-foreground); background: transparent; }
 .rail-action-btn:focus-visible,
 .rail-more:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: -1px; }
-.rail-twisty svg { width: var(--rail-icon-size); height: var(--rail-icon-size); }
+.rail-twisty svg { width: var(--rail-mark-size); height: var(--rail-mark-size); }
 .rail-repo-name {
   display: flex;
   align-items: center;
@@ -815,6 +889,14 @@ body.desk:not(.desk-with-ft) .rail-action-btn { width: 24px; height: 24px; }
    differently depending on which group it sat in. The 4px stays on the
    project lists, where the gap separates whole projects. */
 .rail-sessions { display: flex; flex-direction: column; min-width: 0; gap: 2px; padding: 2px 0 5px 0; }
+/* A conversation drawn UNDER a project (.rail-sessions) tucks under its
+   parent's mark; one drawn under Pinned or Recent (.rail-list) has no
+   parent and keeps the shallow indent. Before this both sat at 16px, so a
+   grandchild lined up with a child and the tree read as a flat list --
+   which is what "the chat room of the parent group is further right than
+   the subgroup's" was describing, on a PHONE screenshot. This rail is the
+   one that screenshot came from. */
+.rail-sessions .rail-session { padding-left: var(--rail-indent-nested); }
 .rail-session {
   position: relative;
   display: flex;
@@ -848,6 +930,14 @@ body.desk:not(.desk-with-ft) .rail-action-btn { width: 24px; height: 24px; }
 }
 .rail-session-branch { display: inline-flex; flex: 0 0 auto; color: var(--vscode-descriptionForeground); }
 .rail-session-branch svg { width: 12px; height: 12px; }
+/* A click waiting for a load another view started (sessionOpening). */
+.rail-session-opening {
+  flex: 0 0 auto;
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  font-style: italic;
+  white-space: nowrap;
+}
 .rail-pinned { margin-bottom: 2px; }
 .rail-session-repo {
   flex: 0 0 auto;
@@ -993,6 +1083,12 @@ body.desk:not(.desk-with-ft) .rail-action-btn { width: 24px; height: 24px; }
     --rail-repo-min-height: 40px;
     --rail-row-font-size: 15px;
     --rail-repo-font-size: 16px;
+    /* The mark rides with the glyphs beside it. Everything else on this row is
+       20px here, and the comment on that rule says why: on a 36px tap target a
+       smaller glyph "read as a different, lesser control". A project's own mark
+       is the last thing that should read as lesser, and at 16 against the
+       compose button's 20 it was the odd one out. */
+    --rail-mark-size: 20px;
   }
   .rail-repo-actions,
   .rail-session-actions {
@@ -1093,6 +1189,49 @@ a:hover {
   color: var(--vscode-textLink-activeForeground, var(--vscode-textLink-foreground));
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+/* A pull request the agent just opened: one chip, the number and the repo,
+   and the whole chip opens that PR in the browser. Same job as Claude's
+   "PR #N" row. The shared `a:hover` underline is wrong on a button-shaped link. */
+a.pr-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 1px 2px;
+  vertical-align: middle;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid var(--vscode-editorWidget-border, transparent);
+  border-radius: 6px;
+  background: var(--chat-surface-code);
+  color: var(--vscode-foreground);
+  font-size: 12px;
+  line-height: 18px;
+  text-decoration: none;
+}
+a.pr-open:hover {
+  text-decoration: none;
+  background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.18));
+  color: var(--vscode-foreground);
+}
+.pr-open-mark,
+.pr-open-ext {
+  display: inline-flex;
+  flex: none;
+  opacity: 0.75;
+}
+.pr-open-label {
+  font-weight: 600;
+  flex: none;
+}
+.pr-open-repo {
+  color: var(--vscode-descriptionForeground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* A detected file ref renders EXACTLY like any other link: no rules on the
@@ -1264,6 +1403,12 @@ a:hover {
 .repo-chip.disabled:hover { background: transparent; }
 .repo-chip.browsing { border-color: var(--vscode-focusBorder); color: var(--vscode-foreground); }
 .repo-chip-icon, .repo-chip > svg { display: inline-flex; flex: none; }
+/* The mark carries no width/height of its own (see repo-icons.js), and an
+   unsized <svg> inside a flex host has no intrinsic size to resolve a
+   flex-basis from: it collapses to 0x0 and `flex: none` never grows it, so
+   a missing rule here makes the mark VANISH rather than overflow. 13px is
+   what ICON.folder drew before, so the top bar keeps its geometry. */
+.repo-chip-icon svg { width: 13px; height: 13px; }
 .repo-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- toolbar popovers ---- */
@@ -1699,6 +1844,7 @@ body.thinking-hidden .msg.thinking.find-reveal { display: block; }
   justify-content: center;
   gap: 6px;
 }
+#welcome-version[hidden] { display: none; }
 #welcome-version.welcome-status-busy svg {
   flex: none;
   animation: send-spinner-rotate 0.9s linear infinite;
@@ -2189,6 +2335,19 @@ body.turn-busy .queued-steer:hover {
   user-select: none;
 }
 .thinking-header:hover { color: var(--vscode-foreground); }
+.thinking-show-less {
+  background: none;
+  border: 0;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  cursor: pointer;
+  margin-left: 22px;
+  padding: 4px 0;
+}
+.thinking-show-less:hover { color: var(--vscode-foreground); }
+.thinking-show-less:focus-visible,
+.thinking-header:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.thinking-show-less[hidden] { display: none; }
 /* Leading brain icon ÔÇö mirrors the tool rows' .tool-icon so a thinking row reads
    as a sibling of the tool rows (and matches the "ThinkingÔÇŽ" stand-in). */
 .thinking-icon { width: 16px; height: 16px; flex: 0 0 auto; opacity: 0.85; }
@@ -2439,15 +2598,14 @@ body.thinking-hidden .msg.thinking { display: none; }
 }
 .generated-media-btn.copied { color: var(--vscode-charts-green, #4ec9b0); }
 
-/* Subagent delegation row ÔÇö same typography as the tool rows, with a purple
-   accent marking "delegated work" (one level up from a single tool call). */
+/* Delegated work uses one quiet card on every surface. */
 .subagent-card {
   font-size: var(--vscode-font-size);
   color: var(--vscode-descriptionForeground);
   padding: 5px 10px;
   margin: 4px var(--pad);
-  border-left: 2px solid var(--vscode-charts-purple, #b180d7);
-  background: var(--vscode-textBlockQuote-background, rgba(177, 128, 215, 0.08));
+  border-left: 2px solid var(--vscode-charts-blue, #3794ff);
+  background: var(--vscode-textBlockQuote-background, rgba(55, 148, 255, 0.08));
   border-radius: 0 6px 6px 0;
 }
 /* A failed subagent reads as failed at a glance ÔÇö red left border + red
@@ -2474,7 +2632,6 @@ body.thinking-hidden .msg.thinking { display: none; }
 .subagent-card .subagent-row.expandable { cursor: pointer; }
 .subagent-card .subagent-badge { display: inline-flex; flex: none; }
 .subagent-card .subagent-label { font-weight: 600; flex: none; }
-.subagent-card .subagent-sep { flex: none; opacity: 0.7; }
 .subagent-card .subagent-title {
   min-width: 0;
   overflow: hidden;
@@ -2529,12 +2686,6 @@ body.thinking-hidden .msg.thinking { display: none; }
   opacity: 0.8;
   font-size: 0.9em;
 }
-.subagent-card .subagent-result-label {
-  font-size: 0.92em;
-  font-weight: 600;
-  color: var(--vscode-descriptionForeground);
-  margin-bottom: 4px;
-}
 .subagent-card .subagent-result {
   margin-top: 5px;
   /* Balance the bottom edge: the last paragraph's margin is collapsed below,
@@ -2543,20 +2694,20 @@ body.thinking-hidden .msg.thinking { display: none; }
   padding-bottom: 3px;
   overflow-wrap: anywhere;
   color: var(--vscode-foreground);
-  opacity: 0.9;
 }
 .subagent-card .subagent-result > *:first-child { margin-top: 0; }
 .subagent-card .subagent-result > *:last-child { margin-bottom: 0; }
 
-/* Workflow / Goal / Deep-research progress (P2-10) ÔÇö teal accent to distinguish
-   from purple subagent cards. Same density as subagent rows. */
+/* Workflow / Goal / Deep-research progress. */
 .run-progress-card {
+  --run-progress-padding: 10px;
+  --run-progress-fill: var(--vscode-textBlockQuote-background, rgba(55, 148, 255, 0.08));
   font-size: var(--vscode-font-size);
   color: var(--vscode-descriptionForeground);
-  padding: 5px 10px;
+  padding: 5px var(--run-progress-padding);
   margin: 4px var(--pad);
   border-left: 2px solid var(--vscode-charts-blue, #3794ff);
-  background: var(--vscode-textBlockQuote-background, rgba(55, 148, 255, 0.08));
+  background: var(--run-progress-fill);
   border-radius: 0 6px 6px 0;
 }
 .run-progress-card.run-progress-failed {
@@ -2585,6 +2736,20 @@ body.thinking-hidden .msg.thinking { display: none; }
   white-space: nowrap;
 }
 .run-progress-card .run-progress-phase { flex: none; opacity: 0.85; }
+/* The liveness dots sit after the phase (see the template in chat.js) and must
+   not shrink: a squashed set of three reads as a rendering fault, and the row
+   has the title's ellipsis to give away instead. */
+.run-progress-card .run-progress-row .blink-dots { flex: none; }
+/* The run's elapsed time. Tabular figures so the row does not twitch once a
+   second, and last in the row so it never pushes the phase off a narrow
+   phone. Same treatment as .grokking-elapsed — it is the same readout. */
+.run-progress-card .run-progress-elapsed {
+  flex: none;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.92em;
+  opacity: 0.75;
+}
 .run-progress-card .run-progress-sub,
 .run-progress-card .run-progress-detail {
   margin-top: 3px;
@@ -2611,6 +2776,327 @@ body.thinking-hidden .msg.thinking { display: none; }
 }
 .run-progress-card .run-progress-btn:hover {
   background: var(--vscode-button-secondaryHoverBackground, rgba(127, 127, 127, 0.35));
+}
+
+/* Workflows report evidence, never perpetual animation. The pin participates
+   in the same flex column as the transcript and composer on every host. */
+.workflow-pin {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 34vh;
+  display: flex;
+  flex-direction: column;
+  /* No rule and no fill of its own: the card below carries the chrome, and the
+     composer this now sits inside already supplies the side gutter. */
+  padding: 0 0 var(--pad);
+}
+.workflow-pin.is-expanded { max-height: 45vh; }
+.workflow-pin-toggle {
+  min-width: 0;
+  text-align: left;
+  flex: none;
+  align-self: flex-start;
+  border: 0;
+  background: none;
+  color: var(--vscode-foreground);
+  font: inherit;
+  font-weight: 600;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.workflow-pin-runs { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+/* The pinned card's own numbers. `.run-progress-card` gives every progress
+   card a fill, a left accent rail and a radius at the transcript's tighter
+   density; a card sitting on top of the composer gets room to breathe. */
+.workflow-pin-run {
+  margin: 0 0 6px;
+  padding: 5px var(--run-progress-padding);
+  overflow: clip;
+  /* Composite the card tint over its surface once; the sticky header inherits
+     this opaque fill so scrolling text cannot show through or darken it. */
+  background: linear-gradient(var(--run-progress-fill), var(--run-progress-fill)), var(--vscode-sideBar-background);
+}
+.workflow-pin-run:last-child { margin-bottom: 0; }
+.workflow-expanded[hidden], .workflow-dots[hidden], .workflow-phases[hidden], .workflow-roster[hidden], .workflow-agent-detail[hidden], .workflow-blocked[hidden], .workflow-chevron[hidden] { display: none; }
+.workflow-tool-marker[hidden] { display: none; }
+.workflow-card .run-progress-row,
+.workflow-pin-run .run-progress-row { flex-wrap: wrap; align-items: baseline; }
+.workflow-card .run-progress-title,
+.workflow-pin-run .run-progress-title {
+  font-weight: 600;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.workflow-card .run-progress-phase,
+.workflow-pin-run .run-progress-phase { flex: 0 1 auto; overflow-wrap: anywhere; }
+.workflow-agent-activity { font-size: 0.9em; opacity: 0.8; }
+/* The process as one picture, in its own band under the header: rings on a
+   track, never a row like the agent rows below it. Equal columns and no wrap,
+   so a long run is folded in chat.js (five slots at most) rather than wrapped
+   onto a second line of a phone. */
+.workflow-phases {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  padding: 12px;
+  margin: 8px calc(-1 * var(--run-progress-padding)) 4px;
+  list-style: none;
+  border-top: 1px solid var(--vscode-editorWidget-border);
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent);
+}
+.workflow-phase, .workflow-step-more { position: relative; min-width: 0; }
+.workflow-phase[hidden] { display: none; }
+/* The segment leading INTO a slot, from the ring before it. It stops short of
+   both rings, so a hollow ring stays hollow. */
+.workflow-phase::before, .workflow-step-more::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: calc(-50% + 11px);
+  right: calc(50% + 11px);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.45));
+}
+.workflow-phases [data-track="none"]::before { display: none; }
+.workflow-phases [data-track="done"]::before { background: var(--vscode-charts-green, #89d185); }
+.workflow-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--vscode-descriptionForeground);
+  font: inherit;
+  cursor: default;
+}
+button.workflow-step { cursor: pointer; }
+button.workflow-step:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; border-radius: 4px; }
+.workflow-step .workflow-step-ring { width: 14px; height: 14px; border-width: 2px; }
+.workflow-step .workflow-step-ring[data-state="active"] {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-charts-blue, #3794ff) 28%, transparent);
+}
+.workflow-step .workflow-step-ring[data-state="active"]::after { display: none; }
+/* Failed is a red RING here, as in the design; the small markers fill it. */
+.workflow-step .workflow-step-ring[data-state="failed"] {
+  background: transparent;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-errorForeground) 28%, transparent);
+}
+.workflow-step .workflow-step-ring[data-state="cancelled"]::after, .workflow-step .workflow-step-ring[data-state="stopped"]::after { top: 4px; width: 10px; }
+.workflow-step-more .workflow-step-ring:not([data-state="done"]) { border-style: dashed; }
+.workflow-phase-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88em;
+}
+.workflow-phase[data-state="active"] .workflow-step, .workflow-phase[data-state="done"] .workflow-step,
+.workflow-phase[data-state="complete"] .workflow-step, .workflow-phase[data-state="completed"] .workflow-step,
+.workflow-step-more[data-state="done"] .workflow-step { color: var(--vscode-foreground); }
+.workflow-phase[data-state="active"] .workflow-phase-label { font-weight: 700; }
+.workflow-phase[data-state="failed"] .workflow-step { color: var(--vscode-errorForeground); font-weight: 700; }
+.workflow-phase[data-state="cancelled"] .workflow-phase-label,
+.workflow-phase[data-state="stopped"] .workflow-phase-label { text-decoration: line-through; }
+/* Agents under their step; a finished one folds to its count, time and tokens. */
+.workflow-roster > .workflow-group { border-top: 1px solid var(--vscode-editorWidget-border, #555); }
+.workflow-group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  color: var(--vscode-foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.workflow-group-head:disabled { cursor: default; }
+.workflow-group-head:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.workflow-group-title { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.workflow-group-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.88em;
+  color: var(--vscode-descriptionForeground);
+  font-variant-numeric: tabular-nums;
+}
+.workflow-group[data-empty] .workflow-group-title { font-weight: 400; color: var(--vscode-descriptionForeground); }
+.workflow-group-chevron { display: inline-flex; flex: none; margin-left: auto; opacity: 0.7; }
+.workflow-group-chevron svg { width: 12px; height: 12px; }
+.workflow-group-chevron.is-open { transform: rotate(90deg); }
+.workflow-group-chevron[hidden], .workflow-group-rows[hidden] { display: none; }
+.workflow-group-rows { list-style: none; margin: 0; padding: 0 0 4px 16px; }
+.workflow-group-rows > .workflow-agent { border-top: 0; padding: 1px 0; }
+/* Name, steps and stage on the left; elapsed and the chevron on the right; the
+   controls on their OWN row at the foot of the card. Pause and Stop used to
+   share this row, which clipped "Stop" off the right edge of a phone, and the
+   chevron hung below it on top of the receipt line. */
+.workflow-heading { display: block; }
+.workflow-output {
+  margin-top: 12px;
+  color: var(--vscode-foreground);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.workflow-output-body > :first-child { margin-top: 0; }
+.workflow-output-body > :last-child { margin-bottom: 0; }
+.workflow-output-body pre { overflow-x: auto; }
+.workflow-pin-run > .workflow-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 calc(-1 * var(--run-progress-padding));
+  padding: 0 var(--run-progress-padding);
+  background: inherit;
+}
+.workflow-heading > .workflow-pin-toggle { display: flex; width: 100%; margin: 0; padding: 0; }
+.workflow-heading .run-progress-row { align-items: center; gap: 9px; }
+.workflow-chevron, .workflow-agent-chevron { display: inline-flex; flex: none; align-self: center; opacity: 0.7; }
+.workflow-chevron svg, .workflow-agent-chevron svg { width: 12px; height: 12px; }
+
+/* The composer is directly below, so the controls need a real target and air
+   above them rather than the transcript card's 6px. */
+.workflow-pin .run-progress-actions { margin-top: 9px; gap: 7px; }
+.workflow-pin .run-progress-btn { padding: 5px 12px; border-radius: 6px; }
+/* Wraps because a phase list is not always four steps — a long one would
+   otherwise run the heading off a 320px screen. */
+.workflow-dots { display: inline-flex; flex-wrap: nowrap; flex: none; gap: 5px; align-items: center; }
+.workflow-state-marker {
+  display: inline-block;
+  position: relative;
+  flex: none;
+  box-sizing: border-box;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--vscode-descriptionForeground);
+  border-radius: 50%;
+}
+.workflow-state-marker[data-state="unknown"] { border-style: dashed; }
+.workflow-state-marker[data-state="done"], .workflow-state-marker[data-state="complete"], .workflow-state-marker[data-state="completed"] {
+  background: var(--vscode-charts-green, #89d185);
+  border-color: var(--vscode-charts-green, #89d185);
+}
+.workflow-state-marker[data-state="active"] { border-color: var(--vscode-charts-blue, #3794ff); }
+.workflow-state-marker[data-state="active"]::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  background: var(--vscode-charts-blue, #3794ff);
+  border-radius: 50%;
+}
+.workflow-state-marker[data-state="failed"] { background: var(--vscode-errorForeground); border-color: var(--vscode-errorForeground); }
+.workflow-state-marker[data-state="cancelled"]::after, .workflow-state-marker[data-state="stopped"]::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 0;
+  width: 7px;
+  border-top: 1px solid var(--vscode-descriptionForeground);
+  transform: rotate(-45deg);
+}
+.workflow-dot[hidden] { display: none; }
+.workflow-dots-more { font-size: 11px; line-height: 1; opacity: 0.6; }
+.workflow-trace { display: flex; align-items: center; gap: 7px; padding: 3px 0; background: none; border: 0; color: var(--vscode-descriptionForeground); }
+.workflow-trace-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-pin-pref { margin-left: auto; flex: none; }
+/* The message copy button's recipe (.msg-action-btn): a ghost 28px target with
+   a 16px glyph. Pinned is said by the glyph's colour alone; a filled box read
+   heavier than every other icon in the conversation. */
+.workflow-pin-pref[aria-pressed="true"] { color: var(--vscode-charts-blue, #3794ff); }
+
+.workflow-report-toggle { cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 9px; }
+/* The native disclosure triangle sits on the LEFT and is not our chevron; the
+   summary draws its own on the right so a finished card matches a live one. */
+.workflow-report-toggle { list-style: none; }
+.workflow-report-toggle::-webkit-details-marker { display: none; }
+.workflow-report-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-report-dots { display: inline-flex; flex-wrap: wrap; gap: 5px; align-items: center; flex: none; }
+.workflow-report-state { font-weight: 400; opacity: 0.75; }
+.workflow-report-elapsed { margin-left: auto; font-variant-numeric: tabular-nums; opacity: 0.75; }
+.workflow-report-chevron { flex: none; display: inline-flex; align-items: center; }
+.workflow-report-dots[hidden], .workflow-report-elapsed[hidden] { display: none; }
+.workflow-report-body { margin-top: 6px; }
+.workflow-agent-toggle { display: flex; align-items: baseline; gap: 6px; width: 100%; border: 0; padding: 4px 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; white-space: nowrap; }
+.workflow-agent-name { font-weight: 400; color: var(--vscode-foreground); flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.workflow-agent-state { flex: 0 0 auto; margin-left: auto; color: var(--vscode-descriptionForeground); }
+.workflow-agent-chevron { margin-left: 0; }
+.workflow-agent-detail { padding: 4px 0; }
+.workflow-roster { overflow-x: auto; list-style: none; padding: 0; margin: 8px 0 2px; }
+.workflow-agent { padding: 5px 0; border-top: 1px solid var(--vscode-editorWidget-border, #555); overflow-wrap: anywhere; }
+.workflow-agent[data-state*="permission"], .workflow-agent[data-state*="blocked"],
+.workflow-agent[data-state*="permission"] .workflow-agent-name, .workflow-agent[data-state*="blocked"] .workflow-agent-name,
+.workflow-agent[data-state*="permission"] .workflow-agent-state, .workflow-agent[data-state*="blocked"] .workflow-agent-state { color: var(--vscode-charts-orange, #d7ba7d); }
+.workflow-agent[data-state="cancelled"] { opacity: 0.8; }
+.run-progress-card .run-progress-btn:disabled { opacity: 0.55; cursor: default; }
+/* A 36px target drawn as a 28px pill, on every surface: the transparent border
+   is hit-slop. Surfaces that raise tap targets (touch, the relay's narrow
+   layout) raised the whole pill with them, and Pause and Stop read as
+   oversized next to the card's text. */
+.run-progress-card .run-progress-actions .run-progress-btn {
+  min-height: 36px;
+  border: 4px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
+}
+.workflow-pin-toggle:focus-visible, .workflow-agent-toggle:focus-visible, .workflow-report-toggle:focus-visible, .run-progress-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+@media (hover: none), (pointer: coarse) {
+  /* The finished report's summary is the tap target that opens it, so it
+     needs the same target as the live card's disclosure -- a coarse pointer
+     cannot reliably hit a line of text. */
+  .workflow-pin-toggle, .workflow-agent-toggle, .workflow-report-toggle, .workflow-pin .run-progress-btn,
+  .workflow-step, .workflow-group-head { min-height: 36px; }
+}
+
+/* Shared header slots retain the same order and alignment at phone widths. */
+.delegation-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  list-style: none;
+}
+.delegation-header::-webkit-details-marker { display: none; }
+.delegation-header.expandable { cursor: pointer; }
+.delegation-header[aria-disabled="true"] { cursor: default; }
+.delegation-header:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 3px; }
+.delegation-header .delegation-icon { display: inline-flex; flex: none; }
+.delegation-header .delegation-icon svg { width: 14px; height: 14px; }
+.delegation-header .delegation-kind { flex: none; font-weight: 600; }
+.delegation-header .delegation-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; }
+.delegation-header .delegation-status { flex: none; font-weight: 400; font-size: .92em; opacity: .8; }
+.delegation-header .delegation-time { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; font-size: .92em; opacity: .8; }
+.delegation-header .delegation-chevron { display: inline-flex; flex: none; }
+.delegation-chevron svg { width: 12px; height: 12px; }
+.delegation-chevron.is-open { transform: rotate(90deg); }
+.delegation-header .delegation-time[hidden] + .delegation-chevron { margin-left: auto; }
+.delegation-header [hidden], .delegation-meta[hidden], .workflow-steps[hidden], .workflow-agents[hidden], .run-progress-actions[hidden] { display: none; }
+.workflow-card .delegation-header, .workflow-pin-run .delegation-header { flex-wrap: nowrap; gap: 6px; align-items: center; }
+.delegation-meta { margin-top: 8px; font-size: .88em; opacity: .7; }
+.delegation-section-label { margin-top: 10px; font-size: .88em; opacity: .7; }
+.subagent-stream::before { content: "Activity"; font-size: .88em; opacity: .7; }
+.delegation-result .msg-actions { opacity: 1; }
+.subagent-failed .delegation-status, .run-progress-failed .delegation-status { color: var(--vscode-errorForeground); }
+@media (hover: none), (pointer: coarse) {
+  .delegation-header, .workflow-card .run-progress-btn { min-height: 36px; }
 }
 
 .tool-group {
@@ -2908,6 +3394,10 @@ body.vscode-light {
   flex-direction: column;
   gap: 2px;
 }
+.turn-file-diff {
+  min-width: 0;
+  margin: 4px 0 8px;
+}
 .turn-diff-file {
   /* letter · path · stat. A grid rather than the old space-between flex, so
      the status letters make a column of their own and the paths start on one
@@ -2998,8 +3488,24 @@ button.turn-diff-file.has-diff:focus-visible {
    is right — it is the card's one action that leaves the card, and the rows
    are quiet enough that a small secondary button does not shout over them. */
 .turn-diff-summary-foot {
+  /* A column since the reload note joined the button here: the note is a
+     sentence and the button is 26px tall, so side by side the sentence would
+     wrap around a control it is not about. `flex-start` keeps the button its
+     own width rather than stretching it the width of the card. */
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
   margin-top: 8px;
+}
+/* Padded to the file rows' own 6px rather than to the paths inside them: the
+   note is about the rows collectively, not about any one path. No font-size of
+   its own either — `.turn-diff-summary` is already 0.92em, so borrowing
+   `.tool-diff-more`'s 0.92em (written for a full-size tool row) would compound
+   to 0.85 and make the explanation the smallest text on screen. */
+.turn-diff-summary-note {
+  padding: 0 6px;
+  color: var(--vscode-descriptionForeground);
 }
 .turn-diff-open-changes {
   min-height: 26px;
@@ -3142,6 +3648,11 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+.tool-missing-message {
+  color: var(--vscode-descriptionForeground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .tool-kind {
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
@@ -3199,39 +3710,102 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
    `.desk-ft-md, .files-browse-md` shares these rules so a README preview matches chat ÔÇö do not
    restyle code/links/tables under the panel prefix; that drifts (see # follow-up). */
 
-.msg.agent .body,
+.workflow-output-body, .msg.agent .body,
 .desk-ft-md, .files-browse-md { white-space: normal; line-height: 1.55; }
-.msg.agent .body h1,
-.msg.agent .body h2,
-.msg.agent .body h3,
+.workflow-output-body h1, .msg.agent .body h1,
+.workflow-output-body h2, .msg.agent .body h2,
+.workflow-output-body h3, .msg.agent .body h3,
+.workflow-output-body h4, .msg.agent .body h4,
+.workflow-output-body h5, .msg.agent .body h5,
+.workflow-output-body h6, .msg.agent .body h6,
 .desk-ft-md h1, .files-browse-md h1,
 .desk-ft-md h2, .files-browse-md h2,
-.desk-ft-md h3, .files-browse-md h3 {
+.desk-ft-md h3, .files-browse-md h3,
+.desk-ft-md h4, .files-browse-md h4,
+.desk-ft-md h5, .files-browse-md h5,
+.desk-ft-md h6, .files-browse-md h6 {
   margin: 16px 0 8px;
   font-weight: 600;
   line-height: 1.3;
 }
-.msg.agent .body h1, .desk-ft-md h1, .files-browse-md h1 { font-size: 1.4em; }
-.msg.agent .body h2, .desk-ft-md h2, .files-browse-md h2 { font-size: 1.25em; }
-.msg.agent .body h3, .desk-ft-md h3, .files-browse-md h3 { font-size: 1.1em; }
-.msg.agent .body > h1:first-child,
-.msg.agent .body > h2:first-child,
-.msg.agent .body > h3:first-child,
+.workflow-output-body h1, .msg.agent .body h1, .desk-ft-md h1, .files-browse-md h1 { font-size: 1.4em; }
+.workflow-output-body h2, .msg.agent .body h2, .desk-ft-md h2, .files-browse-md h2 { font-size: 1.25em; }
+.workflow-output-body h3, .msg.agent .body h3, .desk-ft-md h3, .files-browse-md h3 { font-size: 1.1em; }
+.workflow-output-body h4, .msg.agent .body h4, .desk-ft-md h4, .files-browse-md h4 { font-size: 1em; }
+.workflow-output-body h5, .msg.agent .body h5, .desk-ft-md h5, .files-browse-md h5 { font-size: 1em; }
+.workflow-output-body h6, .msg.agent .body h6, .desk-ft-md h6, .files-browse-md h6 { font-size: 1em; }
+.workflow-output-body > h1:first-child, .msg.agent .body > h1:first-child,
+.workflow-output-body > h2:first-child, .msg.agent .body > h2:first-child,
+.workflow-output-body > h3:first-child, .msg.agent .body > h3:first-child,
+.workflow-output-body > h4:first-child, .msg.agent .body > h4:first-child,
+.workflow-output-body > h5:first-child, .msg.agent .body > h5:first-child,
+.workflow-output-body > h6:first-child, .msg.agent .body > h6:first-child,
 .desk-ft-md > h1, .files-browse-md > h1:first-child,
 .desk-ft-md > h2, .files-browse-md > h2:first-child,
-.desk-ft-md > h3, .files-browse-md > h3:first-child { margin-top: 0; }
-.msg.agent .body ul,
-.msg.agent .body ol,
+.desk-ft-md > h3, .files-browse-md > h3:first-child,
+.desk-ft-md > h4, .files-browse-md > h4:first-child,
+.desk-ft-md > h5, .files-browse-md > h5:first-child,
+.desk-ft-md > h6, .files-browse-md > h6:first-child { margin-top: 0; }
+
+.workflow-output-body hr,
+.msg .body hr,
+.card .plan-body hr,
+.thinking-body hr,
+.subagent-result hr,
+.desk-ft-md hr,
+.files-browse-md hr {
+  border: 0;
+  border-top: 1px solid var(--vscode-textSeparator-foreground, var(--vscode-contrastBorder, var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.25))));
+  margin: 12px 0;
+}
+@media (forced-colors: active) {
+  .workflow-output-body hr,
+  .msg .body hr,
+  .card .plan-body hr,
+  .thinking-body hr,
+  .subagent-result hr,
+  .desk-ft-md hr,
+  .files-browse-md hr { border-top-color: CanvasText; }
+}
+.workflow-output-body ul, .msg.agent .body ul,
+.workflow-output-body ol, .msg.agent .body ol,
 .desk-ft-md ul, .files-browse-md ul,
 .desk-ft-md ol, .files-browse-md ol {
   margin: 6px 0;
   padding-inline-start: 22px; /* logical: indents from the right for RTL lists */
 }
-.msg.agent .body ul, .desk-ft-md ul, .files-browse-md ul { list-style-type: disc; }
-.msg.agent .body ol, .desk-ft-md ol, .files-browse-md ol { list-style-type: decimal; }
-.msg.agent .body li, .desk-ft-md li, .files-browse-md li { margin: 3px 0; }
-.msg.agent .body li > ul, .desk-ft-md li > ul, .files-browse-md li > ul { margin: 3px 0; list-style-type: circle; }
-.msg.agent .body li > ul ul, .desk-ft-md li > ul ul, .files-browse-md li > ul ul { list-style-type: square; }
+.workflow-output-body ul, .msg.agent .body ul, .desk-ft-md ul, .files-browse-md ul { list-style-type: disc; }
+.workflow-output-body ol, .msg.agent .body ol, .desk-ft-md ol, .files-browse-md ol { list-style-type: decimal; }
+.workflow-output-body li, .msg.agent .body li, .desk-ft-md li, .files-browse-md li { margin: 3px 0; }
+.workflow-output-body li > ul, .msg.agent .body li > ul, .desk-ft-md li > ul, .files-browse-md li > ul { margin: 3px 0; list-style-type: circle; }
+.workflow-output-body li > ul ul, .msg.agent .body li > ul ul, .desk-ft-md li > ul ul, .files-browse-md li > ul ul { list-style-type: square; }
+/* A quote is an inset, same tokens the editor uses for one: a bar on the
+   start side and the theme's quote wash. The marker itself is gone; the bar
+   is what says "this was quoted". Nested quotes repeat the bar. */
+.workflow-output-body blockquote,
+.msg .body blockquote,
+.card .plan-body blockquote,
+.thinking-body blockquote,
+.subagent-result blockquote,
+.desk-ft-md blockquote,
+.files-browse-md blockquote {
+  margin: 8px 0;
+  padding: 2px 0 2px 12px;
+  border-inline-start: 3px solid var(--vscode-textBlockQuote-border, var(--vscode-textLink-foreground));
+  background: var(--vscode-textBlockQuote-background, transparent);
+}
+@media (forced-colors: active) {
+  .workflow-output-body blockquote,
+  .msg .body blockquote,
+  .card .plan-body blockquote,
+  .thinking-body blockquote,
+  .subagent-result blockquote,
+  .desk-ft-md blockquote,
+  .files-browse-md blockquote {
+    border-inline-start-color: CanvasText;
+    background: transparent;
+  }
+}
 /* The wrapper owns the block surface (Codex-style): radius on the div,
    overflow clipped so full-width diff-line tints follow the rounded corners.
    Every fenced block renderMarkdown emits is wrapped in .code-block, in agent,
@@ -3245,7 +3819,7 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
 }
 /* Codex's roomier 14px block margin, in agent prose and the file preview ÔÇö
    inside a compact user bubble or plan card the 8px base reads better. */
-.msg.agent .body .code-block,
+.workflow-output-body .code-block, .msg.agent .body .code-block,
 .desk-ft-md .code-block, .files-browse-md .code-block { margin: 14px 0; }
 .code-block pre {
   margin: 0;
@@ -3262,7 +3836,15 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
      can mute the latter, and code should read at editor contrast. */
   color: var(--vscode-editor-foreground, var(--vscode-foreground));
 }
-.code-copy-btn {
+/* Prose in a fence wraps; real code scrolls. `anywhere` rather than
+   `break-word` so a long unbroken token (a URL, a path) still yields instead of
+   pushing the block wide and reintroducing the clipping this fixes. */
+.code-block.wrap pre code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.code-copy-btn,
+.code-wrap-btn {
   position: absolute;
   top: 6px;
   right: 6px;
@@ -3289,23 +3871,33 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
   z-index: 1;
   line-height: 1;
 }
-.code-copy-btn svg { width: 16px; height: 16px; }
-.code-copy-btn .code-copy-glyph {
+/* Left of Copy, so Copy keeps the corner it has always occupied. */
+.code-wrap-btn { right: 38px; }
+.code-copy-btn svg, .code-wrap-btn svg { width: 16px; height: 16px; }
+.code-copy-btn .code-copy-glyph,
+.code-wrap-btn .code-wrap-glyph {
   display: inline-flex;
   align-items: center;
 }
-.code-block:hover .code-copy-btn { opacity: 1; }
+.code-block:hover .code-copy-btn,
+.code-block:hover .code-wrap-btn { opacity: 1; }
 .code-copy-btn:hover,
-.code-copy-btn:focus-visible {
+.code-copy-btn:focus-visible,
+.code-wrap-btn:hover,
+.code-wrap-btn:focus-visible {
   opacity: 1;
   background: color-mix(in srgb, var(--vscode-foreground) 12%, var(--vscode-sideBar-background));
   color: var(--vscode-foreground);
 }
-.code-copy-btn:focus-visible {
+.code-copy-btn:focus-visible,
+.code-wrap-btn:focus-visible {
   outline: 2px solid var(--vscode-focusBorder);
   outline-offset: -2px;
 }
 .code-copy-btn.copied { color: var(--vscode-charts-green, #4ec9b0); }
+/* Wrapping is the non-default state for code, so say so on the control rather
+   than leaving the reader to infer it from the text reflowing. */
+.code-wrap-btn[aria-pressed="true"] { color: var(--vscode-foreground); }
 .code-block.diff pre { padding: 8px 0; }
 .diff-code { display: block; }
 /* A ```diff fence in Grok's MESSAGE text (renderDiffCode) shares the same visual
@@ -3324,21 +3916,21 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
 .diff-line.diff-del { background: var(--tdiff-del-bg); border-left-color: var(--tdiff-del-line); }
 .diff-line.diff-hunk { color: var(--vscode-textLink-foreground); }
 .diff-line.diff-meta { color: var(--vscode-descriptionForeground); }
-.msg.agent .body strong, .desk-ft-md strong, .files-browse-md strong { font-weight: 600; }
-.msg.agent .body em, .desk-ft-md em, .files-browse-md em { font-style: italic; }
-.msg.agent .body .md-table-wrap,
+.workflow-output-body strong, .msg.agent .body strong, .desk-ft-md strong, .files-browse-md strong { font-weight: 600; }
+.workflow-output-body em, .msg.agent .body em, .desk-ft-md em, .files-browse-md em { font-style: italic; }
+.workflow-output-body .md-table-wrap, .msg.agent .body .md-table-wrap,
 .desk-ft-md .md-table-wrap, .files-browse-md .md-table-wrap {
   overflow-x: auto;
   margin: 8px 0;
 }
-.msg.agent .body table,
+.workflow-output-body table, .msg.agent .body table,
 .desk-ft-md table, .files-browse-md table {
   border-collapse: collapse;
   font-size: inherit;
   width: 100%;
 }
-.msg.agent .body th,
-.msg.agent .body td,
+.workflow-output-body th, .msg.agent .body th,
+.workflow-output-body td, .msg.agent .body td,
 .desk-ft-md th, .files-browse-md th,
 .desk-ft-md td, .files-browse-md td {
   border: 1px solid var(--vscode-editorWidget-border);
@@ -3352,7 +3944,7 @@ body.hide-turn-diff-summary .turn-diff-summary { display: none; }
   word-break: normal;
   overflow-wrap: normal;
 }
-.msg.agent .body th,
+.workflow-output-body th, .msg.agent .body th,
 .desk-ft-md th, .files-browse-md th {
   background: var(--vscode-textBlockQuote-background, var(--vscode-editorWidget-background));
   font-weight: 600;
@@ -3691,6 +4283,10 @@ textarea#input {
   white-space: nowrap;
 }
 .toolbar-btn svg { width: 16px; height: 16px; flex: none; }
+/* Author `display: inline-flex` above beats the UA `[hidden]` rule, same
+   trap as .icon-btn. A hidden mode button would still paint. */
+#mode-btn[hidden],
+.toolbar-btn[hidden] { display: none; }
 .toolbar-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
 /* Bar-icon primitive: every ICON-ONLY action in the top areas (and, via
    matching rules, the file-panel strip / viewer / rail chrome). Glyph 20×20
@@ -3739,7 +4335,6 @@ textarea#input {
   outline-offset: -2px;
 }
 .toolbar-btn.plan-active { color: var(--vscode-charts-blue, #569cd6); }
-.toolbar-btn.yolo-active { color: var(--vscode-charts-orange, #d7ba7d); }
 .btn-label {
   flex-shrink: 1;
   min-width: 0;
@@ -3759,6 +4354,40 @@ textarea#input {
   font-size: 12px;
   font-weight: 500;
 }
+/* "Add <folder> to Projects?" above the message box (renderProjectPrompt). */
+.project-prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--vscode-editorWidget-border);
+  border-radius: 6px;
+  background: var(--vscode-editorWidget-background);
+  color: var(--vscode-foreground);
+  font-size: 12px;
+}
+.project-prompt-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.project-prompt-btn {
+  border: 0;
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  font: inherit;
+  cursor: pointer;
+}
+.project-prompt-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+.project-prompt-btn.primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+.project-prompt-btn.primary:hover { background: var(--vscode-button-hoverBackground); }
+/* No catalog yet for this conversation (modelChipLoading): a closed door,
+   not a button -- no hover fill and no pointer. */
+#gear-btn.model-chip.model-chip-loading { cursor: default; opacity: .65; }
+#gear-btn.model-chip.model-chip-loading:hover { background: transparent; }
 .model-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .model-chip-effort { flex: none; color: var(--vscode-descriptionForeground); }
 .model-chip-effort:empty { display: none; }
@@ -3770,26 +4399,33 @@ textarea#input {
   font-size: 12px; z-index: 50;
 }
 .composer-effort-notice:empty { display: none; }
-/* The donut's own numbers are the FIRST rung, above the mode word: they are the
-   one readout here that nothing in the message depends on, and the donut's
-   tooltip and its popover both still carry them in full. Wide surfaces keep
-   them — the chip's width pressure is real at 334px, not at 640px. */
+/* The donut's numbers are the LAST rung, not the first.
+   They used to go first, on the reasoning that nothing in the message depends
+   on them and the tooltip still carries them. True, and beside the point: the
+   context figure is the readout people actually watch, and the model name —
+   which survived every rung — is the one they already know, because they
+   picked it. #172, reported independently by two people: "the priority should
+   be to ensure the context is displayed first, and then the model name", and
+   "I check the context window size much more than the model name."
+   So the ladder now sheds the chip's own text first and keeps the number. */
 @container composer-card (max-width: 470px) {
-  .context-donut #donut-label { display: none; }
+  .model-chip-effort { display: none; }
 }
 @container composer-card (max-width: 430px) {
   #mode-btn .btn-label { display: none; }
 }
 @container composer-card (max-width: 300px) {
-  .model-chip-effort { display: none; }
-}
-@container composer-card (max-width: 272px) {
   .model-chip-name { max-width: 66px; }
 }
-/* The name is the chip's whole content now, so the narrowest rung trims it
-   rather than hiding it -- the glyph that used to stand in its place is gone. */
-@container composer-card (max-width: 224px) {
+/* The name is the chip's whole content now, so these rungs trim it rather than
+   hiding it -- the glyph that used to stand in its place is gone. */
+@container composer-card (max-width: 272px) {
   .model-chip-name { max-width: 44px; }
+}
+/* Only here, with the name already down to a stub, is there nothing cheaper
+   left to spend than the figure itself. */
+@container composer-card (max-width: 224px) {
+  .context-donut #donut-label { display: none; }
 }
 @media (hover: none), (pointer: coarse) {
   /* min-width, not just height: the mode word is the first rung of the collapse
@@ -3915,13 +4551,16 @@ textarea#input {
 .context-compact {
   display: block; width: calc(100% - 16px); margin: 2px 8px 8px;
   text-align: center; padding: 0 10px; height: 28px; border: 0; border-radius: 4px;
-  background: var(--vscode-button-secondaryBackground, #3a3d41);
-  color: var(--vscode-button-secondaryForeground, #fff);
+  /* The theme's PRIMARY button, like the composer's send. The secondary
+     colours are the popup's own colour in some themes, which left this reading
+     as plain text. */
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
   font: inherit; font-weight: 500; cursor: pointer;
 }
-.context-compact:hover { background: var(--vscode-button-secondaryHoverBackground, #45494e); }
+.context-compact:hover { background: var(--vscode-button-hoverBackground, #1177bb); }
 .context-compact:disabled { opacity: .5; cursor: default; }
-.context-compact:disabled:hover { background: var(--vscode-button-secondaryBackground, #3a3d41); }
+.context-compact:disabled:hover { background: var(--vscode-button-background, #0e639c); }
 @media (hover: none), (pointer: coarse) { .context-compact { height: 38px; } }
 
 /* ---- mode / section popover extras ---- */
@@ -4471,8 +5110,11 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
 .card-actions button.primary { font-weight: 600; }
 .card-actions button.danger {
   color: var(--vscode-errorForeground);
+  /* The gap sets No apart from the Yeses. There is no border-top here because
+     the button above already draws its own border-bottom, and the two together
+     rendered as TWO rules 10px apart -- one closing the allow group and one
+     opening this button. Visible with four options, obvious at three. */
   margin-top: 10px;
-  border-top: 1px solid var(--vscode-editorWidget-border);
 }
 .card-actions button.danger.arming { pointer-events: none; }
 .card-actions button:disabled { opacity: 0.4; cursor: default; }
@@ -4515,7 +5157,7 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
 .card .plan-toggle:hover { text-decoration: underline; }
 
 /* ---------- question card (ask_user_question) ---------- */
-.card.question { border-left-color: var(--vscode-charts-purple, #b180d7); }
+.card.question { border-left-color: var(--vscode-charts-blue, #3794ff); }
 /* "Grok is asking" / "You answered" reads as a small label so the question
    itself is the prominent line. */
 .card.question .card-title {
@@ -4667,6 +5309,12 @@ body.dragging { outline: 2px dashed var(--vscode-focusBorder); outline-offset: -
   border-color: var(--vscode-foreground);
 }
 .msg.user.collapsible:hover .msg-expand-btn { display: block; }
+/* A touch screen has no hover, so the chip was never shown there and a long
+   prompt could be read but not expanded. Shown outright rather than making the
+   bubble a tap target, which would fight text selection. */
+@media (hover: none) {
+  .msg.user.collapsible .msg-expand-btn { display: block; }
+}
 .msg-collapse-btn {
   background: color-mix(in oklab, var(--vscode-foreground) 10%, var(--vscode-sideBar-background));
   border: 1px solid var(--vscode-editorWidget-border);
@@ -4885,7 +5533,9 @@ body.session-superseded .msg-edit-btn {
 .card .plan-body h1,
 .card .plan-body h2,
 .card .plan-body h3,
-.card .plan-body h4 { margin: 8px 0 4px; font-size: 1em; font-weight: 600; }
+.card .plan-body h4,
+.card .plan-body h5,
+.card .plan-body h6 { margin: 8px 0 4px; font-size: 1em; font-weight: 600; }
 .card .plan-body code { font-family: var(--vscode-editor-font-family); } /* size: the global 0.92em */
 .card .plan-body pre { margin: 4px 0; }
 .card textarea.plan-feedback {
@@ -4953,6 +5603,10 @@ body.session-superseded .msg-edit-btn {
 }
 .repo-row-main:disabled { cursor: default; }
 .repo-row-icon { display: inline-flex; flex: none; color: var(--vscode-descriptionForeground); }
+/* Same as the chip: viewBox-only marks collapse to 0x0 in a flex host
+   without this. 13px is what ICON.folder drew here before; a worktree row
+   still draws ICON.gitBranch, which brings its own 14px. */
+.repo-row-icon svg { width: 13px; height: 13px; }
 .repo-row-copy { min-width: 0; display: flex; flex-direction: column; }
 .repo-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .repo-row-meta { color: var(--vscode-descriptionForeground); font-size: 11px; margin-top: 2px; }
@@ -5635,9 +6289,12 @@ body.vscode-light .preview-overlay {
   #donut-label { display: none; }
   /* Six controls at a 36px tap floor need 224px of pure button and this rung
      has less. The donut goes rather than something shrinking below the floor:
-     it is the readout the ladder already drops first, its numbers live in its
-     own tooltip and popover, and a control too small to hit is worse than one
-     that is honestly not there. */
+     a control too small to hit is worse than one that is honestly not there,
+     and the figure survives one tap away in the context popover.
+     This is a tap-target argument, NOT the desktop ladder's priority argument —
+     which since #172 keeps the context figure longest, not shortest. The two
+     read as if they contradict each other and do not: they answer different
+     questions, and `test/composer-collapse-ladder.test.ts` holds them apart. */
   @container composer-card (max-width: 250px) {
     .context-donut { display: none; }
   }
@@ -6131,6 +6788,23 @@ a.add-project-github-open {
   gap: 4px;
 }
 .onb-steps li { margin: 0; }
+/* Session startup lives inside the composer; machine wake keeps its existing strip. */
+.startup-strip {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  padding: 7px 12px; border-radius: var(--radius) var(--radius) 0 0;
+  border-bottom: 1px solid var(--vscode-editorWidget-border, #3a3d43);
+  background: color-mix(in srgb, var(--vscode-charts-blue, #4aa3ff) 9%, var(--vscode-input-background, #26282c));
+  color: var(--vscode-foreground, #e4e6ea); font-size: 12.5px;
+}
+.startup-strip[hidden], body.host-wait-visible .startup-strip { display: none; }
+.startup-stage { font-weight: 600; }
+.startup-detail { color: var(--vscode-descriptionForeground, #9aa1ab); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.startup-seconds { margin-left: auto; flex: none; color: var(--vscode-descriptionForeground, #9aa1ab); font-variant-numeric: tabular-nums; }
+.startup-strip .host-wait-spinner { width: 12px; height: 12px; }
+.startup-slow { background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 12%, var(--vscode-input-background, #26282c)); }
+.startup-slow .startup-detail { white-space: normal; overflow: visible; }
+.startup-output { flex: none; border: 0; padding: 0; background: transparent; color: var(--vscode-textLink-foreground, #4aa3ff); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.startup-output[hidden] { display: none; }
 /* One strip above every covering surface, with space reserved for its chrome. */
 .host-wait-strip {
   position: fixed;
@@ -6157,3 +6831,171 @@ body.host-wait-visible { padding-bottom: var(--host-wait-height, 76px); }
 body.host-wait-visible .settings-overlay,
 body.host-wait-visible .gfp-panel.gfp-overlay { bottom: var(--host-wait-height, 76px) !important; }
 .settings-pending { grid-column: 1 / -1; font-size: 12px; opacity: .8; }
+
+/* ── Project mark picker (media/repo-icon-picker.js) ─────────────────────────
+   Ninety-five marks is too many to scan, so the grid is never the first thing
+   you reach: focus lands in the search box and Enter takes the top hit. The
+   tabs are for browsing, the box is for knowing what you want. */
+.repo-icon-picker {
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 296px;
+  max-width: calc(100vw - 16px);
+  padding: 10px;
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+  border: 1px solid var(--vscode-menu-border, var(--vscode-editorWidget-border));
+  border-radius: 8px;
+  box-shadow: 0 4px 16px color-mix(in oklab, var(--vscode-widget-shadow) 40%, transparent);
+}
+.repo-icon-search {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 26px;
+  padding: 3px 7px;
+  color: var(--vscode-input-foreground, var(--vscode-foreground));
+  background: var(--vscode-input-background, transparent);
+  border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border, transparent));
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+}
+.repo-icon-search:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.repo-icon-tabs { display: flex; flex-wrap: wrap; gap: 3px; }
+.repo-icon-tab {
+  padding: 2px 6px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.repo-icon-tab:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground)); }
+.repo-icon-tab.is-active {
+  color: var(--vscode-foreground);
+  background: color-mix(in oklab, var(--vscode-foreground) 12%, transparent);
+}
+.repo-icon-tab:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.repo-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(32px, 1fr));
+  gap: 2px;
+  /* Eight rows before it scrolls: enough that a whole group is one glance,
+     short enough that the popover still fits above a rail row near the
+     bottom of a short window. */
+  max-height: 272px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.repo-icon-cell {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  padding: 0;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+/* The `display: grid` above is an author rule, and an author `display` beats
+   the UA stylesheet's [hidden] { display: none } outright. Without this the
+   filter sets `hidden` on ninety cells and all ninety-six stay on screen, so
+   both the category tabs and the search box look dead -- which is how they
+   were reported. Eight other elements in this file already carry the same
+   line; the picker's cells were the ones that missed it. */
+.repo-icon-cell[hidden] { display: none; }
+.repo-icon-cell svg { width: 18px; height: 18px; }
+.repo-icon-cell:hover { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground); }
+.repo-icon-cell:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.repo-icon-cell.is-selected {
+  color: var(--vscode-foreground);
+  border-color: color-mix(in oklab, var(--vscode-focusBorder) 70%, transparent);
+  background: color-mix(in oklab, var(--vscode-foreground) 10%, transparent);
+}
+/* The default sits first in every tab and is the way back, so it is marked as
+   a different KIND of cell rather than just another glyph. */
+.repo-icon-cell.is-default { border-style: dashed; border-color: color-mix(in oklab, var(--vscode-foreground) 25%, transparent); }
+.repo-icon-empty { padding: 6px 2px; color: var(--vscode-descriptionForeground); font-size: 12px; }
+
+/* Touch: the universal 36px floor. The grid widens with the cells rather than
+   keeping eight cramped columns a thumb cannot hit. */
+@media (hover: none), (pointer: coarse) {
+  .repo-icon-search { min-height: 36px; }
+  .repo-icon-tab { min-height: 32px; }
+  .repo-icon-grid { grid-template-columns: repeat(auto-fill, minmax(40px, 1fr)); }
+}
+
+.model-picker-row:has(.model-picker-description) { flex-wrap: wrap; }
+/* The row tooltip already carries this text. Inline only where a hover
+   tooltip does not exist: it is a disclosure about the user's data. */
+.model-picker-description { display: none; flex-basis: 100%; white-space: normal; text-align: left; font-size: 12px; line-height: 1.4; color: var(--muted); }
+@media (hover: none) {
+  .model-picker-description { display: block; }
+}
+
+/* Created only after a cloud host advertises the update capability. */
+.cloud-host-update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, .25));
+}
+.cloud-host-update-banner button {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: var(--vscode-textLink-foreground, #3794ff);
+  font: inherit;
+  cursor: pointer;
+}
+.remote-btn { position: relative; }
+.remote-viewer-dot { display: none; }
+.remote-btn.phone-connected .remote-viewer-dot {
+  display: block;
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  right: 3px;
+  bottom: 3px;
+  border-radius: 50%;
+  background: #3fb950;
+  box-shadow: 0 0 0 2px var(--vscode-editor-background);
+}
+.toolbar-popover.remote-handoff-popover {
+  width: min(330px, calc(100vw - 24px));
+  padding: 20px;
+  box-sizing: border-box;
+  max-height: calc(100vh - 72px);
+  overflow-y: auto;
+}
+.remote-handoff-popover h3 { margin: 0 24px 12px 0; font-size: 15px; }
+.remote-handoff-popover p { margin: 12px 0; line-height: 1.5; }
+.remote-handoff-close { position: absolute; top: 8px; right: 8px; }
+.remote-handoff-qr { background: white; max-width: 260px; margin: 0 auto; }
+.remote-handoff-qr svg { display: block; width: 100%; height: auto; }
+.remote-handoff-qr-pending {
+  max-width: 260px; margin: 0 auto 12px; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  background: var(--vscode-editorWidget-background, #252526); border: 1px dashed var(--vscode-widget-border, #555);
+  border-radius: 6px; color: var(--vscode-descriptionForeground, #aaa); font-size: 12px;
+}
+.remote-handoff-qr-pending .host-wait-spinner { width: 20px; height: 20px; }
+.remote-handoff-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.remote-handoff-popover > .confirm-btn { margin: 4px 6px 0 0; }
+
+/* The context popup's size control is the Settings dropdown (.settings-select,
+   whose tokens and focus ring it keeps), sized for a popover row: no 160px
+   floor, row-height padding, and a thumb-sized target where the Compact button
+   above it grows to one too. Id weight, because settings.css loads after this. */
+#context-popover .context-window-select { min-width: 0; padding: 2px 6px; }
+#context-popover .context-window-select:disabled { opacity: .6; cursor: default; }
+@media (hover: none), (pointer: coarse) { #context-popover .context-window-select { min-height: 36px; } }

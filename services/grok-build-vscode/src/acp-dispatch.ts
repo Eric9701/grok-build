@@ -1,3 +1,4 @@
+import type { AcpProvider } from "./acp-backend";
 /**
  * Pure dispatch helpers for the ACP wire protocol.
  *
@@ -195,7 +196,7 @@ export function collectToolImages(payload: any): MediaRef[] {
 /** MIRRORED in media/webview-helpers.js so the webview can gate a failure hint
  *  without a host rewrite. KEEP THE TWO IN STEP: test/media-gen-mirror.test.ts
  *  drives one fixture set through both and fails if either changes alone. */
-export function isMediaGenToolCall(payload: any, provider: "grok" | "codex" | "claude" = "grok"): boolean {
+export function isMediaGenToolCall(payload: any, provider: AcpProvider = "grok"): boolean {
   if (!payload || typeof payload !== "object") return false;
   const title = String(payload.title ?? "");
   if (provider === "codex") {
@@ -634,9 +635,13 @@ export function occupancyFromUsageLog(
 }
 
 /**
- * Claude emits exact status strings; Codex stamps `_meta.contextCompaction`.
- * Title matching is the Codex fallback only — a grep titled "compact" is
- * not a compaction.
+ * Both adapters report compaction as a tool call stamped
+ * `_meta.contextCompaction` — an object (`{ version: 1, … }`) from
+ * codex-acp 1.11 and claude-agent-acp 0.76, `true` from older Codex builds.
+ * Older Claude builds emitted exact status strings instead. A status-less
+ * `tool_call_update` only adds metadata to a lifecycle already reported
+ * (Claude's `postTokens` enrichment), so it is not a new phase. Title text is
+ * never trusted — a grep titled "compact" is not a compaction.
  */
 export function adapterCompactSignal(update: unknown): "started" | "completed" | "failed" | null {
   if (typeof update === "string") {
@@ -658,9 +663,11 @@ export function adapterCompactSignal(update: unknown): "started" | "completed" |
     const fromText = adapterCompactSignal(u.content.text);
     if (fromText) return fromText;
   }
-  if (u._meta?.contextCompaction === true) {
+  const marker = u._meta?.contextCompaction;
+  if (marker === true || (marker !== null && typeof marker === "object")) {
     if (u.status === "failed") return "failed";
     if (u.status === "completed") return "completed";
+    if (u.status === undefined && u.sessionUpdate === "tool_call_update") return null;
     return "started";
   }
   return null;

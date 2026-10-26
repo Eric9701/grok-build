@@ -1,8 +1,12 @@
+import type { AcpProvider } from "./acp-backend";
+import type { MusePosture } from "./mode-prefs";
+import type { FileChip } from "./chips";
 import * as nodeFs from "node:fs";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
 import { isPrimerText, isPrimerSummary } from "./grok-primer";
+import { REPO_ICON_IDS } from "./repo-icon-ids";
 import {
   applyContextOccupancy,
   occupancyFromUsageLog,
@@ -27,6 +31,7 @@ export interface SessionListEntry {
   createdAt: number;
   numMessages: number;
   modelId?: string;
+  branch?: string;
   /** grok's `session_kind` when it marks a non-user session — a `spawn_subagent`
    *  delegation persists its child as a top-level session dir with
    *  `session_kind: "subagent"`; the history list hides those. */
@@ -37,14 +42,21 @@ export interface SessionListEntry {
    *  the projects rail's Pinned group; absent means unpinned. */
   pinnedAt?: number;
   /** Agent that owns this immutable session. Absent means Grok for compatibility. */
-  provider?: "grok" | "codex" | "claude";
+  provider?: AcpProvider;
+  /** Started by automation, not a person (a headless Grok run; see
+   *  automated-sessions.ts for the others). Recent leaves it out. */
+  automated?: boolean;
+  /** On a Recent row whose folder is not a project: that folder, which the
+   *  row's menu offers to add ("Add to Projects"). */
+  addableCwd?: string;
 }
 
 export interface SessionMetaOverride {
   /** Agent that owns the session. Existing records omit it and therefore mean Grok. */
-  provider?: "grok" | "codex" | "claude";
+  provider?: AcpProvider;
   /** Provider-reported cwd for stores that are not laid out under the Grok home. */
   providerCwd?: string;
+  musePosture?: MusePosture;
   /**
    * "This conversation was used just now", asserted by the host rather than
    * read off disk.
@@ -63,6 +75,15 @@ export interface SessionMetaOverride {
    * the time anything reads it again the real file has overtaken it.
    */
   activeAt?: number;
+  /** When the person last SENT a message in this conversation through this host
+   *  (desk, desktop or phone). Written at send time only, never by a listing or
+   *  an open, and not for a routine's run: it is what makes a conversation
+   *  Recent (`isRecentConversation`). */
+  sentAt?: number;
+  /** When the person last opened this conversation through this host on purpose
+   *  (a click, a phone tap), never a listing or a reconnect restore. Keeps it in
+   *  Recent for `RECENT_OPENED_MS`. */
+  openedAt?: number;
   customName?: string;
   /** The extension's own title, taken from the first user message when a session's
    *  first turn completes. Deliberately NOT stored as `customName`: a name the
@@ -146,11 +167,12 @@ export interface SessionMetaOverride {
    *  typed it. Restored into the composer the next time the conversation starts,
    *  and cleared in the same write so a reopen cannot append it twice. */
   queuedDraft?: string;
+  queuedDraftChips?: FileChip[];
 }
 export type SessionMetaOverrides = Record<string, SessionMetaOverride>;
 
 /** Storage ceiling for `autoName`. History rows elide well before this; the cap
- *  exists so a pasted prompt cannot bloat `grok.sessionMeta`. */
+ *  exists so a pasted prompt cannot bloat `atlas.sessionMeta`. */
 export const AUTO_NAME_MAX_CHARS = 120;
 
 /** Prefer a word boundary this close to the cap rather than cutting mid-word. */
@@ -363,6 +385,34 @@ export interface RepoColorChoice {
 }
 export type RepoColors = Record<string, RepoColorChoice>;
 
+/**
+ * Project marks — the glyph a project wears instead of a folder. Same shape as
+ * the colour above, deliberately: empty string is "none" (the default folder),
+ * the host puts `icon: ""` on every catalog row so the client can capability-
+ * probe on field presence, and a non-empty value names one entry in
+ * `media/repo-icons.js`.
+ *
+ * Both lists are generated from one table by `scripts/gen-repo-icons.mjs`, so
+ * the picker can never offer an id this allowlist rejects.
+ */
+export { REPO_ICON_IDS };
+export type RepoIconId = (typeof REPO_ICON_IDS)[number];
+/** Wire value: one of {@link REPO_ICON_IDS}, or `""` for the default folder. */
+export type RepoIcon = RepoIconId | "";
+
+export function isRepoIcon(value: unknown): value is RepoIcon {
+  if (value === "") return true;
+  return typeof value === "string" && (REPO_ICON_IDS as readonly string[]).includes(value);
+}
+
+/** Stored mark for one project. Absent entry ≡ the default folder; the wire
+ *  still emits `icon: ""` so capability detection stays field-presence based. */
+export interface RepoIconChoice {
+  cwd: string;
+  icon: RepoIconId;
+}
+export type RepoIcons = Record<string, RepoIconChoice>;
+
 export interface RepoListEntry {
   cwd: string;
   label: string;
@@ -372,7 +422,7 @@ export interface RepoListEntry {
   updatedAt: number;
   /** Provider a fresh conversation in this project will use. Optional so older
    * hosts keep rendering their existing provider-neutral New-session row. */
-  defaultProvider?: "grok" | "codex" | "claude";
+  defaultProvider?: AcpProvider;
   worktreeLabel?: string;
   /**
    * Archive choice flattened for the wire. **Present when the host supports
@@ -403,6 +453,13 @@ export interface RepoListEntry {
    * deliberately ignores this field.
    */
   color?: RepoColor;
+  /**
+   * Project mark id flattened for the wire. **Present when the host supports
+   * project marks** — even when unset (`""`), the same capability rule as
+   * {@link RepoListEntry.color}. One of {@link REPO_ICON_IDS}, or empty for the
+   * default folder. Ordering in {@link discoverRepos} ignores it.
+   */
+  icon?: RepoIcon;
 }
 
 /** Move a renamed session's `customName` from one id to another and drop the source entry. Used when
@@ -739,6 +796,9 @@ export interface DiscoverReposDeps {
   /** Project folder colours. Always flattened onto every row as `color` (empty
    *  string when unset) so the client can capability-probe without a version. */
   colors?: RepoColors;
+  /** Project marks. Always flattened onto every row as `icon` (empty string
+   *  when unset) so the client can capability-probe without a version. */
+  icons?: RepoIcons;
   tmpDir: string;
   platform?: NodeJS.Platform;
   /** Host-known roots that remain selectable before Grok creates a catalog.
@@ -780,6 +840,13 @@ export function discoverRepos(deps: DiscoverReposDeps): RepoListEntry[] {
     const raw = deps.colors?.[key]?.color;
     return raw && (REPO_COLOR_IDS as readonly string[]).includes(raw) ? raw : "";
   };
+  // Same contract as colorOf. A stored id that this build no longer ships —
+  // downgrade, or an icon dropped from the curated set — collapses to the
+  // default folder rather than reaching a client that would draw nothing.
+  const iconOf = (key: string): RepoIcon => {
+    const raw = deps.icons?.[key]?.icon;
+    return raw && (REPO_ICON_IDS as readonly string[]).includes(raw) ? raw : "";
+  };
   for (const name of encoded) {
     let cwd = "";
     try { cwd = decodeURIComponent(name).trim(); } catch { continue; }
@@ -812,6 +879,7 @@ export function discoverRepos(deps: DiscoverReposDeps): RepoListEntry[] {
       updatedAt,
       worktreeLabel: deps.worktreeLabels?.get(key),
       color: colorOf(key),
+      icon: iconOf(key),
       ...archiveOf(key),
     });
   }
@@ -832,6 +900,7 @@ export function discoverRepos(deps: DiscoverReposDeps): RepoListEntry[] {
       updatedAt: 0,
       worktreeLabel: deps.worktreeLabels?.get(key),
       color: colorOf(key),
+      icon: iconOf(key),
       ...archiveOf(key),
     });
   }
@@ -856,6 +925,7 @@ export function discoverRepos(deps: DiscoverReposDeps): RepoListEntry[] {
       updatedAt: 0,
       worktreeLabel: deps.worktreeLabels?.get(key),
       color: colorOf(key),
+      icon: iconOf(key),
       ...archiveOf(key),
     });
   }
@@ -963,6 +1033,7 @@ function buildEntry(
     kind,
     pinnedAt,
     ...(override?.provider ? { provider: override.provider } : {}),
+    ...(raw?.session_kind === "headless" ? { automated: true } : {}),
   };
 }
 
@@ -1116,6 +1187,59 @@ export function statSessionActivity(
   } catch {
     return undefined;
   }
+}
+
+/** How long opening a conversation keeps it in Recent without a message sent. */
+export const RECENT_OPENED_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** `[Routine]`: the tag a routine run's conversation is named with (routines.ts). */
+const ROUTINE_TAG = "[Routine]";
+
+/**
+ * Whether a conversation belongs in Recent, from our own record of it alone:
+ * the person sent something in it through this host, or opened it here in the
+ * last {@link RECENT_OPENED_MS}. Merely being listed from a CLI's history says
+ * nothing, and is never enough.
+ *
+ * "Sent" is `sentAt`, and for conversations from before it existed the marks a
+ * send already left: a `usageLog` (written only after one of our turns) or a
+ * Grok `activeAt` (Grok's is written only at send and turn end -- an adapter
+ * row's is stamped by its listing, so it does not count). A routine's run is
+ * the host's own automation, not the person, and never counts.
+ */
+export function isRecentConversation(meta: SessionMetaOverride | undefined, now: number = Date.now()): boolean {
+  if (!meta || isRoutineRun(meta)) return false;
+  if (hasSentSignal(meta)) return true;
+  return typeof meta.openedAt === "number" && meta.openedAt >= now - RECENT_OPENED_MS;
+}
+
+function isRoutineRun(meta: SessionMetaOverride): boolean {
+  return typeof meta.customName === "string" && meta.customName.trim().startsWith(ROUTINE_TAG);
+}
+
+/** The person sent a message in this conversation through this host, by our
+ *  own record (see isRecentConversation). Never true for a routine's run. */
+export function hasSentSignal(meta: SessionMetaOverride): boolean {
+  if (isRoutineRun(meta)) return false;
+  if (typeof meta.sentAt === "number") return true;
+  if (Array.isArray(meta.usageLog) && meta.usageLog.length > 0) return true;
+  return typeof meta.activeAt === "number" && (meta.provider === undefined || meta.provider === "grok");
+}
+
+/**
+ * How far back history is LISTED: Recent, a project's conversations and history
+ * search show nothing whose last activity is older (the owner, 2026-10-15).
+ * Older conversations stay on disk, untouched, and still open from a pin.
+ * Lists apply it before reading anything per conversation -- the Grok index by
+ * its stat mtime, an adapter's rows by the `updatedAt` its listing reports.
+ */
+export const HISTORY_HORIZON_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** Inside {@link HISTORY_HORIZON_MS}. An unknown time (0, missing) stays in:
+ *  there is nothing to judge it by, and dropping it would hide a live row. */
+export function withinHistoryHorizon(at: number | undefined, now: number = Date.now()): boolean {
+  if (typeof at !== "number" || !Number.isFinite(at) || at <= 0) return true;
+  return at >= now - HISTORY_HORIZON_MS;
 }
 
 /** Cheap ordering pass: every session id newest-first by {@link statSessionActivity}

@@ -8,7 +8,7 @@ way to see it happened.
 **Scope.** The lock is held for exactly the uplink's lifetime: a device token is
 stored *and* the extension host is alive. It is asserted in `maybeStartUplink`,
 released in `unlinkRemoteDevice` and `GrokSidebar.dispose`, and re-asserted on a
-`grok.remote.keepAwake` config change. Not gated on a turn running or on a
+`atlas.remote.keepAwake` config change. Not gated on a turn running or on a
 browser client being connected: the point is that the machine is *reachable* at
 all, and a phone that can't wake the box can't start the turn that would have
 justified the lock.

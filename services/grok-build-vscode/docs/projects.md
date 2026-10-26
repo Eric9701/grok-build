@@ -139,6 +139,32 @@ For anything that is not github.com, the failure is reported as git described
 it — `gh auth login` cannot help a GitLab or Bitbucket sign-in, and offering it
 would send you down the wrong path.
 
+## Telling them apart
+
+The `⋯` on a project row offers **Set color** and **Set icon**. The colour tints
+the project's mark; the icon is the mark itself — ninety-five to choose from,
+grouped by what projects tend to be (Shapes, Build, Work, Talk, People, Play),
+with a search over their names and the plain folder at the top to go back to
+none.
+
+Both belong to the project rather than to the machine you set them on, so a
+project looks the same in VS Code, in the desktop app, on a Cloud machine and on
+your phone. The mark is drawn everywhere the project is named: its row in the
+rail, the chip above the message box, the project switcher, and the title above
+the file panel. The same project always shows the same glyph — that is the
+point of it.
+
+## Recent
+
+**Recent**, above the projects in the rail, is the short way back to what you
+were doing: the conversations you sent a message in through AFK Pilot (from VS
+Code, the desktop app or your phone), plus the ones you opened here in the last
+three days, newest first. It spans every folder, including a folder that is not
+one of your projects. A conversation that only exists in an agent's own history
+is not in it, and neither is one an automated run started: a headless Grok run,
+`codex exec`, a Claude Code SDK script, or a routine. The host builds the list
+(`buildRecentSessions`) from its own record of what you sent and opened.
+
 ## Removing a project
 
 The `⋯` on a project row offers **Remove**, which takes it out of the list and
@@ -148,10 +174,35 @@ Projects you have finished with can be **archived** instead: they drop out of th
 main list but keep their conversations, and routines scheduled against them keep
 running.
 
-## Where projects come from without you adding them
+## Where projects come from
 
-On a first run of the desktop app, Grok looks through its own conversation
-history for checkouts you have actually been working in — ten or more
-conversations in the last ninety days, each in a verified git repository — and
-opens those. It is a one-shot seed, not a running mirror: after the first run the
-list is yours, and removing a project does not bring it back.
+A project is a folder you chose. In VS Code that means: the folder VS Code has
+open; a folder you created, cloned or added; and any folder you pinned,
+coloured, gave an icon or archived. A folder is never a project just because an
+agent ran there — benchmark runs, scripts and other tools drive the same agents
+and leave the same history behind.
+
+When this arrived, AFK Pilot added once the folders you had sent a message in
+through it (from VS Code, the desktop app or your phone) in the previous 30
+days. After that a folder joins Projects only when you say so:
+
+- **Add, create or clone** a project as above.
+- **"Add notes to Projects?"** — the first time you send a message in a
+  conversation whose folder is not a project, a small strip above the message
+  box asks. **Add**, **Not now** (for this conversation), or **Never for this
+  folder**. You can answer from your phone too. The setting
+  `grok.askToAddProjects` stops the question altogether.
+- **Recent** — a conversation's `⋯` offers **Add to Projects** when its folder
+  is not one.
+
+**AFK Pilot: Rebuild Projects from recent activity** (command palette) forgets
+what that one-time pass added and runs it again with the same 30-day rule. It
+leaves everything you chose alone — added, created and cloned folders, pins,
+colours, icons, archives and your "Never for this folder" answers — and touches
+nothing on disk.
+
+The desktop app and Cloud machines already list only the folders they have open.
+On a first run the desktop app opens the checkouts you have been working in —
+ten or more conversations in the last ninety days, each in a verified git
+repository — once; after that the list is yours, and removing a project does not
+bring it back.

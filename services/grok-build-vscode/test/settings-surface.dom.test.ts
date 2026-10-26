@@ -450,14 +450,16 @@ describe("dialogs above renderer layers", () => {
   it.each(["Escape", "Close", "backdrop", "FAQ"])("clears the explainer marker through %s", (exit) => {
     const h = bootLayers("settings", false);
     dispatch(h.window, { type: "remoteStatus", linked: false });
-    click(h.window, h.doc.getElementById("add-btn")!);
-    click(h.window, [...h.doc.querySelectorAll("#add-popover .toolbar-popover-item")].find((el) => el.textContent?.includes("How it works"))!);
+    click(h.window, h.doc.getElementById("remote-btn")!);
+    click(h.window, [...h.doc.querySelectorAll(".remote-handoff-popover button")].find((el) => el.textContent?.includes("How it works"))!);
     blocked(h);
     if (exit === "Escape") keydown(h.window, { key: "Escape" });
     else click(h.window, h.doc.querySelector(exit === "Close" ? ".remote-explainer-close"
       : exit === "backdrop" ? ".remote-explainer-overlay" : ".remote-explainer-panel .confirm-primary")!);
     expect(h.doc.querySelector(".remote-explainer-overlay")).toBeNull();
-    restored(h);
+    expect(h.doc.body.dataset.modalAbove).toBeUndefined();
+    expect(h.layers.depth).toBe(0);
+    expect(h.doc.getElementById("settings-overlay")).toBeNull();
   });
 
   it.each(["Escape", "Close", "backdrop", "session reset", "Back"])("dismisses the image lightbox as a LAYER through %s", (exit) => {
@@ -2000,7 +2002,7 @@ describe("review lows (settings / telemetry / voice write scope)", () => {
     expect(h.doc.querySelector(".remote-explainer-panel")).toBeTruthy();
   });
 
-  it("hides How it works on the VS Code settings tab", () => {
+  it("offers How it works on the VS Code settings tab", () => {
     const window = new Window({ url: "https://localhost/" });
     (window as unknown as { eval: (src: string) => void }).eval(settingsSrc);
     const api = (window as unknown as { GrokSettings: ReturnType<typeof loadSettings> }).GrokSettings;
@@ -2011,8 +2013,9 @@ describe("review lows (settings / telemetry / voice write scope)", () => {
       snapshot: api.defaultSnapshot(),
       env: api.defaultEnv(fullEnv({ isDesktop: false, remoteLinked: false })),
       standalone: true,
+      category: "account",
     });
-    expect(root.querySelector('[data-id="remoteHowItWorks"]')).toBeNull();
+    expect(root.querySelector('[data-id="remoteHowItWorks"]')).not.toBeNull();
   });
 
   it("broadcasts telemetryEnabled to every remote tab", () => {
@@ -2112,6 +2115,54 @@ describe("settings About section", () => {
   });
 });
 
+describe("remote control live status", () => {
+  it("refreshes desktop rows on link and viewer changes and requests the focused chat", () => {
+    const h = bootWebview();
+    seedChat(h);
+    dispatch(h.window, { type: "remoteStatus", linked: false, handoffReady: false });
+    openSettings(h);
+    clickSettingsNav(h, "Remote control");
+    expect(h.doc.querySelector('[data-id="remoteMachineStatus"]')!.textContent).toContain("Not linked");
+    expect(h.doc.querySelector('[data-id="remoteSignIn"]')).not.toBeNull();
+    dispatch(h.window, { type: "remoteStatus", linked: true, handoffReady: true, viewerCount: 2 });
+    expect(h.doc.querySelector('[data-id="remoteSignIn"]')).toBeNull();
+    expect(h.doc.querySelector('[data-id="remoteMachineStatus"]')!.textContent).toContain("Linked · phone connected");
+    expect(h.doc.querySelector('[data-id="continueRemotely"]')).toBeNull();
+    dispatch(h.window, { type: "remoteStatus", linked: true, handoffReady: true, viewerCount: 0 });
+    expect(h.doc.querySelector('[data-id="remoteMachineStatus"]')!.textContent).not.toContain("phone connected");
+    click(h.window, h.doc.querySelector('[data-id="continueOnPhone"] .settings-action')!);
+    expect(h.posted).toContainEqual({ type: "showRemoteHandoff", source: "settings" });
+  });
+
+  it("refreshes the actual standalone Settings boot script without reopening the editor", () => {
+    const window = new Window({ url: "https://localhost/" });
+    const doc = window.document;
+    doc.body.innerHTML = '<div id="settings-root"></div>';
+    const posted: unknown[] = [];
+    (window as any).acquireVsCodeApi = () => ({ postMessage: (m: unknown) => posted.push(m) });
+    window.eval(readFileSync(new URL("../media/webview-helpers.js", import.meta.url), "utf8"));
+    window.eval(settingsSrc);
+    const api = (window as any).GrokSettings;
+    (window as any).__grokSettingsBoot = { snapshot: api.defaultSnapshot(), env: { isRemote: false, isDesktop: false, remoteLinked: false, remoteHandoffSupported: true }, category: "account" };
+    const hostSource = readFileSync(new URL("../src/sidebar.ts", import.meta.url), "utf8");
+    const start = hostSource.indexOf('      var vscode = acquireVsCodeApi();', hostSource.indexOf('private getSettingsHtml'));
+    const end = hostSource.indexOf('    })();', start);
+    window.eval('(function () {\n' + hostSource.slice(start, end) + '\n})();');
+    expect(posted).toContainEqual({ type: "ready" });
+    expect(doc.querySelector('[data-id="remoteSignIn"]')).not.toBeNull();
+    window.dispatchEvent(new window.MessageEvent("message", { data: { type: "remoteStatus", linked: true, handoffReady: true, viewerCount: 1 } }));
+    expect(doc.querySelector('[data-id="remoteSignIn"]')).toBeNull();
+    expect(doc.querySelector('[data-id="remoteMachineStatus"]')!.textContent).toContain("Linked · phone connected");
+    expect(doc.querySelector('[data-id="unlinkDevice"]')).toBeNull();
+    (doc.querySelector('[data-id="continueOnPhone"] .settings-action') as any).click();
+    expect(posted).toContainEqual({ type: "showRemoteHandoff", source: "settings" });
+    window.dispatchEvent(new window.MessageEvent("message", { data: { type: "remoteStatus", linked: false, handoffReady: false, viewerCount: 0 } }));
+    expect(doc.querySelector('[data-id="remoteSignIn"]')).not.toBeNull();
+    (doc.querySelector('[data-id="remoteHowItWorks"] .settings-action') as any).click();
+    expect(posted).toContainEqual({ type: "showRemoteHandoff", source: "settings", explain: true });
+  });
+});
+
 describe("settings editor tab dispose (sidebar.ts)", () => {
   it("installs the dispose listener before awaiting the device token", () => {
     const src = readFileSync(
@@ -2154,6 +2205,305 @@ function mountAt(category: string, opts: {
   const types = () => posted.map((msg) => msg.type);
   return { window, root, posted, types, surface };
 }
+
+describe("Muse settings parity", () => {
+  const museDefaults = { shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: false };
+  it.each([true, false])("posts all three Muse settings from a host-backed surface (desktop=%s)", isDesktop => {
+    const h = mountAt("providers", { env: { isDesktop }, snapshot: { providers: [{ id: "muse", connected: true }], museSettings: museDefaults } });
+    expect(h.root.querySelector('[data-id="museShellSandbox"] [role="switch"]')!.getAttribute("aria-checked")).toBe("true");
+    expect(h.root.querySelector('[data-id="museTrustWorkspaces"] [role="switch"]')!.getAttribute("aria-checked")).toBe("false");
+    expect(h.root.querySelector('[data-id="museTrustWorkspaces"]')!.textContent).toContain("repository's hooks");
+    const sandboxCopy = h.root.querySelector('[data-id="museShellSandbox"]')!.textContent;
+    expect(sandboxCopy).toContain("Prompt unmatched");
+    expect(sandboxCopy).toContain("On request always uses the sandbox");
+    expect(sandboxCopy).toContain("Allow all disables it");
+    expect(sandboxCopy).toContain("unavailable in a running process without the sandbox");
+    expect(h.root.querySelector('[data-id="museSandboxNetwork"]')!.textContent).toContain("Prompt unmatched or On request");
+    (h.root.querySelector('[data-id="museShellSandbox"] [role="switch"]') as HTMLElement).click();
+    (h.root.querySelector('[data-id="museTrustWorkspaces"] [role="switch"]') as HTMLElement).click();
+    const network = h.root.querySelector('[data-id="museSandboxNetwork"] select') as HTMLSelectElement;
+    expect(network.value).toBe("proxy-only");
+    expect([...network.options].map(o => o.value)).toEqual(["proxy-only", "restricted", "enabled"]);
+    network.value = "restricted";
+    network.dispatchEvent(new h.window.Event("change") as unknown as Event);
+    for (const message of [
+      { type: "setMuseSetting", key: "museShellSandbox", value: false },
+      { type: "setMuseSetting", key: "museTrustWorkspaces", value: true },
+      { type: "setMuseSetting", key: "museSandboxNetwork", value: "restricted" },
+    ]) {
+      expect(h.posted).toContainEqual(message);
+      expect(parseWebviewMsg(message)).toEqual(message);
+    }
+    h.surface.update({ museSettings: { ...museDefaults, sandboxNetwork: "enabled" } });
+    expect((h.root.querySelector('[data-id="museSandboxNetwork"] select') as HTMLSelectElement).value).toBe("enabled");
+  });
+
+  // The three Muse rows sit in one collapsible group under the Muse row, so
+  // "Shell sandbox" is plainly Muse's; collapsed until opened.
+  const museGroup = (root: ParentNode) => root.querySelector('details.settings-row-group[data-group="museSettings"]') as HTMLDetailsElement | null;
+
+  it.each([true, false])("groups the Muse rows under Muse, collapsed by default (desktop=%s)", isDesktop => {
+    const h = mountAt("providers", { env: { isDesktop }, snapshot: { providers: [{ id: "muse", connected: true }], museSettings: museDefaults } });
+    const group = museGroup(h.root)!;
+    expect(group).not.toBeNull();
+    expect(group.open).toBe(false);
+    expect(group.querySelector("summary")!.textContent).toBe("Muse Code (Meta) settings");
+    // The summary leads, so the group is reached and opened from the keyboard.
+    expect(group.firstElementChild!.tagName).toBe("SUMMARY");
+    expect([...group.querySelectorAll(".settings-row")].map((row) => (row as HTMLElement).dataset.id))
+      .toEqual(["museShellSandbox", "museSandboxNetwork", "museTrustWorkspaces"]);
+    // Under the Muse row, and nothing else of Muse's outside it.
+    const ids = [...h.root.querySelectorAll(".settings-body > .settings-row, .settings-body > details")]
+      .map((el) => (el as HTMLElement).dataset.id ?? (el as HTMLElement).dataset.group);
+    expect(ids.indexOf("museSettings")).toBe(ids.indexOf("providerMuse") + 1);
+    expect(ids).not.toContain("museShellSandbox");
+  });
+
+  it("stays open across repaints once opened, and its rows still post", () => {
+    const h = mountAt("providers", { snapshot: { providers: [{ id: "muse", connected: true }], museSettings: museDefaults } });
+    const group = museGroup(h.root)!;
+    group.open = true;
+    group.dispatchEvent(new h.window.Event("toggle") as unknown as Event);
+    h.surface.update({ museSettings: { ...museDefaults, trustWorkspaces: true } });
+    const repainted = museGroup(h.root)!;
+    expect(repainted.open).toBe(true);
+    expect(repainted.querySelector('[data-id="museTrustWorkspaces"] [role="switch"]')!.getAttribute("aria-checked")).toBe("true");
+    (repainted.querySelector('[data-id="museShellSandbox"] [role="switch"]') as HTMLElement).click();
+    expect(h.posted).toContainEqual({ type: "setMuseSetting", key: "museShellSandbox", value: false });
+    repainted.open = false;
+    repainted.dispatchEvent(new h.window.Event("toggle") as unknown as Event);
+    h.surface.update({ museSettings: museDefaults });
+    expect(museGroup(h.root)!.open).toBe(false);
+  });
+
+  it.each([{}, { remote: true }])("groups them in the chat's own Settings too (%j)", surface => {
+    const h = bootWebview(surface);
+    seedChat(h);
+    dispatch(h.window, { type: "providerState", providers: [{ id: "muse", connected: true }] });
+    dispatch(h.window, { type: "museSettings", value: museDefaults });
+    openSettings(h);
+    clickSettingsNav(h, "Providers");
+    const overlay = h.doc.getElementById("settings-overlay")!;
+    const group = museGroup(overlay);
+    // Remotes show no Muse settings at all; where the rows show, they are grouped.
+    if ("remote" in surface && !overlay.querySelector('[data-id="museShellSandbox"]')) return;
+    expect(group).not.toBeNull();
+    expect(group!.open).toBe(false);
+    expect(group!.querySelector('[data-id="museShellSandbox"]')).not.toBeNull();
+  });
+
+  it("lists a matching Muse row flat while searching, so a match is never hidden", () => {
+    const h = bootWebview();
+    seedChat(h);
+    dispatch(h.window, { type: "providerState", providers: [{ id: "muse", connected: true }] });
+    dispatch(h.window, { type: "museSettings", value: museDefaults });
+    openSettings(h);
+    const search = h.doc.getElementById("settings-search") as HTMLInputElement;
+    search.value = "sandbox";
+    search.dispatchEvent(new h.window.Event("input", { bubbles: true }));
+    const overlay = h.doc.getElementById("settings-overlay")!;
+    expect(overlay.querySelector('[data-id="museShellSandbox"]')).not.toBeNull();
+    expect(museGroup(overlay)).toBeNull();
+  });
+
+  it("hides settings on older hosts, without Muse, and on remotes", () => {
+    for (const opts of [
+      { snapshot: { providers: [{ id: "muse", connected: true }] } },
+      { snapshot: { providers: [{ id: "grok", connected: true }], museSettings: museDefaults } },
+      { env: { isRemote: true }, snapshot: { providers: [{ id: "muse", connected: true }], museSettings: museDefaults } },
+    ]) {
+      expect(mountAt("providers", opts).root.querySelector('[data-id="museShellSandbox"]')).toBeNull();
+    }
+    for (const [key, value] of [["defaultMode", "yolo"], ["museSandboxNetwork", "all"], ["museShellSandbox", "true"], ["museTrustWorkspaces", 1]]) {
+      expect(parseWebviewMsg({ type: "setMuseSetting", key, value })).toBeNull();
+    }
+  });
+
+  it("reflects Muse config updates in the actual standalone Settings boot script", () => {
+    const window = new Window({ url: "https://localhost/" });
+    window.document.body.innerHTML = '<div id="settings-root"></div>';
+    const posted: unknown[] = [];
+    (window as any).acquireVsCodeApi = () => ({ postMessage: (m: unknown) => posted.push(m) });
+    window.eval(readFileSync(new URL("../media/webview-helpers.js", import.meta.url), "utf8"));
+    window.eval(settingsSrc);
+    (window as any).__grokSettingsBoot = { snapshot: { providers: [{ id: "muse", connected: true }], museSettings: museDefaults },
+      env: { isRemote: false, providersKnown: true }, category: "providers" };
+    const hostSource = readFileSync(new URL("../src/sidebar.ts", import.meta.url), "utf8");
+    const start = hostSource.indexOf('      var vscode = acquireVsCodeApi();', hostSource.indexOf('private getSettingsHtml'));
+    const end = hostSource.indexOf('    })();', start);
+    window.eval('(function () {\n' + hostSource.slice(start, end) + '\n})();');
+    window.dispatchEvent(new window.MessageEvent("message", { data: { type: "museSettings", value: { ...museDefaults, trustWorkspaces: true } } }));
+    const toggle = window.document.querySelector('[data-id="museTrustWorkspaces"] [role="switch"]')!;
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    (toggle as any).click();
+    expect(posted).toContainEqual({ type: "setMuseSetting", key: "museTrustWorkspaces", value: false });
+  });
+  const surfaces = [
+    { name: "desktop", env: { isDesktop: true, isRemote: false } },
+    { name: "VS Code settings tab", env: { isDesktop: false, isRemote: false } },
+    { name: "linked remote", env: { isDesktop: false, isRemote: true, hostCaps: { remoteAgentSignIn: true } } },
+    { name: "cloud remote", env: { isDesktop: false, isRemote: true, hostCaps: { remoteAgentSignIn: true, remoteAgentSignOut: true } } },
+  ];
+
+  const museRow = '[data-id="providerMuse"], [data-id="providerMuseStatus"], [data-id="providerMuseRemote"]';
+
+  it.each(surfaces)("offers Connect on $name", ({ env }) => {
+    const h = mountAt("providers", { env, snapshot: { providers: [{ id: "muse", connected: false }] } });
+    const row = h.root.querySelector(museRow)!;
+    expect(row.getAttribute("data-id")).toBe(env.isRemote ? "providerMuseRemote" : "providerMuse");
+    // One action, the same as the other three. Muse used to carry a second
+    // "Check again" button nobody else had -- a leftover from when signing in
+    // happened in a terminal we could not see and the row had to ask.
+    expect(row.querySelectorAll("button")).toHaveLength(1);
+    const connect = row.querySelector<HTMLButtonElement>(".settings-action");
+    expect(connect?.textContent).toBe("Connect");
+    connect!.click();
+    expect(h.posted).toContainEqual({ type: "runGrokLogin", provider: "muse" });
+    expect(h.posted.some(msg => msg.type === "recheckConnection")).toBe(false);
+  });
+
+  it.each(surfaces)("says whether the account is connected on $name", ({ env }) => {
+    const h = mountAt("providers", { env, snapshot: { providers: [{ id: "muse", connected: true }] } });
+    const row = () => h.root.querySelector(museRow)!;
+    expect(row().textContent).toContain("This account is connected");
+    expect(row().textContent).not.toContain("/login");
+    expect(row().textContent).not.toContain("use another provider");
+    h.surface.update({ providers: [{ id: "muse", connected: true, needsLogin: true }] });
+    expect(row().textContent).toContain("needs to sign in again");
+    const connect = row().querySelector<HTMLButtonElement>(".settings-action:not(.settings-provider-recheck)")!;
+    expect(connect.textContent).toBe("Sign in again");
+    connect.click();
+    expect(h.posted).toContainEqual({ type: "runGrokLogin", provider: "muse" });
+    expect(h.posted.some(m => m.type === "logout")).toBe(false);
+    h.surface.update({ providers: [{ id: "muse", connected: false }] });
+    expect(row().textContent).not.toContain("This account is connected");
+  });
+
+  it("keeps a status row on hosts without remote sign-in capability", () => {
+    const h = mountAt("providers", { env: { isRemote: true, hostCaps: {} },
+      snapshot: { providers: [{ id: "muse", connected: false }] } });
+    expect(h.root.querySelector('[data-id="providerMuseStatus"]')).not.toBeNull();
+    expect(h.root.querySelector(museRow)!.querySelector("button")).toBeNull();
+  });
+
+  it.each(surfaces)("hides Muse until the host advertises it on $name", ({ env }) => {
+    const h = mountAt("providers", { env, snapshot: { providers: [{ id: "grok", connected: true }] } });
+    expect(h.root.querySelector(museRow)).toBeNull();
+    h.surface.update({ providers: [{ id: "muse", connected: false }] });
+    expect(h.root.querySelector(museRow)).not.toBeNull();
+    const connect = h.root.querySelector(museRow)!.querySelector<HTMLButtonElement>(".settings-action:not(.settings-provider-recheck)")!;
+    h.surface.update({ providers: [{ id: "grok", connected: true }] });
+    connect.click(); // A retained control cannot send a new wire value to an older host.
+    expect(h.posted.some(m => m.type === "runGrokLogin")).toBe(false);
+  });
+
+  it.each(surfaces)("uses execution-host availability on $name", ({ env }) => {
+    const reason = "This provider is disabled by the host administrator";
+    const h = mountAt("providers", { env,
+      snapshot: { providers: [{ id: "muse", connected: false, unavailableReason: reason }] } });
+    const row = h.root.querySelector(museRow)!;
+    expect(row.textContent).toContain(reason);
+    expect(row.querySelector(".settings-provider-recheck")).toBeNull();
+    expect([...row.querySelectorAll<HTMLButtonElement>("button")].every(b => b.disabled)).toBe(true);
+  });
+
+  it.each(surfaces)("places Muse last, immediately before GitHub on $name", ({ env }) => {
+    const providers = ["muse", "grok", "codex", "claude"].map(id => ({ id, connected: false }));
+    const h = mountAt("providers", { env, snapshot: { providers, githubState: { connected: false } } });
+    const ids = [...h.root.querySelectorAll<HTMLElement>(".settings-row")]
+      .map(row => row.dataset.id).filter(id => /^provider(?:Grok|Codex|Claude|Muse)|^githubConnection/.test(id || ""));
+    expect(ids.map(id => id!.replace(/Status$|Remote$/, ""))).toEqual([
+      "providerGrok", "providerCodex", "providerClaude", "providerMuse", "githubConnection",
+    ]);
+  });
+
+  it.each(surfaces)("requires a connected provider and reported version in About on $name", ({ env }) => {
+    const h = mountAt("about", { env, snapshot: { providers: [] } });
+    const row = () => h.root.querySelector('[data-id="aboutMuseCli"]');
+    expect(row()).toBeNull();
+    h.surface.update({ providers: [{ id: "muse", connected: true }] });
+    expect(row()).toBeNull();
+    h.surface.update({ providers: [{ id: "muse", connected: true, cliVersion: "1.3.0-R3401.1" }] });
+    expect(row()!.textContent).toContain("v1.3.0-R3401.1");
+    h.surface.update({ providers: [{ id: "muse", connected: false, cliVersion: "1.3.0-R3401.1" }] });
+    expect(row()).toBeNull();
+  });
+
+  it("gates remote Sign out on the host capability", () => {
+    for (const remoteAgentSignOut of [false, true]) {
+      const h = mountAt("providers", { env: { isRemote: true, hostCaps: { remoteAgentSignOut } },
+        snapshot: { providers: [{ id: "muse", connected: true }] } });
+      const action = h.root.querySelector(museRow)!.querySelector<HTMLButtonElement>('.settings-action:not(.settings-provider-recheck)');
+      expect(!!action).toBe(remoteAgentSignOut);
+      action?.click();
+      expect(h.posted.some(m => m.type === "logout")).toBe(remoteAgentSignOut);
+    }
+  });
+
+});
+
+// #203: "please do not hard bind the login/logout between grok vscode extension
+// and Codex CLI." The host decides what its button does and says so on every
+// provider entry; the page only reads it. That is what keeps a phone — always
+// newer than the host — from labelling Disconnect for a host that clears the
+// CLI's credentials.
+describe("the account button says what it does on each surface (#203)", () => {
+  const deskRow = (id: string) => `[data-id="provider${id}"]`;
+  const desks = [
+    { name: "desktop", env: { isDesktop: true, isRemote: false } },
+    { name: "VS Code settings tab", env: { isDesktop: false, isRemote: false } },
+  ];
+
+  it.each(desks)("reads Disconnect on $name and says the CLI stays signed in", ({ env }) => {
+    const h = mountAt("providers", { env, snapshot: { providers: [
+      { id: "grok", connected: true, keepsCliSignIn: true },
+      { id: "codex", connected: true, keepsCliSignIn: true },
+      { id: "claude", connected: true, keepsCliSignIn: true },
+      { id: "muse", connected: true, keepsCliSignIn: true },
+    ] } });
+    for (const [row, cli] of [["Grok", "Grok"], ["Codex", "Codex"], ["Claude", "Claude Code"], ["Muse", "Muse"]]) {
+      const action = h.root.querySelector<HTMLButtonElement>(`${deskRow(row)} .settings-action`)!;
+      expect(action.textContent).toBe("Disconnect");
+      expect(h.root.querySelector(deskRow(row))!.textContent).toContain(`the ${cli} CLI stays signed in`);
+    }
+    h.root.querySelector<HTMLButtonElement>(`${deskRow("Codex")} .settings-action`)!.click();
+    // The same message as ever: the host, not the page, decides what it does.
+    expect(h.posted).toContainEqual({ type: "logout", provider: "codex" });
+  });
+
+  it.each(desks)("keeps Sign out on $name for a host that clears the CLI's credentials", ({ env }) => {
+    const h = mountAt("providers", { env, snapshot: { providers: [{ id: "codex", connected: true }] } });
+    expect(h.root.querySelector(`${deskRow("Codex")} .settings-action`)!.textContent).toBe("Sign out");
+    expect(h.root.querySelector(deskRow("Codex"))!.textContent).not.toContain("stays signed in");
+  });
+
+  it("keeps Sign out on a remote attached to a cloud environment", () => {
+    const h = mountAt("providers", {
+      env: { isRemote: true, hostCaps: { remoteAgentSignIn: true, remoteAgentSignOut: true } },
+      snapshot: { providers: [{ id: "codex", connected: true }] },
+    });
+    const action = h.root.querySelector<HTMLButtonElement>('[data-id="providerCodexRemote"] button')!;
+    expect(action.textContent).toBe("Sign out");
+    action.click();
+    expect(h.posted).toContainEqual({ type: "logout", provider: "codex" });
+  });
+
+  it("offers a remote attached to a desk no button and no Disconnect sentence", () => {
+    const h = mountAt("providers", {
+      env: { isRemote: true, hostCaps: { remoteAgentSignIn: true } },
+      snapshot: { providers: [{ id: "codex", connected: true, keepsCliSignIn: true }] },
+    });
+    const row = h.root.querySelector('[data-id="providerCodexStatus"]')!;
+    expect(row.querySelector("button")).toBeNull();
+    expect(row.textContent).toContain("This account is connected on this machine.");
+    expect(row.textContent).not.toContain("Disconnect");
+  });
+
+  it("does not offer Disconnect for an account that needs to sign in again", () => {
+    const h = mountAt("providers", { snapshot: { providers: [{ id: "codex", connected: true, needsLogin: true, keepsCliSignIn: true }] } });
+    expect(h.root.querySelector(`${deskRow("Codex")} .settings-action`)!.textContent).toBe("Sign in again");
+  });
+});
 
 describe("CLI update actions", () => {
   const providers = [
@@ -2730,7 +3080,9 @@ describe("settings: the GitHub token path matches what the host will accept", ()
     expect(root.querySelector(".settings-github-flow-cancel")?.textContent).toBe("Cancel");
     posted.length = 0;
     recheck.click();
-    expect(posted).toContainEqual({ type: "refreshProviders" });
+    // The local half only: this asks about GitHub, and proving the agents to
+    // answer it is #171 (see the Providers-page describe at the end of this file).
+    expect(posted).toContainEqual({ type: "refreshProviders", credentials: false });
     // And ONLY that. The row binder claims any `.settings-action` inside a row
     // as its primary control, so while this button carried that class it fired
     // Connect first and opened a second sign-in terminal behind the refresh.
@@ -2740,12 +3092,12 @@ describe("settings: the GitHub token path matches what the host will accept", ()
   it("offers Re-check connection once a desk provider row starts a terminal sign-in", () => {
     const { root, posted } = mountAt("providers", {
       snapshot: {
-        providers: [{ id: "grok", connected: false, needsLogin: false }],
+        providers: [{ id: "grok", connected: true, needsLogin: true }],
       },
     });
     posted.length = 0;
     const connect = root.querySelector('[data-id="providerGrok"] .settings-action') as HTMLButtonElement;
-    expect(connect.textContent).toBe("Connect");
+    expect(connect.textContent).toBe("Sign in again");
     connect.click();
     expect(posted).toContainEqual({ type: "runGrokLogin", provider: "grok" });
     expect(root.querySelector('[data-id="providerGrok"] .settings-action')?.textContent)
@@ -3007,5 +3359,176 @@ describe("Expand diff card across settings surfaces", () => {
     seedChat(h, { expandDiffCard: false });
     dispatch(h.window, { type: "expandDiffCard", value: false });
     expect(h.doc.querySelector('.turn-diff-summary-header')?.getAttribute('aria-expanded')).toBe('true');
+  });
+});
+
+/**
+ * #171 — opening Settings → Providers used to ask the desk to prove every
+ * installed account, which means starting each vendor's ACP adapter and
+ * creating a real session against that vendor. The reporter watched their
+ * machine talk to Anthropic because they opened a settings page, for an account
+ * they had never connected here.
+ *
+ * The page still asks on arrival — for what is INSTALLED, which is a locator
+ * and a `--version` and costs nobody anything. Proving an ACCOUNT now needs a
+ * person to have pressed something.
+ */
+describe("Providers page: arriving is not consent to contact anyone (#171)", () => {
+  const providers = [
+    { id: "grok", connected: true },
+    { id: "codex", connected: false },
+    { id: "claude", connected: false },
+  ];
+  const refreshes = (h: { posted: Array<{ type: string }> }) =>
+    h.posted.filter((msg) => msg.type === "refreshProviders") as Array<
+      { type: string; credentials?: boolean }
+    >;
+
+  it("asks for the local half only when the page opens", () => {
+    const h = mountAt("providers", { snapshot: { providers } });
+    expect(refreshes(h)).toEqual([{ type: "refreshProviders", credentials: false }]);
+  });
+
+  it("asks for both halves when a person presses Refresh", () => {
+    const h = mountAt("providers", { snapshot: { providers } });
+    const refresh = [...h.root.querySelectorAll("button.settings-refresh")]
+      .find((btn) => btn.textContent?.trim() === "Refresh") as HTMLElement;
+    expect(refresh).toBeTruthy();
+    click(h.window, refresh);
+    expect(refreshes(h).at(-1)).toEqual({ type: "refreshProviders", credentials: true });
+  });
+
+  // The field is always present, never left to a default. An older host reads
+  // an absent field as "prove everything" — which is right for an older CLIENT
+  // and wrong as a thing this client relies on.
+  it("always says which half it means", () => {
+    const h = mountAt("providers", { snapshot: { providers } });
+    const refresh = [...h.root.querySelectorAll("button.settings-refresh")]
+      .find((btn) => btn.textContent?.trim() === "Refresh") as HTMLElement;
+    click(h.window, refresh);
+    for (const msg of refreshes(h)) expect(typeof msg.credentials).toBe("boolean");
+  });
+
+  // Not a hypothetical: this button sits in the GitHub sign-in flow and means
+  // "did my GitHub login land?". Answering it by starting Claude Code and Codex
+  // is the reported defect wearing a different hat.
+  it("does not prove the agents to answer a question about GitHub", () => {
+    const at = settingsSrc.indexOf('querySelectorAll(".settings-github-flow-recheck")');
+    expect(at).toBeGreaterThan(-1);
+    const handler = settingsSrc.slice(at, settingsSrc.indexOf("settings-provider-recheck", at));
+    expect(handler).toContain("requestProvidersRefresh(false)");
+    expect(handler).not.toMatch(/post\(\{\s*type:\s*"refreshProviders"/);
+  });
+
+  // Every surface that posts this message, not just the one the reporter was
+  // looking at. The Add-project form has its own GitHub re-check and it posted
+  // the unqualified message, which a new host reads as "prove everything".
+  it("leaves no caller sending the unqualified message", () => {
+    const chatSrc = readFileSync(
+      fileURLToPath(new URL("../media/chat.js", import.meta.url)),
+      "utf8",
+    );
+    for (const src of [settingsSrc, chatSrc, readFileSync(fileURLToPath(new URL("../media/projects-rail.js", import.meta.url)), "utf8")]) {
+      expect(src).not.toMatch(/\{\s*type:\s*"refreshProviders"\s*\}/);
+    }
+  });
+});
+
+/**
+ * #174 — the tray row exists only where there is a tray.
+ *
+ * The switch posts `setDesktopTray`, which a host that predates this feature
+ * has never heard of and silently drops. So the row keys off what the HOST
+ * says it can do (`traySupported`) rather than off `isDesktop`, which is true
+ * on macOS, on a cloud machine and on every older desktop build alike.
+ */
+describe("the tray row appears only where a tray does (#174)", () => {
+  const row = (root: HTMLElement) => root.querySelector('[data-id="desktopTray"]');
+
+  it("appears on a desktop that reports a tray", () => {
+    const h = mountAt("general", {
+      env: { isDesktop: true },
+      snapshot: { traySupported: true, desktopTray: true },
+    });
+    expect(row(h.root)).not.toBeNull();
+    expect(h.root.textContent).toContain("Keep running in the tray");
+  });
+
+  it.each([
+    ["an older host that says nothing", { traySupported: undefined }],
+    ["a host that says it has none — macOS", { traySupported: false }],
+  ])("stays away from %s", (_label, snapshot) => {
+    const h = mountAt("general", { env: { isDesktop: true }, snapshot });
+    expect(row(h.root)).toBeNull();
+  });
+
+  // The tray belongs to the machine the window is on, and a phone has no window
+  // there to keep. The relay would refuse the message anyway (host-local), so a
+  // row here would be a switch that does nothing.
+  it("stays away from a remote, even one driving a desktop that has a tray", () => {
+    const h = mountAt("general", {
+      env: { isDesktop: true, isRemote: true },
+      snapshot: { traySupported: true },
+    });
+    expect(row(h.root)).toBeNull();
+  });
+
+  const switchState = (root: HTMLElement) =>
+    root.querySelector('[data-id="desktopTray"] [role="switch"]')?.getAttribute("aria-checked");
+
+  it("is on unless the host says it was turned off", () => {
+    // Including when the host said nothing — an absent value is the state of a
+    // config file written before the key existed, and it must read as on.
+    for (const desktopTray of [undefined, true]) {
+      const h = mountAt("general", {
+        env: { isDesktop: true },
+        snapshot: { traySupported: true, desktopTray },
+      });
+      expect(switchState(h.root), String(desktopTray)).toBe("true");
+    }
+    const off = mountAt("general", {
+      env: { isDesktop: true },
+      snapshot: { traySupported: true, desktopTray: false },
+    });
+    expect(switchState(off.root)).toBe("false");
+  });
+
+  it("posts the desk-only message when flipped", () => {
+    const h = mountAt("general", {
+      env: { isDesktop: true },
+      snapshot: { traySupported: true, desktopTray: true },
+    });
+    h.posted.length = 0;
+    (h.root.querySelector('[data-id="desktopTray"] [role="switch"]') as HTMLElement).click();
+    expect(h.posted).toContainEqual({ type: "setDesktopTray", value: false });
+  });
+
+  it("explains the off state too, not only the on state", () => {
+    const h = mountAt("general", {
+      env: { isDesktop: true },
+      snapshot: { traySupported: true, desktopTray: true },
+    });
+    const text = (row(h.root) as HTMLElement).textContent || "";
+    // Someone hunting for "why didn't closing quit it" has to recognise this
+    // row as the answer.
+    expect(text).toMatch(/quit on close/i);
+  });
+});
+
+
+describe("live workflow pin setting", () => {
+  it("defaults to pinned on both hosts without adding an app Settings row", () => {
+    const api = loadSettings() as any;
+    expect(api.ROWS.some((row: { id: string }) => row.id === "pinLiveWorkflows")).toBe(false);
+    const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
+    const property = JSON.parse(read("../package.json")).contributes.configuration.properties["atlas.pinLiveWorkflows"];
+    expect(property.type).toBe("boolean");
+    expect(property.default).toBe(true);
+    expect(read("../src/desktop/config-store.ts")).toMatch(/"atlas\.pinLiveWorkflows":\s*true,/);
+    const sidebar = read("../src/sidebar.ts");
+    expect(sidebar.match(/pinLiveWorkflows: cfg.get\("pinLiveWorkflows", true\)/g)).toHaveLength(2);
+    expect(sidebar).toContain('e.affectsConfiguration("atlas.pinLiveWorkflows")');
+    expect(sidebar).toContain('type: "pinLiveWorkflows"');
+    expect(sidebar).toContain('.update("pinLiveWorkflows", !!msg.value, "global")');
   });
 });

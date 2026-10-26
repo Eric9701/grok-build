@@ -107,9 +107,23 @@ it. Three things are worth knowing:
 
 ## The Linux AppImage
 
-This repo publishes a **Linux AppImage** that no download page offers. A cloud
+This repo publishes a **Linux AppImage** that serves two audiences. A cloud
 machine has nobody to walk up to and install anything, so it fetches a built
 artifact rather than compiling one: building this app from source on such a
 machine was measured at 25 minutes, against seconds to download. It is
-unsigned, because there is nothing to sign it for, and it is not a desktop
-download — Windows and macOS have their own installers.
+unsigned, because there is nothing to sign it for.
+
+The same file is the Linux desktop download offered at
+`https://afkpilot.com/desktop`. The two uses do not collide, because a cloud
+machine **extracts** the AppImage and execs `squashfs-root` while a desk runs
+the file itself — and `electron-updater`'s `AppImageUpdater` refuses to run
+unless `process.env.APPIMAGE` is set, which only the second case has. So a
+cloud machine never touches the update feed and cannot self-update out from
+under the relay's refresh tooling, while a desk user gets real in-place
+updates. There is deliberately no cloud check in the updater path: the
+property is structural, and a check would be one more thing to keep true.
+
+There is **exactly one AppImage per release**, and the relay's boot script,
+`refresh-sprite-hosts.mjs` and `patch-sprite-host.mjs` all select it by the
+`.AppImage` extension alone. Attaching a second one would make every one of
+those selectors ambiguous — do not add a variant without changing them first.

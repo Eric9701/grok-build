@@ -6,9 +6,15 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { Window } from "happy-dom";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { INTERNAL_PROVIDERS, supportsHistoryDeletion } from "../src/acp-backend";
 
 const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const railSrc = read("../media/projects-rail.js");
+// The rail webview loads these before projects-rail.js (see sidebar.ts). Eval
+// them here too, or every test would exercise the no-marks fallback path
+// instead of what ships.
+const marksSrc = read("../media/repo-icons.js");
+const pickerSrc = read("../media/repo-icon-picker.js");
 
 interface Posted {
   type: string;
@@ -38,6 +44,9 @@ function bootRail() {
       <div id="rail-scroll" class="rail-scroll"></div>
     </aside>
   `;
+  window.eval(marksSrc);
+  window.eval(read("../media/webview-helpers.js"));
+  window.eval(pickerSrc);
   window.eval(railSrc);
   return { window, doc, posted };
 }
@@ -50,6 +59,23 @@ const repos = [
 
 const row = (id: string, cwd: string, name: string, updatedAt = 1) =>
   ({ id, cwd, displayName: name, rawSummary: "", updatedAt, createdAt: 1, numMessages: 2 });
+
+describe("phone handoff from the separate Projects webview", () => {
+  it("names the selected worktree conversation and its project without resuming it", () => {
+    const { window, doc, posted } = bootRail();
+    const api = railApi(window);
+    loadCatalog(api);
+    api.onMessage({ type: "sessions", entries: [row("other", "/work/tree", "Other chat")], activeId: null, dots: {}, offset: 0, total: 1, hasMore: false, query: "" });
+    const target = doc.querySelector('.rail-session[data-session-id="other"]')!;
+    const actionButton = target.querySelector('[title="Session actions"]') as any;
+    actionButton.click();
+    const action = [...doc.querySelectorAll("button")].find((el) => el.textContent === "Continue on phone…") as any;
+    expect(action).toBeTruthy();
+    action.click();
+    expect(posted).toContainEqual({ type: "showRemoteHandoff", source: "projects", sessionId: "other", repoCwd: "/work/alpha" });
+    expect(posted.some((m) => m.type === "resumeSession")).toBe(false);
+  });
+});
 
 function sectionTitles(doc: Document): string[] {
   return [...doc.querySelectorAll(".rail-head")].map((e) => (e.textContent || "").trim());
@@ -101,7 +127,46 @@ function loadSessions(
   });
 }
 
-it("uses open and closed outline project marks that inherit their tint", () => {
+it.each(INTERNAL_PROVIDERS)("offers row deletion only when implemented for %s", provider => {
+  const { window, doc, posted } = bootRail();
+  const api = railApi(window);
+  api.onMessage({ type: "providerState", providers: INTERNAL_PROVIDERS.map(id => ({ id, connected: true })) });
+  loadCatalog(api);
+  loadSessions(api, [{ ...row("s", "/work/alpha", "Conversation"), provider } as any]);
+  expect(doc.querySelector(`.rail-session .provider-${provider}`)).not.toBeNull();
+  (doc.querySelector('.rail-session .rail-action-btn[title="Session actions"]') as HTMLElement).click();
+  const labels = [...doc.querySelectorAll(".rail-menu-item")].map(el => el.textContent?.trim());
+  expect(labels.includes("Delete")).toBe(supportsHistoryDeletion(provider));
+  expect(posted.some(m => m.type === "deleteSession")).toBe(false);
+  window.happyDOM.abort();
+});
+
+it("scopes the rail clear-history confirmation to supported providers", () => {
+  const { window, doc } = bootRail();
+  loadCatalog(railApi(window));
+  (doc.querySelector('.rail-action-btn[title="Project actions"]') as HTMLElement).click();
+  ([...doc.querySelectorAll(".rail-menu-item")].find(el => el.textContent?.trim() === "Clear all history") as HTMLElement).click();
+  expect(doc.body.textContent).toContain("Deletes Atlas, Codex, Claude conversations for:");
+  expect(doc.body.textContent).not.toContain("Every conversation in this project is deleted");
+  window.happyDOM.abort();
+});
+
+/**
+ * The contract that makes 95 icons possible: the CHEVRON is the disclosure and
+ * the MARK is the identity. Before this the folder was both — open when
+ * expanded, closed when not — which is precisely why no other glyph could take
+ * its place, since a rocket has no open variant.
+ */
+it("hides decorative group disclosure icons from assistive technology", () => {
+  const { window, doc } = bootRail();
+  loadCatalog(railApi(window));
+  for (const indicator of doc.querySelectorAll(".rail-head-twisty")) {
+    expect.soft(indicator.getAttribute("aria-hidden")).toBe("true");
+  }
+  window.happyDOM.abort();
+});
+
+it("separates the disclosure chevron from the project mark", () => {
   const { window, doc } = bootRail();
   const api = railApi(window);
   loadCatalog(api);
@@ -110,13 +175,69 @@ it("uses open and closed outline project marks that inherit their tint", () => {
     (el) => el.querySelector(".rail-repo-label")?.textContent === "alpha",
   )!;
   const mark = () => alpha().querySelector(".rail-twisty svg")!;
-  expect(mark().getAttribute("viewBox")).toBe("0 0 24 24");
-  expect(mark().getAttribute("fill")).toBe("none");
-  expect(mark().getAttribute("stroke")).toBe("currentColor");
-  expect(mark().querySelector("path")?.getAttribute("d")).toMatch(/^m6 14 1\.5-2\.9/);
+  const chevron = () => alpha().querySelector(".rail-chevron svg")!;
+  // Filled Material Symbols on their own grid, not the old 24px outline: the
+  // fill is what carries enough colour to tell six projects apart.
+  expect(mark().getAttribute("viewBox")).toBe("0 -960 960 960");
+  expect(mark().getAttribute("fill")).toBe("currentColor");
+  const expanded = mark().querySelector("path")?.getAttribute("d");
+  // The chevron precedes the mark, and only the chevron changes with the fold.
+  const kids = [...alpha().querySelector(".rail-repo-head")!.children].map((e) => e.className);
+  expect(kids.indexOf("rail-chevron")).toBeLessThan(kids.indexOf("rail-twisty"));
+  const down = chevron().querySelector("path")?.getAttribute("d");
   (alpha().querySelector(".rail-repo-head") as HTMLElement).click();
-  expect(mark().querySelector("path")?.getAttribute("d")).toMatch(/^M20 20a2 2/);
   expect(alpha().querySelector(".rail-sessions")).toBeNull();
+  expect(mark().querySelector("path")?.getAttribute("d")).toBe(expanded);
+  expect(chevron().querySelector("path")?.getAttribute("d")).not.toBe(down);
+  window.happyDOM.abort();
+});
+
+it("draws the project's chosen mark, and falls back to the folder for an id it cannot draw", () => {
+  const { window, doc } = bootRail();
+  const api = railApi(window);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const marks = (window as any).GrokRepoIcons;
+  api.onMessage({
+    type: "repos",
+    entries: [
+      { cwd: "/work/alpha", label: "alpha", available: true, updatedAt: 30, icon: "rocket" },
+      { cwd: "/work/beta", label: "beta", available: true, updatedAt: 20, icon: "" },
+      // A newer client's id, or one dropped from the curated set. Never an
+      // empty box.
+      { cwd: "/work/gamma", label: "gamma", available: true, updatedAt: 10, icon: "no_such_mark" },
+    ],
+    cwd: "/work/alpha",
+  });
+  const markOf = (label: string) => [...doc.querySelectorAll(".rail-repo")]
+    .find((el) => el.querySelector(".rail-repo-label")?.textContent === label)!
+    .querySelector(".rail-twisty path")!.getAttribute("d");
+  const pathOf = (id: string) => /\sd="([^"]+)"/.exec(marks.svg(id))![1];
+  expect(markOf("alpha")).toBe(pathOf("rocket"));
+  expect(markOf("beta")).toBe(pathOf(marks.DEFAULT_ID));
+  expect(markOf("gamma")).toBe(pathOf(marks.DEFAULT_ID));
+  window.happyDOM.abort();
+});
+
+it("offers Set icon under Set color, and posts the chosen id", () => {
+  const { window, doc, posted } = bootRail();
+  const api = railApi(window);
+  api.onMessage({
+    type: "repos",
+    entries: [{ cwd: "/work/alpha", label: "alpha", available: true, updatedAt: 30, color: "", icon: "" }],
+    cwd: "/work/alpha",
+  });
+  const head = doc.querySelector(".rail-repo-head") as HTMLElement;
+  (head.querySelector(".rail-menu-btn, .rail-action-btn:last-child") as HTMLElement).click();
+  const labels = [...doc.querySelectorAll(".rail-menu-item")].map((e) => (e.textContent || "").trim());
+  expect(labels.indexOf("Set icon")).toBe(labels.indexOf("Set color") + 1);
+  (([...doc.querySelectorAll(".rail-menu-item")]
+    .find((e) => (e.textContent || "").trim() === "Set icon")) as HTMLElement).click();
+  const cell = doc.querySelector('.repo-icon-cell[data-icon="rocket"]') as HTMLElement;
+  expect(cell).toBeTruthy();
+  cell.click();
+  expect(posted.filter((m) => m.type === "setRepoIcon")).toEqual([
+    { type: "setRepoIcon", cwd: "/work/alpha", icon: "rocket" },
+  ]);
   window.happyDOM.abort();
 });
 
@@ -143,6 +264,58 @@ it("removes abandoned sessions from selected rows, previews, pins and Recent wit
   loadCatalog(api, "/work/beta");
   expect(api.recentRows().map((s) => s.id)).toEqual(["kept"]);
   window.close();
+});
+
+describe("a rail rebuild under an open popover", () => {
+  const marked = [{ cwd: "/work/alpha", label: "alpha", available: true, updatedAt: 30, color: "", icon: "" }];
+
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  it("leaves the menu alone when the host re-sends sessions", () => {
+    // The trigger is not rare and not the rail's own doing: the host re-sends
+    // sessions whenever their files change, and another extension writing its
+    // transcripts drives that every second or two.
+    const { window, doc } = bootRail();
+    const api = railApi(window);
+    api.onMessage({ type: "repos", entries: marked, cwd: "/work/alpha" });
+    expect(openProjectMenu(doc, window, "alpha")).not.toBe(null);
+    loadSessions(api, [row("s1", "/work/alpha", "one")]);
+    expect(
+      doc.querySelector(".rail-menu"),
+      "a session refresh closed the menu -- it does that every second or two",
+    ).not.toBe(null);
+  });
+
+  it("holds the icon picker up, then lands the frame it deferred", async () => {
+    // A rename is the observable here because it is unconditional: a project
+    // row is always drawn, where a session row needs its project expanded and
+    // would make "nothing changed" pass for the wrong reason.
+    const { window, doc } = bootRail();
+    const api = railApi(window);
+    api.onMessage({ type: "repos", entries: marked, cwd: "/work/alpha" });
+    const menu = openProjectMenu(doc, window, "alpha");
+    (menuItem(menu, "Set icon") as HTMLElement).click();
+    expect(doc.querySelector(".repo-icon-picker")).not.toBe(null);
+
+    api.onMessage({
+      type: "repos",
+      entries: [{ ...marked[0], label: "renamed" }],
+      cwd: "/work/alpha",
+    });
+    expect(doc.querySelector(".repo-icon-picker"), "a refresh closed the picker").not.toBe(null);
+    // Deferred, not dropped.
+    expect(repoLabels(doc)).toEqual(["alpha"]);
+
+    // Closing it is what lets the frame through, and the frame that lands is
+    // the newest state rather than the one that was held.
+    (doc.querySelector('.repo-icon-cell[data-icon="rocket"]') as HTMLElement).click();
+    await tick();
+    expect(doc.querySelector(".repo-icon-picker")).toBe(null);
+    expect(
+      repoLabels(doc),
+      "the deferred frame never landed -- the rail is frozen",
+    ).toEqual(["renamed"]);
+  });
 });
 
 function openProjectMenu(doc: Document, window: Window, repoLabel: string) {
@@ -456,6 +629,25 @@ describe("VS Code projects rail renderer", () => {
   });
 
   describe("Pinned", () => {
+    it("updates pinning immediately and ignores acknowledgements of superseded clicks", () => {
+      const { window, doc, posted } = h;
+      const api = railApi(window);
+      loadCatalog(api, "/work/alpha");
+      const a = row("a1", "/work/alpha", "here", 10);
+      loadSessions(api, [a]);
+      api.onMessage({ type: "pinnedSessions", entries: [], dots: {}, pinRequests: true });
+      (doc.querySelector('.rail-repo [data-session-id="a1"] .rail-pin-btn') as HTMLElement).click();
+      expect(doc.querySelector('.rail-pinned [data-session-id="a1"]')).not.toBeNull();
+      const pin = posted.find((m) => m.type === "toggleSessionPin")!;
+      (doc.querySelector('.rail-pinned .rail-pin-btn') as HTMLElement).click();
+      const unpin = posted.filter((m) => m.type === "toggleSessionPin")[1];
+      api.onMessage({ type: "pinnedSessions", entries: [{ ...a, pinnedAt: 10 }], dots: {}, pinRequests: true, requestId: pin.requestId });
+      expect(doc.querySelector('.rail-pinned')).toBeNull();
+      api.onMessage({ type: "pinnedSessions", entries: [], dots: {}, pinRequests: true, requestId: unpin.requestId });
+      loadSessions(api, [{ ...a, pinnedAt: 10 } as typeof a]);
+      expect(doc.querySelector('.rail-repo [data-session-id="a1"] .rail-pin-btn')?.getAttribute("title")).toBe("Pin conversation");
+    });
+
     it("shows no Pinned group until the pinnedSessions frame arrives", () => {
       const { window, doc } = h;
       const api = railApi(window);
@@ -772,6 +964,28 @@ describe("VS Code projects rail renderer", () => {
     });
   });
   describe("add project", () => {
+    it("GitHub Re-check requests a refresh without agent credential probes (#186)", () => {
+      const { doc, window, posted } = bootRail();
+      const api = railApi(window);
+      api.onMessage({
+        type: "repos", entries: repos, selectedCwd: "/work/alpha", activeCwd: "/work/alpha",
+        canAddProject: true, canCloneProject: true,
+      });
+      (doc.querySelector(".rail-add-project-wide") as HTMLButtonElement).click();
+      ([...doc.querySelectorAll(".rail-menu-item")].find(el =>
+        el.textContent?.includes("Clone from GitHub")) as HTMLButtonElement).click();
+      api.onMessage({ type: "githubState", github: {
+        connected: false, cliPresent: true, loginFlow: { status: "starting" },
+      } });
+      (doc.querySelector(".add-project-github-connect") as HTMLButtonElement).click();
+      const recheck = doc.querySelector(".add-project-github-recheck") as HTMLButtonElement;
+      expect(recheck.hidden).toBe(false);
+      posted.length = 0;
+      recheck.click();
+      expect(posted).toEqual([{ type: "refreshProviders", credentials: false }]);
+      window.happyDOM.abort();
+    });
+
     it("shows no control until the host says it answers addProjectFolder", () => {
       // Capability by field presence. An older host sends `repos` without the
       // flag and must not get a button whose message it would ignore.
@@ -1039,5 +1253,80 @@ describe("VS Code projects rail renderer", () => {
       // Matched despite the case and separators, so it is the current project.
       expect((window as any).document.querySelectorAll(".rail-current-tag").length).toBe(1);
     });
+  });
+});
+
+// The Projects view gives up on an unanswered click after 8s. A click the host
+// has acknowledged (`sessionOpening`) keeps its highlight until the host
+// confirms it or says it failed, and says "opening…" while it waits behind a load
+// another view started.
+describe("a click the host is opening", () => {
+  const later = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  function clickAlphaTwo() {
+    const booted = bootRail();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (booted.window as any).__grokRailResumeTimeoutMs = 5;
+    const api = railApi(booted.window);
+    loadCatalog(api);
+    loadSessions(api, [row("a1", "/work/alpha", "alpha one", 9), row("a2", "/work/alpha", "alpha two", 8)], "a1");
+    (booted.doc.querySelector('.rail-session[data-session-id="a2"]') as HTMLElement).click();
+    return { ...booted, api };
+  }
+  const active = (doc: Document) => doc.querySelector(".rail-session.active")?.getAttribute("data-session-id");
+
+  it("keeps the highlight while the host opens it, and shows opening while queued", async () => {
+    const { doc, api, posted } = clickAlphaTwo();
+    expect(posted).toContainEqual({ type: "resumeSession", id: "a2", cwd: "/work/alpha", claim: true });
+    api.onMessage({ type: "sessionOpening", sessionId: "a2", queued: true });
+    await later(30);
+    expect(active(doc)).toBe("a2");
+    expect(doc.querySelector(".rail-session.active .rail-session-opening")?.textContent).toBe("opening\u2026");
+    loadSessions(api, [row("a1", "/work/alpha", "alpha one", 9), row("a2", "/work/alpha", "alpha two", 8)], "a2");
+    expect(active(doc)).toBe("a2");
+    expect(doc.querySelector(".rail-session-opening")).toBeNull();
+  });
+
+  it("goes back to the previous conversation on failed, and on silence", async () => {
+    const failed = clickAlphaTwo();
+    failed.api.onMessage({ type: "sessionOpening", sessionId: "a2", failed: true });
+    expect(active(failed.doc)).toBe("a1");
+    const silent = clickAlphaTwo();
+    await later(30);
+    expect(active(silent.doc)).toBe("a1");
+  });
+});
+
+describe("Recent from the host in the Projects view", () => {
+  it("shows exactly the host's list when it sends one, the loaded union otherwise", () => {
+    const { api } = (() => { const b = bootRail(); return { ...b, api: railApi(b.window) }; })();
+    loadCatalog(api);
+    loadSessions(api, [row("a1", "/work/alpha", "listed only", 9), row("a2", "/work/alpha", "sent in", 8)]);
+    expect(api.recentRows().map((s) => s.id)).toEqual(["a1", "a2"]);
+    api.onMessage({ type: "recentSessions", dots: {}, entries: [row("x1", "/scratch/notes", "outside", 10), row("a2", "/work/alpha", "sent in", 8)] });
+    expect(api.recentRows().map((s) => s.id)).toEqual(["x1", "a2"]);
+    api.onMessage({ type: "sessionRemoved", id: "x1", cwd: "/scratch/notes" });
+    expect(api.recentRows().map((s) => s.id)).toEqual(["a2"]);
+  });
+});
+
+describe("chosen projects in the Projects view", () => {
+  const LINE = "Your projects appear here. Open a folder, create one, or add one from Recent.";
+  it("offers Add to Projects on a Recent row whose folder the host can add, and says where projects come from", () => {
+    const { window, doc, posted } = bootRail();
+    const api = railApi(window);
+    api.onMessage({ type: "repos", entries: [], selectedCwd: "", activeCwd: "", canAddProject: true });
+    expect(doc.getElementById("rail-scroll")!.textContent).toContain(LINE);
+    api.onMessage({ type: "recentSessions", dots: {}, entries: [{ ...row("x1", "/scratch/notes", "outside", 9), addableCwd: "/scratch/notes" }] });
+    const text = doc.getElementById("rail-scroll")!.textContent || "";
+    expect(text).toContain("Recent");
+    expect(text).toContain(LINE);
+    // Recent starts folded.
+    ([...doc.querySelectorAll(".rail-head-btn")].find((b) => (b.textContent || "").includes("Recent")) as any).click();
+    const target = doc.querySelector('.rail-session[data-session-id="x1"]')!;
+    (target.querySelector('[title="Session actions"]') as any).click();
+    const add = [...doc.querySelectorAll("button")].find((el) => el.textContent === "Add to Projects") as any;
+    expect(add).toBeTruthy();
+    add.click();
+    expect(posted).toContainEqual({ type: "addToProjects", cwd: "/scratch/notes" });
   });
 });

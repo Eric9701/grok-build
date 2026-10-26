@@ -3,6 +3,7 @@ import type { HostMsg } from "./protocol";
 import type { FileChip } from "./chips";
 import { permissionOptionsForPlan } from "./plan-gate";
 import type { AcpProvider } from "./acp-backend";
+import { MUSE_ON_REQUEST_UNAVAILABLE, sessionModes } from "./mode-prefs";
 import type { SubscriptionUsageBinding } from "./subscription-usage";
 import type { TelemetrySessionOrigin } from "./telemetry";
 import {
@@ -19,6 +20,8 @@ export interface PendingPermissionOption {
   optionId: string;
   kind: string;
   name: string;
+  /** Muse's own scope, when the adapter stamped one. */
+  _meta?: { scope?: string; [key: string]: unknown } | null;
 }
 
 export interface PendingPermission {
@@ -27,8 +30,10 @@ export interface PendingPermission {
   toolKind?: string;
   /** Adapter plan-review text, when the permission carried one. */
   plan?: string;
-  /** Full option set offered by the CLI. */
+  /** Host-presented options, including a possible session command grant. */
   options: PendingPermissionOption[];
+  /** Host-only translation; the CLI must receive its one-time id, never ours. */
+  commandGrant?: { optionId: string; allowOnceId: string; programs: string[] };
   /** Subset safe to expose while the client-side Plan gate remains active. */
   planOptions: PendingPermissionOption[];
 }
@@ -62,13 +67,43 @@ export function pendingPermissionOptions(
   return planActive ? pending.planOptions : pending.options;
 }
 
+type AutoAcceptOption = {
+  optionId: string;
+  kind: string;
+  _meta?: { scope?: unknown } | null;
+};
+
+/**
+ * The allow Auto accept may send. Grok, Codex and Claude prefer `allow_always`.
+ * Muse must not: `allow_always` is a permanent config grant, and a session-scoped
+ * choice is advertised as `allow_once`, so kind alone would outlive Agent.
+ * Antigravity's `allow_always` is likewise saved with the conversation.
+ */
+export function pickAutoAcceptOption<T extends AutoAcceptOption>(
+  options: readonly T[],
+  provider?: string,
+  excludeOptionId?: string,
+): T | undefined {
+  const usable = excludeOptionId
+    ? options.filter((option) => option.optionId !== excludeOptionId)
+    : options;
+  if (provider === "muse") {
+    return usable.find((option) => option.kind === "allow_once" && option._meta?.scope === "once");
+  }
+  if (provider === "agy") return usable.find((option) => option.kind === "allow_once");
+  return usable.find((option) => option.kind === "allow_always")
+    ?? usable.find((option) => option.kind === "allow_once");
+}
+
 export function preferredPermissionAllowOption(
   pending: PendingPermission,
   planActive: boolean,
+  provider?: string,
 ): PendingPermissionOption | undefined {
   const options = pendingPermissionOptions(pending, planActive);
-  return options.find((option) => option.kind === "allow_always")
-    ?? options.find((option) => option.kind === "allow_once");
+  // Auto accept may answer pending cards, but only a deliberate card answer
+  // may create a program grant; the CLI also cannot interpret our option id.
+  return pickAutoAcceptOption(options, provider, pending.commandGrant?.optionId);
 }
 
 /**
@@ -87,6 +122,8 @@ export class Session {
   provider: AcpProvider = "grok";
   /** Host-owned composer attachments for this session/view. */
   chips: FileChip[] = [];
+  /** Attachment authority for targeted Edit restores, never shared composer state. */
+  restoredChips: FileChip[] = [];
   /** The live ACP client (one spawned `atlas agent stdio` process), once started. */
   client?: AcpClient;
   /** Latest account capacity, held outside conversation history. */
@@ -94,6 +131,17 @@ export class Session {
 
   /** YOLO: auto-approve every permission request for this session. */
   autoApprove = false;
+  /** In the provider's native Auto mode (Claude): the agent decides, and asks. */
+  nativeAuto = false;
+  /** The agent answered an Auto request with its fallback; see onNativeAutoMode. */
+  nativeAutoFellBack = false;
+  musePosture?: import("./mode-prefs").MusePosture;
+  /** Launch fact, never changed by a live approval-mode switch. */
+  museShellSandbox?: boolean;
+  museCloud = false;
+
+  /** Explicit card grants only. Never serialized or inherited by a loaded session. */
+  readonly allowedCommandPrograms = new Set<string>();
 
   /** Plan-mode gate is up for this session (client-side enforcement mirror). */
   planActive = false;
@@ -133,6 +181,8 @@ export class Session {
   /** True for the session-start window (spawn → newSession/load). Model/effort
    * changes that would race startup are ignored; the webview also locks busy. */
   priming = false;
+  startup?: { stage: "updating" | "starting" | "opening" | "loading"; startedAt: number; detail?: string; messageCount?: number };
+  agentTitle?: string;
 
   /** Drop streaming content from hidden summary/context-injection turns. */
   suppressContent = false;
@@ -262,9 +312,10 @@ export class Session {
   loadInFlight?: Promise<void>;
 
   /**
-   * Next Claude/Codex `usage_update.used` is getContextUsage occupancy, not
-   * the billed per-call sum. Armed only after a compact *completed* so a
-   * leftover mid-compact usage_update cannot overwrite the conversation.
+   * Next Claude/Codex `usage_update.used` is the compacted occupancy, not the
+   * billed per-call sum. Armed on started AND completed: Codex reports the
+   * size before completed, Claude after it. A stray value adopted after
+   * started is replaced when completed re-arms and the real size arrives.
    */
   compactUsageArmed = false;
 
@@ -628,6 +679,14 @@ export function finishQueuedSendCommit(
   return true;
 }
 
+/** The same choices and restrictions feed live UI updates and reconnects. */
+export function sessionModeMessage(session: Session, modeId: string): Extract<HostMsg, { type: "modeChanged" }> {
+  return { type: "modeChanged", modeId, modes: sessionModes(session.provider, session.museCloud),
+    ...(session.provider === "muse" && !session.museCloud && session.museShellSandbox !== true
+      ? { disabledModes: { onRequest: MUSE_ON_REQUEST_UNAVAILABLE } } : {}),
+  };
+}
+
 /** Current non-chat UI state for rebuilding a view of this live session. */
 export function sessionUiSnapshot(
   session: Session,
@@ -635,11 +694,13 @@ export function sessionUiSnapshot(
   chips: FileChip[] = session.chips,
 ): HostMsg[] {
   const messages: HostMsg[] = [];
+  messages.push(startupStatusMessage(session));
   messages.push({ type: "subscriptionUsage", windows: session.subscriptionUsage?.snapshot() ?? [] });
   if (session.client?.currentModelId) {
     messages.push({ type: "modelChanged", modelId: session.client.currentModelId });
   }
-  messages.push({ type: "modeChanged", modeId });
+  if (session.client?.provider === "grok") messages.push({ type: "contextWindowSelection", selection: session.client.contextWindowSelection });
+  messages.push(sessionModeMessage(session, modeId));
   messages.push({
     type: "planModeAvailability",
     available: session.planModeAvailable,
@@ -661,4 +722,14 @@ export function sessionUiSnapshot(
   messages.push({ type: "chips", chips });
   messages.push(queuedSendsMessage(session.queuedSends));
   return messages;
+}
+
+export function startupStatusMessage(session: Session): Extract<HostMsg, { type: "startupStatus" }> {
+  const startup = session.startup;
+  return {
+    type: "startupStatus", provider: session.provider, stage: startup?.stage ?? null,
+    elapsedMs: startup ? Math.max(0, Date.now() - startup.startedAt) : 0,
+    ...(startup?.detail ? { detail: startup.detail } : {}),
+    ...(startup?.messageCount !== undefined ? { messageCount: startup.messageCount } : {}),
+  };
 }

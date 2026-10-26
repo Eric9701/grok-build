@@ -95,6 +95,8 @@ import { GrokSidebar } from "../src/sidebar";
 
 function makeSidebar(cwd: string): any {
   const sidebar = Object.create(GrokSidebar.prototype) as any;
+  sidebar.startTurnDiffBaseline = vi.fn();
+  sidebar.pendingTurnDiffCaptures = new WeakSet();
   const memento: Record<string, unknown> = {};
   sidebar.providerConnectionState = { grok: true, codex: false };
   sidebar.providerConnections = vi.fn(() => sidebar.providerConnectionState);
@@ -205,6 +207,22 @@ function resetPromptControl(): void {
 describe("send vs concurrent startSession", () => {
   beforeEach(resetPromptControl);
   afterEach(resetPromptControl);
+
+  it.each(["grok", "codex", "claude", "muse"] as const)("does not invent compaction for %s", async provider => {
+    const sidebar = makeSidebar("/repo");
+    await sidebar.startSession(undefined, sidebar.focused);
+    sidebar.focused.provider = provider;
+    sidebar.refreshContextAfterCompact = vi.fn(async () => {});
+    sidebar.rememberAdapterContext = vi.fn();
+    sidebar.posted = [];
+    await sidebar.handleSend("/compact", true);
+    expect(promptControl.calls).toBe(1);
+    expect(sidebar.posted.some((m: HostMsg) => m.type === "messageChunk" && m.text === "Compacted.")).toBe(provider !== "muse");
+    if (provider === "muse") {
+      expect(sidebar.focused.adapterCompactThisTurn).toBe(false);
+      expect(sidebar.rememberAdapterContext).not.toHaveBeenCalledWith(sidebar.focused, { compacted: true });
+    }
+  });
 
   it("keeps remote accounting on a same-conversation restart and resets it for a new conversation", async () => {
     const sidebar = makeSidebar("/repo");

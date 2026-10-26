@@ -25,6 +25,15 @@ import {
 } from "../src/remote-frames";
 
 describe("uplink frame builders", () => {
+  it("preserves New draft correlation and accepts attachment ids without trusting paths on Send", () => {
+    const wrap = (msg: unknown) => JSON.stringify({ t: "msg", clientId: "phone", msg });
+    const draftId = "01234567-89ab-cdef-0123-456789abcdef";
+    expect(parseRelayFrame(wrap({ type: "newSession", draftId }))).toMatchObject({ msg: { type: "newSession", draftId } });
+    expect(parseRelayFrame(wrap({ type: "newSession", draftId: {} }))).toBeNull();
+    expect(parseRelayFrame(wrap({ type: "send", text: "edit", chips: [{ id: "file", path: "/private" }] })))
+      .toMatchObject({ msg: { type: "send", text: "edit", chips: [{ id: "file", path: "", relPath: "", hidden: false }] } });
+    expect(parseRelayFrame(wrap({ type: "send", text: "edit", chips: [{ path: "/private" }] }))).toBeNull();
+  });
   it("rejects the unreleased paste RPC and validates remote connector payloads", () => {
     const wrap = (msg: unknown) => JSON.stringify({ t: "msg", clientId: "phone", msg });
     expect(parseRelayFrame(wrap({ type: "completeMcpConnectorOAuth", id: "notion", attemptId: "old", redirectUrl: "pasted" }))).toBeNull();
@@ -121,6 +130,7 @@ describe("parseRelayFrame", () => {
     ["selectRepo cwd", { type: "selectRepo", cwd: "../.." }],
     ["toggleRepoPin cwd", { type: "toggleRepoPin", cwd: "..\\..", pinned: true }],
     ["setRepoColor cwd", { type: "setRepoColor", cwd: "..\\..", color: "blue" }],
+    ["setRepoIcon cwd", { type: "setRepoIcon", cwd: "..\\..", icon: "rocket" }],
     ["resumeSession id", { type: "resumeSession", id: "../.." }],
     ["resumeSession cwd", { type: "resumeSession", id: "safe-session", cwd: "/work/../escape" }],
     ["renameSession id", { type: "renameSession", id: "..\\..", name: "renamed" }],
@@ -189,6 +199,7 @@ describe("parseRelayFrame", () => {
         text: "from the phone",
         bare: false,
         submissionId,
+        chips: [{ id: "unchecked-legacy-render-copy", path: "", relPath: "", hidden: false }],
       },
     });
 
@@ -375,6 +386,8 @@ describe("parseRelayFrame", () => {
       { type: "toggleRepoPin", cwd: "C:\\work\\repo", pinned: true },
       { type: "setRepoColor", cwd: "/work/repo", color: "coral" },
       { type: "setRepoColor", cwd: "/work/repo", color: "" },
+      { type: "setRepoIcon", cwd: "/work/repo", icon: "rocket" },
+      { type: "setRepoIcon", cwd: "/work/repo", icon: "" },
       { type: "resumeSession", id: "019f-session_1", cwd: "\\\\server\\share\\repo" },
       { type: "renameSession", id: "019f-session_1", name: "renamed" },
       { type: "deleteSession", id: "019f-session_1" },
@@ -416,6 +429,8 @@ describe("parseRelayFrame", () => {
     expect(parseRelayFrame(wrap({ type: "toggleRepoPin", cwd: "/a", pinned: "yes" }))).toBeNull();
     expect(parseRelayFrame(wrap({ type: "setRepoColor", cwd: "/a", color: 7 }))).toBeNull();
     expect(parseRelayFrame(wrap({ type: "setRepoColor", cwd: "..\\..", color: "blue" }))).toBeNull();
+    expect(parseRelayFrame(wrap({ type: "setRepoIcon", cwd: "/a", icon: 7 }))).toBeNull();
+    expect(parseRelayFrame(wrap({ type: "setRepoIcon", cwd: "..\\..", icon: "rocket" }))).toBeNull();
     expect(parseRelayFrame(wrap({ type: "resumeSession", id: "s", cwd: [] }))).toBeNull();
     expect(parseRelayFrame(wrap({ type: "clearAllSessions", cwd: 42 }))).toBeNull();
     expect(parseRelayFrame(wrap({ type: "ready", tabToken: "short" }))).toBeNull();

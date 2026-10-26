@@ -12,8 +12,8 @@
 > **Status: SHIPPED (subagent row) as of grok 0.2.93 / extension post-1.5.5.**
 > grok now emits a **genuine `spawn_subagent` tool call** — see § Ground truth
 > (0.2.93) below for the captured wire shapes. The extension renders a
-> purple-accented row (task description + blink-dots → duration + expandable
-> result) and hides the child's persisted sibling session from history
+> subagent card (since 4.13.2 the shared delegation header — task description,
+> status and a clock — closed by default, with an expandable, copyable result) and hides the child's persisted sibling session from history
 > (`session_kind: "subagent"`). The sections after § Ground truth (0.2.93)
 > describe the OLD 0.2.3–0.2.3x background-shell mechanism and are kept as
 > history — the classifier still excludes the legacy
@@ -52,13 +52,55 @@ carries the whole delegation:
    tool_calls, turns, duration_ms, worktree_path, resume_from_hint }`, and the
    `subagent_finished.output` above.
 
-**Child activity is never streamed on the parent connection.** The child is
-persisted twice: as a **top-level sibling session** under the same cwd folder
-(`summary.json` carries `session_kind: "subagent"`, `agent_name: <type>` — this
-is what the history filter keys on) and as `<parent>/subagents/<child-id>/meta.json`
-(compact stats record). A nested inspector would read the child session from
-disk (or `session/load` it via `resume_from_hint`); the live stream can't
-provide it. `spawn_subagent` goes through the normal `session/request_permission`
+**Composer-era (≤0.2.x) legacy:** child activity was never streamed on the
+parent connection. The child was persisted twice: as a **top-level sibling
+session** under the same cwd folder (`summary.json` carries `session_kind:
+"subagent"`, `agent_name: <type>` — this is what the history filter keys on)
+and as `<parent>/subagents/<child-id>/meta.json` (compact stats record). A
+nested inspector would have had to read the child session from disk (or
+`session/load` it via `resume_from_hint`). That shape is still what
+`test/fixtures/composer-subagent-session.jsonl` pins, and the host must keep
+tolerating it.
+
+**grok 1.0.3+ multiplexed stdout (captured 2026-08-14):** the CLI writes
+parent and every background child onto **one** ACP stdout. Every
+`session/update` carries `params.sessionId` — there is no ACP `messageId`.
+Content chunks interleave word-level across writers. `_x.ai/session_notification`
+delivers `subagent_spawned` on the **parent** sessionId *before* the child's
+first chunk (`subagent_id` == `child_session_id`, plus `parent_session_id` /
+`description` / `model`). Child `tool_call` / `tool_call_update` /
+`user_message_chunk` / thoughts / prose then arrive with the **child's**
+sessionId. `fs/*` + `terminal/*` server requests still use the parent
+sessionId. `subagent_finished` (flattened `output`, `will_wake`) also rides
+the parent sessionId. A trailing parent `user_message_chunk` may set
+`update._meta.hideFromScrollback: true` (system wake note) — do not render
+it. `_x.ai/session/update` did not appear on this capture.
+
+The host demuxes on `params.sessionId` (`parseAcpLine` keeps it;
+`isForeignSessionUpdate` / `handleSessionUpdate` emit additive `childStream`
+messages). The webview routes those into the existing subagent card keyed by
+`child_session_id` (exact `subagent_id` first, FIFO first-untagged only as
+fallback). A child tool event closes the open prose segment so later prose
+appends *after* the tool row. Word-level chunks coalesce to one markdown /
+thought paint per card per frame. A child chunk whose session matches no card
+is dropped from the parent transcript. Cold `session/load` still does not
+replay child transcripts into the parent — children remain sibling sessions
+on disk. Cards rebuild from tool calls; replayed lifecycle frames tag and finish
+existing cards rather than create them. Fixture:
+`test/fixtures/grok-subagent-mux.jsonl`.
+
+**Other providers:** Codex alone advertises `clientCapabilities.subagents: {}`.
+`normalizeCodexUpdate` turns native spawn/state events into stable tool calls,
+tagged with the child session ID before any child chunks arrive. Its full
+replay follows the same route. The default Start/Complete rows disappear under
+this opt-in; live `wait` remains an ordinary tool. Claude keeps the default
+handshake so replay retains its Agent call. Its explicit subagent marker is
+authoritative; `normalizeClaudeUpdate` extracts output and usage from the
+hand-back (including the replay trailer), with no child stream. Muse delegates
+through workflows and reports children in the workflow roster. See
+[per-provider captures and mappings](subagent-workflow-shapes.md#client-mappings).
+
+`spawn_subagent` goes through the normal `session/request_permission`
 flow, so in Agent mode the user first approves it like any other tool.
 
 Bundled-docs theory confirmed against **grok 0.2.33** (CLI docs at

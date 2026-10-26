@@ -22,7 +22,7 @@ const wsMock = vi.hoisted(() => {
     emit(event: string, ...args: any[]) {
       for (const fn of this.handlers.get(event) ?? []) fn(...args);
     }
-    send(raw: string) { this.sent.push(raw); }
+    send(raw: string, done?: (error?: Error) => void) { this.sent.push(raw); done?.(); }
     close() {}
   }
   return { FakeWebSocket, sockets };
@@ -60,6 +60,61 @@ function makeUplink(overrides: Partial<ConstructorParameters<typeof RemoteUplink
 
 describe("RemoteUplink client identity and targeted sends", () => {
   beforeEach(() => { wsMock.sockets.length = 0; });
+
+  it("keeps identity and viewer presence host-local while preserving reconnect rosters", () => {
+    vi.useFakeTimers();
+    try {
+      const changed = vi.fn();
+      const roster = vi.fn();
+      const uplink = makeUplink({ onStatusChanged: changed, onClientRoster: roster });
+      uplink.start();
+      const ws = wsMock.sockets[0];
+      ws.emit("open");
+      // An old relay has no self frame: never derive its id from the token/hello.
+      expect(uplink.deviceId).toBeUndefined();
+      expect(uplink.viewerCount).toBe(0);
+      ws.emit("message", JSON.stringify({ t: "self", deviceId: "desk-1" }));
+      expect(uplink.deviceId).toBe("desk-1");
+      ws.emit("message", JSON.stringify({ t: "clients", count: 2 }));
+      expect(uplink.viewerCount).toBe(2);
+      ws.emit("message", JSON.stringify({ t: "client-ready", clientId: "one" }));
+      ws.emit("message", JSON.stringify({ t: "client-ready", clientId: "two" }));
+      expect(roster).toHaveBeenCalledWith(["one", "two"]);
+      ws.emit("message", JSON.stringify({ t: "clients", count: 1 }));
+      expect(uplink.viewerCount).toBe(1);
+      expect(changed).toHaveBeenCalledTimes(3);
+      ws.emit("close", 1006);
+      expect(uplink.viewerCount).toBe(0);
+      expect(uplink.deviceId).toBeUndefined();
+      expect(changed).toHaveBeenCalledTimes(4);
+      uplink.dispose();
+      ws.emit("message", JSON.stringify({ t: "self", deviceId: "stale" }));
+      expect(uplink.deviceId).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("writes the one-hour maintenance frame and waits for the socket callback", async () => {
+    const uplink = makeUplink(); uplink.start();
+    const ws = wsMock.sockets[0];
+    let complete: (() => void) | undefined;
+    ws.send = (raw: string, done: () => void) => { ws.sent.push(raw); complete = done; };
+    let finished = false;
+    const sent = uplink.maintenance().then(() => { finished = true; });
+    await Promise.resolve(); expect(finished).toBe(false);
+    expect(JSON.parse(ws.sent[0])).toEqual({ t: "maintenance", holdMs: 3_600_000 });
+    complete!(); await sent; expect(finished).toBe(true);
+    uplink.dispose();
+  });
+
+  it("propagates asynchronous socket write failure so the host will not exit", async () => {
+    const uplink = makeUplink(); uplink.start();
+    wsMock.sockets[0].send = (_raw: string, done: (error: Error) => void) => {
+      queueMicrotask(() => done(new Error("write failed")));
+    };
+    await expect(uplink.maintenance()).rejects.toThrow("write failed");
+    uplink.dispose();
+    await expect(uplink.maintenance()).rejects.toThrow();
+  });
 
   it("logs an outbound frame refused while the uplink is disconnected", () => {
     const logs: string[] = [];
@@ -245,12 +300,22 @@ describe("RemoteUplink client identity and targeted sends", () => {
     // Refusals at t = 0, 2s, 4s, 6s, 8s are inside the 10s window; the one at
     // 10s is a rival rather than a corpse — two windows on one desk share an
     // installId, so one of them has to lose slowly.
+    expect(uplink.refused).toBe(false);
     for (let i = 0; i < 6; i += 1) {
+      // Inside the window this is most likely our own frozen socket, not a rival —
+      // but it is not ours yet either, so the host draws no code (`refused`).
+      expect(uplink.heldElsewhere).toBe(false);
       wsMock.sockets.at(-1)!.emit("close", 4002);
+      expect(uplink.refused).toBe(true);
       await vi.advanceTimersByTimeAsync(2000);
     }
 
     expect(logs.filter((l) => l.includes("refused (device still held)"))).toHaveLength(5);
+    expect(uplink.heldElsewhere).toBe(true);
+    // Once the rival lets go and the relay names this connection, it is ours again.
+    wsMock.sockets.at(-1)!.emit("message", Buffer.from(JSON.stringify({ t: "self", deviceId: "desk" })));
+    expect(uplink.heldElsewhere).toBe(false);
+    expect(uplink.refused).toBe(false);
     // The short retries must not have grown the backoff on the way past —
     // resetting or inflating it here is the flapping bug connectionWasHealthy
     // was written to prevent.

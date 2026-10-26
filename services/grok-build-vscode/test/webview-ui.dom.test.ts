@@ -8,9 +8,11 @@
 //      buttons stopPropagation so they don't also resume
 //   3. Reasoning traces "no longer expandable" -> header click toggles the body
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { openAppSettings, bootWebview, dispatch, click, Posted } from "./webview-harness";
 import { countsAsUserBubble } from "../src/plan-restore";
 import { bracketRemoteSnapshot } from "../src/remote-policy";
+import { normalizeAgySessionResponse } from "../src/agy-backend";
 import type { HostMsg } from "../src/protocol";
 
 const $ = (doc: Document, id: string) => doc.getElementById(id) as HTMLElement;
@@ -249,6 +251,28 @@ describe("history popover (regression: popover that never closed)", () => {
     expect(pop.style.maxWidth).toBe("228px");
     expect(pop.style.minWidth).toBe("228px"); // min(280, 228) — shrinks below the CSS floor
     expect(pop.style.right).toBe("6px");
+  });
+
+  // On a phone the composer spans the screen, so pushing a composer menu back
+  // to the composer's right edge put it flush against the glass.
+  it.each([
+    ["overflowing the right edge keeps the 6px gap", 300, "184px"],
+    ["fitting stays under its button", 100, "100px"],
+    ["wider than the room keeps the left gap", 0, "6px", 386],
+  ])("places a composer menu: %s", async (_name, buttonLeft, left, width = 200) => {
+    const { window, doc } = bootWebview({ remote: true });
+    const pop = $(doc, "add-popover");
+    const btn = $(doc, "add-btn");
+    const parent = pop.parentElement as HTMLElement;
+    (parent as any).getBoundingClientRect = () =>
+      ({ left: 0, right: 390, top: 0, bottom: 800, width: 390, height: 800 });
+    (btn as any).getBoundingClientRect = () =>
+      ({ left: buttonLeft, right: buttonLeft + 28, top: 700, bottom: 728, width: 28, height: 28 });
+    (pop as any).getBoundingClientRect = () => ({ left: 0, right: width, top: 0, bottom: 100, width, height: 100 });
+    click(window, btn);
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    expect(pop.hidden).toBe(false);
+    expect(pop.style.left).toBe(left);
   });
 
   it("re-measures the open popover when the panel is resized (no close+reopen needed)", () => {
@@ -551,6 +575,8 @@ describe("session rows (regression: only the label was clickable)", () => {
     expect(okBtn).not.toBeNull();
     expect(doc.querySelector(".confirm-title")?.textContent).toContain("project");
     expect(doc.querySelector(".confirm-body")?.textContent).toContain("/work/project");
+    expect(doc.querySelector(".confirm-body")?.textContent).toContain("Deletes Atlas, Codex, Claude conversations");
+    expect(doc.querySelector(".confirm-body")?.textContent).not.toContain("every session");
     click(window, okBtn);
     await Promise.resolve();
 
@@ -839,6 +865,11 @@ describe("mode picker (the plan-gate entry path)", () => {
     expect((pop as any).hidden).toBe(false);
     const labels = [...pop.querySelectorAll(".mode-item-label")].map((l) => l.textContent);
     expect(labels).toEqual(["Agent mode", "Plan mode", "Auto accept"]);
+    expect([...pop.querySelectorAll(".mode-item-desc")].map((l) => l.textContent)).toEqual([
+      "Atlas acts directly, asking approval only for changes it judges sensitive",
+      "Atlas explores and proposes a plan; file writes and commands are blocked until you approve it",
+      "Atlas automatically approves all permission requests (YOLO)",
+    ]);
 
     const planItem = [...pop.querySelectorAll(".mode-popover-item")]
       .find((el) => el.querySelector(".mode-item-label")!.textContent === "Plan mode") as HTMLElement;
@@ -862,6 +893,25 @@ describe("mode picker (the plan-gate entry path)", () => {
     const labels = [...$(doc, "mode-popover").querySelectorAll(".mode-item-label")]
       .map((label) => label.textContent);
     expect(labels).toEqual(["Agent mode", "Auto accept"]);
+    expect([...$(doc, "mode-popover").querySelectorAll(".mode-item-desc")].map((label) => label.textContent)).toEqual([
+      "Codex acts directly, asking approval only for changes it judges sensitive",
+      "Codex automatically approves all permission requests (Full access)",
+    ]);
+  });
+
+  // YOLO is Grok Build's own word; other providers get their own name for the
+  // mode, or none.
+  it.each([
+    ["claude", "Claude automatically approves all permission requests (Bypass permissions)"],
+    ["agy", "Antigravity automatically approves all permission requests"],
+  ])("describes Auto accept for %s without YOLO", (provider, description) => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "providerState", providers: [{ id: provider, connected: true }] });
+    dispatch(window, { type: "session", sessionId: "s", provider, models: [] });
+    dispatch(window, { type: "modeChanged", modeId: "agent", modes: ["agent", "yolo"] });
+    click(window, $(doc, "mode-btn"));
+    const descriptions = [...$(doc, "mode-popover").querySelectorAll(".mode-item-desc")].map((label) => label.textContent);
+    expect(descriptions.at(-1)).toBe(description);
   });
 
   it("disables only Plan with the host's version reason, then re-enables it", () => {
@@ -996,8 +1046,11 @@ describe("context donut (token usage)", () => {
     const { window, doc } = boot();
     dispatch(window, { type: "contextUsage", used: 29088, window: 200000 });
     expect($(doc, "donut-label").textContent).toBe("29K/200K");
+    // The percentage rides in the tooltip as of #172: the arc encodes it only to
+    // the eye and the label has no room for it, so without this the only place a
+    // reader could read the number was the popover, a click away.
     expect($(doc, "donut").title).toBe(
-      `Context usage — ${(29088).toLocaleString()} / ${(200000).toLocaleString()} tokens`,
+      `Context usage — ${(29088).toLocaleString()} / ${(200000).toLocaleString()} tokens (15%)`,
     );
   });
 
@@ -1032,7 +1085,33 @@ describe("context donut (token usage)", () => {
     const { window, doc } = boot();
     dispatch(window, { type: "contextUsage", used: 44123, window: 100000 });
     dispatch(window, { type: "contextUsage", window: 1000000 });
-    expect($(doc, "donut-label").textContent).toBe("44K/1000K");
+    expect($(doc, "donut-label").textContent).toBe("44K/1M");
+  });
+
+  // The owner, 2026-10-15: Gemini's window is "1.05M" from the start, not the
+  // last conversation's 200K or 256K, and never "1049K". Below a million the
+  // label keeps its whole thousands.
+  it("reads a window of a million and up in millions, and starts Antigravity on Gemini's", () => {
+    const { window, doc } = boot();
+    dispatch(window, { type: "contextUsage", used: 44123, window: 256000 });
+    expect($(doc, "donut-label").textContent).toBe("44K/256K");
+    dispatch(window, { type: "contextUsage", window: 500000 });
+    expect($(doc, "donut-label").textContent).toBe("44K/500K");
+    // An Antigravity conversation through the host's own catalog, before the
+    // server's first usage_update.
+    const { models } = normalizeAgySessionResponse({ sessionId: "a", configOptions: [
+      { id: "model", currentValue: "gemini-3.8-flash", options: [{ value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }] },
+    ] });
+    dispatch(window, { type: "providerState", providers: [{ id: "grok", connected: true }, { id: "agy", connected: true }] });
+    dispatch(window, { type: "session", sessionId: "a", provider: "agy", currentModelId: models.currentModelId,
+      models: models.availableModels.map((m: any) => ({ provider: "agy", modelId: m.modelId, name: m.name, totalContextTokens: m._meta.totalContextTokens })) });
+    expect($(doc, "donut-label").textContent).toBe("0K/1.05M");
+    click(window, $(doc, "donut"));
+    expect($(doc, "context-popover").textContent).toContain("0 / 1.05M (0%)");
+    // The server's own figure replaces the default.
+    dispatch(window, { type: "contextUsage", used: 52300, window: 1000000 });
+    expect($(doc, "donut-label").textContent).toBe("52K/1M");
+    expect($(doc, "context-popover").textContent).toContain("52.3K / 1M (5%)");
   });
 });
 
@@ -1437,64 +1516,29 @@ describe("provider onboarding", () => {
   });
 });
 
-describe("gear menu — AFK Pilot onboarding", () => {
+describe("remote control onboarding", () => {
   const gearItem = (doc: Document, label: string) =>
     [...doc.querySelectorAll("#add-popover .toolbar-popover-item")].find(
       (el) => el.textContent?.includes(label),
     ) as HTMLElement | undefined;
   const button = (doc: Document, label: string) =>
-    [...doc.querySelectorAll(".confirm-panel button")].find(
+    [...doc.querySelectorAll(".confirm-panel button, .remote-handoff-popover button")].find(
       (el) => el.textContent?.trim() === label,
     ) as HTMLButtonElement | undefined;
 
-  it("offers linked devices an immediate hinted Continue remotely action with a phone icon", () => {
-    const { window, posted, doc } = bootWebview();
-    dispatch(window, { type: "remoteStatus", linked: true });
-    click(window, $(doc, "add-btn"));
-
-    const item = gearItem(doc, "Continue remotely");
-    expect(item).toBeTruthy();
-    expect(item!.querySelector("svg rect")).not.toBeNull();
-
-    click(window, item!);
-    expect(posted).toContainEqual({ type: "openRemotePortal", withHint: true });
-    expect(($(doc, "gear-popover") as HTMLElement).hidden).toBe(true);
-  });
-
-  it("offers no link/account action until the host has answered with the link status", () => {
-    // The host reads the device token from secret storage asynchronously, so
-    // there is a real window with no answer. Defaulting to "not linked" told
-    // an already-linked machine to "Sign in (link this device)" — the owner
-    // started re-linking a device that was working (2026-07-30). Unknown must
-    // show nothing, and the section must appear when the answer lands, even
-    // while the popover is open.
+  it.each([false, true])("removes the quick-menu remote rows (linked=%s)", (linked) => {
     const { window, doc } = bootWebview();
+    dispatch(window, { type: "remoteStatus", linked });
     click(window, $(doc, "add-btn"));
-
-    const labels = () => [...doc.querySelectorAll("#add-popover .toolbar-popover-item")]
-      .map((el) => el.textContent || "");
-    expect(labels().some((l) => /link this device|Your account|Continue remotely/i.test(l))).toBe(false);
-
-    dispatch(window, { type: "remoteStatus", linked: false });
-    expect(labels().some((l) => /Sign in \(link this device\)/i.test(l))).toBe(true);
+    expect(doc.querySelector("#add-popover")!.textContent).not.toMatch(/Remote control|Continue remotely|Your account|link this device|How it works/i);
   });
 
-  it("sends linked devices to the portal for account management, never a one-tap unlink", () => {
-    // VS Code: unlinking stays on the Command Palette. A one-tap menu item
-    // next to "Continue remotely" was removed (owner, 2026-07-30).
-    const { window, posted, doc } = bootWebview();
-    dispatch(window, { type: "remoteStatus", linked: true });
-    click(window, $(doc, "add-btn"));
-
-    const labels = [...doc.querySelectorAll("#add-popover .toolbar-popover-item")]
-      .map((el) => el.textContent || "");
-    expect(labels.some((l) => /unlink this device/i.test(l))).toBe(false);
-
-    const account = gearItem(doc, "Your account");
-    expect(account).toBeTruthy();
-    click(window, account!);
-    expect(posted).toContainEqual({ type: "openRemotePortal" });
-    expect(posted.some((m) => m.type === "remoteSignOut" || m.type === "unlinkRemoteDevice")).toBe(false);
+  it("keeps the linked popover to the code and its actions, without account or unlink", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "remoteStatus", linked: true, handoffReady: false });
+    click(window, $(doc, "remote-btn"));
+    expect(button(doc, "Your account")).toBeFalsy();
+    expect(doc.querySelector(".remote-handoff-popover")!.textContent).not.toMatch(/unlink/i);
   });
 
   it("offers Unlink this device… in Settings → Account on desktop, not the gear", () => {
@@ -1527,28 +1571,117 @@ describe("gear menu — AFK Pilot onboarding", () => {
     expect(gearItem(doc, "Unlink this device…")).toBeUndefined();
   });
 
-  it("offers a top-bar Continue remotely button only in a linked local client", () => {
-    // The desk is where someone decides to get up and keep going on a phone —
-    // one tap, not buried in the gear menu. Hidden until this machine links.
+  it("always shows the desk button and waits for the host before offering sign-in", () => {
     const { window, posted, doc } = bootWebview();
+    dispatch(window, { type: "sessionName", sessionId: "a", name: "My chat", cwd: "/repo" });
     const remoteBtn = $(doc, "remote-btn") as HTMLButtonElement;
-    expect(remoteBtn.hidden).toBe(true);
-
-    dispatch(window, { type: "remoteStatus", linked: true });
     expect(remoteBtn.hidden).toBe(false);
-
+    expect(remoteBtn.title).toBe("Remote control");
     click(window, remoteBtn);
-    expect(posted).toContainEqual({ type: "openRemotePortal", withHint: true });
+    expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Checking…");
+    expect(button(doc, "Sign in and link this machine")).toBeUndefined();
+    dispatch(window, { type: "remoteStatus", linked: false, handoffReady: false });
+    expect(remoteBtn.hidden).toBe(false);
+    expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Use this chat from your phone");
+    expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("prompts and code are never stored");
+    expect(doc.querySelector(".remote-handoff-popover")!.textContent).not.toMatch(/plan|price|free|pro\b/i);
+    click(window, button(doc, "Sign in and link this machine")!);
+    expect(posted).toContainEqual({ type: "remoteSignIn", source: "topbar" });
+    dispatch(window, { type: "remoteStatus", linked: true, handoffReady: false, viewerCount: 0 });
+    expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Linked. Getting your code ready…");
+    expect(remoteBtn.classList.contains("phone-connected")).toBe(false);
+    dispatch(window, { type: "remoteStatus", linked: true, handoffReady: true, viewerCount: 2 });
+    expect(remoteBtn.title).toBe("Remote control · phone connected");
+    expect(remoteBtn.classList.contains("phone-connected")).toBe(true);
+    const request = posted.filter((m) => m.type === "remoteHandoff").at(-1)!;
+    dispatch(window, { type: "remoteHandoff", requestId: request.requestId, url: "https://afkpilot.com/chat?device=desk#session=a&repo=%2Frepo", qrSvg: '<svg viewBox="0 0 1 1"><path d="M0 0h1v1H0z"/></svg>', title: "My chat" });
+    expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Linked. Now scan this.");
+    expect(doc.querySelector(".remote-handoff-qr svg")).not.toBeNull();
+    dispatch(window, { type: "remoteStatus", linked: false, handoffReady: false, viewerCount: 0 });
+    expect(remoteBtn.title).toBe("Remote control");
+    expect(doc.querySelector(".remote-handoff-qr")).toBeNull();
+  });
 
-    dispatch(window, { type: "remoteStatus", linked: false });
-    expect(remoteBtn.hidden).toBe(true);
+  it("retains the hinted portal action on an old linked host", () => {
+    const { window, posted, doc } = bootWebview();
+    dispatch(window, { type: "remoteStatus", linked: true });
+    click(window, $(doc, "remote-btn"));
+    expect(posted).toContainEqual({ type: "openRemotePortal", withHint: true, source: "topbar" });
+    expect(doc.querySelector(".remote-handoff-popover")).toBeNull();
+  });
+
+  it("binds a cold palette popover and follows the focused conversation", () => {
+    const { window, posted } = bootWebview();
+    dispatch(window, { type: "remoteStatus", linked: true, handoffReady: true });
+    dispatch(window, { type: "showRemoteHandoff", source: "palette" });
+    expect(posted.filter((m) => m.type === "remoteHandoff")).toHaveLength(0);
+    dispatch(window, { type: "sessionName", sessionId: "loaded", name: "Loaded chat", cwd: "/repo" });
+    expect(posted.filter((m) => m.type === "remoteHandoff").at(-1)).toMatchObject({ sessionId: "loaded", source: "palette", action: "show" });
+    const count = posted.filter((m) => m.type === "remoteHandoff").length;
+    dispatch(window, { type: "sessionName", sessionId: "different", name: "Different chat", cwd: "/other" });
+    expect(posted.filter((m) => m.type === "remoteHandoff")).toHaveLength(count + 1);
+    expect(posted.filter((m) => m.type === "remoteHandoff").at(-1)).toMatchObject({ sessionId: "different", action: "refresh" });
+  });
+
+  it("never renders the button or popover on a remote", () => {
+    const { window, doc } = bootWebview({ remote: true });
+    dispatch(window, { type: "remoteStatus", linked: true, handoffReady: true, viewerCount: 2 });
+    dispatch(window, { type: "showRemoteHandoff", source: "palette" });
+    expect(doc.getElementById("remote-btn")).toBeNull();
+    expect(doc.querySelector(".remote-handoff-popover")).toBeNull();
+  });
+
+  it("says so, instead of waiting forever, when another window holds this machine's link", () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "sessionName", sessionId: "a", name: "My chat", cwd: "/repo" });
+    dispatch(window, { type: "remoteStatus", linked: true, handoffReady: true });
+    click(window, $(doc, "remote-btn"));
+    dispatch(window, { type: "remoteStatus", linked: true, handoffReady: false, heldElsewhere: true });
+    expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Another window on this computer is connected");
+    expect(doc.querySelector(".remote-handoff-qr-pending")).toBeNull();
+  });
+
+  it("shows no QR until identity is ready and uses the fallback action", () => {
+    const { window, posted, doc } = bootWebview();
+    dispatch(window, { type: "sessionName", sessionId: "a", name: "My chat", cwd: "/repo" });
+    dispatch(window, { type: "remoteStatus", linked: true, handoffReady: false });
+    click(window, $(doc, "remote-btn"));
+    expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Continue on your phone");
+    expect(doc.querySelector(".remote-handoff-qr-pending")!.textContent).toContain("Generating QR code…");
+    expect(doc.querySelector(".remote-handoff-qr")).toBeNull();
+    expect(button(doc, "Copy link")!.disabled).toBe(true);
+    click(window, button(doc, "Open in browser")!);
+    expect(posted.at(-1)).toMatchObject({ type: "remoteHandoff", source: "topbar", action: "open" });
+  });
+
+  it("copies the handoff link and ignores stale replies after a different session opens", async () => {
+    const copied: string[] = [];
+    const { window, posted, doc } = bootWebview({ beforeScripts: (w) => {
+      Object.defineProperty((w as any).navigator, "clipboard", { configurable: true, value: { writeText: async (v: string) => { copied.push(v); } } });
+    } });
+    dispatch(window, { type: "remoteStatus", linked: true, handoffReady: true });
+    dispatch(window, { type: "showRemoteHandoff", source: "projects", sessionId: "first", repoCwd: "/repo" });
+    const first = posted.at(-1)!;
+    dispatch(window, { type: "showRemoteHandoff", source: "projects", sessionId: "second", repoCwd: "/other" });
+    const second = posted.at(-1)!;
+    dispatch(window, { type: "remoteHandoff", requestId: first.requestId, title: "Wrong chat", url: "https://wrong", qrSvg: "<svg/>" });
+    expect(doc.querySelector(".remote-handoff-qr")).toBeNull();
+    const url = "https://afkpilot.com/chat?device=d#session=second&repo=%2Fother";
+    dispatch(window, { type: "remoteHandoff", requestId: second.requestId, title: "Other <chat>", url, qrSvg: "<svg/>" });
+    expect(doc.querySelector(".remote-handoff-popover")!.textContent).toContain("Scan with your phone camera to open Other <chat> there.");
+    click(window, button(doc, "Copy link")!);
+    await Promise.resolve();
+    expect(copied).toEqual([url]);
+    await vi.waitFor(() => expect(button(doc, "Copied")).toBeTruthy());
+    click(window, button(doc, "Open in browser")!);
+    expect(posted.at(-1)).toMatchObject({ type: "remoteHandoff", action: "open", sessionId: "second", repoCwd: "/other", source: "projects" });
   });
 
   it("opens the How it works explainer locally without navigating", () => {
     const { window, posted, doc } = bootWebview();
     dispatch(window, { type: "remoteStatus", linked: false });
-    click(window, $(doc, "add-btn"));
-    click(window, gearItem(doc, "How it works")!);
+    click(window, $(doc, "remote-btn"));
+    click(window, button(doc, "How it works")!);
 
     expect(posted.filter((msg) => msg.type === "openRemotePortal")).toEqual([]);
     const panel = doc.querySelector(".remote-explainer-panel");
@@ -1570,8 +1703,8 @@ describe("gear menu — AFK Pilot onboarding", () => {
       capabilities: { relocateView: false, showOutput: false },
     });
     dispatch(window, { type: "remoteStatus", linked: false });
-    click(window, $(doc, "add-btn"));
-    click(window, gearItem(doc, "How it works")!);
+    click(window, $(doc, "remote-btn"));
+    click(window, button(doc, "How it works")!);
     const panel = doc.querySelector(".remote-explainer-panel");
     expect(panel!.textContent).toContain("Keep this app open.");
     expect(panel!.textContent).not.toContain("Keep VS Code, Cursor, or Antigravity open.");
@@ -1588,8 +1721,8 @@ describe("gear menu — AFK Pilot onboarding", () => {
       },
     });
     dispatch(window, { type: "remoteStatus", linked: false }); // an unlinked machine, stated not assumed
-    click(window, $(doc, "add-btn"));
-    click(window, gearItem(doc, "How it works")!);
+    click(window, $(doc, "remote-btn"));
+    click(window, button(doc, "How it works")!);
 
     click(window, doc.querySelector(".remote-url-copy")!);
     await Promise.resolve();
@@ -1597,15 +1730,15 @@ describe("gear menu — AFK Pilot onboarding", () => {
     expect(doc.querySelector(".remote-url-copied")!.textContent).toBe("Copied");
 
     click(window, button(doc, "More & FAQ")!);
-    expect(posted).toContainEqual({ type: "openRemotePortal" });
+    expect(posted).toContainEqual({ type: "openRemotePortal", source: "topbar" });
     expect(doc.querySelector(".remote-explainer-panel")).toBeNull();
   });
 
   it("closes the explainer without navigating", () => {
     const { window, posted, doc } = bootWebview();
     dispatch(window, { type: "remoteStatus", linked: false }); // an unlinked machine, stated not assumed
-    click(window, $(doc, "add-btn"));
-    click(window, gearItem(doc, "How it works")!);
+    click(window, $(doc, "remote-btn"));
+    click(window, button(doc, "How it works")!);
     click(window, doc.querySelector(".remote-explainer-close")!);
 
     expect(doc.querySelector(".remote-explainer-panel")).toBeNull();
@@ -1676,6 +1809,19 @@ describe("reasoning trace (regression: thinking traces no longer expandable)", (
     expect(body.hidden).toBe(true);
     expect(block.classList.contains("expanded")).toBe(false);
   });
+
+  // Muse separates reasoning items with a blank line and cannot tell where a
+  // block starts: a block opens on its text, a break inside it stays.
+  it("drops a leading break at the start of a block and keeps one inside it", async () => {
+    const { window, doc } = bootWebview();
+    dispatch(window, { type: "thoughtChunk", text: "\n\nFirst thought." });
+    dispatch(window, { type: "thoughtChunk", text: "\n\nSecond thought." });
+    await new Promise((r) => setTimeout(r, 50));
+    const body = doc.querySelector(".msg.thinking .thinking-body") as HTMLElement;
+    expect(body.textContent!.startsWith("First thought.")).toBe(true);
+    expect(body.textContent).toContain("Second thought.");
+    expect(body.textContent!.indexOf("Second")).toBeGreaterThan(body.textContent!.indexOf("First thought.") + "First thought.".length);
+  });
 });
 
 describe("Grokking… indicator (waiting placeholder)", () => {
@@ -1689,7 +1835,7 @@ describe("Grokking… indicator (waiting placeholder)", () => {
     dispatch(h.window, {
       type: "session", sessionId: "c1", models: [], currentModelId: "gpt-5.6-sol", provider: "codex",
     });
-    expect(input.placeholder).toBe("Ask GPT…");
+    expect(input.placeholder).toBe("Ask Codex…");
 
     dispatch(h.window, {
       type: "session", sessionId: "g1", models: [], currentModelId: "grok-build", provider: "grok",
@@ -1705,7 +1851,7 @@ describe("Grokking… indicator (waiting placeholder)", () => {
     dispatch(h.window, { type: "agentStart" });
     const el = grokking(h.doc)!;
     expect(el.querySelector(".grokking-label")?.textContent).toBe("Opening AI");
-    expect(el.getAttribute("aria-label")).toBe("OpenAI is working");
+    expect(el.getAttribute("aria-label")).toBe("Codex is working");
     expect(el.querySelector(".grokking-icon svg")).not.toBeNull();
   });
 
@@ -2186,6 +2332,9 @@ describe("gear menu — Other group + About / Settings", () => {
         ...extra,
       });
       dispatch(h.window, { type: "initialized", info: { version: "0.2.33" } });
+      // The remote reaches Settings through the model chip, which stays shut
+      // until the starting session has published its catalog.
+      dispatch(h.window, { type: "session", sessionId: "s", models: [] });
       h.posted.length = 0;
       openAbout(h);
       return h;
@@ -2566,11 +2715,33 @@ describe("thinking traces toggle (#26)", () => {
       options: [{ optionId: "allow", kind: "allow_once", name: "Allow once" }],
     } });
 
+    // No session frame named the agent, so the cue does not guess Grok.
     expect(spoken).toEqual([
       "Which database should I use?",
-      "Atlas is waiting for your permission. Review the request and choose an option.",
+      "The agent is waiting for your permission. Review the request and choose an option.",
     ]);
     expect(spoken.join(" ")).not.toContain("private-file.txt");
+  });
+
+  // Copy about the agent names the conversation's own agent, and "the agent"
+  // when the host did not say which it is.
+  it.each([
+    ["claude", "Claude is asking", "Optional comment — Claude decides what to do with it"],
+    ["agy", "Antigravity is asking", "Optional comment — Antigravity decides what to do with it"],
+    [undefined, "The agent is asking", "Optional comment — The agent decides what to do with it"],
+  ])("names the conversation's agent in its cards (%s)", (provider, heading, placeholder) => {
+    const { window, doc } = bootWebview();
+    if (provider) {
+      dispatch(window, { type: "providerState", providers: [{ id: provider, connected: true }] });
+      dispatch(window, { type: "session", sessionId: "s", provider, models: [] });
+    }
+    dispatch(window, { type: "questionRequest", req: {
+      id: 3, questions: [{ question: "Which one?", options: [{ label: "A" }, { label: "B" }], multiSelect: false }],
+    } });
+    expect(doc.querySelector(".card.question .card-title")!.textContent).toBe(heading);
+    dispatch(window, { type: "exitPlanRequest", req: { id: 4, plan: "1. Do it" } });
+    expect((doc.querySelector(".card.plan .plan-feedback") as HTMLTextAreaElement).placeholder).toBe(placeholder);
+    expect(doc.body.textContent).not.toContain("Grok is asking");
   });
 
   it("never speaks a completed local reply inside a history replay bracket", () => {
@@ -4225,5 +4396,16 @@ describe("remote tab session reconnect", () => {
     dispatch(window, { type: "sessions", entries: [], activeId: null });
 
     expect(window.sessionStorage.getItem("atlas.remote.tabSession:default")).toBeNull();
+  });
+});
+
+// A long prompt on a phone could be read but never expanded: "Show more" was
+// revealed only by hovering the bubble, and a touch screen has no hover.
+describe("long user messages on a touch screen", () => {
+  it("shows the Show more chip without hover, and does not make the bubble a tap target", () => {
+    const css = readFileSync(new URL("../media/chat.css", import.meta.url), "utf8");
+    const touch = [...css.matchAll(/@media \(hover: none\) \{([^@]*?)\n\}/g)].map((m) => m[1]).join("\n");
+    expect(touch).toMatch(/\.msg\.user\.collapsible \.msg-expand-btn \{ display: block; \}/);
+    expect(css).not.toMatch(/\.msg\.user\.collapsible\s*\{[^}]*cursor:\s*pointer/);
   });
 });

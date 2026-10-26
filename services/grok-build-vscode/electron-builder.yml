@@ -34,16 +34,19 @@ extraMetadata:
   description: Atlas Desktop
 
 # Layout inside app.asar (or app/ when --dir):
-#   package.json, out/**, media/**, resources/**, LICENSE, node_modules/{ws,jpeg-js,@agentclientprotocol/codex-acp}
+#   package.json, out/**, media/**, resources/**, LICENSE, node_modules/{ws,jpeg-js,qrcode-generator,@agentclientprotocol/codex-acp}
 # resolveExtensionRoot() expects media/chat.js at the package root (see src/desktop/paths.ts).
 files:
   - package.json
   - LICENSE
   - out/**/*
+  - out/muse-adapter/*.mjs
   - media/**/*
   - resources/**/*
   - node_modules/ws/**/*
   - node_modules/jpeg-js/**/*
+  - node_modules/qrcode-generator/package.json
+  - node_modules/qrcode-generator/dist/qrcode.js
   - node_modules/@agentclientprotocol/codex-acp/package.json
   - node_modules/@agentclientprotocol/codex-acp/dist/**/*
   - node_modules/@agentclientprotocol/codex-acp/LICENSE
@@ -53,6 +56,9 @@ files:
   - node_modules/@agentclientprotocol/sdk/package.json
   - node_modules/@agentclientprotocol/sdk/dist/**/*
   - node_modules/@agentclientprotocol/sdk/LICENSE-APACHE
+  - node_modules/@muse-code/sdk/package.json
+  - node_modules/@muse-code/sdk/dist/src/**/*.js
+  - node_modules/@muse-code/sdk/LICENSE*
   - node_modules/@anthropic-ai/claude-agent-sdk/package.json
   - node_modules/@anthropic-ai/claude-agent-sdk/*.mjs
   - node_modules/@anthropic-ai/claude-agent-sdk/*.js
@@ -201,6 +207,15 @@ nsis:
   artifactName: Grok-Build-Desktop-${version}-${os}-${arch}.${ext}
 
 linux:
+  # Same AppImage serves two audiences: the cloud machines, which extract it and
+  # exec the payload, and Linux desks, which run the file itself. Only the
+  # second ever reaches the feed below — electron-updater's AppImageUpdater
+  # refuses to run unless `process.env.APPIMAGE` is set, which an extracted run
+  # never has. That is what keeps a sprite from self-updating out from under
+  # refresh-sprite-hosts.mjs without a cloud check anywhere in the app.
+  publish:
+    provider: generic
+    url: https://afkpilot.com/update/linux
   icon: resources/grok-icon-round-512.png
   category: Development
   target:

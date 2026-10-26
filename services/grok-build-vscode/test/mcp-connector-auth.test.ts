@@ -89,7 +89,7 @@ describe("sidebar connect wiring", () => {
     expect(forget).toContain("mcpConnectorSecretKey");
   });
 
-  it("loading keys never writes grok.mcpConnectors, including when a secret read fails", () => {
+  it("loading keys never writes atlas.mcpConnectors, including when a secret read fails", () => {
     const src = readFileSync(new URL("../src/sidebar.ts", import.meta.url), "utf8");
     const start = src.indexOf("private async loadMcpConnectorKeys(");
     const end = src.indexOf("private async forgetConnectorKey(", start);
@@ -569,7 +569,7 @@ const proto = GrokSidebar.prototype as unknown as {
   connectedConnectorStore(): Record<string, { endpoint: string }>;
 };
 
-describe("key cache across hosts sharing grok.mcpConnectors", () => {
+describe("key cache across hosts sharing atlas.mcpConnectors", () => {
   const DIR = "/home/.grok/client-state";
   const diskFile = `${DIR}/${DISK_KEYS[MCP_CONNECTORS_KEY]}`;
 

@@ -15,12 +15,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { Writable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { planGitOp } from "../src/git-status";
 import {
   GIT_WRITE_TIMEOUT_MS,
+  GIT_BASELINE_UNTRACKED_MAX_PATHS,
+  GIT_BASELINE_UNTRACKED_MAX_FILE_BYTES,
+  captureGitTurnBaseline,
   GitRunGate,
   readGitFileDiff,
+  readGitTurnFileBefore,
   readGitStatus,
   runGit,
   runGitPlan,
@@ -82,7 +87,39 @@ function fakeIo(replies: Record<string, FakeReply>, seen?: string[][]): GitIo {
   return { execFile: impl };
 }
 
+describe("whole-file turn baseline read failures", () => {
+  const baseline = { sha: "a".repeat(40) };
+  it.each([
+    { code: 128, stderr: "tree unavailable" },
+    { code: 1, stdout: "partial tree", stderr: "read interrupted" },
+    { code: 0, stderr: "tree diagnostic" },
+    { enoent: true },
+  ])("never classifies a failed tree lookup as a turn-created file: %j", async reply => {
+    const seen: string[][] = [];
+    const result = await readGitTurnFileBefore("/repo", "a.ts", baseline,
+      { io: fakeIo({ "--literal-pathspecs": reply }, seen) });
+    expect(result).toMatchObject({ ok: false, reason: expect.any(String) });
+    expect(seen).toHaveLength(1);
+  });
+  it.each([false, true])("rejects partial whole-file stdout, unlike no-index patches (blob=%s)", async blob => {
+    const result = await readGitTurnFileBefore("/repo", "a.ts",
+      { ...baseline, ...(blob ? { untracked: new Map([["a.ts", "b".repeat(40)]]) } : {}) },
+      { io: fakeIo({ "--literal-pathspecs": { stdout: "tree entry\0" },
+        [blob ? "cat-file" : "show"]: { code: 1, stdout: "partial text", stderr: "buffer limit" } }) });
+    expect(result).toEqual({ ok: false, reason: "buffer limit" });
+  });
+});
+
 describe("runGit", () => {
+  it("classifies an asynchronous stdin error instead of accepting partial input", async () => {
+    const io: GitIo = { execFile: ((_file: string, _args: string[], _opts: any, cb: any) => {
+      const stdin = new Writable({ write(_chunk, _encoding, done) { done(new Error("broken pipe")); } });
+      setImmediate(() => cb(null, "", ""));
+      return { stdin };
+    }) as any };
+    expect(await runGit("/repo", ["hash-object", "-w", "--stdin-paths"], { io, stdin: '"a.ts"\n' }))
+      .toMatchObject({ ok: false, stderr: "broken pipe" });
+  });
   it("passes -C root before the subcommand", async () => {
     const seen: string[][] = [];
     await runGit("/repo", ["status"], { io: fakeIo({}, seen) });
@@ -308,6 +345,234 @@ afterAll(() => {
 });
 
 describe.runIf(gitAvailable !== false)("readGitStatus against real git", () => {
+  it.each(["tracked", "untracked", "created"] as const)("reads the complete %s before-side without changing the index or refs", async kind => {
+    const root = await makeRepo(`turn-editor-${kind}`);
+    const name = kind === "tracked" ? "README.md" : "new.txt";
+    const file = path.join(root, name);
+    const oldText = kind === "created" ? "" : Array.from({ length: 900 }, (_, i) => `before ${i}\n`).join("");
+    if (kind !== "created") fs.writeFileSync(file, oldText);
+    const baseline = await captureGitTurnBaseline(root);
+    expect(baseline).toBeDefined();
+    const newText = Array.from({ length: 900 }, (_, i) => `after ${i}\n`).join("");
+    fs.writeFileSync(file, newText);
+    // New and pre-existing untracked files may have been staged by click time.
+    if (kind !== "tracked") await git(root, "add", "--", name);
+    const index = fs.readFileSync(path.join(root, ".git", "index"));
+    const refs = await git(root, "show-ref");
+    const { io, calls } = observedGit();
+    expect(await readGitTurnFileBefore(root, name, baseline!, { io })).toEqual({ ok: true, text: oldText });
+    expect(fs.readFileSync(file, "utf8")).toBe(newText);
+    expect(fs.readFileSync(path.join(root, ".git", "index"))).toEqual(index);
+    expect(await git(root, "show-ref")).toBe(refs);
+    expect(calls.map(args => args.slice(2))).toEqual(kind === "untracked"
+      ? [["cat-file", "blob", baseline!.untracked!.get(name)!]]
+      : [["--literal-pathspecs", "ls-tree", "-z", "--full-tree", baseline!.sha, "--", name],
+        ...(kind === "tracked" ? [["show", `${baseline!.sha}:${name}`]] : [])]);
+  });
+
+  it("uses literal tree paths and object names even when brackets match another file", async () => {
+    const root = await makeRepo("turn-editor-literal");
+    for (const name of ["a[1].txt", "a1.txt", "a2.txt"]) fs.writeFileSync(path.join(root, name), name + "\n");
+    await git(root, "add", "-A");
+    await git(root, "commit", "-m", "literal filenames");
+    const baseline = await captureGitTurnBaseline(root);
+    expect(await readGitTurnFileBefore(root, "a[1].txt", baseline!)).toEqual({ ok: true, text: "a[1].txt\n" });
+    expect(await readGitTurnFileBefore(root, "a[2].txt", baseline!)).toEqual({ ok: true, text: "" });
+    expect(await readGitTurnFileBefore(root, "new.txt", { sha: "f".repeat(40) }))
+      .toMatchObject({ ok: false, reason: expect.any(String) });
+  });
+
+  it("captures pre-existing staged and unstaged edits without changing the index, files or stash ref", async () => {
+    const root = await makeRepo("turn-baseline");
+    const file = path.join(root, "README.md");
+    fs.writeFileSync(file, "pre-turn staged\n");
+    await git(root, "add", "README.md");
+    fs.appendFileSync(file, "pre-turn unstaged\n");
+    const indexBefore = await git(root, "ls-files", "--stage");
+    const statusBefore = await git(root, "status", "--porcelain");
+    const stashesBefore = await git(root, "stash", "list");
+    const baseline = await captureGitTurnBaseline(root);
+    expect(baseline?.sha).toMatch(/^[a-f0-9]{40,64}$/);
+    expect(await git(root, "ls-files", "--stage")).toBe(indexBefore);
+    expect(await git(root, "status", "--porcelain")).toBe(statusBefore);
+    expect(await git(root, "stash", "list")).toBe(stashesBefore);
+    expect(fs.readFileSync(file, "utf8")).toBe("pre-turn staged\npre-turn unstaged\n");
+    fs.appendFileSync(file, "agent first\n");
+    fs.appendFileSync(file, "user mid-turn\n");
+    fs.appendFileSync(file, "agent last\n");
+    const diff = await readGitFileDiff(root, "README.md", { baseline: baseline?.sha });
+    expect(diff.ok).toBe(true);
+    if (diff.ok) {
+      expect(diff.patch).toContain("+agent first");
+      expect(diff.patch).toContain("+user mid-turn");
+      expect(diff.patch).toContain("+agent last");
+      expect(diff.patch).not.toContain("+pre-turn");
+      expect(diff.patch).not.toContain("-hello");
+    }
+  });
+
+  it("captures clean HEAD and diffs new untracked files and tracked deletions", async () => {
+    const root = await makeRepo("turn-clean");
+    const baseline = await captureGitTurnBaseline(root);
+    expect(baseline?.sha).toBe((await git(root, "rev-parse", "HEAD")).trim());
+    fs.writeFileSync(path.join(root, "new.txt"), "created\nthis\nturn\n");
+    const added = await readGitFileDiff(root, "new.txt", { baseline: baseline?.sha, untracked: true });
+    expect(added.ok).toBe(true);
+    if (added.ok) expect(addedLines(added.patch)).toEqual(["created", "this", "turn"]);
+    fs.unlinkSync(path.join(root, "README.md"));
+    const deleted = await readGitFileDiff(root, "README.md", { baseline: baseline?.sha });
+    expect(deleted.ok && deleted.patch).toContain("-hello");
+  });
+
+  const beforeTurn = Array.from({ length: 9 }, (_, i) => `before ${i + 1}\n`).join("");
+  const duringTurn = "added one\nadded two\nadded three\n";
+  const addedLines = (patch: string) => patch.split(/\r?\n/).filter(line => line.startsWith("+") && !line.startsWith("+++"))
+    .map(line => line.slice(1));
+  // Observe real invocations, rather than teaching fake git what it should do.
+  function observedGit() {
+    const calls: string[][] = [];
+    const io: GitIo = { execFile: ((file: string, args: string[], options: any, cb: any) => {
+      calls.push(args);
+      return execFile(file, args, options, cb);
+    }) as typeof execFile };
+    return { io, calls };
+  }
+
+  it.each([false, true])("counts only this turn's three additions to a pre-existing untracked file (staged=%s)", async staged => {
+    const root = await makeRepo(`turn-preexisting-${staged}`);
+    const file = path.join(root, "b.md");
+    fs.writeFileSync(file, beforeTurn);
+    const indexBefore = fs.readFileSync(path.join(root, ".git", "index"));
+    const refsBefore = await git(root, "show-ref");
+    const baseline = await captureGitTurnBaseline(root);
+    expect(baseline?.untracked?.get("b.md")).toMatch(/^[a-f0-9]{40,64}$/);
+    expect(fs.readFileSync(path.join(root, ".git", "index"))).toEqual(indexBefore);
+    expect(await git(root, "show-ref")).toBe(refsBefore);
+    fs.appendFileSync(file, duringTurn);
+    if (staged) await git(root, "add", "--", "b.md");
+    const status = await readGitStatus(root);
+    if (!status.ok) throw new Error(status.reason);
+    const entry = status.snapshot.files.find(file => file.path === "b.md");
+    expect(entry?.status).toBe(staged ? "A" : "?");
+    const indexAtClick = fs.readFileSync(path.join(root, ".git", "index"));
+    const diff = await readGitFileDiff(root, "b.md", {
+      baseline: baseline?.sha, baselineBlob: baseline?.untracked?.get("b.md"), untracked: entry?.status === "?",
+    });
+    expect(diff.ok).toBe(true);
+    if (!diff.ok) throw new Error(diff.reason);
+    expect(addedLines(diff.patch)).toHaveLength(3);
+    expect(addedLines(diff.patch)).toEqual(["added one", "added two", "added three"]);
+    expect(fs.readFileSync(path.join(root, ".git", "index"))).toEqual(indexAtClick);
+    expect(await git(root, "show-ref")).toBe(refsBefore);
+  });
+
+  it("never hashes ignored build output", async () => {
+    const root = await makeRepo("turn-ignored");
+    fs.writeFileSync(path.join(root, ".gitignore"), "build/\n");
+    await git(root, "add", "--", ".gitignore");
+    await git(root, "commit", "-m", "ignore build output");
+    fs.mkdirSync(path.join(root, "build"));
+    fs.writeFileSync(path.join(root, "build", "output.bin"), Buffer.alloc(GIT_BASELINE_UNTRACKED_MAX_FILE_BYTES + 1));
+    const { io, calls } = observedGit();
+    const baseline = await captureGitTurnBaseline(root, { io });
+    expect(baseline?.sha).toBeTruthy();
+    expect(baseline?.untracked?.has("build/output.bin") ?? false).toBe(false);
+    expect(calls.some(args => args.includes("hash-object"))).toBe(false);
+    // Ignored output must not consume the byte budget for a real candidate.
+    fs.writeFileSync(path.join(root, "b.md"), beforeTurn);
+    const withFile = await captureGitTurnBaseline(root);
+    expect([...withFile!.untracked!.keys()]).toEqual(["b.md"]);
+  });
+
+  it("omits the whole map above the path-count cap and keeps the previous diff behaviour", async () => {
+    const root = await makeRepo("turn-cap-path-count");
+    fs.writeFileSync(path.join(root, "b.md"), beforeTurn);
+    for (let i = 0; i < GIT_BASELINE_UNTRACKED_MAX_PATHS; i++) fs.writeFileSync(path.join(root, `f${i}.txt`), "x\n");
+    const { io, calls } = observedGit();
+    const baseline = await captureGitTurnBaseline(root, { io });
+    expect(baseline?.sha).toBeTruthy();
+    expect(baseline?.untracked?.size ?? 0).toBe(0);
+    expect(calls.some(args => args.includes("hash-object"))).toBe(false);
+    fs.appendFileSync(path.join(root, "b.md"), duringTurn);
+    for (const staged of [false, true]) {
+      if (staged) await git(root, "add", "--", "b.md");
+      const diff = await readGitFileDiff(root, "b.md", {
+        baseline: baseline?.sha, baselineBlob: baseline?.untracked?.get("b.md"), untracked: !staged,
+      });
+      if (!diff.ok) throw new Error(diff.reason);
+      expect(addedLines(diff.patch)).toHaveLength(12);
+    }
+  });
+
+  it("skips only the oversized file, so its neighbours still get a real turn diff", async () => {
+    // Why the per-file cap is a `continue` and not a bail: one big untracked
+    // artifact sitting beside a file the turn edited must not cost that file
+    // its diff. Dropping the map would hand every untracked path in the turn
+    // the whole-file diff #168 is about.
+    const root = await makeRepo("turn-cap-file-bytes");
+    fs.writeFileSync(path.join(root, "b.md"), beforeTurn);
+    fs.writeFileSync(path.join(root, "z-big.bin"), Buffer.alloc(GIT_BASELINE_UNTRACKED_MAX_FILE_BYTES + 1));
+    const baseline = await captureGitTurnBaseline(root);
+    expect([...baseline!.untracked!.keys()]).toEqual(["b.md"]);
+
+    fs.appendFileSync(path.join(root, "b.md"), duringTurn);
+    const diff = await readGitFileDiff(root, "b.md", { baselineBlob: baseline!.untracked!.get("b.md") });
+    if (!diff.ok) throw new Error(diff.reason);
+    expect(addedLines(diff.patch)).toHaveLength(3);
+
+    // The skipped file falls through to the old whole-file path, as before.
+    const big = await readGitFileDiff(root, "z-big.bin", { baseline: baseline!.sha, untracked: true });
+    expect(big.ok).toBe(true);
+  });
+
+  it("hashes literal filenames and pairs batch output in input order", async () => {
+    const root = await makeRepo("turn-untracked-literal");
+    const names = ["a[1].txt", "a1.txt", "-option.txt", "space é.txt"];
+    if (process.platform !== "win32") names.push('quote"slash\\line\n.txt');
+    for (const name of names) fs.writeFileSync(path.join(root, name), name + "\nbefore\n");
+    const { io, calls } = observedGit();
+    const baseline = await captureGitTurnBaseline(root, { io });
+    expect(baseline?.untracked?.size).toBe(names.length);
+    expect(calls.filter(args => args.includes("hash-object"))).toHaveLength(1);
+    for (const name of names) {
+      expect(await git(root, "cat-file", "blob", baseline!.untracked!.get(name)!)).toBe(name + "\nbefore\n");
+      fs.appendFileSync(path.join(root, name), "chosen file\n");
+      const diff = await readGitFileDiff(root, name, { baselineBlob: baseline!.untracked!.get(name) });
+      if (!diff.ok) throw new Error(diff.reason);
+      expect(addedLines(diff.patch)).toEqual(["chosen file"]);
+    }
+  });
+
+  it("returns an empty patch for an unchanged blob and an honest failure after deletion", async () => {
+    const root = await makeRepo("turn-untracked-gone");
+    fs.writeFileSync(path.join(root, "b.md"), beforeTurn);
+    const baseline = await captureGitTurnBaseline(root);
+    const options = { baselineBlob: baseline!.untracked!.get("b.md") };
+    expect(await readGitFileDiff(root, "b.md", options)).toMatchObject({ ok: true, patch: "", truncated: false });
+    fs.unlinkSync(path.join(root, "b.md"));
+    expect(await readGitFileDiff(root, "b.md", options)).toMatchObject({ ok: false, reason: expect.any(String) });
+  });
+
+  it("has no turn baseline in an unborn repository or a plain folder", async () => {
+    const root = await makeRepo("turn-unborn", { empty: true });
+    expect(await captureGitTurnBaseline(root)).toBeUndefined();
+    const plain = path.join(tmpRoot, "plain");
+    fs.mkdirSync(plain);
+    expect(await captureGitTurnBaseline(plain)).toBeUndefined();
+  });
+
+  it("a pathspec-shaped filename selects only that file's turn diff", async () => {
+    const root = await makeRepo("turn-literal");
+    for (const name of ["a[1].txt", "a1.txt"]) fs.writeFileSync(path.join(root, name), "before\n");
+    await git(root, "add", "-A");
+    await git(root, "commit", "-m", "files");
+    const baseline = await captureGitTurnBaseline(root);
+    fs.writeFileSync(path.join(root, "a[1].txt"), "chosen file\n");
+    fs.writeFileSync(path.join(root, "a1.txt"), "other file\n");
+    const diff = await readGitFileDiff(root, "a[1].txt", { baseline: baseline?.sha });
+    expect(diff.ok && diff.patch).toContain("+chosen file");
+    expect(diff.ok && diff.patch).not.toContain("other file");
+  });
   it("expands a wholly untracked directory into diffable files", async () => {
     const root = await makeRepo("new-directory");
     fs.mkdirSync(path.join(root, "docs", "nested"), { recursive: true });

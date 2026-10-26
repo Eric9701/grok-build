@@ -88,6 +88,7 @@ describe("remote-policy classification tables", () => {
     expect(INBOUND_DISPOSITION.selectRepo).toBe("view");
     expect(INBOUND_DISPOSITION.toggleRepoPin).toBe("full");
     expect(INBOUND_DISPOSITION.setRepoColor).toBe("full");
+    expect(INBOUND_DISPOSITION.setRepoIcon).toBe("full");
     // native pickers/editors/mic act on the LOCAL VS Code — never remote-drivable
     expect(INBOUND_DISPOSITION.openFile).toBe("host-local");
     expect(INBOUND_DISPOSITION.showInFolder).toBe("host-local");
@@ -171,6 +172,7 @@ describe("remote repo target gate", () => {
     expect(allowRemoteRepoTarget({ type: "selectRepo", cwd: "/work/a" }, discovered)).toBe(true);
     expect(allowRemoteRepoTarget({ type: "toggleRepoPin", cwd: "/work/b", pinned: true }, discovered)).toBe(true);
     expect(allowRemoteRepoTarget({ type: "setRepoColor", cwd: "/work/a", color: "blue" }, discovered)).toBe(true);
+    expect(allowRemoteRepoTarget({ type: "setRepoIcon", cwd: "/work/a", icon: "rocket" }, discovered)).toBe(true);
     expect(allowRemoteRepoTarget({ type: "resumeSession", id: "s", cwd: "/work/a" }, discovered)).toBe(true);
     expect(allowRemoteRepoTarget({ type: "clearAllSessions", cwd: "/work/a" }, discovered)).toBe(true);
     // The rail previews a repo without selecting it — same catalog gate, so it
@@ -211,8 +213,12 @@ describe("remote repo target gate", () => {
     ).toBe(false);
     expect(allowRemoteRepoTarget({ type: "selectRepo", cwd: "/etc" }, discovered)).toBe(false);
     expect(allowRemoteRepoTarget({ type: "toggleRepoPin", cwd: "/etc", pinned: true }, discovered)).toBe(false);
-    // A colour write that names an arbitrary cwd is the same hole as archive/pin.
+    // A colour or mark write that names an arbitrary cwd is the same hole as
+    // archive/pin. Both are in the switch for that reason: the default branch
+    // returns true, so a type that names a cwd and is NOT listed here is a
+    // remote-writable path the host never published.
     expect(allowRemoteRepoTarget({ type: "setRepoColor", cwd: "/etc", color: "teal" }, discovered)).toBe(false);
+    expect(allowRemoteRepoTarget({ type: "setRepoIcon", cwd: "/etc", icon: "rocket" }, discovered)).toBe(false);
     expect(allowRemoteRepoTarget({ type: "resumeSession", id: "s", cwd: "/etc" }, discovered)).toBe(false);
     expect(allowRemoteRepoTarget({ type: "clearAllSessions", cwd: "/etc" }, discovered)).toBe(false);
   });
@@ -1481,7 +1487,7 @@ describe("a cloud environment is its own desk", () => {
     // promotion protected nothing and removed the paste path from a phone
     // driving a desk.
     expect([...promoted].sort()).toEqual([
-      "githubSignOut", "logout", "refreshProviders", "setTelemetryEnabled", "setThumbsFeedback",
+      "cloudHostUpdate", "githubSignOut", "logout", "refreshProviders", "setTelemetryEnabled", "setThumbsFeedback",
     ]);
   });
 });
@@ -1493,5 +1499,15 @@ describe("the diff-card preference belongs to each device", () => {
     expect(REMOTE_REQUIRES_BOUND_SESSION.setExpandDiffCard).toBe(false);
     expect(OUTBOUND_DISPOSITION.expandDiffCard).toBe("host-local");
     expect(transformHostMsgForRemote({ type: "expandDiffCard", value: true })).toBeNull();
+  });
+});
+
+describe("the live-workflow pin preference belongs to each device", () => {
+  it("keeps both directions host-local and needs no remote session binding", () => {
+    expect(INBOUND_DISPOSITION.setPinLiveWorkflows).toBe("host-local");
+    expect(REMOTE_REQUIRES_BOUND_SESSION.setPinLiveWorkflows).toBe(false);
+    expect(OUTBOUND_DISPOSITION.pinLiveWorkflows).toBe("host-local");
+    expect(OUTBOUND_PROJECT_AUTH.pinLiveWorkflows).toBe("none");
+    expect(transformHostMsgForRemote({ type: "pinLiveWorkflows", value: true })).toBeNull();
   });
 });

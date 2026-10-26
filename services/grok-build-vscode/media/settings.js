@@ -58,6 +58,14 @@
     codex: "M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z",
     // Four-point sparkle — distinct from the Atlas/Codex marks, currentColor.
     claude: "M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z",
+    // Meta's mark, from the same Lobe set as the three above -- Muse Code is
+    // Meta's agent, and a bare letter beside three real marks read as a
+    // placeholder because it was one. Its two loops are drawn with holes, so
+    // this is the mark that actually needs the evenodd rule; Lobe ships all
+    // four with it and the other three render the same either way.
+    muse: "M6.897 4c1.915 0 3.516.932 5.43 3.376l.282-.373c.19-.246.383-.484.58-.71l.313-.35C14.588 4.788 15.792 4 17.225 4c1.273 0 2.469.557 3.491 1.516l.218.213c1.73 1.765 2.917 4.71 3.053 8.026l.011.392.002.25c0 1.501-.28 2.759-.818 3.7l-.14.23-.108.153c-.301.42-.664.758-1.086 1.009l-.265.142-.087.04a3.493 3.493 0 01-.302.118 4.117 4.117 0 01-1.33.208c-.524 0-.996-.067-1.438-.215-.614-.204-1.163-.56-1.726-1.116l-.227-.235c-.753-.812-1.534-1.976-2.493-3.586l-1.43-2.41-.544-.895-1.766 3.13-.343.592C7.597 19.156 6.227 20 4.356 20c-1.21 0-2.205-.42-2.936-1.182l-.168-.184c-.484-.573-.837-1.311-1.043-2.189l-.067-.32a8.69 8.69 0 01-.136-1.288L0 14.468c.002-.745.06-1.49.174-2.23l.1-.573c.298-1.53.828-2.958 1.536-4.157l.209-.34c1.177-1.83 2.789-3.053 4.615-3.16L6.897 4zm-.033 2.615l-.201.01c-.83.083-1.606.673-2.252 1.577l-.138.199-.01.018c-.67 1.017-1.185 2.378-1.456 3.845l-.004.022a12.591 12.591 0 00-.207 2.254l.002.188c.004.18.017.36.04.54l.043.291c.092.503.257.908.486 1.208l.117.137c.303.323.698.492 1.17.492 1.1 0 1.796-.676 3.696-3.641l2.175-3.4.454-.701-.139-.198C9.11 7.3 8.084 6.616 6.864 6.616zm10.196-.552l-.176.007c-.635.048-1.223.359-1.82.933l-.196.198c-.439.462-.887 1.064-1.367 1.807l.266.398c.18.274.362.56.55.858l.293.475 1.396 2.335.695 1.114c.583.926 1.03 1.6 1.408 2.082l.213.262c.282.326.529.54.777.673l.102.05c.227.1.457.138.718.138.176.002.35-.023.518-.073.338-.104.61-.32.813-.637l.095-.163.077-.162c.194-.459.29-1.06.29-1.785l-.006-.449c-.08-2.871-.938-5.372-2.2-6.798l-.176-.189c-.67-.683-1.444-1.074-2.27-1.074z",
+    // Google Antigravity's mark, from the same Lobe set (1.95.1).
+    agy: "M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z",
   };
 
   /**
@@ -80,7 +88,7 @@
   function providerLogoMarkup(id) {
     const path = PROVIDER_LOGO_PATHS[id];
     if (!path) return "";
-    return `<svg class="provider-logo" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="${path}"></path></svg>`;
+    return `<svg class="provider-logo" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="${path}"></path></svg>`;
   }
 
   const GITHUB_REPO_URL = "https://github.com/phuryn/grok-build-vscode";
@@ -120,6 +128,15 @@
     return String(text ?? "")
       .replace(/SuperGrok/g, "\0SUPERGROK\0")
       .replace(/Grok-Build-Desktop/g, "\0GROKBUILDDESKTOP\0")
+      .replace(/afkpilot\.com/gi, "\0AFKPILOTCOM\0")
+      .replace(/\bAFK Pilot \(previously Grok Build\)/gi, "Atlas")
+      .replace(/\bAFK Pilot account\b/gi, "\0AFKPILOT\0 account")
+      .replace(/\bAFK Pilot device\b/gi, "\0AFKPILOT\0 device")
+      .replace(/\bto AFK Pilot\b/gi, "to \0AFKPILOT\0")
+      .replace(/\bHow AFK Pilot works\b/gi, "How \0AFKPILOT\0 works")
+      .replace(/\bconnected to AFK Pilot\b/gi, "connected to \0AFKPILOT\0")
+      .replace(/\bAFK Pilot keeps\b/gi, "\0AFKPILOT\0 keeps")
+      .replace(/\bAFK Pilot\b/gi, "Atlas")
       .replace(/\bGrok Build Desktop\b/gi, "Atlas Desktop")
       .replace(/\bGrok Build CLI\b/gi, "Atlas CLI")
       .replace(/\bGrok Build\b/gi, "Atlas")
@@ -131,7 +148,9 @@
       .replace(/\bA Atlas\b/g, "An Atlas")
       .replace(/\ba Atlas\b/g, "an Atlas")
       .replace(/\0GROKBUILDDESKTOP\0/g, "Grok-Build-Desktop")
-      .replace(/\0SUPERGROK\0/g, "SuperGrok");
+      .replace(/\0SUPERGROK\0/g, "SuperGrok")
+      .replace(/\0AFKPILOT\0/g, "AFK Pilot")
+      .replace(/\0AFKPILOTCOM\0/g, "afkpilot.com");
   }
   const ICON_EXTERNAL_LINK =
     '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
@@ -163,6 +182,11 @@
   const TELEMETRY_COPY =
     "Anonymous usage stats only: a single session-start event with an anonymous install id — never prompts, code, file paths or names, and no identity. The IP address is discarded, never stored.";
 
+  // Says what the OFF state does as well as the ON state: the whole point of
+  // the row is that closing the window no longer means quitting, and a person
+  // looking for "why didn't it quit" needs to recognise this row as the answer.
+  const TRAY_COPY = "Closing the window leaves the app running in the tray, so your agent "
+    + "and any linked phone keep working. Turn this off to quit on close.";
   const THUMBS_COPY =
     "Show thumbs on a finished Atlas turn so you can send a rating to SpaceXAI. Off by default. On, thumbs appear only when this Atlas session supports feedback — never on Codex or Claude.";
 
@@ -351,7 +375,7 @@
       return flow.message;
     }
     const provider = providerOf(s, id);
-    const base = providerDescription(provider);
+    const base = providerDescription(provider, true);
     // On a cloud machine the three agents are NOT equal offers — Grok is the
     // native one (owner, 2026-08-31).
     if (id === "grok" && hostIsCloud(env) && !(provider && provider.connected)) {
@@ -376,13 +400,37 @@
     const connected = provider.connected === true;
     const needsLogin = connected && provider.needsLogin === true;
     if (needsLogin) return "Sign in again";
-    return connected ? "Sign out" : "Connect";
+    if (!connected) return "Connect";
+    // The host says what its button does (#203). A cloud environment, and any
+    // host older than the flag, clears the CLI's credentials — and keeps the
+    // word that says so.
+    return provider.keepsCliSignIn === true ? "Disconnect" : "Sign out";
   }
 
-  function providerDescription(provider) {
+  const PROVIDER_CLI_NAMES = { grok: "Grok", codex: "Codex", claude: "Claude Code", muse: "Muse" };
+
+  function agyAdvertised(s) {
+    return ((s && s.providers) || []).some((p) => p && p.id === "agy");
+  }
+
+  /** `remote`: a remote row has no Disconnect button to explain (desk hosts
+   *  keep `logout` host-local), so it keeps the plain sentence. */
+  function providerDescription(provider, remote) {
     const connected = provider.connected === true;
     const needsLogin = connected && provider.needsLogin === true;
     if (needsLogin) return "This account is connected but needs to sign in again before it can be used.";
+    if (connected && !needsLogin && provider.id === "agy") {
+      const how = provider.signInMethod === "api-key" ? "a Gemini API key" : "your Google account";
+      if (remote) return "Connected with " + how + " on the computer running this workspace.";
+      return "Connected with " + how + "."
+        + (provider.keepsCliSignIn === true
+          ? " Disconnect turns it off here and keeps the " + (provider.signInMethod === "api-key" ? "saved key" : "Google sign-in") + "."
+          : "");
+    }
+    if (connected && provider.keepsCliSignIn === true && !remote) {
+      const cli = PROVIDER_CLI_NAMES[provider.id] || "agent";
+      return "This account is connected on this machine. Disconnect turns it off here; the " + cli + " CLI stays signed in.";
+    }
     if (connected) return "This account is connected on this machine.";
     return "Connect this account to use it for new conversations.";
   }
@@ -403,6 +451,10 @@
 
   function claudeProvider(snapshot) {
     return ((snapshot && snapshot.providers) || []).find((p) => p && p.id === "claude" && p.connected);
+  }
+
+  function museProvider(snapshot) {
+    return ((snapshot && snapshot.providers) || []).find((p) => p && p.id === "muse" && p.connected);
   }
 
   function legacyProviders(env) {
@@ -583,7 +635,7 @@
       id: "showThinking",
       category: "general",
       title: "Show thinking traces",
-      description: "Show Atlas's reasoning traces in chat, including on already-loaded sessions.",
+      description: "Show the agent's reasoning traces in chat, including on already-loaded sessions.",
       kind: "toggle",
       defaultValue: false,
       visible: (s) => purposeOf(s) === "coding",
@@ -686,6 +738,22 @@
       visible: (s, env) => !env || !env.isRemote || hostIsCloud(env),
       get: (s) => !!(s && s.thumbsFeedback),
       message: (value) => ({ type: "setThumbsFeedback", value }),
+    },
+    {
+      id: "desktopTray",
+      category: "general",
+      title: "Keep running in the tray",
+      description: TRAY_COPY,
+      kind: "toggle",
+      defaultValue: true,
+      // Keyed off traySupported, not isDesktop: macOS has no tray because a
+      // tray is not its answer, a cloud machine has no tray, and an older host
+      // says nothing at all -- in each case the switch would have nothing
+      // behind it. `!env.isRemote` because the tray belongs to the machine the
+      // window is on, and a phone has no window there to keep.
+      visible: (s, env) => !!(s && s.traySupported === true && env && !env.isRemote),
+      get: (s) => !s || s.desktopTray !== false,
+      message: (value) => ({ type: "setDesktopTray", value }),
     },
     {
       id: "thumbsFeedbackRemote",
@@ -1007,6 +1075,77 @@
       },
     },
     {
+      id: "providerMuse", category: "providers", logo: "muse", provider: "muse",
+      title: "Muse Code", vendor: "Meta", description: "", kind: "action", keepOpen: true,
+      visible: (s, env) => !!(env && !env.isRemote && env.providersKnown
+        && (s.providers || []).some(p => p.id === "muse")),
+      enabled: (s) => !providerOf(s, "muse").unavailableReason,
+      describe: (s) => providerOf(s, "muse").unavailableReason || providerDescription(providerOf(s, "muse")),
+      actionLabel: (s) => providerAction(providerOf(s, "muse")),
+      message: (s) => ({ type: providerConnectedNow(s, "muse") ? "logout" : "runGrokLogin", provider: "muse" }),
+    },
+    {
+      id: "providerMuseStatus", category: "providers", logo: "muse", provider: "muse",
+      title: "Muse Code", vendor: "Meta", description: "", kind: "status",
+      visible: (s, env) => !!(env && env.isRemote && env.providersKnown
+        && (s.providers || []).some(p => p.id === "muse")
+        && !remoteProviderActionable(s, env, "muse")),
+      describe: (s, env) => providerOf(s, "muse").unavailableReason || providerRemoteDescribe(s, env, "muse"),
+    },
+    {
+      id: "providerMuseRemote", category: "providers", logo: "muse", provider: "muse",
+      title: "Muse Code", vendor: "Meta", description: "", kind: "action", keepOpen: true,
+      visible: (s, env) => !!(env && env.isRemote && env.providersKnown
+        && (s.providers || []).some(p => p.id === "muse")
+        && remoteProviderActionable(s, env, "muse")),
+      enabled: (s) => !providerOf(s, "muse").unavailableReason,
+      local: (s) => !providerConnectedNow(s, "muse") ? "connectWizard:muse" : "",
+      describe: (s, env) => providerOf(s, "muse").unavailableReason || providerRemoteDescribe(s, env, "muse"),
+      actionLabel: (s) => providerAction(providerOf(s, "muse")),
+      message: (s) => ({ type: providerConnectedNow(s, "muse") ? "logout" : "runGrokLogin", provider: "muse" }),
+    },
+    {
+      id: "museShellSandbox", category: "providers", group: "museSettings", title: "Shell sandbox",
+      description: "For new Muse Code conversations in Prompt unmatched. On request always uses the sandbox; Allow all disables it. On request is unavailable in a running process without the sandbox.", kind: "toggle", hostLocal: true,
+      visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
+      defaultValue: true, get: (s) => s.museSettings.shellSandbox,
+      message: (value) => ({ type: "setMuseSetting", key: "museShellSandbox", value }),
+    },
+    {
+      id: "museSandboxNetwork", category: "providers", group: "museSettings", title: "Sandbox network",
+      description: "Sandbox network access for new Muse Code conversations in Prompt unmatched or On request.", kind: "select", hostLocal: true,
+      visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
+      defaultValue: "proxy-only", get: (s) => s.museSettings.sandboxNetwork,
+      options: [{ value: "proxy-only", label: "Proxy only" }, { value: "restricted", label: "Restricted" }, { value: "enabled", label: "Enabled" }],
+      message: (value) => ({ type: "setMuseSetting", key: "museSandboxNetwork", value }),
+    },
+    {
+      id: "museTrustWorkspaces", category: "providers", group: "museSettings", title: "Trust workspaces",
+      description: "For new Muse Code conversations in Prompt unmatched or On request. Allow all always trusts the workspace. A trusted workspace also runs the repository's hooks.",
+      kind: "toggle", hostLocal: true,
+      visible: (s) => !!s.museSettings && (s.providers || []).some(p => p.id === "muse"),
+      defaultValue: false, get: (s) => s.museSettings.trustWorkspaces,
+      message: (value) => ({ type: "setMuseSetting", key: "museTrustWorkspaces", value }),
+    },
+    // Antigravity is desk-only: Google's sign-in opens a browser on the
+    // machine running it. A remote gets a status row and never a Connect.
+    {
+      id: "providerAgy", category: "providers", logo: "agy", provider: "agy",
+      title: "Antigravity", vendor: "Google", description: "", kind: "action", keepOpen: true,
+      visible: (s, env) => !!(env && !env.isRemote && env.providersKnown && agyAdvertised(s)),
+      describe: (s) => providerDescription(providerOf(s, "agy")),
+      actionLabel: (s) => providerAction(providerOf(s, "agy")),
+      message: (s) => ({ type: providerConnectedNow(s, "agy") ? "logout" : "runGrokLogin", provider: "agy" }),
+    },
+    {
+      id: "providerAgyStatus", category: "providers", logo: "agy", provider: "agy",
+      title: "Antigravity", vendor: "Google", description: "", kind: "status",
+      visible: (s, env) => !!(env && env.isRemote && env.providersKnown && agyAdvertised(s)),
+      describe: (s) => providerConnectedNow(s, "agy")
+        ? providerDescription(providerOf(s, "agy"), true)
+        : "Connect Antigravity on the computer running this workspace.",
+    },
+    {
       id: "githubConnection",
       category: "providers",
       icon: "github",
@@ -1066,14 +1205,25 @@
       visible: (s, env) => !!(env && env.hostCaps && env.hostCaps.editProviderConfigFiles && env.hostCaps.editProjectFiles),
     },
     {
-      id: "continueRemotely",
+      id: "remoteMachineStatus",
       category: "account",
-      title: "Continue remotely",
-      description: "Open AFK Pilot so you can keep this session going from another device.",
+      title: "This machine",
+      kind: "status",
+      describe: (s, env) => env.remoteLinked === null ? "Checking…" : !env.remoteLinked ? "Not linked"
+        : env.remoteViewerCount > 0 ? "Linked · phone connected" : "Linked",
+      visible: (s, env) => !!(env && !env.isRemote),
+    },
+    {
+      id: "continueOnPhone",
+      category: "account",
+      title: "Continue on phone",
+      description: "Show a code for the conversation open in chat.",
       kind: "action",
-      actionLabel: "Open",
+      actionLabel: "Show code",
       visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === true),
-      message: () => ({ type: "openRemotePortal", withHint: true }),
+      message: (s, env) => env.remoteHandoffSupported
+        ? { type: "showRemoteHandoff", source: "settings" }
+        : { type: "openRemotePortal", withHint: true, source: "settings" },
     },
     {
       id: "yourAccount",
@@ -1083,7 +1233,7 @@
       kind: "action",
       actionLabel: "Open",
       visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === true),
-      message: () => ({ type: "openRemotePortal" }),
+      message: () => ({ type: "openRemotePortal", source: "settings" }),
     },
     {
       id: "unlinkDevice",
@@ -1103,7 +1253,7 @@
       kind: "action",
       actionLabel: "Link this device",
       visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === false),
-      message: () => ({ type: "remoteSignIn" }),
+      message: () => ({ type: "remoteSignIn", source: "settings" }),
     },
     {
       id: "remoteHowItWorks",
@@ -1112,8 +1262,11 @@
       description: "AFK Pilot keeps this machine awake and lets you continue from a phone without storing prompts or code.",
       kind: "action",
       actionLabel: "Learn more",
-      visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === false && !env.standalone),
-      local: "explainRemote",
+      visible: (s, env) => !!(env && !env.isRemote && env.remoteLinked === false),
+      local: (s, env) => env.standalone ? null : "explainRemote",
+      message: (s, env) => !env.standalone ? null : env.remoteHandoffSupported
+        ? { type: "showRemoteHandoff", source: "settings", explain: true }
+        : { type: "openRemotePortal", source: "settings" },
     },
     {
       id: "remoteAccountStatus",
@@ -1198,6 +1351,20 @@
       message: () => ({ type: "toggleDevTools" }),
     },
     {
+      id: "experimentalAntigravity",
+      category: "advanced",
+      title: "Experimental: Antigravity",
+      description: "Offer Google's Antigravity as an agent on this computer. Connect it under Providers.",
+      kind: "toggle",
+      hostLocal: true,
+      defaultValue: false,
+      visible: (s, env) => !!(env && !env.isRemote && !hostIsCloud(env)),
+      // The host names Antigravity in providerState exactly when the setting is
+      // on (desk only), so that frame is the setting's state.
+      get: (s) => agyAdvertised(s),
+      message: (value) => ({ type: "setExperimentalAntigravity", value }),
+    },
+    {
       id: "openVsCodeSettings",
       category: "advanced",
       title: "Open VS Code settings",
@@ -1256,6 +1423,26 @@
       },
     },
     {
+      id: "aboutCloudHostUpdate",
+      category: "about",
+      title: "Cloud host update",
+      kind: "action",
+      actionLabel: "Update now",
+      visible: (s, env) => !!(env && env.isRemote && s.cloudHostUpdate &&
+        ["available", "failed"].includes(s.cloudHostUpdate.state) && s.cloudHostUpdate.installed && s.cloudHostUpdate.latest),
+      describe: (s) => s.cloudHostUpdateText,
+      message: () => ({ type: "cloudHostUpdate" }),
+    },
+    {
+      id: "aboutCloudHostUpdateStatus",
+      category: "about",
+      title: "Cloud host update",
+      kind: "status",
+      visible: (s, env) => !!(env && env.isRemote && s.cloudHostUpdate &&
+        !(["available", "failed"].includes(s.cloudHostUpdate.state) && s.cloudHostUpdate.installed && s.cloudHostUpdate.latest)),
+      describe: (s) => s.cloudHostUpdateText,
+    },
+    {
       id: "aboutHostProduct",
       category: "about",
       title: (s) => (s && s.hostKind === "desktop") ? "Atlas Desktop" : "Atlas extension",
@@ -1307,6 +1494,18 @@
       },
     },
     ...cliUpdateRows("claude"),
+    {
+      id: "aboutMuseCli",
+      category: "about",
+      title: "Muse Code CLI",
+      kind: "value",
+      // Older hosts advertise Muse without its CLI version.
+      visible: (s) => !!(museProvider(s) && museProvider(s).cliVersion),
+      get: (s) => {
+        const p = museProvider(s);
+        return versionLabel(p && p.cliVersion);
+      },
+    },
     // Deliberately absent: "Codex ACP adapter" and "Claude ACP adapter".
     // The two adapters are pinned dependencies of THIS
     // extension (@agentclientprotocol/codex-acp, @agentclientprotocol/
@@ -1541,16 +1740,23 @@
     return String(value);
   }
 
-  function rowMessage(row, value, snapshot) {
+  function rowMessage(row, value, snapshot, env = {}) {
     if (typeof row.message !== "function") return null;
-    // Action rows that need the snapshot receive it as the sole argument.
-    if (row.kind === "action") return row.message(snapshot);
+    // Actions may depend on the snapshot and host capabilities.
+    if (row.kind === "action") return row.message(snapshot, env);
     return row.message(value);
   }
 
   function applyValue(row, value, snapshot) {
     const next = { ...snapshot };
     switch (row.id) {
+      case "museShellSandbox":
+      case "museSandboxNetwork":
+      case "museTrustWorkspaces": {
+        const key = { museShellSandbox: "shellSandbox", museSandboxNetwork: "sandboxNetwork", museTrustWorkspaces: "trustWorkspaces" }[row.id];
+        next.museSettings = { ...snapshot.museSettings, [key]: value };
+        break;
+      }
       case "appPurpose":
         next.appPurpose = value === "coding" ? "coding" : "knowledge";
         break;
@@ -1597,6 +1803,9 @@
       case "thumbsFeedback":
         next.thumbsFeedback = !!value;
         break;
+      case "desktopTray":
+        next.desktopTray = !!value;
+        break;
       default:
         break;
     }
@@ -1634,6 +1843,10 @@
       voiceKeyterms: [],
       telemetryEnabled: true,
       thumbsFeedback: false,
+      // Defaults to NOT supported: an older host says nothing about a tray,
+      // and the row must stay hidden rather than appear and do nothing (#174).
+      traySupported: false,
+      desktopTray: true,
       expandDiffCard: false,
       promptNav: true,
       providers: [],
@@ -2282,7 +2495,7 @@
   }
   const NEW_ROUTINE = "__new__";
 
-  const PROVIDER_LABELS = { grok: "Atlas", codex: "Codex", claude: "Claude" };
+  const PROVIDER_LABELS = { grok: "Atlas", codex: "Codex", claude: "Claude", muse: "Muse Code", agy: "Antigravity" };
   function providerLabel(provider) {
     return PROVIDER_LABELS[provider] || provider;
   }
@@ -2305,7 +2518,7 @@
 
   function blankRoutineDraft(snapshot) {
     const projects = Array.isArray(snapshot.routineProjects) ? snapshot.routineProjects : [];
-    const models = Array.isArray(snapshot.routineModels) ? snapshot.routineModels : [];
+    const models = (Array.isArray(snapshot.routineModels) ? snapshot.routineModels : []).filter(m => m.provider !== "muse" || (snapshot.providers || []).some(p => p.id === "muse" && !p.unavailableReason));
     const project = projects[0];
     const pick = defaultModelFor(models, project && project.defaultProvider);
     return {
@@ -2417,7 +2630,7 @@
     const count = document.createElement("span");
     count.className = "settings-routine-count";
     const health = routine.health || { ran: 0, total: 0 };
-    count.textContent = health.total ? health.ran + "/" + health.total : "no runs yet";
+    count.textContent = health.total ? health.ran.toLocaleString("en-US") + "/" + health.total.toLocaleString("en-US") : "no runs yet";
     const wrap = document.createElement("span");
     wrap.className = "settings-routine-strip-wrap";
     wrap.append(strip, count);
@@ -2485,7 +2698,7 @@
     }
     pair.appendChild(labelledField("Project", project));
 
-    const models = Array.isArray(snapshot.routineModels) ? snapshot.routineModels : [];
+    const models = (Array.isArray(snapshot.routineModels) ? snapshot.routineModels : []).filter(m => m.provider !== "muse" || (snapshot.providers || []).some(p => p.id === "muse" && !p.unavailableReason));
     const model = document.createElement("select");
     model.className = "settings-routine-input";
     model.dataset.field = "model";
@@ -2594,7 +2807,7 @@
     const head = document.createElement("div");
     head.className = "settings-routine-runs-head";
     head.textContent = routine.runs.length
-      ? "Last " + routine.runs.length + (routine.runs.length === 1 ? " run" : " runs")
+      ? "Last " + routine.runs.length.toLocaleString("en-US") + (routine.runs.length === 1 ? " run" : " runs")
       : "No runs yet";
     wrap.appendChild(head);
     for (const run of routine.runs) {
@@ -2945,6 +3158,29 @@
     el.appendChild(form);
   }
 
+  /**
+   * Rows that belong to one provider sit in a collapsible group under it, so a
+   * setting like "Shell sandbox" is plainly that provider's. A native
+   * <details>, as for the provider config files: keyboard-operable, and the
+   * open state is announced. Collapsed by default.
+   */
+  const ROW_GROUPS = {
+    museSettings: { title: "Muse Code (Meta) settings" },
+  };
+
+  function renderRowGroup(id, open, onToggle) {
+    const el = document.createElement("details");
+    el.className = "settings-row-group";
+    el.dataset.group = id;
+    el.open = open;
+    el.ontoggle = () => onToggle(el.open);
+    const summary = document.createElement("summary");
+    summary.className = "settings-row-group-title";
+    summary.textContent = ROW_GROUPS[id].title;
+    el.appendChild(summary);
+    return el;
+  }
+
   function renderRow(row, snapshot, env, keyForm, githubTokenForm, githubCliStarted) {
     if (row.kind === "providerConfigs") {
       const el = document.createElement("details");
@@ -3017,9 +3253,9 @@
         const option = document.createElement("option");
         option.value = opt.value;
         option.textContent = opt.label;
-        if (opt.value === value) option.selected = true;
         select.appendChild(option);
       }
+      select.value = value;
       control.appendChild(select);
     } else if (row.kind === "range") {
       const wrap = document.createElement("div");
@@ -3152,6 +3388,8 @@
     let githubTokenForm = { open: false, value: "" };
     let githubCliStarted = false;
     let providerConfigsOpen = false;
+    /** Row groups the person opened, kept across repaints of this mount. */
+    const openRowGroups = new Set();
     let pendingRestore = null;
     let aboutChecked = false;
     let providersChecked = false;
@@ -3159,7 +3397,12 @@
     let routinesChecked = false;
     let lastPaintedCategory = "";
     let lastPaintedQuery = "";
-    const post = typeof opts.post === "function" ? opts.post : () => {};
+    const post = message => {
+      const mentionsMuse = value => value && typeof value === "object" && Object.entries(value).some(([key, child]) =>
+        key === "provider" && child === "muse" || mentionsMuse(child));
+      if (mentionsMuse(message) && !(snapshot.providers || []).some(p => p.id === "muse" && !p.unavailableReason)) return;
+      if (typeof opts.post === "function") opts.post(message);
+    };
     const apply = typeof opts.apply === "function" ? opts.apply : null;
     const onLocal = typeof opts.onLocal === "function" ? opts.onLocal : null;
     const onClose = typeof opts.onClose === "function" ? opts.onClose : null;
@@ -3300,15 +3543,28 @@
       return !env.isRemote || hostIsCloud(env);
     }
 
-    function requestProvidersRefresh() {
+    /** `credentials` decides whether the desk may prove the ACCOUNTS as well as
+     *  re-read what is installed. Proving one starts the agent's ACP adapter and
+     *  creates a session against the vendor — real traffic, for an account the
+     *  person may never have connected here (#171). Pass true only where a
+     *  person pressed something. */
+    function requestProvidersRefresh(credentials) {
       if (!canRefreshProviders()) return;
-      post({ type: "refreshProviders" });
+      post({ type: "refreshProviders", credentials: credentials === true });
     }
 
     /**
-     * Opening the page is itself the request. What the rows claim comes from a
-     * persisted flag and a cached CLI path, so arriving here without asking is
-     * the most common way to read something that stopped being true.
+     * Opening the page is itself the request — for what is INSTALLED. What the
+     * rows claim about the local machine comes from a cached CLI path, so
+     * arriving here without asking is the most common way to read something
+     * that stopped being true, and re-running the locators costs a spawn.
+     *
+     * It is NOT a request to contact anybody. Opening a settings page is not
+     * consent to start Claude Code and hold a session open against Anthropic,
+     * which is what this used to do for every installed agent, connected or not
+     * (#171). A lapsed account therefore keeps its row until Refresh or the
+     * row's own Check — the page can be a little stale about a sign-in that
+     * happened elsewhere, and that is the cheaper of the two wrongs.
      *
      * Latched like maybeCheckAbout: paint() runs on every repaint and every
      * host update, and this must fire once per visit, not once per frame.
@@ -3317,7 +3573,7 @@
       if (providersChecked || categoryId !== "providers" || query.trim()) return;
       if (!canRefreshProviders()) return;
       providersChecked = true;
-      requestProvidersRefresh();
+      requestProvidersRefresh(false);
     }
 
     function requestMcpRefresh() {
@@ -3351,7 +3607,7 @@
         if (input) input.focus();
         return;
       }
-      if (local && !row.message) {
+      if (local && (!row.message || local === "explainRemote")) {
         if (onClose && !opts.standalone) onClose();
         if (onLocal) onLocal(local);
         return;
@@ -3361,7 +3617,7 @@
         openExternalHref(row.href);
         return;
       }
-      const message = rowMessage(row, undefined, snapshot);
+      const message = rowMessage(row, undefined, snapshot, env);
       // Sign-out is the one with nothing else to show for it: a sign-in opens
       // the wizard, and this page sits behind that.
       let marked = false;
@@ -3542,7 +3798,8 @@
         refresh.textContent = checking ? "Checking…" : "Refresh";
         refresh.disabled = checking;
         if (checking) refresh.setAttribute("aria-busy", "true");
-        refresh.onclick = (e) => { e.stopPropagation(); requestProvidersRefresh(); };
+        // A person pressed it, so this is the one that may prove the accounts.
+        refresh.onclick = (e) => { e.stopPropagation(); requestProvidersRefresh(true); };
         headActions.appendChild(refresh);
       }
       if (!searching && page && page.id === "connectors") {
@@ -3623,6 +3880,7 @@
         }
       } else {
         let lastSection = "";
+        let group = null;
         for (const row of rows) {
           const section = connectorSection(row, env);
           if (section && section !== lastSection) {
@@ -3632,7 +3890,17 @@
             heading.textContent = section;
             body.appendChild(heading);
           }
-          body.appendChild(renderRow(row, snapshot, env, keyForm, githubTokenForm, githubCliStarted));
+          // Search lists rows flat (above), so a match is never hidden in a group.
+          const groupId = row.group && Object.hasOwn(ROW_GROUPS, row.group) ? row.group : "";
+          if (!groupId) group = null;
+          else if (!group || group.dataset.group !== groupId) {
+            group = renderRowGroup(groupId, openRowGroups.has(groupId), (open) => {
+              if (open) openRowGroups.add(groupId);
+              else openRowGroups.delete(groupId);
+            });
+            body.appendChild(group);
+          }
+          (group || body).appendChild(renderRow(row, snapshot, env, keyForm, githubTokenForm, githubCliStarted));
         }
         if (categoryId === "about") {
           const disclaimer = document.createElement("p");
@@ -3758,7 +4026,7 @@
             input.onchange = () => addTerm(input.value);
           }
         } else if (row.kind === "action") {
-          const btn = el.querySelector(".settings-action");
+          const btn = el.querySelector(".settings-action:not(.settings-provider-recheck)");
           if (!btn) return;
           if (btn.classList.contains("settings-github-token-submit")
             || btn.classList.contains("settings-github-token-cancel")) {
@@ -3775,6 +4043,7 @@
               return;
             }
             if (row.provider && !(env && env.isRemote)
+              && providerOf(snapshot, row.provider).connected
               && !providerConnectedNow(snapshot, row.provider)) {
               PROVIDER_TERMINAL.id = row.provider;
               runAction(row);
@@ -3874,7 +4143,10 @@
       body.querySelectorAll(".settings-github-flow-recheck").forEach((btn) => {
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
-          post({ type: "refreshProviders" });
+          // This asks "did my GitHub sign-in land?" — the host answers it from
+          // refreshGithubState, which runs either way. Starting Claude Code and
+          // Codex to answer a question about GitHub is #171 in miniature.
+          requestProvidersRefresh(false);
         });
       });
       body.querySelectorAll(".settings-provider-recheck").forEach((btn) => {
@@ -3955,7 +4227,7 @@
           // previous project's model across is rarely what was meant.
           if (input.dataset.field === "cwd" && ROUTINE_UI.draft) {
             const projects = Array.isArray(snapshot.routineProjects) ? snapshot.routineProjects : [];
-            const models = Array.isArray(snapshot.routineModels) ? snapshot.routineModels : [];
+            const models = (Array.isArray(snapshot.routineModels) ? snapshot.routineModels : []).filter(m => m.provider !== "muse" || (snapshot.providers || []).some(p => p.id === "muse" && !p.unavailableReason));
             const project = projects.find((x) => x.cwd === ROUTINE_UI.draft.cwd);
             const pick = defaultModelFor(models, project && project.defaultProvider);
             if (pick) {

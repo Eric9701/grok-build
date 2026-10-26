@@ -166,7 +166,7 @@ the already in-flight `session/prompt`, and the CLI performs the selected contin
 
 grok only keeps the *latest* `plan.md` on disk for a session. If the user went through two or three planning iterations, earlier plans would be lost.
 
-The extension therefore maintains its own per-session log in VS Code `globalState` (`grok.sessionMeta.<sessionId>.plans`):
+The extension therefore maintains its own per-session log in VS Code `globalState` (`atlas.sessionMeta.<sessionId>.plans`):
 
 ```ts
 interface PlanEntry {

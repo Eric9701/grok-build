@@ -1,7 +1,10 @@
+import { contextWindowSizes, type ContextWindowSelection } from "./context-selection";
+import { supportsSessionDeletion } from "./acp-backend";
+import { GrokHookCalls } from "./grok-hooks";
 import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface, Interface } from "node:readline";
 import { EventEmitter } from "node:events";
-import { claudeSubscriptionWindows, grokSubscriptionWindows, type SubscriptionWindow } from "./subscription-usage";
+import { claudeSubscriptionWindows, grokBillingReplyShape, grokSubscriptionWindows, museSubscriptionWindows, type SubscriptionWindow } from "./subscription-usage";
 import * as path from "node:path";
 import {
   collectToolImages,
@@ -43,7 +46,7 @@ import { grokCliNeedsShell } from "./cli-process";
 import { atlasAcpMeta } from "./grok-config";
 import { compareVersionTuple, parseGrokVersion } from "./cli-locator";
 import { resolvedTerminalShellDialect } from "./terminal-manager";
-import type { AcpBackend, AcpProvider, BackendSessionListResult, BackendSteeringCapabilities } from "./acp-backend";
+import type { AcpBackend, AcpProvider, BackendSessionListEntry, BackendSessionListResult, BackendSteeringCapabilities } from "./acp-backend";
 import { buildGrokAgentArgs, grokBackend } from "./grok-backend";
 import {
   parseWorktreeApply,
@@ -87,6 +90,8 @@ export type PromptContentBlock =
 export { buildInterjectParams, cliHonorsInterjectContent, GROK_INTERJECT_CONTENT_MIN_VERSION } from "./grok-backend";
 
 export interface AcpClientOptions {
+  /** Host consent lifetime. Revocation stops the process and forbids later RPCs. */
+  signal?: AbortSignal;
   cliPath: string;
   cwd: string;
   effort?: EffortLevel;
@@ -107,6 +112,12 @@ export interface AcpClientOptions {
    */
   timeouts?: AcpTimeoutInput;
   /**
+   * `authenticate` sent right after `initialize`, before any session is opened
+   * or loaded. For agents whose shared settings file another client can
+   * rewrite, so each process states its method itself.
+   */
+  startupAuth?: { methodId: string; meta?: Record<string, unknown> };
+  /**
    * Host-owned MCP servers for `session/new` and `session/load`. A getter is
    * read at request time so a Connect that lands after construct still applies.
    * The getter may be async so a host can re-read its own secrets first.
@@ -123,6 +134,7 @@ export interface ModelInfo {
   name: string;
   description?: string;
   totalContextTokens?: number;
+  contextWindowSizes?: number[];
   supportsReasoningEffort?: boolean;
   /** The model's ACTIVE reasoning effort as advertised in `_meta.reasoningEffort`
    *  — the session override (from `SessionHandle.reasoning_effort`), not merely
@@ -155,6 +167,8 @@ export interface PermissionOption {
   optionId: string;
   kind: string; // "allow_always" | "allow_once" | "reject_once" | ...
   name: string;
+  /** Muse stamps its own scope here: `once`, `session`, or `localPersistent`. */
+  _meta?: { scope?: string; [key: string]: unknown } | null;
 }
 
 export interface PermissionRequest {
@@ -227,9 +241,25 @@ type Pending = {
 export { buildGrokAgentArgs } from "./grok-backend";
 
 export type AcpClientCapabilities = {
-  fs: { readTextFile?: true; writeTextFile: true };
-  terminal: true;
+  fs: { readTextFile?: boolean; writeTextFile: boolean };
+  terminal: boolean;
+  subagents?: Record<string, never>;
+  _meta?: { jetbrains: { air: { version: number; capabilities: string[] } } };
 };
+
+/**
+ * Antigravity executes its own tools. Advertising client fs swaps its file
+ * tools for callbacks into ours, which is a different server than the one
+ * measured; the edit-card normalization in agy-backend.ts is for this one.
+ */
+export const ACP_SERVER_EXECUTED_CAPABILITIES: AcpClientCapabilities = {
+  fs: { readTextFile: false, writeTextFile: false },
+  terminal: false,
+};
+
+/** Teardown budget for a backend with `stopProcess`; it is only reached by a
+ *  process that would not stop, and then the usual tree kill follows. */
+export const STOP_PROCESS_BUDGET_MS = 10_000;
 
 /** Handshake every provider used before grok 1.0 — client-delegated fs. */
 export const ACP_DELEGATED_FS_CAPABILITIES: AcpClientCapabilities = {
@@ -268,13 +298,21 @@ export const GROK_IMAGE_READ_MIN_VERSION: [number, number, number] = [1, 0, 4];
  * Unknown, unparseable, unverified, or cached grok versions keep the pre-1.0
  * handshake. A missed version probe must not silently drop client fs: on
  * 0.2.117 that can blank plan review (`planContent: null`) and may also stop
- * write delegation. Codex is not this bug and keeps the delegated handshake.
+ * write delegation. Codex retains delegated fs and opts into subagent sessions;
+ * Claude opts into background task updates; Muse keeps the default handshake.
  */
 export function acpClientCapabilities(
   provider: AcpProvider,
   grokVersion?: string | null,
   versionVerified = false,
 ): AcpClientCapabilities {
+  // codex-acp's bundled ACP schema strips `subagents` before its native gate.
+  // AIR metadata survives that parser. Codex's separate asyncTasks opt-in stays off.
+  if (provider === "codex") return { ...ACP_DELEGATED_FS_CAPABILITIES, subagents: {},
+    _meta: { jetbrains: { air: { version: 1, capabilities: ["nativeSubagentSessions"] } } } };
+  if (provider === "claude") return { ...ACP_DELEGATED_FS_CAPABILITIES,
+    _meta: { jetbrains: { air: { version: 1, capabilities: ["asyncTasks"] } } } };
+  if (provider === "agy") return ACP_SERVER_EXECUTED_CAPABILITIES;
   if (provider !== "grok") return ACP_DELEGATED_FS_CAPABILITIES;
   if (!versionVerified) return ACP_DELEGATED_FS_CAPABILITIES;
   const parsed = parseGrokVersion(grokVersion ?? "");
@@ -289,6 +327,7 @@ export class AcpClient extends EventEmitter {
   private rl?: Interface;
   private nextId = 1;
   private pending = new Map<number, Pending>();
+  private readonly hookCalls = new GrokHookCalls();
   private readonly backend: AcpBackend;
   private readonly timeouts: AcpTimeouts;
   private humanWaitActive = false;
@@ -298,6 +337,7 @@ export class AcpClient extends EventEmitter {
   readonly usesClientPlanGate: boolean;
 
   sessionId?: string;
+  private loadingChildSessionIds?: Set<string>;
   currentModelId?: string;
   currentModeId?: string;
   availableModels: ModelInfo[] = [];
@@ -305,6 +345,110 @@ export class AcpClient extends EventEmitter {
   lastMeta?: PromptResultMeta;
   private lastContextUsed?: number;
   private lastContextWindow?: number;
+  private contextGeneration = 0;
+  private selectedContextWindow?: number;
+  private contextWindowChanging = false;
+  private contextSelectionStale = false;
+
+  get contextWindowSelection(): ContextWindowSelection {
+    const model = this.availableModels.find(m => m.modelId === this.currentModelId);
+    const sizes = model?.contextWindowSizes ?? [];
+    const version = this.opts.grokVersionVerified && parseGrokVersion(this.opts.grokVersion ?? "");
+    const nativeRpc = !!version && compareVersionTuple(version, [1, 0, 46]) >= 0;
+    const advertised = this.availableCommands.some(c => c.name === "context-window");
+    const available = this.provider === "grok" && !!this.sessionId && sizes.length > 1 && (nativeRpc || advertised);
+    return { sessionId: this.sessionId ?? "", modelId: this.currentModelId, generation: this.contextGeneration,
+      sizes, defaultSize: sizes[0], selectedSize: this.selectedContextWindow, available,
+      changing: this.contextWindowChanging, stale: this.contextSelectionStale,
+      reason: available ? undefined : "This CLI session does not expose native context-window selection." };
+  }
+
+  private publishContextWindowSelection(): void {
+    this.emit("contextWindowSelection", this.contextWindowSelection);
+  }
+
+  async setContextWindow(size: number, expected: Pick<ContextWindowSelection, "sessionId" | "modelId" | "generation">): Promise<void> {
+    const current = this.contextWindowSelection;
+    if (expected.sessionId !== current.sessionId || expected.modelId !== current.modelId || expected.generation !== current.generation)
+      throw new Error("The context selection belongs to an older session or model. Please choose again.");
+    if (!current.available || !current.sizes.includes(size)) throw new Error(current.reason ?? "This model does not offer that context size.");
+    if (this.contextWindowChanging || [...this.pending.values()].some(p => p.isPrompt || p.method === "session/set_model" || p.method === "session/set_config_option" || p.method === "session/new" || p.method === "session/load")) throw new Error("Wait for the current turn or context change to finish.");
+    const previousUsed = this.lastContextUsed;
+    const previousWindow = this.lastContextWindow;
+    const previousSize = this.selectedContextWindow;
+    const previousModelWindow = this.availableModels.find(m => m.modelId === current.modelId)?.totalContextTokens;
+    this.contextWindowChanging = true;
+    this.contextGeneration++;
+    this.publishContextWindowSelection();
+    const generation = this.contextGeneration;
+    try {
+      if (this.availableCommands.some(c => c.name === "context-window")) {
+        await this.request("session/prompt", { sessionId: current.sessionId, prompt: [{ type: "text", text: `/context-window ${size}` }] });
+      } else {
+        // Native Windows CLI 1.0.46: measured set_model override + session/info confirmation.
+        const result = await this.request("session/set_model", { sessionId: current.sessionId, modelId: current.modelId,
+          _meta: { contextWindow: size, ...(this.currentReasoningEffort ? { reasoningEffort: this.currentReasoningEffort } : {}) } });
+        if (!this.backend.modelSetSucceeded(result)) throw new Error("The CLI rejected the context-window change.");
+      }
+      const raw = await this.request("_x.ai/session/info", { sessionId: current.sessionId });
+      const info = parseSessionInfoRpcResult(raw);
+      if (generation !== this.contextGeneration || current.sessionId !== this.sessionId || current.modelId !== this.currentModelId)
+        throw new Error("The session changed before the context-window update was confirmed.");
+      if (!info || info.window !== size) throw new Error("The CLI did not confirm the requested context window. Refresh the session before trying again.");
+      this.selectedContextWindow = size;
+      this.contextSelectionStale = false;
+      this.lastContextUsed = info.used;
+      this.lastContextWindow = size;
+      const model = this.availableModels.find(m => m.modelId === current.modelId);
+      if (model) model.totalContextTokens = size;
+      this.emit("contextUsage", info.used, size);
+    } catch (error) {
+      if (generation === this.contextGeneration) {
+        this.selectedContextWindow = previousSize;
+        this.contextSelectionStale = true;
+        const model = this.availableModels.find(m => m.modelId === current.modelId);
+        if (model) model.totalContextTokens = previousModelWindow;
+        this.lastContextWindow = previousWindow;
+        this.lastContextUsed = previousUsed;
+        this.emit("contextUsage", previousUsed, previousWindow);
+      }
+      throw error;
+    } finally {
+      this.contextWindowChanging = false;
+      this.publishContextWindowSelection();
+    }
+  }
+
+  private resetContextSelection(): void {
+    if (this.provider !== "grok") return;
+    this.contextSelectionStale = false;
+    this.contextGeneration++;
+    this.selectedContextWindow = undefined;
+    this.lastContextUsed = undefined;
+    this.lastContextWindow = undefined;
+  }
+
+  private async refreshContextSelection(): Promise<void> {
+    if (this.provider !== "grok") return;
+    if (this.contextWindowSelection.sizes.length > 1) {
+      try { await this.getSessionInfo(); }
+      catch (error) { this.opts.log(`[context-window] ${(error as Error).message}`); }
+    }
+    this.publishContextWindowSelection();
+  }
+
+  /**
+   * Remembered -32601 for `_x.ai/git/worktree/list`.
+   *
+   * A running CLI cannot grow a method, so the answer is settled for this
+   * client's life. It is cached because this one is on a HOT path in a way the
+   * other optional methods are not: `refreshWorktreeCache()` fires on every
+   * `listSessions()`, so a CLI without the method paid a round trip and wrote a
+   * log line every time the session list was built — bursts of identical
+   * "CLI does not support" lines, seconds apart, drowning everything else in
+   * the desktop log (owner-hit, 2026-09-21).
+   */
+  private worktreeListUnsupported = false;
   private currentSessionTitle?: string;
   /**
    * The session's effective reasoning effort. Seeded from the spawn flag
@@ -357,6 +501,8 @@ export class AcpClient extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    this.opts.signal?.throwIfAborted();
+    this.opts.signal?.addEventListener("abort", this.onAbort, { once: true });
     const spawnSpec = this.backend.spawn({
       cliPath: this.opts.cliPath,
       cwd: this.opts.cwd,
@@ -405,17 +551,20 @@ export class AcpClient extends EventEmitter {
     // a final successful interject response must be parsed before exit recovery
     // decides whether its user text still needs to be reclaimed.
     this.proc.on("close", (code) => {
+      this.opts.signal?.removeEventListener("abort", this.onAbort);
       this.disposeMcpFiles();
       for (const [id, p] of this.pending) {
         this.pending.delete(id);
         if (p.timer) clearTimeout(p.timer);
         p.reject(new Error(`${this.backend.processName} exited (code ${code})`));
       }
+      this.finishHooks();
       this.emit("exit", code);
     });
     this.proc.on("error", (err) => {
       this.opts.log(`spawn error: ${err.message}`);
-      this.emit("error", err);
+      // Warm-up clients only await start(); an unhandled "error" event throws.
+      if (this.listenerCount("error") > 0) this.emit("error", err);
     });
 
     const init = await this.request("initialize", {
@@ -429,6 +578,8 @@ export class AcpClient extends EventEmitter {
     });
     this.steering = this.backend.steeringCapabilities(init, this.opts);
     this.emit("initialized", init);
+    const auth = this.opts.startupAuth;
+    if (auth) await this.authenticate(auth.methodId, this.timeouts.requestTimeoutMs, auth.meta);
   }
 
   private async mcpServersForSession(): Promise<AcpMcpStdioServer[]> {
@@ -452,18 +603,22 @@ export class AcpClient extends EventEmitter {
   }
 
   async newSession(modelId?: string): Promise<{ sessionId: string }> {
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     const raw = await this.request("session/new", {
       cwd: this.opts.cwd,
       mcpServers: await this.mcpServersForSession(),
       ...(this.provider === "grok" ? { _meta: atlasAcpMeta() } : {}),
+      ...this.backend.sessionParams?.(this.opts.cwd),
     });
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = res.sessionId;
+    this.resetContextSelection();
     this.availableModels = (res.models?.availableModels ?? []).map((m: any) => ({
       modelId: m.modelId,
       name: m.name,
       description: m.description,
       totalContextTokens: m._meta?.totalContextTokens,
+      contextWindowSizes: this.provider === "grok" ? contextWindowSizes(m._meta?.contextWindows, m._meta?.totalContextTokens) : undefined,
       supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
       reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
       reasoningEfforts: Array.isArray(m._meta?.reasoningEfforts)
@@ -496,13 +651,28 @@ export class AcpClient extends EventEmitter {
         current.reasoningEffort = requestedEffort;
       }
     }
+    // Grok's TOML default can override the spawn flag in session/new's
+    // effective state. Apply the preference to the session itself before its
+    // catalog reaches the picker (#162, #164).
+    if (requestedEffort && this.provider === "grok" && this.currentModelSupportsEffort()) {
+      try {
+        await this.setReasoningEffort(requestedEffort);
+      } catch (err) {
+        this.opts.log(`[acp] Failed to set reasoning effort to ${requestedEffort}: ${(err as Error).message}.`);
+      }
+    }
+    if (this.provider === "muse" && res?.modes?.currentModeId) {
+      this.currentModeId = res.modes.currentModeId;
+      this.emit("modeChanged", this.currentModeId);
+    }
     this.emit("session", res);
 
-    if (modelId && modelId !== this.currentModelId) {
+    const wantedModel = modelId || this.backend.defaultModelId?.(this.availableModels.map((m) => m.modelId));
+    if (wantedModel && wantedModel !== this.currentModelId) {
       try {
-        await this.setModel(modelId);
+        await this.setModel(wantedModel);
       } catch (err) {
-        this.opts.log(`[acp] Failed to set model to ${modelId}: ${(err as Error).message}. Falling back to default model ${this.currentModelId}.`);
+        this.opts.log(`[acp] Failed to set model to ${wantedModel}: ${(err as Error).message}. Falling back to default model ${this.currentModelId}.`);
       }
     }
     // Spawn `--reasoning-effort` is grok-only. Adapters take effort as a
@@ -516,23 +686,36 @@ export class AcpClient extends EventEmitter {
         this.opts.log(`[acp] Failed to set reasoning effort to ${this.opts.effort}: ${(err as Error).message}.`);
       }
     }
+    await this.refreshContextSelection();
     return { sessionId: res.sessionId };
   }
 
   async loadSession(sessionId: string, modelId?: string): Promise<{ sessionId: string }> {
-    const raw = await this.request("session/load", {
-      sessionId,
-      cwd: this.opts.cwd,
-      mcpServers: await this.mcpServersForSession(),
-    });
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
+    const mcpServers = await this.mcpServersForSession();
+    // Replay precedes the response and may use a different parent wire ID.
+    // Only an explicit spawn identifies a child until the load completes.
+    this.loadingChildSessionIds = new Set();
+    this.hookCalls.reset();
+    let raw: any;
+    try {
+      raw = await this.request("session/load", { sessionId, cwd: this.opts.cwd, mcpServers, ...this.backend.sessionParams?.(this.opts.cwd) });
+      // The replay is the session's past turns; whatever the backend still
+      // holds open from it is settled, inside the host's replay window.
+      this.endTurn("completed");
+    } finally {
+      this.loadingChildSessionIds = undefined;
+    }
     const res = this.backend.normalizeSessionResponse(raw);
     this.sessionId = sessionId;
+    this.resetContextSelection();
     if (res?.models?.availableModels) {
       this.availableModels = res.models.availableModels.map((m: any) => ({
         modelId: m.modelId,
         name: m.name,
         description: m.description,
         totalContextTokens: m._meta?.totalContextTokens,
+      contextWindowSizes: this.provider === "grok" ? contextWindowSizes(m._meta?.contextWindows, m._meta?.totalContextTokens) : undefined,
         supportsReasoningEffort: m._meta?.supportsReasoningEffort === true,
         reasoningEffort: typeof m._meta?.reasoningEffort === "string" ? m._meta.reasoningEffort : undefined,
       reasoningEfforts: Array.isArray(m._meta?.reasoningEfforts)
@@ -547,6 +730,10 @@ export class AcpClient extends EventEmitter {
     // session override, not a stale global value.
     const loadedEffort = this.availableModels.find((m) => m.modelId === this.currentModelId)?.reasoningEffort;
     if (loadedEffort) this.currentReasoningEffort = loadedEffort;
+    if (this.provider === "muse" && res?.modes?.currentModeId) {
+      this.currentModeId = res.modes.currentModeId;
+      this.emit("modeChanged", this.currentModeId);
+    }
     this.emit("session", { sessionId, ...(res ?? {}) });
     this.emit("sessionLoaded", { sessionId });
     if (modelId && modelId !== this.currentModelId) {
@@ -556,6 +743,7 @@ export class AcpClient extends EventEmitter {
         this.opts.log(`[acp] Failed to set model to ${modelId}: ${(err as Error).message}. Keeping ${this.currentModelId}.`);
       }
     }
+    await this.refreshContextSelection();
     return { sessionId };
   }
 
@@ -579,6 +767,7 @@ export class AcpClient extends EventEmitter {
   }
 
   async setModel(modelId: string): Promise<void> {
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     if (!this.sessionId) throw new Error("no session");
     // Carry the live effort override through a compatible switch — a bare
     // set_model lets the server resolve the new model's default effort, silently
@@ -617,7 +806,9 @@ export class AcpClient extends EventEmitter {
         const current = this.availableModels.find((entry) => entry.modelId === this.currentModelId);
         if (current) current.reasoningEffort = this.currentReasoningEffort;
       }
+      this.resetContextSelection();
       this.emit("modelChanged", this.currentModelId);
+      await this.refreshContextSelection();
     }
   }
 
@@ -645,6 +836,7 @@ export class AcpClient extends EventEmitter {
    *  response, so an optimistic post-response write would clobber the true value
    *  on a build that resolved the effort differently. */
   async setReasoningEffort(level: string): Promise<boolean> {
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     if (!this.sessionId) throw new Error("no session");
     if (!level) return false; // "" = unset → cannot be expressed as an override
     const call = this.backend.setReasoningEffort(this.sessionId, this.currentModelId, level);
@@ -667,6 +859,7 @@ export class AcpClient extends EventEmitter {
   }
 
   async setMode(modeId: string): Promise<void> {
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
     if (!this.sessionId) throw new Error("no session");
     const call = this.backend.setMode(this.sessionId, modeId);
     const res = await this.request(call.method, call.params, () => {
@@ -695,16 +888,27 @@ export class AcpClient extends EventEmitter {
   }
 
   async prompt(textOrBlocks: string | PromptContentBlock[]): Promise<PromptResultMeta> {
+    if (this.contextWindowChanging) throw new Error("Wait for the context-window change to finish.");
+    const firstText = typeof textOrBlocks === "string" ? textOrBlocks : textOrBlocks[0]?.type === "text" ? textOrBlocks[0].text : "";
+    if (/^\/context-window(?:\s|$)/i.test(firstText) && !this.availableCommands.some(c => c.name === "context-window"))
+      throw new Error("Use the native context-window selection; this CLI does not advertise the slash command over ACP.");
     if (!this.sessionId) throw new Error("no session");
     const prompt: PromptContentBlock[] =
       typeof textOrBlocks === "string"
         ? [{ type: "text", text: textOrBlocks }]
         : textOrBlocks;
-    const raw = await this.request("session/prompt", {
-      sessionId: this.sessionId,
-      prompt,
-    });
+    let raw: any;
+    try {
+      raw = await this.request("session/prompt", {
+        sessionId: this.sessionId,
+        prompt,
+      });
+    } catch (error) {
+      this.endTurn("failed");
+      throw error;
+    }
     const result = this.backend.normalizePromptResult(raw);
+    this.endTurn(result?.stopReason === "cancelled" ? "cancelled" : "completed");
     const meta = extractPromptMeta(result);
     this.lastMeta = meta;
     this.emit("promptComplete", meta);
@@ -720,6 +924,22 @@ export class AcpClient extends EventEmitter {
       ...result,
       sessions: [{ sessionId: this.sessionId, cwd: this.opts.cwd, title: this.currentSessionTitle }, ...result.sessions],
     };
+  }
+
+  /**
+   * Every folder's sessions from one listing, for an agent whose `session/list`
+   * is not scoped by folder anyway; undefined when it is (then list per folder
+   * with {@link listSessions}). `sessionsFor(cwd)` is what the backend's own
+   * per-folder listing keeps, from the one read. Used by the history process,
+   * which never has a session of its own, so nothing live is folded in.
+   */
+  async listSessionCatalog(platform: NodeJS.Platform = process.platform): Promise<{
+    sessionsFor(cwd: string): BackendSessionListEntry[];
+  } | undefined> {
+    const backend = this.backend;
+    if (!backend.listSessionCatalog || !backend.catalogSessionsFor) return undefined;
+    const catalog = await backend.listSessionCatalog((method, params) => this.request(method, params), platform);
+    return { sessionsFor: (cwd) => backend.catalogSessionsFor!(catalog, cwd, platform) };
   }
 
   /** Read Atlas's MCP inventory from the same ACP session as the conversation. */
@@ -740,12 +960,23 @@ export class AcpClient extends EventEmitter {
   }
 
   async deleteSession(sessionId: string): Promise<void> {
-    if (this.provider === "grok") throw new Error("This backend does not support ACP session deletion.");
+    if (!supportsSessionDeletion(this.provider)) throw new Error("This backend does not support ACP session deletion.");
     await this.request("session/delete", { sessionId });
   }
 
   isCredentialError(error: unknown): boolean {
     return this.backend.isCredentialError(error);
+  }
+
+  /** ACP `authenticate`. Interactive methods wait on a person, so the caller
+   *  sets the wait rather than the ordinary request cap. */
+  authenticate(methodId: string, timeoutMs: number, meta?: Record<string, unknown>): Promise<any> {
+    return this.request("authenticate", { methodId, ...(meta ? { _meta: meta } : {}) }, undefined, timeoutMs);
+  }
+
+  /** ACP `logout`: the agent clears its own stored credentials. */
+  async logout(): Promise<void> {
+    await this.request("logout", {});
   }
 
   /**
@@ -896,11 +1127,14 @@ export class AcpClient extends EventEmitter {
 
   /** List tracked worktrees. Empty params = all; optional filters pass through. */
   async listWorktrees(params: Record<string, unknown> = {}): Promise<WorktreeRecord[] | "unsupported"> {
+    // Asked and answered, for the life of this process. See the field.
+    if (this.worktreeListUnsupported) return "unsupported";
     try {
       const r = await this.request("_x.ai/git/worktree/list", params);
       return parseWorktreeList(r);
     } catch (e: any) {
       if (isMethodNotFoundError(e)) {
+        this.worktreeListUnsupported = true;
         this.opts.log("[worktree] CLI does not support _x.ai/git/worktree/list");
         return "unsupported";
       }
@@ -956,12 +1190,26 @@ export class AcpClient extends EventEmitter {
    * prompt scrape.
    */
   async getSessionInfo(): Promise<SessionInfoContext | "unsupported"> {
+    if (this.contextWindowChanging) throw new Error("Context-window change in progress; retry the session-info refresh.");
     if (!this.sessionId) throw new Error("no session");
     if (this.provider !== "grok") return "unsupported";
     try {
-      const r = await this.request("_x.ai/session/info", { sessionId: this.sessionId });
+      const generation = this.contextGeneration;
+      const sessionId = this.sessionId;
+      const r = await this.request("_x.ai/session/info", { sessionId });
       const parsed = parseSessionInfoRpcResult(r);
       if (!parsed) throw new Error("session/info returned no usable context");
+      if (generation !== this.contextGeneration || sessionId !== this.sessionId) throw new Error("Session context changed during refresh; retry session-info.");
+      if (this.contextWindowSelection.sizes.length > 1) {
+        this.selectedContextWindow = parsed.window;
+        this.contextSelectionStale = false;
+        this.lastContextWindow = parsed.window;
+        this.lastContextUsed = parsed.used;
+        const model = this.availableModels.find(m => m.modelId === this.currentModelId);
+        if (model) model.totalContextTokens = parsed.window;
+        this.emit("contextUsage", parsed.used, parsed.window);
+        this.publishContextWindowSelection();
+      }
       return parsed;
     } catch (e: any) {
       if (isMethodNotFoundError(e)) {
@@ -973,16 +1221,35 @@ export class AcpClient extends EventEmitter {
   }
 
   private billingUnsupported = false;
+  private billingShapeLogged = false;
+  private billingErrorLogged = false;
 
   async getSubscriptionUsage(): Promise<SubscriptionWindow[]> {
     if (this.provider !== "grok" || this.billingUnsupported) return [];
     try {
-      return grokSubscriptionWindows(await this.request("_x.ai/billing", {}));
+      const raw = await this.request("_x.ai/billing", {});
+      const windows = grokSubscriptionWindows(raw);
+      // An empty popup is otherwise indistinguishable from "nothing to report"
+      // (#202). Log the reply's SHAPE once, never its numbers or dates, so a
+      // plan that answers differently can be read off the output channel.
+      if (!windows.length && !this.billingShapeLogged) {
+        this.billingShapeLogged = true;
+        this.opts.log(`[billing] no usage window in the _x.ai/billing reply: ${grokBillingReplyShape(raw)}`);
+      }
+      return windows;
     } catch (error) {
       if (isMethodNotFoundError(error)) {
         this.billingUnsupported = true;
         this.opts.log("[billing] CLI does not support _x.ai/billing");
         return [];
+      }
+      if (!this.billingErrorLogged) {
+        this.billingErrorLogged = true;
+        // request() rejects with the JSON-RPC error object, not an Error.
+        const e = error as { message?: unknown; code?: unknown } | undefined;
+        const detail = typeof e?.message === "string" ? e.message : String(error);
+        const code = typeof e?.code === "number" ? ` (code ${e.code})` : "";
+        this.opts.log(`[billing] _x.ai/billing failed: ${detail}${code}`);
       }
       throw error;
     }
@@ -1113,7 +1380,11 @@ export class AcpClient extends EventEmitter {
    * fallback so a wedged process can't hang the caller forever. Fire-and-forget
    * callers can ignore the returned promise — the kill is still initiated now.
    */
+  private readonly onAbort = () => { void this.dispose(); };
+
   dispose(timeoutMs = 3000): Promise<void> {
+    this.finishHooks();
+    this.opts.signal?.removeEventListener("abort", this.onAbort);
     this.setHumanWaitActive(false);
     this.rl?.close();
     const proc = this.proc;
@@ -1123,6 +1394,9 @@ export class AcpClient extends EventEmitter {
       return Promise.resolve();
     }
     if (this.provider !== "grok") {
+      // A backend that can be asked to exit cleanly gets the time to do it.
+      const stop = this.backend.stopProcess;
+      const budget = stop ? Math.max(timeoutMs, STOP_PROCESS_BUDGET_MS) : timeoutMs;
       return new Promise<void>((resolve) => {
         let done = false;
         const finish = () => {
@@ -1142,9 +1416,13 @@ export class AcpClient extends EventEmitter {
             try { proc.kill(); } catch { /* already gone */ }
           }
         };
-        const timer = setTimeout(() => { abruptKill(); finish(); }, timeoutMs);
+        const timer = setTimeout(() => { abruptKill(); finish(); }, budget);
         proc.once("exit", finish);
         try { proc.stdin.end(); } catch { abruptKill(); }
+        if (stop && proc.pid !== undefined) {
+          stop.call(this.backend, proc.pid, this.opts.cliPath).catch((error) =>
+            this.opts.log(`[acp] ${this.backend.processName} clean stop failed: ${(error as Error).message}`));
+        }
       });
     }
     return new Promise<void>((resolve) => {
@@ -1199,7 +1477,9 @@ export class AcpClient extends EventEmitter {
     method: string,
     params: any,
     onResolve?: (value: any) => void,
+    timeoutMs?: number,
   ): Promise<any> {
+    if (this.opts.signal?.aborted) return Promise.reject(this.opts.signal.reason);
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const now = Date.now();
@@ -1236,7 +1516,7 @@ export class AcpClient extends EventEmitter {
           });
           if (!Number.isFinite(waitMs)) return;
         } else {
-          waitMs = this.timeouts.requestTimeoutMs;
+          waitMs = timeoutMs ?? this.timeouts.requestTimeoutMs;
         }
         entry.timer = setTimeout(() => {
           if (this.pending.delete(id)) {
@@ -1323,9 +1603,22 @@ export class AcpClient extends EventEmitter {
   }
 
   private handleSessionUpdate(u: any, meta?: any, sessionId?: string): void {
-    const foreign = isForeignSessionUpdate(sessionId, this.sessionId);
+    if (this.routeHookUpdate(u, meta, sessionId)) return;
+    if (this.loadingChildSessionIds && u?.sessionUpdate === "subagent_spawned") {
+      const childId = u.subagentSessionId ?? u.child_session_id ?? u.subagent_id;
+      if (typeof childId === "string" && childId) this.loadingChildSessionIds.add(childId);
+    }
+    const foreign = this.loadingChildSessionIds
+      ? typeof sessionId === "string" && this.loadingChildSessionIds.has(sessionId)
+      : isForeignSessionUpdate(sessionId, this.sessionId);
+    const updateGeneration = meta?.generation ?? u?._meta?.generation;
+    if (this.provider === "grok" && typeof updateGeneration === "number" && updateGeneration !== this.contextGeneration) return;
     const normalized = this.backend.normalizeUpdate(u, meta);
+    for (const earlier of normalized.precede ?? []) this.routeUpdate(earlier, undefined);
     if (!foreign) {
+      if (normalized.workflowUpdate) this.emit("subagentLifecycle", normalized.workflowUpdate, meta);
+      if (normalized.notice) this.emit("notice", normalized.notice);
+      if (normalized.credentialRejected) this.emit("credentialRejected");
       if (this.provider === "claude") {
         const windows = claudeSubscriptionWindows(normalized.update);
         if (windows !== undefined) this.emit("subscriptionUsage", windows);
@@ -1345,7 +1638,7 @@ export class AcpClient extends EventEmitter {
         if (model) model.totalContextTokens = normalized.contextWindow;
       }
     }
-    if (normalized.update === undefined && normalized.usageUpdateUsed === undefined && normalized.contextWindow === undefined) {
+    if (normalized.update === undefined && normalized.usageUpdateUsed === undefined && normalized.contextWindow === undefined && normalized.contextUsed === undefined) {
       return;
     }
     if (normalized.update !== undefined) {
@@ -1354,24 +1647,62 @@ export class AcpClient extends EventEmitter {
     }
     if (!foreign) {
       // Ordinary adapter usage_update.used is billed per call (includes
-      // output) and is not occupancy by itself. Compact's getContextUsage
-      // is the exception — sidebar adopts it only after a compact
-      // completed. Other values are per-call observations for
+      // output) and is not occupancy by itself. The compacted size is the
+      // exception — sidebar adopts the first one after a compaction
+      // signal. Other values are per-call observations for
       // occupancyFromAdapterTurn.
       if (normalized.usageUpdateUsed !== undefined) {
         this.emit("adapterUsageUpdate", normalized.usageUpdateUsed, this.lastContextWindow);
       }
-      const contextUsed = contextUsedFromUpdateEnvelope(meta);
+      const contextUsed = normalized.contextUsed ?? contextUsedFromUpdateEnvelope(meta);
       const usedChanged = contextUsed !== null && contextUsed !== this.lastContextUsed;
       if (usedChanged) this.lastContextUsed = contextUsed;
       if (usedChanged || normalized.contextWindow !== undefined) {
         this.emit("contextUsage", this.lastContextUsed, this.lastContextWindow);
       }
     }
+    this.routeUpdate(u, meta, foreign ? sessionId : normalized.childSessionId);
+  }
+
+  /** What a backend still holds open when a turn or a replay ends. */
+  private endTurn(outcome: "completed" | "cancelled" | "failed"): void {
+    this.finishHooks(this.loadingChildSessionIds ? undefined : this.sessionId);
+    for (const update of this.backend.turnEnded?.(outcome) ?? []) this.routeUpdate(update, undefined);
+  }
+
+  private routeHookUpdate(u: any, meta?: any, sessionId = this.sessionId): boolean {
+    if (this.provider !== "grok" || !sessionId) return false;
+    if (u?.sessionUpdate !== "hook_run_started" && u?.sessionUpdate !== "hook_execution") return false;
+    const generation = meta?.generation ?? u?._meta?.generation;
+    if (typeof generation === "number" && generation !== this.contextGeneration) return true;
+    const updates = this.hookCalls.update(u, sessionId, meta);
+    if (updates === null) return false;
+    const foreign = this.loadingChildSessionIds
+      ? this.loadingChildSessionIds.has(sessionId)
+      : isForeignSessionUpdate(sessionId, this.sessionId);
+    for (const update of updates) this.routeUpdate(update, meta, foreign ? sessionId : undefined);
+    return true;
+  }
+
+  private finishHooks(sessionId?: string): void {
+    for (const entry of this.hookCalls.finish(sessionId)) {
+      const foreign = this.loadingChildSessionIds
+        ? this.loadingChildSessionIds.has(entry.sessionId)
+        : isForeignSessionUpdate(entry.sessionId, this.sessionId);
+      this.routeUpdate(entry.update, undefined, foreign ? entry.sessionId : undefined);
+    }
+  }
+
+  /**
+   * Deliver a normalized update. A child's -- from its own session, or tagged
+   * by a backend whose child calls arrive on this one -- goes to its card's
+   * stream (`childStream`), never into the parent's transcript.
+   */
+  private routeUpdate(u: any, meta: any, childSessionId?: string): void {
     const r = routeSessionUpdate(u);
     if (!r) return;
-    if (foreign) {
-      this.emit("childStream", { childSessionId: sessionId, route: r, meta });
+    if (childSessionId !== undefined) {
+      this.emit("childStream", { childSessionId, route: r, meta });
       return;
     }
     if (r.event === "modeChanged") {
@@ -1402,6 +1733,7 @@ export class AcpClient extends EventEmitter {
       // autocomplete and the dispatch gate at the single ingestion point (#31).
       this.availableCommands = filterAdvertisedCommands(r.commands);
       this.emit("commandsUpdate", this.availableCommands);
+      this.publishContextWindowSelection();
       return;
     }
     if (r.event === "taskBackgrounded") { this.emit("taskBackgrounded", r.payload); return; }
@@ -1450,6 +1782,13 @@ export class AcpClient extends EventEmitter {
   private async handleServerRequest(msg: any): Promise<void> {
     const { method, id, params } = msg;
     try {
+      if (method === "_x.ai/session/setup") {
+        if (this.provider === "grok" && !isForeignSessionUpdate(params?.sessionId, this.sessionId)) {
+          this.emit("sessionSetup", params);
+        }
+        if (id != null) this.respondOk(id, {});
+        return;
+      }
       if (
         method === "_x.ai/mcp/servers_updated" ||
         method === "_x.ai/mcp/init_progress" ||
@@ -1593,6 +1932,10 @@ export class AcpClient extends EventEmitter {
         method === "_x.ai/session_notification" ||
         method === "x.ai/session_notification"
       ) {
+        if (this.routeHookUpdate(params?.update, params?._meta, params?.sessionId)) {
+          if (id != null) this.respondOk(id, {});
+          return;
+        }
         // `model_changed` carries the EFFECTIVE reasoning effort the CLI actually
         // applied (post-resolution) — the authoritative signal that a live
         // set_model override took (or, on a non-conforming build, didn't). Keep
@@ -1608,6 +1951,8 @@ export class AcpClient extends EventEmitter {
           if (typeof upd.model_id === "string" && upd.model_id) {
             this.currentModelId = resolveModelId(upd.model_id, this.availableModels) ?? upd.model_id;
           }
+          const current = this.availableModels.find((model) => model.modelId === this.currentModelId);
+          if (current) current.reasoningEffort = this.currentReasoningEffort;
         }
         this.emit("xaiNotification", params?.update);
         if (id != null) this.respondOk(id, {});
@@ -1625,6 +1970,15 @@ export class AcpClient extends EventEmitter {
         method === "_x.ai/session/update" ||
         method === "x.ai/session/update"
       ) {
+        if (this.loadingChildSessionIds && params?.update?.sessionUpdate === "subagent_spawned") {
+          const u = params.update;
+          const childId = u.subagentSessionId ?? u.child_session_id ?? u.subagent_id;
+          if (typeof childId === "string" && childId) this.loadingChildSessionIds.add(childId);
+        }
+        if (this.routeHookUpdate(params?.update, params?._meta, params?.sessionId)) {
+          if (id != null) this.respondOk(id, {});
+          return;
+        }
         // Subagent lifecycle stream (subagent_spawned / subagent_finished) —
         // carries the duration_ms + child output that Composer's completed
         // tool_call_update lacks (wire capture:
@@ -1642,6 +1996,16 @@ export class AcpClient extends EventEmitter {
         // unparseable so the host can log the raw params.
         const status = parseWorktreeStatus(params) ?? { status: "unknown" };
         this.emit("worktreeStatus", status, params);
+        if (id != null) this.respondOk(id, {});
+        return;
+      }
+      if (method === "_muse/subscription_usage") {
+        // The adapter forwards Muse's raw MSP usage. Only this provider, and
+        // only the session that owns the process — a shared adapter stdout
+        // must not paint another conversation's account windows.
+        if (this.provider === "muse" && params?.sessionId && params.sessionId === this.sessionId) {
+          this.emit("subscriptionUsage", museSubscriptionWindows(params.usage));
+        }
         if (id != null) this.respondOk(id, {});
         return;
       }

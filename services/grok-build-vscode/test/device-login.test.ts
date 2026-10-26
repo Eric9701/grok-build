@@ -10,6 +10,9 @@
  * noticing a CLI that will never speak.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import {
   classifyDeviceLoginFailure,
@@ -52,6 +55,12 @@ const CLAUDE_REAL = [
 ].join("\n");
 
 describe("reading what the CLI printed", () => {
+  it("reads the measured Muse login URL and code without a paste-code prompt", () => {
+    expect(parseDeviceLoginPrompt(
+      "Open this page to sign in:  https://auth.meta.com/oauth/device/?code=FLVM-CRRJ\n"
+      + "confirm this code matches:  FLVM-CRRJ\nWaiting for approval…",
+    )).toEqual({ url: "https://auth.meta.com/oauth/device/?code=FLVM-CRRJ", code: "FLVM-CRRJ" });
+  });
   it("finds the URL and code in real grok output", () => {
     expect(parseDeviceLoginPrompt(GROK_REAL)).toEqual({
       url: "https://accounts.x.ai/oauth2/device?user_code=SDCN-9XZS",
@@ -117,6 +126,10 @@ describe("reading what the CLI printed", () => {
 });
 
 describe("which providers have a headless flow", () => {
+  it("uses Muse's login subcommand, which skips workspace trust and polls on pipes", () => {
+    expect(deviceLoginPlan("muse")).toEqual({ args: ["login"] });
+    expect(deviceLoginPlan("muse")?.needsCode).toBeUndefined();
+  });
   it("offers one for grok and codex", () => {
     expect(deviceLoginPlan("grok")).toEqual({ args: ["login", "--device-auth"] });
     expect(deviceLoginPlan("codex")).toEqual({ args: ["login", "--device-auth"] });
@@ -224,6 +237,54 @@ function fakeIo(): { io: DeviceLoginIo; child: FakeChild; calls: unknown[][] } {
   };
   return { io, child, calls };
 }
+
+describe("device login shell policy", () => {
+  it.skipIf(process.platform !== "win32").each(["grok", "codex", "claude", "muse"] as const)(
+    "starts %s login and receives its URL from a real shim in a spaced path", async provider => {
+      const dir = mkdtempSync(join(tmpdir(), "Login install with spaces "));
+      try {
+        const executable = join(dir, `${provider}.cmd`);
+        writeFileSync(executable, "@echo off\r\necho https://example.com/device?user_code=ABCD-1234\r\n");
+        const onPrompt = vi.fn();
+        const plan = deviceLoginPlan(provider);
+        const result = await new Promise(resolve => runDeviceLogin(executable, plan.args,
+          { onPrompt, onDone: resolve }, undefined, process.env, { needsCode: !!plan.needsCode }));
+        expect({ result, prompts: onPrompt.mock.calls }).toEqual({
+          result: { ok: true, output: expect.stringContaining("https://example.com/device") },
+          prompts: [[expect.objectContaining({ url: "https://example.com/device?user_code=ABCD-1234" })]],
+        });
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  afterEach(() => Object.defineProperty(process, "platform", platformDescriptor));
+
+  it.each([
+    ["win32", String.raw`C:\Users\Dell\AppData\Local\Programs\muse\muse.cmd`, true],
+    ["win32", String.raw`C:\muse\muse.BAT`, true],
+    ["win32", String.raw`C:\muse\muse.exe`, false],
+    ["linux", "/home/u/.local/bin/muse", false],
+    ["darwin", "/home/u/.local/bin/muse", false],
+    ["linux", "/home/u/.local/bin/muse.cmd", false],
+  ] as const)("on %s launches %s with shell=%s", (platform, executable, shell) => {
+    Object.defineProperty(process, "platform", { value: platform });
+    const { io, child, calls } = fakeIo();
+    runDeviceLogin(executable, ["login"], { onPrompt: vi.fn(), onDone: vi.fn() }, io, {});
+    child.emit("close", 0);
+    expect(calls[0]).toEqual([shell ? `"${executable}"` : executable, ["login"], expect.objectContaining({ shell })]);
+  });
+
+  it("keeps Claude paste-code stdin piped through the win32 shell", () => {
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const { io, child, calls } = fakeIo();
+    const handle = runDeviceLogin(String.raw`C:\claude\claude.cmd`, ["auth", "login"],
+      { onPrompt: vi.fn(), onDone: vi.fn() }, io, {}, { needsCode: true });
+    handle.submitCode("  paste-me-now  ");
+    child.emit("close", 0);
+    expect(calls[0][2]).toMatchObject({ shell: true, stdio: ["pipe", "pipe", "pipe"] });
+    expect(child.stdin.writes).toEqual(["paste-me-now\n"]);
+  });
+});
 
 describe("running one", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -376,6 +437,18 @@ describe("running one", () => {
 });
 
 describe("claude auth status over the spawn seam", () => {
+  it("passes consent cancellation to the child and skips a withdrawn consent", async () => {
+    const { io, child, calls } = fakeIo();
+    const controller = new AbortController();
+    const pending = probeClaudeAuthStatus("/bin/claude", io, {}, controller.signal);
+    expect(calls[0][2]).toMatchObject({ signal: controller.signal, windowsHide: true });
+    controller.abort();
+    // Node's spawn reports AbortError when its signal kills the child.
+    child.emit("error", new Error("AbortError"));
+    await expect(pending).resolves.toBeUndefined();
+    await expect(probeClaudeAuthStatus("/bin/claude", io, {}, controller.signal)).resolves.toBeUndefined();
+    expect(calls).toHaveLength(1);
+  });
   it("treats loggedIn true as success", async () => {
     const { io, child } = fakeIo();
     const pending = probeClaudeAuthStatus("/bin/claude", io, {});

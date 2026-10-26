@@ -47,6 +47,16 @@ export function grokSubscriptionWindows(raw: any, now = Date.now()): Subscriptio
     periodStart, periodEnd, observedAt: new Date(now).toISOString() }];
 }
 
+/** The key names of a `_x.ai/billing` reply (top level, `config`, and
+ *  `config.currentPeriod`) plus the plan name, for a log line when no usage
+ *  window could be read from it. No numbers, dates or other values. */
+export function grokBillingReplyShape(raw: any): string {
+  const keys = (value: unknown) =>
+    value && typeof value === "object" && !Array.isArray(value) ? `{${Object.keys(value).join(", ")}}` : typeof value;
+  const tier = typeof raw?.subscription_tier === "string" ? ` tier=${JSON.stringify(raw.subscription_tier)}` : "";
+  return `reply ${keys(raw)} config ${keys(raw?.config)} currentPeriod ${keys(raw?.config?.currentPeriod)}${tier}`;
+}
+
 const CLAUDE_WINDOW_LABELS: Record<string, string> = {
   five_hour: "5-hour",
   seven_day: "Weekly",
@@ -149,6 +159,38 @@ export function codexSubscriptionWindows(rateLimits: any, observedAt: string): S
     .filter((window): window is SubscriptionWindow => window !== undefined);
 }
 
+/** `resetsAtMs` is epoch milliseconds. Claude's `resetsAt` and Codex's
+ *  `resets_at` are Unix seconds — multiplying this stamp puts the reset
+ *  tens of thousands of years out. `usedPercent` is already 0..100. `tier`
+ *  stays off the wire. A window we cannot label is dropped, not guessed. */
+function musePeriodEnd(resetsAtMs: unknown): string | undefined {
+  if (typeof resetsAtMs !== "number" || !Number.isFinite(resetsAtMs) || resetsAtMs <= 0) return undefined;
+  const reset = new Date(resetsAtMs);
+  return Number.isFinite(reset.getTime()) ? reset.toISOString() : undefined;
+}
+
+export function museSubscriptionWindows(usage: any, now = Date.now()): SubscriptionWindow[] {
+  if (!usage || typeof usage !== "object") return [];
+  const observedAt = new Date(now).toISOString();
+  const windows: SubscriptionWindow[] = [];
+  const rolling = usage.window;
+  const rollingPercent = percentage(rolling?.usedPercent);
+  const rollingLabel = codexWindowLabel(rolling?.windowDurationMins);
+  const rollingEnd = musePeriodEnd(rolling?.resetsAtMs);
+  if (rollingPercent !== undefined && rollingLabel && rollingEnd) {
+    windows.push({ usedPercent: rollingPercent, label: rollingLabel,
+      periodType: `window_${rolling.windowDurationMins}m`, periodEnd: rollingEnd, observedAt });
+  }
+  const weekly = usage.weekly;
+  const weeklyPercent = percentage(weekly?.usedPercent);
+  const weeklyEnd = musePeriodEnd(weekly?.resetsAtMs);
+  if (weeklyPercent !== undefined && weeklyEnd) {
+    windows.push({ usedPercent: weeklyPercent, label: "Weekly", periodType: "weekly",
+      periodEnd: weeklyEnd, observedAt });
+  }
+  return windows;
+}
+
 export const SUBSCRIPTION_USAGE_MIN_INTERVAL_MS = 60_000;
 
 /** Shared only by processes with the same effective credential context. No timers. */
@@ -207,7 +249,7 @@ export class SubscriptionUsageBinding {
 /** Opaque, memory-only key. Neither credentials nor their digest leave the host.
  * File contents also detect an external login; unreadable stores fail closed.
  * Keychain-only Claude logins are bounded by process lifetime and host sign-out. */
-const CREDENTIAL_ENV_KEYS: Record<AcpProvider, string[]> = {
+const CREDENTIAL_ENV_KEYS: Partial<Record<AcpProvider, string[]>> = {
   grok: ["GROK_CODE_XAI_API_KEY", "XAI_API_KEY", "GROK_CODE_BASE_URL"],
   claude: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL",
     "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"],
@@ -215,21 +257,24 @@ const CREDENTIAL_ENV_KEYS: Record<AcpProvider, string[]> = {
 };
 
 /** The file each CLI writes its login to, relative to that CLI's home. */
-const CREDENTIAL_FILES: Record<AcpProvider, string> = {
+const CREDENTIAL_FILES: Partial<Record<AcpProvider, string>> = {
   grok: "auth.json",
   claude: ".credentials.json",
   codex: "auth.json",
 };
 
 export function subscriptionCredentialContext(provider: AcpProvider, env: NodeJS.ProcessEnv): string {
+  if (provider === "muse") return "muse:cli-owned";
+  // No usage meter for Antigravity; its key only has to be stable.
+  if (provider === "agy") return "agy:server-owned";
   const home = env.HOME || env.USERPROFILE || homedir();
   const root = provider === "grok" ? env.GROK_HOME || path.join(home, ".grok")
     : provider === "codex" ? env.CODEX_HOME || path.join(home, ".codex")
       : env.CLAUDE_CONFIG_DIR || path.join(home, ".claude");
-  const keys = CREDENTIAL_ENV_KEYS[provider];
+  const keys = CREDENTIAL_ENV_KEYS[provider] ?? [];
   const effectiveEnv: NodeJS.ProcessEnv = { ...env, GROK_CODE_XAI_API_KEY: env.GROK_CODE_XAI_API_KEY || env.XAI_API_KEY };
   const hash = createHash("sha256").update(JSON.stringify([provider, root, keys.map((key) => effectiveEnv[key] ?? null)]));
-  try { hash.update(readFileSync(path.join(root, CREDENTIAL_FILES[provider]))); }
+  try { hash.update(readFileSync(path.join(root, CREDENTIAL_FILES[provider]!))); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") return `${provider}:unreadable:${randomUUID()}`;
     hash.update("absent");

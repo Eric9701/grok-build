@@ -134,6 +134,15 @@ export class PersistedState {
     if (key === "atlas.installId" || key === "atlas.appPurpose") {
       return typeof value === "string";
     }
+    // The two tip stores are flat maps, not records of records (welcome-tips.ts):
+    // dismissed tip id -> true, and shown tip id -> the day it was shown.
+    // Rejecting them logged "unexpected JSON shape" on every start (#214) and
+    // kept both off disk, so a tip dismissed on the desk came back on a phone.
+    if (key === "atlas.welcomeTips" || key === "atlas.welcomeTipsShown") {
+      const want = key === "atlas.welcomeTips" ? "boolean" : "string";
+      return !!value && typeof value === "object" && !Array.isArray(value)
+        && Object.values(value).every((v) => typeof v === want);
+    }
     return isRecordMap(value);
   }
 

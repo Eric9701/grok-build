@@ -22,15 +22,21 @@
  *   silently stops recognising anything on a localised machine.
  */
 import { execFile as nodeExecFile } from "node:child_process";
+import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import {
   GIT_NUMSTAT_ARGS,
   GIT_REMOTE_ARGS,
   GIT_STATUS_ARGS,
+  GIT_TURN_BASELINE_ARGS,
+  GIT_HEAD_ARGS,
   buildGitStatusSnapshot,
   gitDiffArgs,
   gitDiffUntrackedArgs,
+  gitTurnDiffArgs,
   gitUnpushedArgs,
   parseGitNumstatZ,
+  parseGitBaseline,
   parseGitStatusPorcelain2,
   parseUnpushedLog,
   type GitOpPlan,
@@ -50,6 +56,19 @@ export const GIT_READ_TIMEOUT_MS = 20_000;
 export const GIT_WRITE_TIMEOUT_MS = 180_000;
 /** A patch past this is cut; the view says so rather than rendering silence. */
 export const GIT_DIFF_MAX_BYTES = 2 * 1024 * 1024;
+export const GIT_BASELINE_TIMEOUT_MS = 5_000;
+// At most 128 paths, and 1 MiB per file (128 MiB worst case).
+//
+// The two caps answer differently ON PURPOSE. Hundreds of untracked paths mean
+// an unignored build directory, where snapshotting an arbitrary 128 of them
+// buys nothing -- so the whole map is dropped and every path keeps the old
+// behaviour. One oversized file among small ones is ordinary (an archive, a
+// screenshot, a core dump), and dropping the map there would reinstate #168's
+// whole-file diff for the small files too. So that file alone is skipped: a
+// path absent from the map already means "fall through", which is exactly
+// right for it.
+export const GIT_BASELINE_UNTRACKED_MAX_PATHS = 128;
+export const GIT_BASELINE_UNTRACKED_MAX_FILE_BYTES = 1024 * 1024;
 
 export interface GitExecResult {
   ok: boolean;
@@ -75,13 +94,14 @@ function gitEnv(base: NodeJS.ProcessEnv, readOnly: boolean): NodeJS.ProcessEnv {
 export function runGit(
   root: string,
   args: readonly string[],
-  opts?: { io?: GitIo; env?: NodeJS.ProcessEnv; timeoutMs?: number; readOnly?: boolean; maxBytes?: number },
+  opts?: { io?: GitIo; env?: NodeJS.ProcessEnv; timeoutMs?: number; readOnly?: boolean; maxBytes?: number; stdin?: string },
 ): Promise<GitExecResult> {
   const io = opts?.io ?? REAL_IO;
   const readOnly = opts?.readOnly !== false;
   return new Promise((resolve) => {
+    let inputError: Error | undefined;
     try {
-      io.execFile(
+      const child = io.execFile(
         "git",
         ["-C", root, ...args],
         {
@@ -92,6 +112,7 @@ export function runGit(
           encoding: "utf8",
         },
         (error, stdout, stderr) => {
+          error ??= inputError ?? null;
           const out = String(stdout ?? "");
           const err = String(stderr ?? "");
           if (!error) {
@@ -111,6 +132,13 @@ export function runGit(
           });
         },
       );
+      if (opts?.stdin !== undefined) {
+        // Git may exit before consuming the list (e.g. an unreadable file).
+        // Drain the child's result as usual, but never let EPIPE escape or
+        // turn a failed stdin write into a successful partial baseline.
+        child.stdin!.on("error", (error: Error) => { inputError = error; });
+        child.stdin!.end(opts.stdin);
+      }
     } catch (e: unknown) {
       resolve({
         ok: false,
@@ -184,8 +212,60 @@ export type GitDiffRead =
   | { ok: true; patch: string; truncated: boolean; untracked: boolean }
   | { ok: false; reason: string };
 
+export interface GitTurnBaseline {
+  sha: string;
+  untracked?: Map<string, string>;
+}
+
+/** Caller holds GitRunGate. Never waits on the prompt path or updates refs. */
+export async function captureGitTurnBaseline(
+  root: string,
+  opts?: { io?: GitIo; env?: NodeJS.ProcessEnv },
+): Promise<GitTurnBaseline | undefined> {
+  const options = { ...opts, timeoutMs: GIT_BASELINE_TIMEOUT_MS };
+  // Capture the immutable HEAD before stash, never resolve a moving ref at click.
+  const head = await runGit(root, GIT_HEAD_ARGS, options);
+  const headSha = head.ok ? parseGitBaseline(head.stdout) : undefined;
+  if (!headSha) return undefined; // includes an unborn / non-git directory
+  const stash = await runGit(root, GIT_TURN_BASELINE_ARGS, options);
+  if (!stash.ok) return undefined;
+  const sha = stash.stdout.trim() ? parseGitBaseline(stash.stdout) : headSha;
+  if (!sha) return undefined;
+
+  // `stash create` snapshots tracked content only and has no -u option.
+  // Preserve pre-existing untracked content as loose blobs, without touching
+  // the index or refs. Ignored build output must never reach hash-object.
+  const listed = await runGit(root, ["ls-files", "--others", "--exclude-standard", "-z", "--full-name"], options);
+  if (!listed.ok) return { sha };
+  const paths = listed.stdout.split("\0").filter(Boolean);
+  if (paths.length > GIT_BASELINE_UNTRACKED_MAX_PATHS) return { sha };
+  const survivors: string[] = [];
+  for (const path of paths) {
+    try {
+      const info = await stat(join(root, path));
+      if (!info.isFile()) continue;
+      if (info.size > GIT_BASELINE_UNTRACKED_MAX_FILE_BYTES) continue;
+      survivors.push(path);
+    } catch {
+      // A disappeared or unreadable candidate is not a file we can snapshot.
+    }
+  }
+  if (!survivors.length) return { sha };
+  // --stdin-paths is line-delimited, not NUL-delimited. Git accepts C-quoted
+  // filenames here; octal escapes keep quotes, backslashes and newlines literal.
+  const stdin = survivors.map(path => '"' + path.replace(/["\\\x00-\x1f\x7f]/g,
+    char => "\\" + char.charCodeAt(0).toString(8).padStart(3, "0")) + '"\n').join("");
+  const hashed = await runGit(root, ["hash-object", "-w", "--stdin-paths"], { ...options, stdin });
+  if (!hashed.ok) return { sha };
+  const blobs = hashed.stdout.trim().split(/\r?\n/).map(parseGitBaseline);
+  // No partial map on a failed or malformed batch: positional pairing is only
+  // trustworthy when every input has exactly one complete object id.
+  if (blobs.length !== survivors.length || blobs.some(blob => !blob)) return { sha };
+  return { sha, untracked: new Map(survivors.map((path, i) => [path, blobs[i]!])) };
+}
+
 /**
- * One file's diff against the last commit.
+ * One file's diff against a host-owned baseline (the last commit by default).
  *
  * The path is checked against the snapshot by the caller, not here — this
  * function is given a path the repository is already reporting as changed.
@@ -198,9 +278,23 @@ export type GitDiffRead =
 export async function readGitFileDiff(
   root: string,
   path: string,
-  opts?: { io?: GitIo; env?: NodeJS.ProcessEnv; untracked?: boolean },
+  opts?: { io?: GitIo; env?: NodeJS.ProcessEnv; untracked?: boolean; baseline?: string; baselineBlob?: string },
 ): Promise<GitDiffRead> {
-  const args = opts?.untracked ? gitDiffUntrackedArgs(path) : gitDiffArgs(path);
+  let args: string[];
+  if (opts?.baselineBlob) {
+    // hash-object takes literal filenames, not pathspecs; -- only terminates
+    // options. -w is required so the following blob diff can read the object.
+    const current = await runGit(root, ["hash-object", "-w", "--", path], opts);
+    const blob = current.ok ? parseGitBaseline(current.stdout) : undefined;
+    if (!blob) {
+      return { ok: false, reason: current.spawnFailed ? "Git is not installed on this machine."
+        : firstLine(current.stderr) || "Could not read the diff." };
+    }
+    args = ["diff", opts.baselineBlob, blob];
+  } else {
+    args = opts?.untracked ? gitDiffUntrackedArgs(path)
+      : opts?.baseline ? gitTurnDiffArgs(path, opts.baseline) : gitDiffArgs(path);
+  }
   const result = await runGit(root, args, { ...opts, maxBytes: GIT_DIFF_MAX_BYTES + 1024 });
   const hasPatch = result.stdout.length > 0;
   if (!result.ok && !hasPatch) {
@@ -214,6 +308,37 @@ export async function readGitFileDiff(
     truncated,
     untracked: !!opts?.untracked,
   };
+}
+
+/** Whole before-side text for a host-local turn diff; never derived from a capped patch. */
+export async function readGitTurnFileBefore(
+  root: string,
+  path: string,
+  baseline: GitTurnBaseline,
+  opts?: { io?: GitIo; env?: NodeJS.ProcessEnv },
+): Promise<{ ok: true; text: string } | { ok: false; reason: string }> {
+  const fail = (result: GitExecResult) => ({
+    ok: false as const,
+    reason: result.spawnFailed ? "Git is not installed on this machine."
+      : firstLine(result.stderr) || "Could not read this file's turn baseline.",
+  });
+  const blob = baseline.untracked?.get(path);
+  if (!blob) {
+    // A failed `show sha:path` cannot distinguish a new file from a broken
+    // baseline without parsing prose. ls-tree's successful empty listing can;
+    // a non-zero exit (even with stdout) or diagnostic must never mean empty.
+    const entry = await runGit(root, ["--literal-pathspecs", "ls-tree", "-z", "--full-tree", baseline.sha, "--", path], opts);
+    if (!entry.ok || entry.stderr) return fail(entry);
+    if (!entry.stdout) return { ok: true, text: "" };
+  }
+  // <rev>:<path> names one object, not a pathspec (gitrevisions). Brackets and
+  // wildcard characters are literal here, unlike ls-tree's path operand above.
+  const result = await runGit(root, blob
+    ? ["cat-file", "blob", blob] : ["show", `${baseline.sha}:${path}`], opts);
+  // Unlike --no-index diff, these reads require exit 0: partial stdout on a
+  // timeout/buffer failure is not a whole file and must not reach the editor.
+  if (!result.ok) return fail(result);
+  return { ok: true, text: result.stdout };
 }
 
 export interface GitRunOutcome {

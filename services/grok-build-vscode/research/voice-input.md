@@ -127,7 +127,7 @@ Blockers, all real:
    > **Overturned by #51 (v1.6.1).** The `~/.grok/auth.json` `key` **is** accepted
    > by `api.x.ai/v1/stt` and works for STT (user-confirmed). The extension now
    > reuses it as the last-resort Voice credential when no dedicated key is set —
-   > so voice works without a separate key. A dedicated `grok.voiceApiKey` still
+   > so voice works without a separate key. A dedicated `atlas.voiceApiKey` still
    > wins. It remains undocumented xAI behavior (a `capabilities`/`vision-prompt`-
    > style drift risk), and the transmission is disclosed in [docs/privacy.md](../docs/privacy.md).
    > See `extractGrokAuthKey`/`resolveVoiceKey` in [src/voice.ts](../src/voice.ts).

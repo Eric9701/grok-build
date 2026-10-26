@@ -588,12 +588,9 @@ body.settings-page .settings-surface {
   color: var(--vscode-descriptionForeground, #969696);
 }
 
-.settings-connector .settings-row-control {
-  gap: 8px;
-}
-
 .settings-row-control {
   display: flex;
+  gap: 8px;
   justify-content: flex-end;
   justify-self: end;
   align-items: center;
@@ -1453,6 +1450,22 @@ a.settings-github-flow-open {
 /* Config paths remain readable on narrow Settings pages. */
 .settings-provider-configs {
   display: block;
+}
+/* A provider's own rows, collapsed under it (settings.js ROW_GROUPS). */
+.settings-row-group {
+  border-bottom: 1px solid color-mix(in oklab, var(--vscode-foreground) 10%, transparent);
+}
+.settings-row-group > summary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.settings-row-group > .settings-row {
+  padding-left: 16px;
+}
+.settings-row-group > .settings-row:last-child {
+  border-bottom: none;
 }
 .settings-provider-configs > summary {
   cursor: pointer;

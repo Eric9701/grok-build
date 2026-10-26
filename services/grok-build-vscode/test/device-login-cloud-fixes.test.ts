@@ -13,10 +13,16 @@
 import { describe, expect, it, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 import { Window } from "happy-dom";
 import { shouldKeepAwake } from "../src/keep-awake";
 import { GrokSidebar } from "../src/sidebar";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, existsSync: vi.fn(actual.existsSync), readFileSync: vi.fn(actual.readFileSync) };
+});
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sidebar = fs.readFileSync(path.join(root, "src", "sidebar.ts"), "utf8").replace(/\r\n/g, "\n");
@@ -39,10 +45,9 @@ describe("device login: announce only what is verified", () => {
     expect(start).toContain("needsCode: !!plan.needsCode");
 
     const confirm = methodBody("private async confirmDeviceLoginInner(");
-    expect(confirm).toContain("reprobeProviderCredentials(");
     expect(confirm).toContain("deviceLoginCredentialReady(");
     expect(confirm).toContain('status: "done"');
-    expect(confirm.indexOf("reprobeProviderCredentials(")).toBeLessThan(
+    expect(confirm.indexOf("deviceLoginCredentialReady(")).toBeLessThan(
       confirm.indexOf('status: "done"'),
     );
     // And a verdict either way: exhausting the probes must tell the user.
@@ -70,6 +75,67 @@ describe("device login: announce only what is verified", () => {
     const registration = body.indexOf("this.deviceLogins.set(");
     expect(settledCheck).toBeGreaterThan(-1);
     expect(registration).toBeGreaterThan(settledCheck);
+  });
+});
+
+describe("Muse device login completion", () => {
+  it("refuses to look at all when Muse was never connected", async () => {
+    const instance = Object.create(GrokSidebar.prototype) as any;
+    const exists = vi.spyOn(fs, "existsSync").mockReturnValue(true);
+    try {
+      expect(await instance.deviceLoginCredentialReady("muse")).toBe(false);
+      expect(exists).not.toHaveBeenCalled();
+    } finally {
+      exists.mockRestore();
+    }
+  });
+
+  it.each([true, false])("checks only credential presence after CLI success (present=%s)", async present => {
+    const instance = Object.create(GrokSidebar.prototype) as any;
+    instance.providerConnectionState = { muse: true };
+    instance.reprobeProviderCredentials = vi.fn();
+    const exists = vi.spyOn(fs, "existsSync").mockReturnValue(present);
+    const read = vi.spyOn(fs, "readFileSync");
+    read.mockClear();
+    try {
+      expect(await instance.deviceLoginCredentialReady("muse")).toBe(present);
+      expect(exists).toHaveBeenCalledTimes(1);
+      expect(exists).toHaveBeenCalledWith(path.join(os.homedir(), ".config", "muse", "auth.json"));
+      expect(read).not.toHaveBeenCalled();
+      expect(instance.reprobeProviderCredentials).not.toHaveBeenCalled();
+    } finally {
+      exists.mockRestore();
+      read.mockRestore();
+    }
+  });
+
+  it("does not call a catalog response proof of authentication", async () => {
+    const instance = Object.create(GrokSidebar.prototype) as any;
+    expect(await instance.reprobeProviderCredentials("muse")).toBe(false);
+  });
+
+  it("adopts the requesting session after a credential lands, promoting nothing", async () => {
+    // Inverted with #171. Confirm used to mark the account connected here, on
+    // the reasoning that the probe had just proved the account works. It had --
+    // but proof is not permission, and the press that STARTED this flow is
+    // where the person gave it. There is nothing left for confirm to promote.
+    const instance = Object.create(GrokSidebar.prototype) as any;
+    instance.providerConnectionState = { muse: true };
+    instance.deviceLoginCredentialReady = vi.fn(async () => true);
+    instance.reprobeProviderCredentials = vi.fn();
+    instance.host = { appendLine: vi.fn() };
+    instance.setProviderNeedsLogin = vi.fn();
+    instance.setProviderConnected = vi.fn(async () => {});
+    instance.deviceLoginSession = vi.fn(() => "requesting-session");
+    instance.adoptSessionsForConnectedProvider = vi.fn(async () => {});
+    const send = vi.fn();
+    await instance.confirmDeviceLoginInner("muse", send, "Muse Code", () => ({ clientId: "phone" }));
+    expect(instance.deviceLoginCredentialReady).toHaveBeenCalledWith("muse");
+    expect(instance.reprobeProviderCredentials).not.toHaveBeenCalled();
+    expect(instance.setProviderNeedsLogin).toHaveBeenCalledWith("muse", false);
+    expect(instance.setProviderConnected).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith({ status: "done" });
+    expect(instance.adoptSessionsForConnectedProvider).toHaveBeenCalledWith("muse", "requesting-session");
   });
 });
 
@@ -249,7 +315,7 @@ describe("every provider configuration a remote can be in", () => {
     }
   });
 
-  it("asks the client to open the wizard, and still posts the sign-in message", () => {
+  it.each(["codex", "muse"])("opens the wizard and posts the sign-in message for %s", provider => {
     // Connect must do BOTH: post `runGrokLogin` (the capability) and open the
     // wizard (where the flow reports). A local action used to return before
     // the message, so the dialog opened with nothing on its way to it.
@@ -258,17 +324,17 @@ describe("every provider configuration a remote can be in", () => {
     const { container, window } = mountSettings({
       isRemote: true, isDesktop: false, providersKnown: true, hostCaps: CLOUD,
     }, {
-      snapshotOverrides: { providers: NONE },
+      snapshotOverrides: { providers: [...NONE, { id: "muse", connected: false }] },
       post: (m: unknown) => posted.push(m),
       onLocal: (name: string) => locals.push(name),
       closeOnAction: true,
       onClose: () => { throw new Error("settings must stay open behind the wizard"); },
     });
-    const row = container.querySelector('[data-id="providerCodexRemote"]')!;
-    const btn = row.querySelector(".settings-action") as HTMLElement;
+    const row = container.querySelector(`[data-id="provider${provider === "muse" ? "Muse" : "Codex"}Remote"]`)!;
+    const btn = row.querySelector(".settings-action:not(.settings-provider-recheck)") as HTMLElement;
     btn.dispatchEvent(new (window as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent("click", { bubbles: true }));
-    expect(posted).toContainEqual({ type: "runGrokLogin", provider: "codex" });
-    expect(locals).toContain("connectWizard:codex");
+    expect(posted).toContainEqual({ type: "runGrokLogin", provider });
+    expect(locals).toContain(`connectWizard:${provider}`);
   });
 
   it("says it is disconnecting, because the answer is 10-15 seconds away", () => {
@@ -540,6 +606,8 @@ describe("a device-code sign-in finishes the job", () => {
     const sent: Array<Record<string, unknown>> = [];
     const bound = { id: "tab-1" };
     host.host = { appendLine: vi.fn() };
+    // Connect already recorded this; confirm only observes (#171).
+    host.providerConnectionState = { grok: true };
     host.reprobeProviderCredentials = vi.fn(async () => true);
     host.setProviderConnected = vi.fn(async () => {});
     host.remoteSessionFor = vi.fn(() => bound);
@@ -561,7 +629,7 @@ describe("a device-code sign-in finishes the job", () => {
     );
 
     expect(sent).toEqual([{ status: "done" }]);
-    expect(host.setProviderConnected).toHaveBeenCalledWith("grok", true);
+    expect(host.setProviderConnected).not.toHaveBeenCalled();
     // The flow's CURRENT client, read at confirm time — a phone that visited
     // the vendor's page and came back has reconnected under a new id.
     expect(host.remoteSessionFor).toHaveBeenCalledWith("client-42");
@@ -581,6 +649,8 @@ describe("a device-code sign-in finishes the job", () => {
     const adopted: unknown[] = [];
     const reconnected = { id: "session-on-the-new-socket" };
     host.host = { appendLine: vi.fn() };
+    // Connect already recorded this; confirm only observes (#171).
+    host.providerConnectionState = { grok: true };
     host.reprobeProviderCredentials = vi.fn(async () => true);
     host.setProviderConnected = vi.fn(async () => {});
     host.focused = { id: "desk" };
@@ -614,6 +684,8 @@ describe("a device-code sign-in finishes the job", () => {
     const host = Object.create(GrokSidebar.prototype) as any;
     const adopted: unknown[] = [];
     host.host = { appendLine: vi.fn() };
+    // Connect already recorded this; confirm only observes (#171).
+    host.providerConnectionState = { grok: true };
     host.reprobeProviderCredentials = vi.fn(async () => true);
     host.setProviderConnected = vi.fn(async () => {});
     host.focused = { id: "desk" };
@@ -638,6 +710,8 @@ describe("a device-code sign-in finishes the job", () => {
     const host = Object.create(GrokSidebar.prototype) as any;
     const adopted: unknown[] = [];
     host.host = { appendLine: vi.fn() };
+    // Connect already recorded this; confirm only observes (#171).
+    host.providerConnectionState = { codex: true };
     host.reprobeProviderCredentials = vi.fn(async () => true);
     host.setProviderConnected = vi.fn(async () => {});
     host.remoteSessionFor = vi.fn(() => ({ id: "remote" }));
@@ -766,18 +840,20 @@ describe("a success must not end on an invitation to start over", () => {
   });
 });
 
-describe("re-checking a connection proves it before claiming it", () => {
-  it("promotes only on a passing probe, and never demotes on a failing one", () => {
-    // Marking the provider connected first left a FAILED check reading
-    // "connected but needs to sign in again" for an account that was never
-    // signed in — seen on a fresh cloud machine (owner, 2026-08-31).
+describe("re-checking a connection observes it and never grants it", () => {
+  it("refuses a provider the person never connected, and promotes nobody", () => {
+    // Inverted with #171. This used to require the probe to come BEFORE a
+    // promotion, which was the right ORDER for the wrong idea: a successful
+    // probe is evidence the account works, never evidence the person wants
+    // it used here. Re-check now refuses outright unless Connect was
+    // pressed, so there is no promotion left to order.
     const at = sidebar.indexOf('case "recheckConnection": {');
     expect(at).toBeGreaterThan(-1);
     const body = sidebar.slice(at, sidebar.indexOf('case "', at + 40));
-    const probe = body.indexOf("const rechecked = await this.reprobeProviderCredentials(provider)");
-    const promote = body.indexOf("if (rechecked) await this.setProviderConnected(provider, true)");
-    expect(probe).toBeGreaterThan(-1);
-    expect(promote).toBeGreaterThan(probe);
-    expect(body).not.toContain("await this.setProviderConnected(provider, true);\n        await this.reprobeProviderCredentials");
+    const gate = body.indexOf("if (!this.hasProviderConsent(provider)) {");
+    const probe = body.indexOf("await this.reprobeProviderCredentials(provider)");
+    expect(gate).toBeGreaterThan(-1);
+    expect(probe).toBeGreaterThan(gate);
+    expect(body).not.toContain("this.setProviderConnected(");
   });
 });

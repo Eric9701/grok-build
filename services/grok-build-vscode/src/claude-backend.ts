@@ -12,6 +12,7 @@ import type {
   BackendUpdate,
 } from "./acp-backend";
 import { adapterContextOccupancy } from "./acp-dispatch";
+import { ClaudeWorkflows } from "./claude-workflows";
 
 export const CLAUDE_ACP_ADAPTER_PACKAGE = "@agentclientprotocol/claude-agent-acp";
 export const CLAUDE_ACP_ADAPTER_VERSION = packageManifest.dependencies[CLAUDE_ACP_ADAPTER_PACKAGE];
@@ -28,7 +29,7 @@ export const CLAUDE_ACP_ADAPTER_VERSION = packageManifest.dependencies[CLAUDE_AC
  *  is a comparison point, nothing more. Bump it when a release is validated
  *  against a newer CLI. Falling behind Anthropic's latest is the safe
  *  direction — it means we stop offering, not that we offer wrongly. */
-export const CLAUDE_PINNED_CLI_VERSION = "2.1.263";
+export const CLAUDE_PINNED_CLI_VERSION = "2.1.303";
 
 const PERMISSION_TITLE_LIMIT = 80;
 
@@ -90,6 +91,33 @@ export function claudeModelDescription(description: unknown): string | undefined
  *  inside this picker, and `claude`'s own `/model` is the way back. */
 const CLAUDE_DEFAULT_MODEL_ID = "default";
 
+/** What the default row resolves to, for its label: "Default (Opus 5.5)", not
+ *  "Default (recommended)" (the owner, 2026-10-15). The adapter itself says it:
+ *  claude-agent-acp 0.76 (`buildModelConfigOption`) describes the row with the
+ *  SDK's display name of the model the default resolves to ("Opus (1M
+ *  context)"), or that model's id when no row shares it, while that model's own
+ *  row carries the versioned name ("Opus 5.5"). An older SDK said "Use the
+ *  default model (currently Sonnet 4.5) · …". So: the row whose name is the
+ *  description, else the one row of the description's family with its context
+ *  size, else the description itself. */
+export function claudeDefaultModelName(description: unknown, rows: readonly any[]): string | undefined {
+  if (typeof description !== "string") return undefined;
+  const text = (/\bcurrently\s+([^)·]+)/i.exec(description)?.[1] ?? description.split("·")[0]).trim();
+  if (!text) return undefined;
+  const named = rows.filter((row) => row?.value !== CLAUDE_DEFAULT_MODEL_ID && typeof row?.name === "string" && row.name.trim());
+  const exact = named.find((row) => row.name.trim().toLowerCase() === text.toLowerCase());
+  if (exact) return exact.name.trim();
+  const family = text.replace(/\s*\([^)]*\)\s*$/, "").trim().toLowerCase();
+  const context = /(\d+(?:\.\d+)?[KM])\s+context\b/i.exec(text)?.[1];
+  const same = named.filter((row) => {
+    const name = row.name.trim().toLowerCase();
+    if (!family || (name !== family && !name.startsWith(`${family} `))) return false;
+    return !context || new RegExp(`\\b${context.replace(".", "\\.")}\\s+context\\b`, "i").test(String(row.description ?? ""));
+  });
+  if (same.length === 1) return same[0].name.trim();
+  return text.replace(/\s*\(([^)]*)\)\s*$/, ", $1");
+}
+
 /** session/new returns configOptions, not the models envelope the host picker reads. */
 export function modelsFromClaudeConfigOptions(configOptions: any): { currentModelId?: string; availableModels: any[] } {
   const options = Array.isArray(configOptions) ? configOptions : [];
@@ -100,15 +128,17 @@ export function modelsFromClaudeConfigOptions(configOptions: any): { currentMode
   const effortValues = selectOptions(effort)
     .map((entry) => entry?.value)
     .filter((value): value is string => typeof value === "string" && value !== "default");
+  const rows = selectOptions(model);
   return {
     currentModelId,
-    availableModels: selectOptions(model).flatMap((entry) => {
+    availableModels: rows.flatMap((entry) => {
       const modelId = typeof entry?.value === "string" ? entry.value : "";
       if (!modelId) return [];
       if (modelId === CLAUDE_DEFAULT_MODEL_ID && currentModelId !== CLAUDE_DEFAULT_MODEL_ID) return [];
+      const resolved = modelId === CLAUDE_DEFAULT_MODEL_ID ? claudeDefaultModelName(entry?.description, rows) : undefined;
       return [{
         modelId,
-        name: typeof entry?.name === "string" && entry.name.trim() ? entry.name : modelId,
+        name: resolved ? `Default (${resolved})` : typeof entry?.name === "string" && entry.name.trim() ? entry.name : modelId,
         description: claudeModelDescription(entry?.description),
         _meta: {
           supportsReasoningEffort: effortValues.length > 0,
@@ -163,8 +193,136 @@ export function normalizeClaudePromptResult(result: any): any {
   };
 }
 
-export function normalizeClaudeUpdate(update: any, meta?: any): BackendUpdate {
+// Replay retains the generated script filename: <launched name>-<exact run id>.js.
+function claudeWorkflowName(output: string, runId: string): string {
+  const file = /^Script file:\s*(.+)$/m.exec(output)?.[1]?.trim().split(/[\\/]/).pop();
+  const suffix = `-${runId}.js`;
+  return file?.endsWith(suffix) ? file.slice(0, -suffix.length) : "Workflow";
+}
+
+const claudeText = (raw: any): string | undefined => typeof raw === "string" ? raw
+  : Array.isArray(raw) ? raw.filter(c => c?.type === "text").map(c => c.text).join("\n") : undefined;
+const taskTerminal = (state: string | undefined) => !!state && /^(completed|failed|stopped|cancelled)$/.test(state);
+const taskTag = (text: string, tag: string) => new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(text)?.[1]?.trim();
+const cleanClaudeError = (text: string) => text.replace(/^\s*<tool_use_error>([\s\S]*)<\/tool_use_error>\s*$/, "$1").trim();
+
+/** Receipts and task edges arrive separately, sometimes in the opposite order. */
+class ClaudeSubagents {
+  private readonly calls = new Set<string>();
+  private readonly agents = new Map<string, string>();
+  private readonly tasks = new Map<string, { toolCallId?: string; taskType?: string; state?: string; output?: string; durationMs?: number; tokens?: number }>();
+
+  accept(update: any): any {
+    const claude = update._meta?.claudeCode;
+    const callId = update.toolCallId;
+    if ((claude?.toolName === "Agent" || claude?.subagent === true) && typeof callId === "string") this.calls.add(callId);
+    const text = update.content?.type === "text" ? update.content.text : undefined;
+    const notification = update.sessionUpdate === "user_message_chunk" && typeof text === "string" && /^\s*<task-notification>/.test(text);
+    if (update.sessionUpdate?.startsWith("async_task_") || notification) {
+      const id = notification ? taskTag(text, "task-id") : update.asyncTaskId;
+      const toolId = notification ? taskTag(text, "tool-use-id") : callId;
+      if (typeof id !== "string" || !id) return;
+      const task = this.tasks.get(id) || {};
+      const mapped = this.agents.get(id);
+      if (toolId && ((mapped && mapped !== toolId) || (task.toolCallId && task.toolCallId !== toolId))) return;
+      const owner = mapped || toolId || task.toolCallId;
+      if (owner && [...this.agents].some(([key, value]) => value === owner && key !== id)) return;
+      if (toolId) task.toolCallId = toolId;
+      if (update.taskType) task.taskType = update.taskType;
+      const state = notification ? taskTag(text, "status") : update.state
+        ?? (["async_task_spawned", "async_task_progress"].includes(update.sessionUpdate) ? "running" : undefined);
+      // A level-derived stopped edge can be corrected by the final task event.
+      if (typeof state === "string" && /^(running|paused|completed|failed|stopped|cancelled)$/.test(state)
+          && (!taskTerminal(task.state) || (task.state === "stopped" && taskTerminal(state)) || task.state === state)) {
+        task.state = state;
+        const result = notification ? taskTag(text, "result") ?? taskTag(text, "summary") : update.summary;
+        if (taskTerminal(state) && typeof result === "string") task.output = cleanClaudeError(result);
+      }
+      const usage = update.usage;
+      if (finiteNumber(usage?.durationMs) !== undefined) task.durationMs = usage.durationMs;
+      if (finiteNumber(usage?.totalTokens) !== undefined) task.tokens = usage.totalTokens;
+      this.tasks.set(id, task);
+      if (!owner || !this.calls.has(owner) || (task.taskType && !["agent", "local_agent", "subagent", "task"].includes(task.taskType))) return;
+      this.agents.set(id, owner);
+      return this.snapshot(owner, task);
+    }
+    if (!this.calls.has(callId)) return;
+    const output = claudeText(update.rawOutput) ?? claudeText(update.content?.map?.((c: any) => c.content));
+    const receipt = /^\s*Async agent launched successfully\./.test(output || "");
+    const response = claude?.toolResponse;
+    if (!receipt && response?.isAsync !== true && response?.status !== "async_launched") return;
+    const id = response?.agentId ?? response?.taskId ?? /^agentId:\s*(\S+)/m.exec(output || "")?.[1];
+    if (typeof id === "string" && id) this.agents.set(id, callId);
+    // Nothing from the model-facing receipt belongs in either output channel.
+    const task = this.tasks.get(id);
+    return { ...update, ...this.snapshot(callId, task?.toolCallId && task.toolCallId !== callId ? {} : task || {}), sessionUpdate: update.sessionUpdate };
+  }
+
+  private snapshot(toolCallId: string, task: any): any {
+    // The installed adapter omits local_agent task events. A receipt alone
+    // settles as background, with no claim that work is still running.
+    return { sessionUpdate: "tool_call_update", toolCallId,
+      status: task.state === "completed" ? "completed" : task.state === "failed" ? "failed"
+        : task.state === "stopped" || task.state === "cancelled" ? "cancelled" : task.state ? "in_progress" : "background",
+      rawOutput: { output: task.output || "" }, content: [],
+      _meta: { claudeCode: { toolName: "Agent", subagent: true }, subagentStatusAuthoritative: true,
+        subagentUsage: { durationMs: task.durationMs, tokens: task.tokens } },
+    };
+  }
+}
+
+export function normalizeClaudeUpdate(update: any, meta?: any, subagents = new ClaudeSubagents()): BackendUpdate {
   if (!update || typeof update !== "object") return { update, meta };
+  const subagent = subagents.accept(update);
+  const text = update.content?.type === "text" ? update.content.text : undefined;
+  if (update.sessionUpdate === "user_message_chunk" && typeof text === "string"
+      && /^\s*<task-notification>/.test(text)) {
+    const status = /<status>([^<]*)<\/status>/.exec(text)?.[1];
+    // This is a system wake-up, not a user prompt. Never expose its XML,
+    // paths or diagnostic instructions as a user bubble on resume.
+    return { update: subagent, meta, notice: `Background task ${status && /^(completed|failed|cancelled|stopped)$/.test(status) ? status : "updated"}.` };
+  }
+  if (subagent) return { update: subagent, meta };
+  const claude = update._meta?.claudeCode;
+  if (claude?.toolName === "Agent" || claude?.subagent === true) {
+    const response = claude.toolResponse;
+    const raw = update.rawOutput;
+    let output = claudeText(raw);
+    if (output !== undefined && update.status === "failed") output = cleanClaudeError(output);
+    let durationMs = finiteNumber(response?.totalDurationMs);
+    let tokens = finiteNumber(response?.totalTokens);
+    // Replay drops toolResponse but keeps this framed hand-back, including
+    // the usage trailer. Strip only that envelope, retaining report Markdown.
+    if (output?.startsWith("[Subagent hand-back]")) {
+      const usage = /<usage>([\s\S]*?)<\/usage>/.exec(output)?.[1] || "";
+      const duration = /duration_ms:\s*(\d+)/.exec(usage);
+      const tokenCount = /subagent_tokens:\s*(\d+)/.exec(usage);
+      durationMs ??= duration ? Number(duration[1]) : undefined;
+      tokens ??= tokenCount ? Number(tokenCount[1]) : undefined;
+      output = output.replace(/^[\s\S]*?The report follows:\s*\n/, "")
+        .replace(/\nagentId:[\s\S]*$/, "").replace(/^  /gm, "").trim();
+    }
+    if (output !== undefined || durationMs !== undefined || tokens !== undefined) return { meta, update: {
+      ...update,
+      _meta: { ...update._meta, subagentUsage: { durationMs, tokens } },
+      ...(output === undefined ? {} : { rawOutput: { output }, content: [{ type: "content", content: { type: "text", text: output } }] }),
+    } };
+  }
+  if (claude?.toolName === "Workflow") {
+    const response = claude.toolResponse;
+    const output = typeof update.rawOutput === "string" ? update.rawOutput : "";
+    const launched = response?.status === "async_launched" && response.taskType === "local_workflow";
+    // Replay drops toolResponse, but retains this launch acknowledgement.
+    const replayRun = /^Workflow launched in background\./.test(output)
+      ? /^Run ID:\s*(\S+)/m.exec(output)?.[1] : undefined;
+    const runId = launched ? response.runId : replayRun;
+    if (typeof runId === "string" && runId) return { update, meta, workflowUpdate: {
+      sessionUpdate: "workflow_updated", run_id: runId, status: "launched",
+      launchOnly: true,
+      name: (launched ? response.workflowName : undefined) || claudeWorkflowName(output, runId), objective: launched ? response.summary : /^Summary:\s*(.+)$/m.exec(output)?.[1],
+      controlsAvailable: false,
+    } };
+  }
   if (update.sessionUpdate === "session_info_update") {
     const title = [update.title, update.sessionTitle, update.name, update.sessionInfo?.title, update._meta?.title]
       .find((value) => typeof value === "string" && value.trim()) as string | undefined;
@@ -307,7 +465,18 @@ export class ClaudeBackend implements AcpBackend {
   }
 
   normalizePromptResult(result: any): any { return normalizeClaudePromptResult(result); }
-  normalizeUpdate(update: any, meta: any): BackendUpdate { return normalizeClaudeUpdate(update, meta); }
+  private readonly workflows = new ClaudeWorkflows();
+  private readonly subagents = new ClaudeSubagents();
+  normalizeUpdate(update: any, meta: any): BackendUpdate {
+    this.workflows.toolInput(update);
+    const result = normalizeClaudeUpdate(update, meta, this.subagents);
+    if (["async_task_spawned", "async_task_progress", "async_task_state_update"].includes(update?.sessionUpdate)) {
+      return { update: result.update === update ? undefined : result.update, meta, workflowUpdate: this.workflows.accept(update) };
+    }
+    if (result.workflowUpdate) result.workflowUpdate = this.workflows.launch(update, result.workflowUpdate);
+    if (result.notice) result.workflowUpdate = this.workflows.notification(update.content.text);
+    return result;
+  }
   normalizePermissionParams(params: any): any { return normalizeClaudePermissionParams(params); }
 
   setModel(sessionId: string, modelId: string): { method: string; params: any } {

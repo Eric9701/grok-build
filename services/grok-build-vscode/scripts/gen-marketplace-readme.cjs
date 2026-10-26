@@ -17,25 +17,25 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 
-const header = `# Atlas for VS Code (Community)
+const header = `# Atlas for VS Code
 
-[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](https://github.com/phuryn/grok-build-vscode/blob/main/LICENSE) ![Agents](https://img.shields.io/badge/Agents-Atlas%20%C2%B7%20Codex%20%C2%B7%20Claude%20Code-000000) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Cursor](https://badgen.net/badge/Cursor/Extension/007ACC)](https://cursor.com) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
+[![License: FSL-1.1-MIT](https://img.shields.io/badge/License-FSL--1.1--MIT-blue.svg)](https://github.com/phuryn/grok-build-vscode/blob/main/LICENSE) ![Agents](https://img.shields.io/badge/Agents-Atlas%20%C2%B7%20Codex%20%C2%B7%20Claude%20Code%20%C2%B7%20Muse%20Code%20%C2%B7%20Antigravity-000000) [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com) [![Cursor](https://badgen.net/badge/Cursor/Extension/007ACC)](https://cursor.com) [![The Product Compass](https://img.shields.io/badge/The%20Product%20Compass-productcompass.pm-FF6B35)](https://www.productcompass.pm)
 
-> **GUI for Atlas CLI (incl. Atlas 4.6)** — not affiliated with or endorsed by SpaceXAI (formerly xAI). *Atlas* and *xAI* are trademarks of xAI; this project uses those names only to describe what it's compatible with.
+> **One place for the Atlas CLI (Grok 4.7) and Muse Code (Muse Wonder)** — plus Codex (GPT-6 Astra), Claude Code (Opus 5.5) and Google Antigravity (Gemini 4 Argon, experimental). Not affiliated with or endorsed by SpaceXAI (formerly xAI), Meta, OpenAI, Anthropic or Google. *Grok* and *xAI* are trademarks of xAI; *Muse Code* of Meta; *Codex* of OpenAI; *Claude* and *Claude Code* of Anthropic. *Antigravity* and *Gemini* are trademarks of Google. This project uses those names only to describe what it is compatible with.
 
-The GUI for **Atlas CLI** (incl. **Atlas 4.6**), right in your editor — with **Remote Control**: pair **[AFK Pilot](https://afkpilot.com)** once and watch, approve, and steer your agent from your phone or any browser while away from your desk. Drop open files in as \`@\`-context, run **multiple sessions** at once, keep **resumable chat history**, generate **images & video inline**, and dictate by **voice**. If you'd rather stay in VS Code than a terminal, this brings Atlas into your sidebar.
+The GUI for **Atlas CLI** (incl. **Grok 4.7**) and **Meta's Muse Code**, right in your editor. It drives **OpenAI's Codex** and **Anthropic's Claude Code** too — and, experimentally, **Google's Antigravity** on your own computer: one window, one model picker, and every conversation keeps the agent it started with. **Remote Control** is built in: pair your phone at **[afkpilot.com](https://afkpilot.com)** once and watch, approve, and steer your agent from your phone or any browser while away from your desk. Drop open files in as \`@\`-context, run **multiple sessions** at once, keep **resumable chat history**, generate **images & video inline**, and dictate by **voice**. If you'd rather stay in VS Code than a terminal, this brings Atlas into your sidebar.
 
-No manual setup: the extension **walks you through installing the \`atlas\` CLI and signing in** — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key** — right from the sidebar, one click per step.
+No manual setup: the extension **walks you through installing the \`atlas\` CLI and signing in** — with a **SuperGrok or X Premium+ subscription**, or an **xAI API key** — right from the sidebar, one click per step. The other agents connect from **Settings → Providers**, each with its own account.
 
-![Atlas in the VS Code sidebar, running Atlas](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/grok_4.5.png)
+![Atlas in VS Code, choosing Grok 4.7 and its reasoning effort](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/grok_4.7.png)
 
-![Generated image rendered inline from /imagine](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/imagine.webp)
+![The Projects rail beside a conversation running a deep-research workflow, with context and subscription usage open](https://raw.githubusercontent.com/phuryn/grok-build-vscode/main/docs/screenshots/rail.png)
 
 ---
 
 ## Why use this?
 
-If you live in your editor, this puts Atlas right next to your code — a graphical workflow on top of the CLI: the **native diff editor** on every proposed edit, your **open files and selection as context**, **parallel sessions** with status dots, **resumable history**, **inline images & video**, and **voice dictation**. The CLI does the heavy lifting; this is the GUI for when you'd rather not be in a terminal.
+If you live in your editor, this puts Atlas right next to your code — a graphical workflow on top of the CLIs: the **native diff editor** on every proposed edit, your **open files and selection as context**, **parallel sessions** with status dots, **resumable history**, **inline images & video**, and **voice dictation**. The CLIs do the heavy lifting; this is the GUI for when you'd rather not be in a terminal.
 
 `;
 
@@ -45,11 +45,18 @@ If you live in your editor, this puts Atlas right next to your code — a graphi
 // Open VSX the way README.md does: this page IS the store page.
 const installBlock = `## Install
 
+**Muse Code:** choose **Connect** in Settings → Providers. If Muse is missing, the sidebar offers **Install Muse Code**, with a confirmation before Meta's installer runs in a visible terminal. Afterwards, click **Re-check**, then **Connect Muse Code**. You can also install manually:
+
+- **Windows (PowerShell):** \`irm https://dev.meta.ai/install.ps1 | iex\` — installs to \`%LOCALAPPDATA%\\Programs\\muse\\muse.cmd\` and adds that directory to your user PATH.
+- **macOS / Linux:** \`curl -fsSL https://dev.meta.ai/install.sh | bash\` — installs to \`~/.local/bin/muse\`.
+
+On a phone or remote browser, Muse must be installed on the machine running the workspace; the remote view cannot launch the desk installer.
+
 **1. Install the extension.** In VS Code or Cursor, open **Extensions** (\`Ctrl/Cmd+Shift+X\`) and search **"Atlas for VS Code"**.
 
 **2. Open Atlas and sign in.** Press \`Ctrl/Cmd+;\`. The sidebar **walks you through installing the \`atlas\` CLI and signing in** — one click per step, with your SuperGrok / X Premium+ subscription or an xAI API key. That's the whole setup.
 
-Atlas opens in the **Secondary Side Bar** (right side, next to other AI tools). Prefer it elsewhere? Gear → **Config & debug** → **Move view** relocates it to the Panel or Primary Side Bar in one click.
+Atlas defaults to the **Secondary Side Bar** (right side, next to other AI tools). Cursor refuses that container, so a first installation moves the view to the Primary Side Bar. Use the editor's own Move View controls to relocate it; where the secondary container is unavailable, Settings → Advanced → **Move view…** opens that picker.
 
 > Prefer the terminal, building from source, or installing into several IDEs at once? See the project [INSTALL docs](https://github.com/phuryn/grok-build-vscode/blob/main/docs/INSTALL.md).
 
@@ -58,8 +65,8 @@ Atlas opens in the **Secondary Side Bar** (right side, next to other AI tools). 
 ## Quick start
 
 1. **Open** the Atlas view (\`Ctrl/Cmd+;\`, or **Atlas: Open** from the command palette) — it lives in the Secondary Side Bar by default.
-2. **Type a prompt** and press **Enter**. Atlas streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in Settings.
-3. **Approve actions.** When Atlas wants to write a file or run a command it may raise a permission card — preview an edit in the native **diff editor**, with full-file context focused on the first changed line, then *Allow once / always / Reject*.
+2. **Type a prompt** and press **Enter**. Grok streams its answer, showing a *Thinking…* line while it reasons. Want the full reasoning inline? Turn on **Show thinking traces** in Settings.
+3. **Approve actions.** When Grok wants to write a file or run a command it may raise a permission card — preview an edit in the native **diff editor**, with full-file context focused on the first changed line, then *Allow once / always / Reject*.
 4. **Pick your mode** (Agent / Plan / Auto accept), **model**, and **reasoning effort** from the bottom toolbar and model chip.
 5. **Resume anytime** — the clock icon lists past sessions for this project.
 
@@ -67,24 +74,25 @@ Atlas opens in the **Secondary Side Bar** (right side, next to other AI tools). 
 
 `;
 
-// The companions the listing may mention. The marketplace Install section is
-// extension-only, so this is the one place a reader learns AFK Pilot and the
-// desktop app exist. Generator-owned rather than carried from README.md,
-// because README.md covers the same ground inside `## Install` — the section
-// this file replaces wholesale.
+// The companion the listing may mention. The marketplace Install section is
+// extension-only, so this is the one place a reader learns the desktop app
+// exists. Generator-owned rather than carried from README.md, because
+// README.md covers the same ground inside `## Install` — the section this file
+// replaces wholesale. Remote Control is not a companion: it is built in.
 const companionBlock = `## Companion apps
 
-This extension is complete on its own. Two optional companions share the same
-chat UI and the same Atlas CLI:
+This extension is complete on its own, Remote Control included: pair your phone
+at **[afkpilot.com](https://afkpilot.com)** from the **Remote control** phone
+button in the chat's top bar. **[AFK Pilot](https://afkpilot.com)** is the phone
+and browser companion: watch, approve, and steer this extension's agent while
+you are away from the desk. One optional desktop companion shares the same chat
+UI and the same agents:
 
-- **[AFK Pilot](https://afkpilot.com)** — watch, approve, and steer this
-  extension's agent from your phone or any browser. Pair once from **Remote
-  control** in the **+** menu.
 - **[Atlas Desktop](https://afkpilot.com/desktop)** — the same
-  agent as a standalone app for Windows and macOS, for machines where you would
-  rather not install an editor. Free.
+  agent as a standalone app for Windows, macOS and Linux, for machines where you
+  would rather not install an editor. Free.
 
-Neither is required, and nothing here depends on them.
+It is not required, and nothing here depends on it.
 
 ---
 
@@ -125,7 +133,7 @@ function buildMarketplaceReadme(githubReadme) {
   body = body.replace(/\n### Atlas Desktop[\s\S]*?(?=\n### |\n## )/m, "\n");
   body = body.replace(/\n### VS Code \/ Cursor extension\n\n/m, "\n");
   body = body.replace(
-    /1\. \*\*Open\*\* Grok — in VS Code: `Ctrl\/Cmd\+;` \(Secondary Side Bar by default\); in Desktop: launch the app and add a project folder\./,
+    /1\. \*\*Open\*\* Atlas — in VS Code: `Ctrl\/Cmd\+;` \(Secondary Side Bar by default\); in Desktop: launch the app and add a project folder\./,
     "1. **Open** the Atlas view (`Ctrl/Cmd+;`, or **Atlas: Open** from the command palette) — it lives in the Secondary Side Bar by default.",
   );
   body = body.replace(
@@ -140,6 +148,10 @@ function buildMarketplaceReadme(githubReadme) {
   );
   body = body.replace(
     /\]\((docs\/[^)]+)\)/g,
+    "](https://github.com/phuryn/grok-build-vscode/blob/main/$1)",
+  );
+  body = body.replace(
+    /\]\((research\/[^)]+)\)/g,
     "](https://github.com/phuryn/grok-build-vscode/blob/main/$1)",
   );
   body = body.replace(

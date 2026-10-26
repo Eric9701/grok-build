@@ -27,15 +27,15 @@ suite("grok-build extension smoke", () => {
     const all = await vscode.commands.getCommands(true);
     // A stable subset that must always exist (the full list lives in package.json).
     for (const id of [
-      "grok.open",
-      "grok.newSession",
-      "grok.showLogs",
-      "grok.settings",
-      "grok.findInSession",
-      "grok.logout",
+      "atlas.open",
+      "atlas.newSession",
+      "atlas.showLogs",
+      "atlas.settings",
+      "atlas.findInSession",
+      "atlas.logout",
       // The escape hatch for an editor that hid the view somewhere unreachable —
       // useless if it is not in the palette.
-      "grok.moveView",
+      "atlas.moveView",
     ]) {
       assert.ok(all.includes(id), `command not registered: ${id}`);
     }
@@ -46,8 +46,8 @@ suite("grok-build extension smoke", () => {
     }
   });
 
-  test("grok.open actually opens the chat", async () => {
-    // The regression this exists for: `grok.open` used to execute a hardcoded
+  test("atlas.open actually opens the chat", async () => {
+    // The regression this exists for: `atlas.open` used to execute a hardcoded
     // container command, and in an editor that refuses our secondary-side-bar
     // container that command does not exist — so opening the chat failed with
     // "command not found" and the extension could not be used at all (#101
@@ -55,17 +55,17 @@ suite("grok-build extension smoke", () => {
     //
     // It replaces a version that ran `grok.chat.focus`, swallowed any failure,
     // and then asserted `true` — which would have passed throughout the outage.
-    await vscode.commands.executeCommand("grok.open");
+    await vscode.commands.executeCommand("atlas.open");
   });
 
   test("resolving the webview view does not crash (missing-CLI onboarding path)", async () => {
     // Focusing the view triggers resolveWebviewView -> getHtml -> the first posts.
     // With no grok binary on the CI box the extension takes the missing-CLI onboarding
     // branch; reaching the assertion below without an unhandled rejection is the check.
-    await vscode.commands.executeCommand("grok.chat.focus");
+    await vscode.commands.executeCommand("atlas.chat.focus");
     await new Promise((r) => setTimeout(r, 2000)); // let the webview resolve + post
     // A second, lightweight command that touches the sidebar without needing grok.
-    await vscode.commands.executeCommand("grok.showLogs");
+    await vscode.commands.executeCommand("atlas.showLogs");
     assert.ok(true, "webview resolved without throwing");
   });
 
@@ -191,7 +191,7 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
       assert.strictEqual(
         hooks.locatedGrokCli(),
         undefined,
-        "isolated discovery must ignore grok.cliPath and PATH",
+        "isolated discovery must ignore atlas.cliPath and PATH",
       );
       const restore = provisionFakeCli();
       try {
@@ -459,6 +459,8 @@ suite("repo selection: isolated per remote tab, workspace-local in VS Code", () 
         { type: "historyReplay", active: true },
         { type: "historyBatch", messages: [{ type: "messageChunk", text: "partial load" }] },
         { type: "historyReplay", active: false },
+        // The snapshot also says the conversation is no longer starting.
+        { type: "startupStatus", provider: "grok", stage: null, elapsedMs: 0 },
         { type: "subscriptionUsage", windows: [] },
       ],
     );

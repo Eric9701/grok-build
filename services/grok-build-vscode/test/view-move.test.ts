@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
+import { ALWAYS_APPROVE_NOTICE_KEY } from "../src/grok-config";
 import {
   GROK_VIEW_ID,
   hostAcceptedSecondarySideBar,
@@ -34,7 +35,7 @@ describe("the one automatic placement correction", () => {
 
   it("moves to the activity-bar container where the secondary one was refused", () => {
     // Cursor drops the view into Explorer and never registers our container, so
-    // grok.open threw "command not found" and the chat could not be opened.
+    // atlas.open threw "command not found" and the chat could not be opened.
     expect(correct(CURSOR, true)).toEqual({
       containerId: PRIMARY_CONTAINER_ID,
       panelPosition: null,
@@ -88,6 +89,10 @@ describe("whether this install has ever been used", () => {
     // stranding exactly the fresh install this exists for.
     expect(isFirstEverRun([SECONDARY_SIDE_BAR_PROBE_KEY])).toBe(true);
     expect(isFirstEverRun([VIEW_PLACEMENT_KEY, SECONDARY_SIDE_BAR_PROBE_KEY])).toBe(true);
+    // Same class: we write this ourselves the first time a session starts
+    // under a global always-approve config. Counting it as use would close
+    // the first-run placement gate on a machine that already had grok's TUI.
+    expect(isFirstEverRun([ALWAYS_APPROVE_NOTICE_KEY])).toBe(true);
   });
 
   it("anything the user's use produced does count", () => {
@@ -177,7 +182,7 @@ describe("both routes to the host picker retire the hint BEFORE moving", () => {
   });
 });
 
-describe("what grok.open executes", () => {
+describe("what atlas.open executes", () => {
   it("focuses the view itself, which works wherever the view lives", () => {
     // Previously hardcoded the secondary container — exactly the command that
     // does not exist in Cursor, which is what users saw fail.

@@ -12,9 +12,11 @@ phone and on a machine with no screen.
 
 It depends on where you press the button, and the difference is deliberate.
 
-**At the computer** — VS Code, Cursor, or the desktop app — **Settings →
-Providers → Connect** opens a terminal there and runs the agent's own login
-command:
+**At the computer** — VS Code, Cursor, or the desktop app — **Connect** (the
+agent chooser, or **Settings → Providers**) first checks whether the agent's CLI
+is already signed in. If it is, that sign-in is used and nothing opens. If it is
+not, the agent's sign-in panel appears, and only its sign-in button opens a
+terminal there and runs the agent's own login command:
 
 | Agent | Command | Credential lands in |
 |---|---|---|
@@ -23,7 +25,9 @@ command:
 | Claude Code | `claude auth login` | `~/.claude/` (or the OS keychain) |
 
 A terminal is the better affordance there, because the CLI opens your browser
-for you.
+for you — after you have pressed the button that asks it to. Muse Code has no
+terminal step: its sign-in card shows the vendor's link and code, and the link
+opens when you click it.
 
 **From a phone or browser**, there is no terminal to look at, so the same button
 runs the agent's **headless device-code flow** instead and shows you the URL and
@@ -206,6 +210,11 @@ and the relay never sees any of them. See [Privacy](privacy.md).
 
 ## Signing out
 
-`grok logout`, `codex logout`, `claude auth logout` — or **Settings → Providers
-→ Sign out**, which runs the same command. Signing out of Grok is also the fix
+`grok logout`, `codex logout`, `claude auth logout` — or the **Grok: Log Out**
+command, which runs the same command for the agent you pick. **Settings →
+Providers → Disconnect** does not sign the CLI out: it turns the agent off in
+this extension and leaves the CLI signed in, so a terminal or another editor
+keeps working and Connect turns it back on without a login. On a cloud
+environment the same button reads **Sign out** and does run the CLI's logout,
+because nobody else will clear that machine. Signing out of Grok is also the fix
 for a cached OAuth session shadowing an `XAI_API_KEY` you would rather use.

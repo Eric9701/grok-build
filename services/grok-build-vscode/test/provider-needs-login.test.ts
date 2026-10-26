@@ -23,10 +23,19 @@ vi.mock("../src/codex-model-cache", () => ({
 
 vi.mock("../src/acp", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/acp")>();
-  class ListRefusingAcpClient {
-    constructor(readonly options: unknown) {}
+  // Imported INSIDE the factory: vi.mock is hoisted above the import block, so
+  // a top-level EventEmitter binding is not initialised when this runs.
+  const { EventEmitter } = await import("node:events");
+  // EventEmitter because the real client is one, and the history path now
+  // subscribes to `exit` so a dead shared process is dropped rather than
+  // reused. A double omitting it turns that subscribe into a TypeError — and a
+  // TypeError is not a credential error, so this very test would report "no
+  // sign-in needed" for an account that is signed out.
+  class ListRefusingAcpClient extends EventEmitter {
+    constructor(readonly options: unknown) { super(); }
     async start(): Promise<void> {}
     async listSessions(): Promise<never> { throw probe.error; }
+    async listSessionCatalog(): Promise<never> { throw probe.error; }
     async dispose(): Promise<void> {}
   }
   return { ...actual, AcpClient: ListRefusingAcpClient };
@@ -40,15 +49,15 @@ function makeSidebar(cwd = "/repo"): any {
   sidebar.connectedProviders = vi.fn(() => ["codex"]);
   sidebar.locateProvider = vi.fn(() => "codex");
   sidebar.providerNeedsLogin = {};
-  sidebar.loginReprobeTimers = new Map();
   sidebar.remoteClients = new RemoteClientState<Session>(cwd);
   sidebar.pool = new Set<Session>();
   sidebar.focused = new Session();
   sidebar.focused.provider = "codex";
   sidebar.focused.cwd = cwd;
   sidebar.codexSessionCache = new Map();
-  sidebar.codexSessionCacheAt = new Map();
-  sidebar.codexSessionRefresh = new Map();
+  // The shared per-provider history process. Listings reuse one process
+  // across repos, so a double that reaches them needs it.
+  sidebar.adapterHistoryClients = new Map();
   sidebar.state = { get: vi.fn((_key: string, fallback: unknown) => fallback), update: vi.fn(async () => {}) };
   sidebar.host = {
     appendLine: vi.fn(),
@@ -61,7 +70,12 @@ function makeSidebar(cwd = "/repo"): any {
   sidebar.sendRemoteClient = vi.fn();
   sidebar.dotForId = vi.fn(() => "none");
   sidebar.sessionCwd = vi.fn((session: Session) => session.cwd || cwd);
-  sidebar.setProviderConnected = vi.fn(async () => {});
+  // Stubbed to skip persistence, but it still has to WRITE: the saved flag is
+  // what permits the binary to run at all now, so a no-op here silently gates
+  // every path under test (#171).
+  sidebar.setProviderConnected = vi.fn(async (provider: string, connected: boolean) => {
+    sidebar.providerConnectionState = { ...sidebar.providerConnectionState, [provider]: connected };
+  });
   sidebar.rememberProjectProvider = vi.fn(async () => {});
   sidebar.startSession = vi.fn(async () => {});
   // A successful re-check now announces itself, so the re-check path reaches
@@ -103,14 +117,14 @@ describe("an agent that will not authenticate", () => {
   it("an explicit re-check bypasses listing freshness and clears needs-login after sign-in", async () => {
     const sidebar = makeSidebar();
     sidebar.providerNeedsLogin = { codex: true };
-    sidebar.codexSessionCacheAt.set(projectProviderKey("/repo"), Date.now());
+    sidebar.adapterHistoryStamps = new Map([["codex", { at: Date.now() }]]);
     vi.mocked(warmCodexModelCache).mockResolvedValueOnce(undefined as never);
 
     await sidebar.onMessage({ type: "recheckConnection", provider: "codex" }, "local");
 
     expect(warmCodexModelCache).toHaveBeenCalled();
     expect(codexState(sidebar).needsLogin).toBeUndefined();
-    expect(sidebar.codexSessionCacheAt.has(projectProviderKey("/repo"))).toBe(false);
+    expect(sidebar.adapterHistoryStamps.has("codex")).toBe(false);
     // Say it worked. A re-check that succeeds and shows nothing is
     // indistinguishable from one that did nothing.
     expect(onboardingStates(sidebar)).toContain("provider-connected");
@@ -136,22 +150,37 @@ describe("an agent that will not authenticate", () => {
     expect(codexState(sidebar).needsLogin).toBeUndefined();
   });
 
-  it("the sign-in action keeps probing until the completed login is observable", async () => {
+  it("the sign-in action records consent, then watches the terminal it opened", async () => {
+    // #171 inverted this to "probes NOBODY", calling the ladder the extension
+    // starting a vendor's binary on a guess. It is not a guess: it starts from
+    // the Connect press, after consent is saved, and #171's reporter never
+    // pressed Connect, so it could not have been their traffic. What the
+    // inversion did cost was measured on the owner's desk the same day: a
+    // finished `grok login` / `codex login` / `claude auth login` was noticed
+    // by nothing, and every agent waited for a hand-pressed Re-check.
     vi.useFakeTimers();
     try {
       const sidebar = makeSidebar();
-      sidebar.reprobeProviderCredentials = vi.fn()
-        .mockResolvedValueOnce(false)
-        .mockResolvedValueOnce(true);
+      // Fail until the fourth probe: the person is still in the browser.
+      sidebar.providerConnectionState.grok = true;
+      sidebar.providerNeedsLogin.grok = true;
+      let calls = 0;
+      sidebar.reprobeProviderCredentials = vi.fn(async () => ++calls >= 4);
 
       await sidebar.onMessage({ type: "runGrokLogin", provider: "grok" }, "local");
       await Promise.resolve();
+      // This is explicit sign-in on an already connected provider.
+      expect(sidebar.providerConnectionState.grok).toBe(true);
+      expect(sidebar.host.createTerminal).toHaveBeenCalled();
       expect(sidebar.reprobeProviderCredentials).toHaveBeenCalledTimes(1);
-      expect(sidebar.reprobeProviderCredentials).toHaveBeenLastCalledWith("grok");
 
-      await vi.advanceTimersByTimeAsync(2_000);
-      expect(sidebar.reprobeProviderCredentials).toHaveBeenCalledTimes(2);
-      expect(sidebar.loginReprobeTimers.has("grok")).toBe(false);
+      await vi.advanceTimersByTimeAsync(120_000);
+      // 0s, 2s, 5s, 10s -- and it stops at the first probe that succeeds.
+      expect(sidebar.reprobeProviderCredentials).toHaveBeenCalledTimes(4);
+
+      // Re-check still works for a terminal the ladder gave up on.
+      await sidebar.onMessage({ type: "recheckConnection", provider: "grok" }, "local");
+      expect(sidebar.reprobeProviderCredentials).toHaveBeenCalledTimes(5);
     } finally {
       vi.useRealTimers();
     }
@@ -169,12 +198,13 @@ describe("an agent that will not authenticate", () => {
     sidebar.remoteClients.setActive("phone", session);
 
     sidebar.installTestHooks().fromRemote({ type: "listSessions", offset: 0, query: "" }, "phone");
-    await sidebar.codexSessionRefresh.get(projectProviderKey("/repo"));
+    await sidebar.adapterHistoryRuns.get("codex");
 
     expect(codexState(sidebar)).toMatchObject({ needsLogin: true });
     expect(sidebar.codexSessionCache.get(projectProviderKey("/repo"))).toBeUndefined();
     // Backed off, so the repaint this state change causes cannot re-list in a loop.
-    expect(sidebar.codexSessionCacheAt.get(projectProviderKey("/repo"))).toBeGreaterThan(0);
+    expect(sidebar.adapterHistoryStamps.get("codex")).toMatchObject({ refused: true });
+    expect(sidebar.adapterHistoryStamps.get("codex").at).toBeGreaterThan(0);
   });
 
   it("leaves an account alone when the failure is billing rather than credentials", async () => {
@@ -192,7 +222,7 @@ describe("an agent that will not authenticate", () => {
     });
 
     sidebar.installTestHooks().fromRemote({ type: "listSessions", offset: 0, query: "" }, "phone");
-    await sidebar.codexSessionRefresh.get(projectProviderKey("/repo"));
+    await sidebar.adapterHistoryRuns.get("codex");
 
     // A login screen cannot fix an entitlement problem (#58), so the account
     // must not be labelled signed-out.
@@ -212,7 +242,7 @@ describe("an agent that will not authenticate", () => {
     sidebar.remoteClients.setActive("phone", session);
 
     sidebar.installTestHooks().fromRemote({ type: "listSessions", offset: 0, query: "" }, "phone");
-    await sidebar.codexSessionRefresh.get(projectProviderKey("/repo"));
+    await sidebar.adapterHistoryRuns.get("codex");
 
     expect(codexState(sidebar).needsLogin).toBeUndefined();
   });

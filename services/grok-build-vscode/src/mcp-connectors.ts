@@ -2,7 +2,7 @@
  * Host-owned MCP connector catalog (Tier 1) and the session/new `mcpServers`
  * builder. OAuth tokens stay in `~/.mcp-auth` (`mcp-remote`). Key-auth tokens
  * (GitHub PAT) live in `HostSecrets` (`mcpConnectorSecretKey`) and reach
- * mcp-remote as `AUTH_HEADER` in env — never argv, never `grok.mcpConnectors`,
+ * mcp-remote as `AUTH_HEADER` in env — never argv, never `atlas.mcpConnectors`,
  * never PersistedState.
  *
  * Our list is additive, not authoritative: `mcpServers: []` does not suppress
@@ -200,7 +200,7 @@ export interface ConnectorView {
   name: string;
   description: string;
   endpoint: string;
-  /** Shared `grok.mcpConnectors` record. Independent of this host's secret. */
+  /** Shared `atlas.mcpConnectors` record. Independent of this host's secret. */
   connected: boolean;
   status: ConnectorStatus;
   error?: string;
@@ -341,7 +341,7 @@ export function isKeyConnector(connector: Pick<ConnectorDef, "auth"> | undefined
   return connectorAuth(connector) === "key";
 }
 
-/** SecretStorage / desktop HostSecrets key. Not a PersistedState / grok.mcpConnectors key. */
+/** SecretStorage / desktop HostSecrets key. Not a PersistedState / atlas.mcpConnectors key. */
 export function mcpConnectorSecretKey(id: ConnectorId): string {
   return `${MCP_CONNECTOR_SECRET_KEY_PREFIX}${id}.key`;
 }
@@ -561,7 +561,7 @@ export function reservedConflictsConnector(
 /**
  * Host `mcpServers` payload. File-discovered / managed names win: we skip a
  * convenience entry rather than duplicate their tools. A key-auth row with a
- * store record but no local token is skipped, not deleted — `grok.mcpConnectors`
+ * store record but no local token is skipped, not deleted — `atlas.mcpConnectors`
  * is shared across hosts; HostSecrets are not.
  */
 export function hostMcpServers(

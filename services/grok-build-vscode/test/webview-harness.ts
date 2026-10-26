@@ -17,6 +17,11 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 const helperSrc = read("../media/webview-helpers.js");
 const settingsSrc = read("../media/settings.js");
 const filePanelSrc = read("../media/file-panel.js");
+// Project marks. Every surface serves these before chat.js and the file panel
+// (getHtml() and web/chat.html both do); without them here the rail and the
+// panel title would silently exercise their no-marks fallback instead.
+const marksSrc = read("../media/repo-icons.js");
+const iconPickerSrc = read("../media/repo-icon-picker.js");
 const chatSrc = read("../media/chat.js");
 
 // Mirror of getHtml()'s <body> — only the ids chat.js queries at startup matter.
@@ -119,6 +124,8 @@ export function bootWebview(opts: {
   if (opts.remote) (window as any).grokRemoteClient = true;
   if (opts.beforeScripts) opts.beforeScripts(window);
   (window as any).eval(helperSrc);
+  (window as any).eval(marksSrc);
+  (window as any).eval(iconPickerSrc);
   (window as any).eval(settingsSrc);
   // Every surface loads the shared component; each feature gates its own mount.
   (window as any).eval(filePanelSrc);

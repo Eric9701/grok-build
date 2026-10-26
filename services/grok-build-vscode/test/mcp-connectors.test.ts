@@ -296,12 +296,12 @@ describe("connected store", () => {
 });
 
 describe("key-auth connectors", () => {
-  it("GitHub is the only key-auth row and stores secrets under HostSecrets, not grok.mcpConnectors", () => {
+  it("GitHub is the only key-auth row and stores secrets under HostSecrets, not atlas.mcpConnectors", () => {
     const github = connectorById("github")!;
     expect(isKeyConnector(github)).toBe(true);
     expect(isKeyConnector(connectorById("linear"))).toBe(false);
     expect(mcpConnectorSecretKey("github")).toBe("grok.mcpConnector.github.key");
-    expect(mcpConnectorSecretKey("github")).not.toBe("grok.mcpConnectors");
+    expect(mcpConnectorSecretKey("github")).not.toBe("atlas.mcpConnectors");
   });
 
   it("puts the PAT in AUTH_HEADER env and never in argv", () => {

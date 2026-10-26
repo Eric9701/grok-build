@@ -48,9 +48,8 @@ function findInDir(dir: string, names: string[]): string | undefined {
 /** `env` is injectable for the same reason locateCodexCli and locateClaudeCli
  *  take one. A test that redirects the home or PATH lookup by assigning
  *  `process.env` is mutating state shared with every other test FILE in the
- *  process, because vitest runs those as threads - and the shell fallback below
- *  then runs a real `where grok`, which on any machine with the CLI installed
- *  returns the very binary the test asserts is absent. */
+ *  process, because vitest runs those as threads. Windows discovery scans only
+ *  the supplied PATH/PATHEXT; POSIX can also use a shell fallback. */
 export function locateGrokCli(
   configuredPath: string,
   env: NodeJS.ProcessEnv = process.env,

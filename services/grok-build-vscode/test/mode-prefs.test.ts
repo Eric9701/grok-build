@@ -1,14 +1,52 @@
 import { describe, it, expect, vi } from "vitest";
-import { modeToRemember, rememberedEffort, startsInYolo } from "../src/mode-prefs";
+import { hasNativeAutoMode, isModeId, modeToRemember, rememberedEffort, sessionModes, startsInNativeAuto, startsInYolo, musePosture, museShellSandboxEnabled, usesClientAutoAccept } from "../src/mode-prefs";
 import { GrokSidebar } from "../src/sidebar";
 import { Session } from "../src/session";
 
 describe("remembered mode preference (#25)", () => {
-  it("remembers a switch to Agent or Auto accept, but never Plan", () => {
+  const defaults = { shellSandbox: true, sandboxNetwork: "proxy-only" as const, trustWorkspaces: false };
+  it.each([false, true])("replaces saved and default Deny unmatched with Prompt unmatched (cloud=%s)", cloud => {
+    expect(musePosture("denyUnmatched", false, undefined, defaults, cloud)).toEqual({ ...defaults, mode: "agent" });
+    const saved = { ...defaults, mode: "denyUnmatched" as const, trustWorkspaces: true };
+    expect(musePosture("yolo", true, saved, defaults, cloud)).toEqual({ ...saved, mode: "agent" });
+    expect(saved.mode).toBe("denyUnmatched");
+  });
+  it.each(["agent", "yolo", "onRequest", "denyUnmatched"] as const)("uses the VM rather than the Muse sandbox for cloud %s", mode => {
+    expect(museShellSandboxEnabled({ ...defaults, mode }, true)).toBe(false);
+    expect(museShellSandboxEnabled({ ...defaults, mode })).toBe(mode !== "yolo");
+  });
+
+  it("uses Prompt unmatched for a remembered cloud On request default, preserving existing histories for explicit refusal", () => {
+    expect(musePosture("onRequest", false, undefined, defaults, true).mode).toBe("agent");
+    expect(musePosture("onRequest", false, undefined, defaults).mode).toBe("onRequest");
+    const saved = { ...defaults, mode: "onRequest" as const };
+    expect(musePosture("agent", true, saved, defaults, true)).toEqual(saved);
+  });
+  it("seeds new Muse sessions from the shared mode and Agent settings", () => {
+    expect(musePosture("yolo", false, undefined, defaults)).toEqual({ ...defaults, mode: "yolo" });
+    const configured = { ...defaults, shellSandbox: false, trustWorkspaces: true };
+    expect(musePosture("agent", false, undefined, configured)).toEqual({ ...configured, mode: "agent" });
+  });
+
+  it("reopens with the conversation's posture, unaffected by defaults changed elsewhere", () => {
+    const saved = { ...defaults, mode: "yolo" as const };
+    expect(musePosture("agent", true, saved, { ...defaults, trustWorkspaces: true })).toEqual(saved);
+    expect(musePosture("yolo", true, { ...saved, mode: "agent" }, defaults).mode).toBe("agent");
+    expect(musePosture("yolo", true, undefined, { ...defaults, trustWorkspaces: true })).toEqual({ ...defaults, mode: "agent" });
+  });
+
+  it("leaves all Muse approvals to its native mode, including before replay", () => {
+    expect(usesClientAutoAccept("muse")).toBe(false);
+    for (const provider of ["grok", "codex", "claude"]) expect(usesClientAutoAccept(provider)).toBe(true);
+  });
+  it("remembers a switch to Agent, Auto or Auto accept, but never Plan", () => {
     expect(modeToRemember("agent")).toBe("agent");
     expect(modeToRemember("yolo")).toBe("yolo");
+    expect(modeToRemember("auto")).toBe("auto");
     // Plan is a transient per-task choice — leave the remembered preference alone.
     expect(modeToRemember("plan")).toBeNull();
+    expect(modeToRemember("onRequest")).toBeNull();
+    expect(modeToRemember("denyUnmatched")).toBeNull();
   });
 
   it("starts a NEW session in Auto accept only when that's the remembered mode", () => {
@@ -21,6 +59,32 @@ describe("remembered mode preference (#25)", () => {
   it("never pre-applies the remembered mode on a resume (those are verdict-driven)", () => {
     expect(startsInYolo("yolo", true)).toBe(false);
     expect(startsInYolo("agent", true)).toBe(false);
+  });
+
+  // Claude Code's `auto` is the one unambiguous native Auto (claude-agent-acp
+  // 0.76.0: "Claude handles permission decisions"). Codex already starts in its
+  // auto-review mode; Grok, Muse and Antigravity's ACP server have none.
+  it("offers a native Auto only where the agent has one, and starts new sessions in it unless something else was chosen", () => {
+    expect(["claude", "codex", "grok", "muse", "agy"].filter(hasNativeAutoMode)).toEqual(["claude"]);
+    expect(isModeId("auto")).toBe(true);
+    expect(startsInNativeAuto("claude", undefined, false)).toBe(true);
+    expect(startsInNativeAuto("claude", "", false)).toBe(true);
+    expect(startsInNativeAuto("claude", "auto", false)).toBe(true);
+    // An explicit choice is kept, a resume keeps its own mode, and others have no Auto.
+    expect(startsInNativeAuto("claude", "agent", false)).toBe(false);
+    expect(startsInNativeAuto("claude", "yolo", false)).toBe(false);
+    expect(startsInNativeAuto("claude", undefined, true)).toBe(false);
+    for (const provider of ["codex", "grok", "muse", "agy"]) expect(startsInNativeAuto(provider, undefined, false)).toBe(false);
+    expect(startsInYolo("auto", false)).toBe(false);
+  });
+
+  it("offers Plan to Grok and Claude only", () => {
+    expect(sessionModes("grok")).toEqual(["agent", "plan", "yolo"]);
+    expect(sessionModes("claude")).toEqual(["agent", "auto", "plan", "yolo"]);
+    expect(sessionModes("codex")).toEqual(["agent", "yolo"]);
+    expect(sessionModes("muse")).toEqual(["yolo", "agent", "onRequest"]);
+    expect(sessionModes("muse", true)).toEqual(["yolo", "agent"]);
+    for (const provider of ["grok", "codex", "claude"]) expect(sessionModes(provider, true)).toEqual(sessionModes(provider));
   });
 });
 
@@ -41,7 +105,7 @@ describe("remembered effort by provider (#151)", () => {
 });
 
 describe("effort picker persistence", () => {
-  function picker(provider: "grok" | "claude" | "codex") {
+  function picker(provider: "grok" | "claude" | "codex" | "muse") {
     const sidebar = Object.create(GrokSidebar.prototype) as any;
     const session = new Session();
     session.provider = provider;
@@ -85,7 +149,7 @@ describe("effort picker persistence", () => {
     return { sidebar, session, cfg, values };
   }
 
-  it.each(["grok", "claude", "codex"] as const)("remembers a successful live %s change without changing another provider", async (provider) => {
+  it.each(["grok", "claude", "codex", "muse"] as const)("remembers a successful live %s change without changing another provider", async (provider) => {
     const { sidebar, session, cfg, values } = picker(provider);
     await sidebar.onMessage({ type: "setEffort", level: "low" }, "local");
     expect(session.client!.setReasoningEffort).toHaveBeenCalledWith("low");
@@ -102,6 +166,30 @@ describe("effort picker persistence", () => {
     // own transcript. The chip is optimistic and reconciles on the next real
     // `initialState`, which is what the effort dots did before it.
     expect(sidebar.emit).not.toHaveBeenCalled();
+  });
+
+  it("applies a Muse picker change live and reads back its own saved effort", async () => {
+    const { sidebar, session, cfg, values } = picker("muse");
+    values["grok.defaultEffortByProvider"] = { codex: "medium", claude: "low" };
+    await sidebar.onMessage({ type: "setEffort", level: "ultra" }, "local");
+    expect(session.client!.setReasoningEffort).toHaveBeenCalledWith("ultra");
+    expect(values["grok.defaultEffortByProvider"]).toEqual({ codex: "medium", claude: "low", muse: "ultra" });
+    expect(sidebar.defaultEffortForProvider("muse")).toBe("ultra");
+    expect(cfg.update).not.toHaveBeenCalled();
+    expect(sidebar.startSession).not.toHaveBeenCalled();
+    expect(sidebar.restartSession).not.toHaveBeenCalled();
+    expect(sidebar.pickRestartMode).not.toHaveBeenCalled();
+  });
+
+  it("remembers a Muse picker change before restarting an empty session", async () => {
+    const { sidebar, session } = picker("muse");
+    session.hasHistory = false;
+    sidebar.startSession.mockImplementation(async () => {
+      expect(sidebar.defaultEffortForProvider("muse")).toBe("max");
+    });
+    await sidebar.onMessage({ type: "setEffort", level: "max" }, "local");
+    expect(sidebar.startSession).toHaveBeenCalledWith(undefined, session);
+    expect(session.client!.setReasoningEffort).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("remembers an adapter reset for the restart path (empty=%s)", async (empty) => {

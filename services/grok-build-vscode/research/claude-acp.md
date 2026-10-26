@@ -73,6 +73,30 @@ text block. The host lifts that with `planTextFromPermissionToolCall`
 and the webview shows grok's plan-review card plus Claude's mode options
 (`default` / `acceptEdits` / `auto` / `bypassPermissions` / keep planning).
 
+## Auto mode
+
+claude-agent-acp 0.76.0 offers `default` ("Manual"), `acceptEdits`, `plan`,
+`auto` ("Claude handles permission decisions", `_meta.kind: auto_review`) and
+`bypassPermissions`. `auto` is the host's **Auto mode** (`hasNativeAutoMode`),
+and a new conversation starts in it when `grok.defaultMode` is unset or
+`auto` (`startsInNativeAuto`); an explicit Agent or Auto accept is kept, and a
+resume keeps its own mode.
+
+- In Auto, Claude still asks about what it judges risky, so the host does
+  **not** auto-accept: `auto` is not in `ADAPTER_AUTO_ACCEPT_MODES`.
+- Auto needs a model (and account) that supports it, which ACP does not tell
+  the host in advance (`ModelInfo.supportsAutoMode` stays in the adapter).
+  Without it the adapter switches to `acceptEdits`, reports that as
+  `current_mode_update`, and posts "Auto mode unavailable". The host reads an
+  `acceptEdits` while it is in Auto as that fallback (`onNativeAutoMode`):
+  it settles once on Agent (`default`), not Accept edits, which it would treat
+  as Auto accept; remembers the model for the rest of the run so new
+  conversations on it start in Agent without asking again; and never retries
+  on its own. A hand-picked Auto that falls back says so.
+- Codex is deliberately left alone: its default `agent` is already its
+  auto-review mode ("Approve for me"), and its classic Auto preset is a second
+  candidate under the id `read-only`.
+
 ## Context usage
 
 `usage_update.used` is the **current assistant call's** billed total
@@ -97,10 +121,14 @@ Claude turn, where the result excludes output). The host persists that
 figure per session (`SessionMetaOverride.contextUsed`) and keeps it
 monotonic between compactions. Ordinary `usage_update.used` is not
 occupancy by itself (it includes that call's output); the adapter sends
-real occupancy via `getContextUsage` only on compact (`compact_boundary`),
-and the host adopts that `usage_update.used` after `adapterCompactSignal`
-reports completed. A later summed PromptResponse must not overwrite
-that adoption. `size` is the window and must ride
+real occupancy only on compact (`compact_boundary`'s `post_tokens`), and
+the host adopts the first `usage_update.used` after any non-failed
+`adapterCompactSignal`. Measured 2026-10-13 on the pinned adapters, both
+stamping `_meta.contextCompaction: { version: 1, … }`: Claude 0.76.0 sends
+started → completed → a status-less enrichment carrying `postTokens` →
+`usage_update` (3647); codex-acp 1.11.0 sends started → `usage_update`
+(12037) → completed. Arming on both phases covers both orders. A later
+summed PromptResponse must not overwrite that adoption. `size` is the window and must ride
 `contextUsage.window` — Claude's live id is often `opus[1m]`, which does
 not match the picker model list, so stamping
 `availableModels[].totalContextTokens` alone never updates the webview.

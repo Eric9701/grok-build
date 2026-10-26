@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RemoteClientState } from "../src/remote-client-state";
 import { Session } from "../src/session";
 import type { HostMsg } from "../src/protocol";
+import { CLOUD_ENVIRONMENT_ENV } from "../src/remote-frames";
+import { bootWebview, click, dispatch } from "./webview-harness";
 
 const startControl = {
   failuresRemaining: 0,
@@ -17,6 +19,16 @@ const startControl = {
   loadFailWith: "Internal error",
   exitDuringNewSessionRemaining: 0,
   efforts: [] as Array<string | undefined>,
+  museMode: undefined as string | undefined,
+  musePostures: [] as any[],
+  museRefusesFullAccess: false,
+  museFailsAfterReplay: false,
+  catalogs: {} as Record<string, { modelId: string; name: string }[]>,
+  startWait: undefined as Promise<void> | undefined,
+  startupAuths: [] as unknown[],
+  startEnvs: [] as Array<NodeJS.ProcessEnv | undefined>,
+  setModes: [] as string[],
+  claudeAutoUnsupported: false,
 };
 
 vi.mock("../src/acp", async (importOriginal) => {
@@ -24,7 +36,8 @@ vi.mock("../src/acp", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/acp")>();
   class FakeAcpClient extends EventEmitter {
     setHumanWaitActive = vi.fn();
-    provider: "grok" | "codex" | "claude";
+    provider: "grok" | "codex" | "claude" | "muse";
+    currentModeId?: string;
     usesClientPlanGate = false;
     sessionId: string | undefined;
     availableModels: { modelId: string; name: string }[] = [];
@@ -32,12 +45,18 @@ vi.mock("../src/acp", async (importOriginal) => {
     fsRead?: unknown;
     fsWrite?: unknown;
     terminal?: unknown;
-    constructor(opts: { log: (msg: string) => void; effort?: string; backend?: { provider: "grok" | "codex" | "claude" } }) {
+    constructor(opts: { log: (msg: string) => void; effort?: string; backend?: any; startupAuth?: unknown; env?: NodeJS.ProcessEnv }) {
       super();
+      startControl.startupAuths.push(opts.startupAuth);
+      startControl.startEnvs.push(opts.env);
       this.provider = opts.backend?.provider ?? "grok";
+      this.availableModels = startControl.catalogs[this.provider] ?? [];
+      this.currentModelId = this.availableModels[0]?.modelId ?? "fake-model";
       startControl.efforts.push(opts.effort);
+      if (this.provider === "muse") startControl.musePostures.push(JSON.parse(opts.backend.spawn({ cliPath: "/fake/muse", cwd: "/repo", env: {} }).env.GROK_MUSE_POSTURE));
     }
     async start(): Promise<void> {
+      await startControl.startWait;
       startControl.starts += 1;
       if (startControl.failuresRemaining > 0) {
         startControl.failuresRemaining -= 1;
@@ -53,6 +72,10 @@ vi.mock("../src/acp", async (importOriginal) => {
         this.emit("exit", 0);
       }
       this.sessionId = "new-session";
+      if (this.provider === "muse") {
+        this.currentModeId = startControl.museMode ?? startControl.musePostures.at(-1).mode;
+        this.emit("modeChanged", this.currentModeId);
+      }
       this.emit("session", { sessionId: this.sessionId });
       return { sessionId: this.sessionId };
     }
@@ -62,6 +85,11 @@ vi.mock("../src/acp", async (importOriginal) => {
         throw new Error(startControl.loadFailWith);
       }
       this.sessionId = sessionId;
+      if (this.provider === "muse") {
+        this.currentModeId = startControl.museMode ?? "agent";
+        this.emit("modeChanged", this.currentModeId);
+      }
+      if (startControl.museFailsAfterReplay) throw new Error("On request requires the shell sandbox");
       this.emit("session", { sessionId });
       this.emit("sessionLoaded", { sessionId });
       return { sessionId };
@@ -69,7 +97,23 @@ vi.mock("../src/acp", async (importOriginal) => {
     async dispose(): Promise<void> {
       startControl.disposes += 1;
     }
-    async setMode(): Promise<void> {}
+    async deleteSession(): Promise<void> {}
+    async setMode(mode: string): Promise<void> {
+      startControl.setModes.push(`${this.provider}:${mode}`);
+      if (this.provider === "muse" && mode === "yolo" && startControl.museRefusesFullAccess) {
+        throw new Error("approval mode allowAll was not accepted");
+      }
+      if (this.provider === "muse") { this.currentModeId = mode; this.emit("modeChanged", mode); }
+      if (this.provider === "claude" && mode === "auto") {
+        // claude-agent-acp 0.76.0, a model without Auto: it switches to Accept
+        // edits and says so, then the RPC resolves and AcpClient reports the
+        // mode it asked for.
+        if (startControl.claudeAutoUnsupported) this.emit("modeChanged", "acceptEdits");
+        this.emit("modeChanged", "auto");
+      } else if (this.provider === "claude") {
+        this.emit("modeChanged", mode);
+      }
+    }
     supportsInterject(): boolean { return this.provider === "grok"; }
     isCredentialError(): boolean {
       return /auth|unauthor|401|api[_\s-]?key|credential|sign.?in/i.test(startControl.failWith);
@@ -82,6 +126,7 @@ import { GrokSidebar } from "../src/sidebar";
 
 function makeSidebar(cwd: string): any {
   const sidebar = Object.create(GrokSidebar.prototype) as any;
+  sidebar.pendingTurnDiffCaptures = new WeakSet();
   const memento: Record<string, unknown> = {};
   sidebar.providerConnectionState = { grok: true, codex: false };
   sidebar.providerConnections = vi.fn(() => sidebar.providerConnectionState);
@@ -111,6 +156,7 @@ function makeSidebar(cwd: string): any {
     appendLine: vi.fn(),
     showInformationMessage: vi.fn(async () => undefined),
     showWarningMessage: vi.fn(async () => undefined),
+    showErrorMessage: vi.fn(async () => undefined),
     getConfiguration: vi.fn(() => ({
       get: (_key: string, fallback: unknown) => fallback,
       inspect: () => undefined,
@@ -177,6 +223,318 @@ function onboardings(sidebar: any): HostMsg[] {
 }
 
 describe("startSession bounded spawn retry", () => {
+  const switchCatalogs = {
+    muse: [
+      { modelId: "muse-spark-1.3", name: "muse-spark-1.3" },
+      { modelId: "muse-spark-1.3-contributor", name: "muse-spark-1.3-contributor" },
+      { modelId: "muse-spark-1.2", name: "muse-spark-1.2" },
+    ],
+    grok: [{ modelId: "grok-4.7", name: "Atlas 4.7" }],
+    codex: [{ modelId: "gpt-test", name: "GPT Test" }],
+    claude: [{ modelId: "claude-test", name: "Claude Test" }],
+  };
+
+  async function switchingSidebar(provider: keyof typeof switchCatalogs) {
+    const sidebar = makeSidebar(process.cwd());
+    startControl.catalogs = switchCatalogs;
+    sidebar.providerConnectionState = { grok: true, muse: true, codex: true, claude: true };
+    sidebar.focused.provider = provider;
+    sidebar.connectedProviders = () => Object.keys(switchCatalogs);
+    sidebar.usableProviders = sidebar.connectedProviders;
+    // Keep the real cache, catalog composition and project-default methods.
+    delete sidebar.cacheProviderModels;
+    delete sidebar.modelsForSession;
+    delete sidebar.providerDefaultForProject;
+    sidebar.discardRestartedEmptySession = vi.fn();
+    for (const [id, models] of Object.entries(switchCatalogs)) {
+      await sidebar.cacheProviderModels(id, models, models[0].modelId);
+    }
+    await sidebar.startSession(undefined, sidebar.focused);
+    expect(startErrors(sidebar)).toEqual([]);
+    const update = sidebar.state.update;
+    sidebar.state.update = async (key: string, value: unknown) => {
+      await update(key, value);
+      if (key === "atlas.projectProviderDefaults") {
+        // A catalog warm-up finishes while switchModel awaits the preference
+        // write, before startSession can detach the old client. Use the real
+        // refresh path so its emitted session frame/order is not hand-written.
+        await sidebar.cacheProviderModels("grok", switchCatalogs.grok, "grok-4.7");
+        await Promise.resolve();
+      }
+    };
+    return sidebar;
+  }
+
+  it.each(["grok", "codex", "claude", "muse"] as const)(
+    "never attributes the retiring %s client's catalog to its replacement",
+    async provider => {
+      const sidebar = await switchingSidebar(provider);
+      const session = sidebar.focused;
+      const oldClient = session.client;
+      const next = provider === "grok" ? "muse" : "grok";
+      sidebar.posted.length = 0;
+      await sidebar.switchModel(switchCatalogs[next][0].modelId, session, undefined, next);
+      expect(startErrors(sidebar)).toEqual([]);
+      expect(session.client).not.toBe(oldClient);
+      expect(session.client.provider).toBe(next);
+      expect(startControl.disposes).toBe(1);
+      const frames = sidebar.posted.filter((m: HostMsg) => m.type === "session");
+      expect(frames.length).toBeGreaterThan(0);
+      for (const frame of frames) {
+        expect(frame.currentModelId).toBe(switchCatalogs[frame.provider as keyof typeof switchCatalogs][0].modelId);
+        for (const model of frame.models) {
+          expect(switchCatalogs[model.provider as keyof typeof switchCatalogs]).toContainEqual({
+            modelId: model.modelId, name: model.name,
+          });
+        }
+      }
+    },
+  );
+
+  it.each([false, true])("drives Muse → Grok through the host's restart frames, remote=%s", async remote => {
+    const sidebar = await switchingSidebar("muse");
+    const h = bootWebview({ remote });
+    const el = (id: string) => h.doc.getElementById(id)!;
+    dispatch(h.window, { type: "providerState", providers: Object.keys(switchCatalogs).map(id => ({ id, connected: true })) });
+    for (const frame of sidebar.posted) dispatch(h.window, frame);
+    const modes = () => [...h.doc.querySelectorAll(".mode-item-label")].map(row => row.textContent);
+    click(h.window, el("mode-btn"));
+    expect(modes()).toEqual(["Allow all", "Prompt unmatched", "On request"]);
+    expect(el("mode-btn").textContent).toBe("Prompt unmatched");
+    click(h.window, el("gear-btn"));
+    const grokRow = [...h.doc.querySelectorAll(".model-picker-row")].find(row => row.textContent?.includes("Atlas 4.7"))!;
+    click(h.window, grokRow);
+    expect(el("gear-btn").textContent).toContain("Atlas 4.7");
+    expect(h.posted.filter(m => m.type === "setModel")).toEqual([]);
+    // Opening the mode menu commits the picker, just as closing it on desk
+    // or phone does. Inspect the first transient before any host response.
+    click(h.window, el("mode-btn"));
+    expect.soft(modes()).toEqual(["Agent mode", "Plan mode", "Auto accept"]);
+    expect.soft(el("mode-btn").textContent).toBe("Agent mode");
+    expect.soft((el("input") as HTMLTextAreaElement).placeholder).toContain("Ask Atlas");
+    const pick = h.posted.find(m => m.type === "setModel")!;
+    expect(pick).toEqual({ type: "setModel", provider: "grok", modelId: "grok-4.7" });
+
+    const assertUi = () => {
+      // Inspect each frame, including the catalog refresh during the switch
+      // and modeChanged BEFORE session; final-only assertions miss both bugs.
+      dispatch(h.window, { type: "openModePopover" });
+      if ((el("mode-popover") as HTMLElement).hidden) dispatch(h.window, { type: "openModePopover" });
+      expect.soft(modes()).toEqual(["Agent mode", "Plan mode", "Auto accept"]);
+      expect.soft(el("mode-btn").textContent).toBe("Agent mode");
+      expect.soft(el("mode-popover").textContent).not.toMatch(/Unknown mode|Muse|Prompt unmatched|Deny unmatched|On request/);
+      click(h.window, el("gear-btn"));
+      let heading = "";
+      for (const row of h.doc.querySelectorAll(".model-picker-list > *")) {
+        if (row.classList.contains("model-provider-heading")) heading = row.textContent ?? "";
+        else if (heading === "Grok") expect.soft(row.textContent).not.toContain("muse-spark");
+      }
+      expect.soft(el("gear-btn").textContent).toContain("Atlas 4.7");
+    };
+    sidebar.posted.length = 0;
+    let release!: () => void;
+    startControl.startWait = new Promise<void>(resolve => { release = resolve; });
+    const switching = sidebar.switchModel(pick.modelId, sidebar.focused, remote ? { clientId: "phone" } : undefined, pick.provider);
+    try {
+      await vi.waitFor(() => expect(sidebar.focused.priming).toBe(true));
+      const beforeReady = sidebar.posted.splice(0);
+      expect(beforeReady.find((m: HostMsg) => m.type === "modeChanged")).toMatchObject({ modeId: "agent", modes: ["agent", "plan", "yolo"] });
+      for (const frame of beforeReady) { dispatch(h.window, frame); assertUi(); }
+    } finally {
+      release();
+      await switching;
+    }
+    const readyFrames = sidebar.posted;
+    expect(readyFrames.find((m: HostMsg) => m.type === "session")).toMatchObject({ provider: "grok", currentModelId: "grok-4.7" });
+    for (const frame of readyFrames) { dispatch(h.window, frame); assertUi(); }
+    expect(startErrors(sidebar)).toEqual([]);
+    expect((el("input") as HTMLTextAreaElement).placeholder).toContain("Ask Atlas");
+    expect(h.doc.querySelector(".model-picker-row.active")?.textContent).toContain("Atlas 4.7");
+    await h.window.happyDOM.close();
+  });
+
+  it.each(["agent", "yolo", "onRequest", "denyUnmatched"])("applies the host cloud launch rule for remembered %s without persisting cloud flags", async mode => {
+    vi.stubEnv(CLOUD_ENVIRONMENT_ENV, "1");
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    await sidebar.state.update("grok.defaultMuseMode", mode);
+    await sidebar.startSession(undefined, session);
+    await sidebar.sessionMetaWrites;
+    const effective = mode === "onRequest" || mode === "denyUnmatched" ? "agent" : mode;
+    expect(startControl.musePostures.at(-1)).toMatchObject({ mode: effective, cloud: true, shellSandbox: false });
+    expect(session.museCloud).toBe(true);
+    expect(session.museShellSandbox).toBe(false);
+    expect(sidebar.displayMode(session)).toBe(effective);
+    const saved = sidebar.state.get("atlas.sessionMeta", {})["new-session"].musePosture;
+    expect(saved).toMatchObject({ mode: effective, shellSandbox: true });
+    expect(saved).not.toHaveProperty("cloud");
+    expect(sidebar.state.get("grok.defaultMuseMode")).toBe(mode);
+    expect(sidebar.posted.filter((message: HostMsg) => message.type === "modeChanged").every((message: any) =>
+      !message.modes.includes("onRequest") && !message.disabledModes)).toBe(true);
+    // Shared catalog connections use the same host launch rule.
+    const catalog = sidebar.createProviderBackend("muse").spawn({ cliPath: "/fake/muse", cwd: "/repo", env: {} });
+    expect(JSON.parse(catalog.env.GROK_MUSE_POSTURE)).toMatchObject({ cloud: true, shellSandbox: false });
+  });
+  it("saves a replayed On request before a sandbox mismatch aborts resume", async () => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    await sidebar.state.update("atlas.sessionMeta", { history: { musePosture: { mode: "yolo", shellSandbox: false, sandboxNetwork: "proxy-only", trustWorkspaces: true } } });
+    startControl.museMode = "onRequest";
+    startControl.museFailsAfterReplay = true;
+    await sidebar.startSession("history", session);
+    await sidebar.sessionMetaWrites;
+    expect(sidebar.state.get("atlas.sessionMeta", {}).history.musePosture.mode).toBe("onRequest");
+    startControl.museFailsAfterReplay = false;
+    await sidebar.startSession("history", session);
+    expect(startControl.musePostures.at(-1).mode).toBe("onRequest");
+    expect(session.museShellSandbox).toBe(true);
+  });
+  it.each([false, true])("starts saved/default Deny unmatched as Prompt unmatched and shows its badge (cloud=%s)", async cloud => {
+    vi.stubEnv(CLOUD_ENVIRONMENT_ENV, cloud ? "1" : "");
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    await sidebar.state.update("grok.defaultMuseMode", "denyUnmatched");
+    await sidebar.state.update("atlas.sessionMeta", { history: { musePosture: {
+      mode: "denyUnmatched", shellSandbox: true, sandboxNetwork: "proxy-only", trustWorkspaces: true,
+    } } });
+    // The adapter's durable replay repair is tested in muse-session.test.ts.
+    startControl.museMode = "agent";
+    const h = bootWebview({ remote: cloud });
+    dispatch(h.window, { type: "providerState", providers: [{ id: "muse", connected: true }] } as any);
+    for (const resumeId of [undefined, "history"]) {
+      await sidebar.startSession(resumeId, session);
+      await sidebar.sessionMetaWrites;
+      expect(startControl.musePostures.at(-1).mode).toBe("agent");
+      expect(sidebar.displayMode(session)).toBe("agent");
+      dispatch(h.window, { type: "session", sessionId: "m", provider: "muse", models: [] } as any);
+      dispatch(h.window, sidebar.posted.filter((message: HostMsg) => message.type === "modeChanged").at(-1));
+      expect(h.doc.getElementById("mode-btn")!.textContent).toBe("Prompt unmatched");
+    }
+    expect(sidebar.state.get("atlas.sessionMeta", {}).history.musePosture).toMatchObject({ mode: "agent", trustWorkspaces: true });
+    await h.window.happyDOM.close();
+  });
+  it.each(["agent", "yolo", "onRequest"])("follows replayed Muse %s and preserves it for the next process start", async mode => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    startControl.museMode = mode;
+    await sidebar.startSession("history", session);
+    await sidebar.sessionMetaWrites;
+    expect(sidebar.displayMode(session)).toBe(mode);
+    expect(sidebar.state.get("atlas.sessionMeta", {}).history.musePosture.mode).toBe(mode);
+    await sidebar.startSession("history", session);
+    expect(startControl.musePostures.at(-1).mode).toBe(mode);
+    expect(session.museShellSandbox).toBe(mode !== "yolo");
+  });
+
+  it.each(["onRequest"])("starts a new Muse conversation in remembered %s without writing the shared default", async mode => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    const update = vi.fn();
+    let sandboxSetting = true;
+    sidebar.host.getConfiguration.mockReturnValue({
+      get: (key: string, fallback: unknown) => key === "museShellSandbox" ? sandboxSetting : fallback,
+      inspect: () => undefined, update,
+    });
+    await sidebar.startSession(undefined, session);
+    await sidebar.setMode(mode, session);
+    expect(update).not.toHaveBeenCalled();
+    sandboxSetting = false;
+    await sidebar.startSession(undefined, session);
+    expect(startControl.musePostures.at(-1)).toMatchObject({ mode, shellSandbox: false });
+    expect(session.museShellSandbox).toBe(mode === "onRequest");
+    expect(sidebar.displayMode(session)).toBe(mode);
+  });
+
+  it("starts remembered Muse full access, persists live switches, and follows replay on reopen", async () => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta; // exercise the serialized, durable store
+    const config: Record<string, unknown> = { defaultMode: "yolo", museSandboxNetwork: "restricted" };
+    sidebar.host.getConfiguration.mockReturnValue({
+      get: (key: string, fallback: unknown) => config[key] ?? fallback,
+      inspect: () => undefined,
+      update: vi.fn(async (key: string, value: unknown) => { config[key] = value; }),
+    });
+    const client = await sidebar.startSession(undefined, session);
+    expect(client).toBeDefined();
+    await sidebar.sessionMetaWrites;
+    const original = { mode: "yolo", shellSandbox: true, sandboxNetwork: "restricted", trustWorkspaces: false };
+    expect(startControl.musePostures.at(-1)).toEqual(original);
+    expect(sidebar.displayMode(session)).toBe("yolo");
+    expect(sidebar.state.get("atlas.sessionMeta", {})["new-session"].musePosture).toEqual(original);
+
+    const starts = startControl.starts;
+    await sidebar.setMode("agent", session);
+    expect(startControl.starts).toBe(starts);
+    expect(sidebar.state.get("atlas.sessionMeta", {})["new-session"].musePosture).toEqual({ ...original, mode: "agent" });
+    // Settings changed in another conversation do not alter this one's process.
+    config.museTrustWorkspaces = true;
+    config.museSandboxNetwork = "enabled";
+    startControl.museMode = "yolo"; // Muse replay is authority even when it differs.
+    await sidebar.startSession("new-session", session);
+    await sidebar.sessionMetaWrites;
+    expect(startControl.musePostures.at(-1)).toEqual({ ...original, mode: "agent" });
+    expect(sidebar.displayMode(session)).toBe("yolo");
+    expect(session.planModeAvailable).toBe(false);
+    expect(config.defaultMode).toBe("agent"); // replay never overwrites shared preference
+    await sidebar.startSession("new-session", session);
+    expect(startControl.musePostures.at(-1)).toEqual(original);
+  });
+  it("keeps Muse's kept mode for the next start when it refuses full access", async () => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.provider = "muse";
+    sidebar.connectedProviders = () => ["muse"];
+    sidebar.usableProviders = () => ["muse"];
+    sidebar.providerConnectionState = { muse: true };
+    delete sidebar.updateSessionMeta;
+    const config: Record<string, unknown> = { defaultMode: "agent" };
+    sidebar.host.getConfiguration.mockReturnValue({
+      get: (key: string, fallback: unknown) => config[key] ?? fallback,
+      inspect: () => undefined,
+      update: vi.fn(async (key: string, value: unknown) => { config[key] = value; }),
+    });
+    await sidebar.startSession(undefined, session);
+    await sidebar.sessionMetaWrites;
+    const agent = startControl.musePostures.at(-1);
+    expect(agent.mode).toBe("agent");
+    startControl.museRefusesFullAccess = true;
+    await sidebar.setMode("yolo", session);
+    await sidebar.sessionMetaWrites;
+    expect(session.autoApprove).toBe(false);
+    expect(sidebar.state.get("atlas.sessionMeta", {})["new-session"].musePosture).toEqual(agent);
+    await sidebar.startSession("new-session", session);
+    expect(startControl.musePostures.at(-1)).toEqual(agent);
+  });
   it.each(["completed", "failed"])("the live tool update handler closes a question on %s", async (status) => {
     const sidebar = makeSidebar("/repo");
     const session = sidebar.focused;
@@ -247,6 +605,9 @@ describe("startSession bounded spawn retry", () => {
     sidebar.focused.provider = provider;
     sidebar.connectedProviders = () => [provider];
     sidebar.usableProviders = () => [provider];
+    // Starting the adapter runs the vendor binary, so the saved consent has
+    // to agree with the mocked derived views above (#171).
+    sidebar.providerConnectionState = { [provider]: true };
     sidebar.createProviderBackend = () => ({ provider });
     await sidebar.state.update("grok.defaultEffortByProvider", { [provider]: remembered });
     sidebar.host.getConfiguration.mockReturnValue({
@@ -262,6 +623,12 @@ describe("startSession bounded spawn retry", () => {
   });
 
   beforeEach(() => {
+    startControl.catalogs = {};
+    startControl.startWait = undefined;
+    startControl.museMode = undefined;
+    startControl.musePostures = [];
+    startControl.museRefusesFullAccess = false;
+    startControl.museFailsAfterReplay = false;
     startControl.failuresRemaining = 0;
     startControl.failWith = "Internal error";
     startControl.starts = 0;
@@ -269,10 +636,20 @@ describe("startSession bounded spawn retry", () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     startControl.failuresRemaining = 0;
     startControl.failWith = "Internal error";
     startControl.starts = 0;
     startControl.disposes = 0;
+  });
+
+  it.each([undefined, "saved-session"])("a new/load start (%s) clears grants even when reusing a Session object", async (resumeId) => {
+    const sidebar = makeSidebar("/repo");
+    const session = sidebar.focused;
+    session.allowedCommandPrograms.add("npm");
+    const client = await sidebar.startSession(resumeId, session);
+    expect(client).toBeDefined();
+    expect(session.allowedCommandPrograms.size).toBe(0);
   });
 
   it("retries two transient spawn failures then comes up with no error", async () => {
@@ -441,6 +818,133 @@ describe("startSession bounded spawn retry", () => {
     expect(session.historyEventCount).toBe(countBefore + (child ? 0 : 1));
     expect(sidebar.posted.at(-1)).toMatchObject({
       type: child ? "childStream" : "toolCall", call: { toolCallId: "real-1" },
+    });
+  });
+
+  // Every Antigravity start authenticates with the way the person chose, and
+  // with nothing stored for it starts no server: `authenticate` and the
+  // server's own session/new would open Google's sign-in at an empty desk.
+  it.each([true, false])("starts an Antigravity server only with its chosen credential (stored=%s)", async stored => {
+    const sidebar = makeSidebar("/repo");
+    sidebar.providerConnectionState = { agy: true };
+    sidebar.connectedProviders = vi.fn(() => ["agy"]);
+    sidebar.usableProviders = vi.fn(() => ["agy"]);
+    sidebar.focused.provider = "agy";
+    sidebar.agyCredentialFor = vi.fn(async () => stored ? { method: "google" } : undefined);
+    sidebar.rejectAgyCredential = vi.fn(async () => {});
+    startControl.startupAuths = [];
+    startControl.startEnvs = [];
+    const client = await sidebar.startSession(undefined, sidebar.focused);
+    if (stored) {
+      expect(client?.provider).toBe("agy");
+      expect(startControl.starts).toBe(1);
+      expect(startControl.startupAuths).toEqual([{ methodId: "oauth-personal" }]);
+      expect(startControl.startEnvs[0]?.AGY_ACP_ENABLE_GATEWAY_AUTH).toBeUndefined();
+      // A refusal reported mid-turn goes back to the choice of how to sign in.
+      sidebar.focused.client.emit("credentialRejected");
+      expect(sidebar.rejectAgyCredential).toHaveBeenCalledTimes(1);
+      return;
+    }
+    expect(client).toBeUndefined();
+    expect(startControl.starts).toBe(0);
+    expect(sidebar.setProviderNeedsLogin).toHaveBeenCalledWith("agy", true);
+    expect(onboardings(sidebar)).toEqual([expect.objectContaining({ state: "agy-login", provider: "agy" })]);
+    expect(startErrors(sidebar)).toEqual([]);
+  });
+
+  // A key's server gets the relay's address and the rollout flag -- never the
+  // key -- and holds a lease on the relay until it exits.
+  it("starts a key's Antigravity server in gateway mode at the relay", async () => {
+    const sidebar = makeSidebar("/repo");
+    sidebar.providerConnectionState = { agy: true };
+    sidebar.connectedProviders = vi.fn(() => ["agy"]);
+    sidebar.usableProviders = vi.fn(() => ["agy"]);
+    sidebar.focused.provider = "agy";
+    sidebar.agyCredentialFor = vi.fn(async () => ({ method: "api-key", key: "AIza-session-key" }));
+    const release = vi.fn();
+    sidebar.agyRelay = {
+      acquire: vi.fn(async () => ({ baseUrl: "http://127.0.0.1:4321/prefix", release })),
+      redact: (text: string) => text,
+    };
+    startControl.startupAuths = [];
+    startControl.startEnvs = [];
+    const client = await sidebar.startSession(undefined, sidebar.focused);
+    expect(client?.provider).toBe("agy");
+    expect(sidebar.agyRelay.acquire).toHaveBeenCalledWith("AIza-session-key");
+    expect(startControl.startupAuths).toEqual([{ methodId: "gateway", meta: { gateway: { baseUrl: "http://127.0.0.1:4321/prefix" } } }]);
+    expect(startControl.startEnvs[0]?.AGY_ACP_ENABLE_GATEWAY_AUTH).toBe("1");
+    expect(JSON.stringify(startControl.startupAuths)).not.toContain("AIza-session-key");
+    expect(Object.values(startControl.startEnvs[0] ?? {})).not.toContain("AIza-session-key");
+    expect(release).not.toHaveBeenCalled();
+    sidebar.focused.client.emit("exit", 0);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  // Claude Code's native Auto is the default for a new conversation where no
+  // mode was chosen; it still asks about what it judges risky, so the host
+  // does not answer for the person.
+  describe("Claude's native Auto at the start of a conversation", () => {
+    function claudeSidebar(defaultMode?: string): any {
+      const sidebar = makeSidebar("/repo");
+      sidebar.providerConnectionState = { claude: true };
+      sidebar.connectedProviders = vi.fn(() => ["claude"]);
+      sidebar.usableProviders = vi.fn(() => ["claude"]);
+      sidebar.focused.provider = "claude";
+      sidebar.host.getConfiguration = vi.fn(() => ({
+        get: (key: string, fallback: unknown) => key === "defaultMode" && defaultMode !== undefined ? defaultMode : fallback,
+        inspect: () => undefined,
+        update: vi.fn(async () => {}),
+      }));
+      startControl.setModes = [];
+      startControl.claudeAutoUnsupported = false;
+      return sidebar;
+    }
+    const modes = (sidebar: any) => sidebar.posted.filter((message: HostMsg) => message.type === "modeChanged");
+
+    it("starts in Auto when no mode was chosen, from the first frame", async () => {
+      const sidebar = claudeSidebar();
+      await sidebar.startSession(undefined, sidebar.focused);
+      expect(startControl.setModes).toEqual(["claude:auto"]);
+      expect(modes(sidebar).map((message: any) => message.modeId)).not.toContain("agent");
+      expect(modes(sidebar).at(-1)).toMatchObject({ modeId: "auto", modes: ["agent", "auto", "plan", "yolo"] });
+      expect(sidebar.focused.autoApprove).toBe(false);
+    });
+
+    it.each(["agent", "yolo"])("keeps an explicit %s", async (mode) => {
+      const sidebar = claudeSidebar(mode);
+      await sidebar.startSession(undefined, sidebar.focused);
+      expect(startControl.setModes).toEqual([]);
+      expect(modes(sidebar).at(-1)).toMatchObject({ modeId: mode });
+    });
+
+    it("settles once on Agent mode when the model has no Auto, and does not ask again this run", async () => {
+      startControl.claudeAutoUnsupported = true;
+      const sidebar = claudeSidebar();
+      startControl.claudeAutoUnsupported = true;
+      await sidebar.startSession(undefined, sidebar.focused);
+      expect(startControl.setModes).toEqual(["claude:auto", "claude:agent"]);
+      expect(modes(sidebar).at(-1)).toMatchObject({ modeId: "agent" });
+      // Never the adapter's Accept edits, which this host would answer for.
+      expect(sidebar.focused.autoApprove).toBe(false);
+      startControl.setModes = [];
+      const next = new Session();
+      next.provider = "claude";
+      next.cwd = "/repo";
+      sidebar.focused = next;
+      await sidebar.startSession(undefined, next);
+      expect(startControl.setModes).toEqual([]);
+      expect(modes(sidebar).at(-1)).toMatchObject({ modeId: "agent" });
+    });
+
+    it("picking Auto by hand on a model without it says so and stays in Agent mode", async () => {
+      const sidebar = claudeSidebar("agent");
+      await sidebar.startSession(undefined, sidebar.focused);
+      startControl.claudeAutoUnsupported = true;
+      sidebar.reportRequester = vi.fn();
+      await sidebar.setMode("auto", sidebar.focused);
+      expect(startControl.setModes).toEqual(["claude:auto", "claude:agent"]);
+      expect(modes(sidebar).at(-1)).toMatchObject({ modeId: "agent" });
+      expect(sidebar.reportRequester).toHaveBeenCalledWith(undefined, "warning", expect.stringContaining("Auto mode isn't available for this model"));
     });
   });
 

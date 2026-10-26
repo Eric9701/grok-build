@@ -64,7 +64,7 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const qa = buildQaFixture();
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "grok-live-ud-"));
-fs.writeFileSync(path.join(userData, "config.json"), JSON.stringify({ "grok.cliPath": cli }), "utf8");
+fs.writeFileSync(path.join(userData, "config.json"), JSON.stringify({ "atlas.cliPath": cli }), "utf8");
 
 // The REAL grok home, deliberately — no GROK_HOME override here.
 //

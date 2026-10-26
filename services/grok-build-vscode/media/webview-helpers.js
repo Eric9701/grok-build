@@ -1,4 +1,20 @@
 (function (root) {
+  // Kept set-equal to INTERNAL_PROVIDERS by provider-enumerations.test.ts.
+  const PROVIDER_ACTIONS = {
+    grok: { label: "Atlas", deleteHistory: true, compact: true },
+    codex: { label: "Codex", deleteHistory: true, compact: true },
+    claude: { label: "Claude", deleteHistory: true, compact: true },
+    muse: { label: "Muse Code", deleteHistory: false, compact: false },
+    agy: { label: "Antigravity", deleteHistory: false, compact: false },
+  };
+  function providerSupports(provider, action) {
+    return Object.hasOwn(PROVIDER_ACTIONS, provider || "grok")
+      && PROVIDER_ACTIONS[provider || "grok"][action] === true;
+  }
+  function clearHistoryConfirmation(cwd) {
+    const names = Object.values(PROVIDER_ACTIONS).filter(p => p.deleteHistory).map(p => p.label);
+    return `Deletes ${names.join(", ")} conversations for:\n${cwd}\n\nOpen conversations are kept. This cannot be undone.`;
+  }
   // Both the standalone VS Code Settings webview and the chat mount this
   // catalog extension. Rows stay hidden until the host supplies availability.
   root.GrokVoiceSettings = {
@@ -51,21 +67,26 @@
   // copy and test/protocol.test.ts asserts the two are set-equal in both
   // directions (and that chat.js actually handles every host type).
   const HOST_MESSAGE_TYPES = [
+    "museSettings",
+    "cloudHostUpdateState",
     "providerConfigContent", "providerConfigWriteResult",
-    "initialState", "moveViewHint", "welcomeTips", "projectSetup", "githubState", "githubRepos", "providerState", "mcpServers", "mcpConnectors", "mcpConnectorAuthorization", "routines", "codexInstallProgress", "planModeAvailability", "showThinking", "appPurpose", "fontScale", "grokUpdateStatus", "updateAvailable", "updateReady", "telemetryEnabled", "thumbsFeedback", "initialized",
-    "cliUpdating", "session", "localModels", "sessionName", "sessionRemoved", "modelChanged", "modeChanged", "openModePopover",
+    "initialState", "moveViewHint", "welcomeTips", "projectSetup", "githubState", "githubRepos", "providerState", "mcpServers", "mcpConnectors", "mcpConnectorAuthorization", "routines", "codexInstallProgress", "agyInstallProgress", "planModeAvailability", "showThinking", "appPurpose", "fontScale", "grokUpdateStatus", "updateAvailable", "updateReady", "telemetryEnabled", "thumbsFeedback", "initialized",
+    "cliUpdating", "startupStatus", "session", "localModels", "sessionName", "composerDraftSession", "sessionRemoved", "sessionOpening", "recentSessions", "projectPrompt", "contextWindowSelection", "modelChanged", "modeChanged", "openModePopover",
     "voiceState", "voiceConfigured", "voicePartial", "voiceSubmit", "voiceTranscript",
-    "voiceError", "chips", "commandsUpdate", "mentionResults", "projectDirListing", "projectFileContent", "projectFileWriteResult", "gitStatusResult", "gitFileDiffResult", "gitRunResult", "userMessage", "agentStart", "thoughtChunk",
+    "voiceError", "chips", "commandsUpdate", "mentionResults", "projectDirListing", "projectFileContent", "projectFileWriteResult", "gitStatusResult", "gitFileDiffResult", "turnFileDiffResult", "turnDiffBaseline", "gitRunResult", "userMessage", "agentStart", "thoughtChunk",
     "messageChunk", "media", "userMessageChunk", "historyReplay", "historyBatch", "permissionHistoryQueue",
     "planHistoryQueue", "toolCall", "toolCallUpdate", "permissionRequest", "permissionOptions",
     "permissionResolved", "exitPlanRequest", "planResolved", "questionRequest", "questionResolved", "planNotice", "autoCompactNotice", "planBlocked",
     "subscriptionUsage",
     "promptComplete", "contextUsage", "commandOutput", "expandCommandOutputs", "setAllToolDetails", "focusInput", "findInSession", "restoreComposer", "truncateMessages", "uiConfirmRequest", "uiConfirmResolved", "agentReset", "agentError", "agentEnd", "exit", "setBusy", "summarizing",
     "sessionContext", "clearMessages", "onboarding", "error", "hostNotice", "xaiNotification", "subagentUpdate", "childStream", "runProgress", "sessions", "repoSessions", "pinnedSessions", "repos",
-    "sessionDot", "queuedSends", "submitQueuedSend", "steerUnavailable", "feedbackAvailability", "turnFeedbackAck", "usage", "steerByDefault", "promptNav", "expandDiffCard", "soundNotifications", "processingSound", "readRepliesAloud", "summarizeRepliesAloud", "speechSummary", "imageFull", "imageOriginal", "moveComposerCaret",
-    "remoteStatus", "hostReachable", "hostLink",
+    "sessionDot", "queuedSends", "submitQueuedSend", "steerUnavailable", "feedbackAvailability", "turnFeedbackAck", "usage", "steerByDefault", "promptNav", "pinLiveWorkflows", "expandDiffCard", "soundNotifications", "processingSound", "readRepliesAloud", "summarizeRepliesAloud", "speechSummary", "imageFull", "imageOriginal", "moveComposerCaret",
+    "remoteStatus", "remoteHandoff", "showRemoteHandoff", "hostReachable", "hostLink",
   ];
   const WEBVIEW_MESSAGE_TYPES = [
+    "setMuseSetting",
+    "addToProjects", "answerProjectPrompt",
+    "cloudHostUpdate",
     "readProviderConfig", "writeProviderConfig", "restartProviderSession", "openProviderConfig",
     "ready", "remotePreferences", "send", "newSession", "cancel", "pickModel", "setMode", "removeChip",
     "toggleChip", "openFile", "showInFolder", "openUrl", "openText", "openDiff", "exportExpr", "setEffort",
@@ -74,15 +95,15 @@
     "listRoutines", "saveRoutine", "deleteRoutine", "setRoutinePaused", "runRoutineNow",
     "setShowThinking", "setAppPurpose", "setExpandCommandOutputs",
     "dropFile", "permissionAnswer", "exitPlanAnswer", "questionAnswer", "questionCancel",
-    "setModel", "installCodex", "cancelCodexInstall", "runInstallCmd", "runGrokLogin", "cancelDeviceLogin", "submitDeviceLoginCode", "logout", "checkGrokUpdate", "updateGrok", "updateCodex", "updateClaude",
-    "recheckConnection", "refreshProviders", "retryProviderSession", "listSessions", "listRepoSessions", "selectRepo", "toggleRepoPin", "setRepoArchived", "setRepoColor", "toggleSessionPin", "resumeSession", "renameSession", "deleteSession",
-      "clearAllSessions", "pickFile", "mentionQuery", "addMentionFile", "listProjectDir", "readProjectFile", "writeProjectFile", "gitStatus", "gitFileDiff", "gitRun", "pasteImage", "uploadFile", "voiceStart", "voiceStop",
+    "setContextWindow", "setModel", "installCodex", "cancelCodexInstall", "installAgy", "cancelAgyInstall", "agySignIn", "setExperimentalAntigravity", "runInstallCmd", "runMuseInstallCmd", "runGrokLogin", "cancelDeviceLogin", "submitDeviceLoginCode", "logout", "checkGrokUpdate", "updateGrok", "updateCodex", "updateClaude",
+    "recheckConnection", "refreshProviders", "retryProviderSession", "listSessions", "listRepoSessions", "selectRepo", "toggleRepoPin", "setRepoArchived", "setRepoColor", "setRepoIcon", "toggleSessionPin", "resumeSession", "renameSession", "deleteSession",
+      "clearAllSessions", "pickFile", "mentionQuery", "addMentionFile", "listProjectDir", "readProjectFile", "writeProjectFile", "gitStatus", "gitFileDiff", "turnFileDiff", "turnFileOpenDiff", "gitRun", "pasteImage", "uploadFile", "voiceStart", "voiceStop",
       "remoteVoiceStart", "remoteVoiceChunk", "remoteVoiceStop", "setVoiceBackend", "configureOpenAiVoice",
-    "queueSend", "dequeueSend", "clearQueuedSends", "steerSend", "turnFeedback", "forkSession", "setSteerByDefault", "setPromptNav", "setExpandDiffCard",
-    "setSoundNotifications", "setProcessingSound", "setReadRepliesAloud", "setSummarizeRepliesAloud", "setVoiceSendPhrase", "setVoiceKeyterms", "setTelemetryEnabled", "setThumbsFeedback", "summarizeSpeech", "requestImageFull", "requestImageOriginal", "composerFocus",
+    "queueSend", "dequeueSend", "clearQueuedSends", "steerSend", "turnFeedback", "forkSession", "setSteerByDefault", "setPromptNav", "setPinLiveWorkflows", "setExpandDiffCard",
+    "setSoundNotifications", "setProcessingSound", "setReadRepliesAloud", "setSummarizeRepliesAloud", "setVoiceSendPhrase", "setVoiceKeyterms", "setTelemetryEnabled", "setThumbsFeedback", "setDesktopTray", "summarizeSpeech", "requestImageFull", "requestImageOriginal", "composerFocus",
     "newWorktreeSession", "applyWorktree", "removeWorktree", "rewindSession", "editLastMessage", "uiConfirmAnswer", "workflowControl", "refreshContextDetails",
     "refreshSubscriptionUsage",
-    "remoteSignIn", "remoteSignOut", "unlinkRemoteDevice", "openRemotePortal",
+    "remoteSignIn", "remoteSignOut", "unlinkRemoteDevice", "openRemotePortal", "remoteHandoff", "showRemoteHandoff",
     "openUpdateRelease", "restartToUpdate",
   ];
   const HOST_MESSAGE_TYPE_SET = new Set(HOST_MESSAGE_TYPES);
@@ -212,6 +233,34 @@
     if (snapshot.used !== used) return false;
     if (snapshot.window != null && typeof window === "number" && snapshot.window !== window) return false;
     return true;
+  }
+
+  /** MIRRORED from src/context-selection.ts so the webview can read the size
+   *  in a typed `/context-window 256k` before deciding whether to ask first.
+   *  KEEP THE TWO IN STEP: test/context-selection.test.ts drives one fixture
+   *  set through both. */
+  function parseContextWindowSize(text) {
+    const match = /^(\d+)(k)?$/i.exec(String(text).trim());
+    if (!match) return undefined;
+    const value = Number(match[1]) * (match[2] ? 1000 : 1);
+    return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  }
+
+  /**
+   * What switching DOWN to `size` costs a conversation using `used` tokens.
+   * The CLI accepts the smaller window at once and auto-compacts before the
+   * next turn when the conversation does not fit, so a switch that can do that
+   * asks first: "will" when the conversation is already larger than `size`,
+   * "may" above 70% of it, null otherwise -- and null for a larger size or an
+   * unknown usage, which switch as they always did. Deliberately not the CLI's
+   * own auto-compact threshold: that is configurable, and this errs early.
+   */
+  function contextWindowShrinkRisk(used, size, current) {
+    if (!(used > 0) || !(size > 0) || !(size < current)) return null;
+    if (used > size) return "will";
+    // Integer arithmetic: 0.7 * size is not exact at the boundary.
+    if (used * 10 > size * 7) return "may";
+    return null;
   }
 
   /**
@@ -369,6 +418,17 @@
     return String(text)
       .replace(/SuperGrok/g, "\0SUPERGROK\0")
       .replace(/Grok-Build-Desktop/g, "\0GROKBUILDDESKTOP\0")
+      .replace(/afkpilot\.com/gi, "\0AFKPILOTCOM\0")
+      // Phone companion copy keeps the AFK Pilot name. Upstream uses the same
+      // words for this extension; that product meaning becomes Atlas.
+      .replace(/\bAFK Pilot \(previously Grok Build\)/gi, "Atlas")
+      .replace(/\bAFK Pilot account\b/gi, "\0AFKPILOT\0 account")
+      .replace(/\bAFK Pilot device\b/gi, "\0AFKPILOT\0 device")
+      .replace(/\bto AFK Pilot\b/gi, "to \0AFKPILOT\0")
+      .replace(/\bHow AFK Pilot works\b/gi, "How \0AFKPILOT\0 works")
+      .replace(/\bconnected to AFK Pilot\b/gi, "connected to \0AFKPILOT\0")
+      .replace(/\bAFK Pilot keeps\b/gi, "\0AFKPILOT\0 keeps")
+      .replace(/\bAFK Pilot\b/gi, "Atlas")
       .replace(/\bGrok Build Desktop\b/gi, "Atlas Desktop")
       .replace(/\bGrok Build CLI\b/gi, "Atlas CLI")
       .replace(/\bGrok Build\b/gi, "Atlas")
@@ -381,7 +441,9 @@
       .replace(/\bA Atlas\b/g, "An Atlas")
       .replace(/\ba Atlas\b/g, "an Atlas")
       .replace(/\0GROKBUILDDESKTOP\0/g, "Grok-Build-Desktop")
-      .replace(/\0SUPERGROK\0/g, "SuperGrok");
+      .replace(/\0SUPERGROK\0/g, "SuperGrok")
+      .replace(/\0AFKPILOT\0/g, "AFK Pilot")
+      .replace(/\0AFKPILOTCOM\0/g, "afkpilot.com");
   }
 
   function brandModelDisplayName(name, modelId) {
@@ -512,6 +574,7 @@
 
   function isSubagentToolCall(call) {
     if (!call) return false;
+    if (call._meta?.claudeCode?.subagent === true) return true;
     if (call.kind === "subagent" || call.kind === "agent") return true;
     // Structural marker on grok 0.2.9x: _meta["x.ai/tool"].name carries the
     // real tool id regardless of how the call is titled — and when present it
@@ -1623,7 +1686,8 @@
         userMsgCount += 1;
         continue;
       }
-      if (!suppressTurn && HISTORY_EVENT_TYPES.has(ev.type)) historyEventCount += 1;
+      // Hook rows are display-only and never counted (see isHookRow in grok-hooks.ts).
+      if (!suppressTurn && HISTORY_EVENT_TYPES.has(ev.type) && !ev.call?._meta?.afkPilotHook) historyEventCount += 1;
       i += 1;
     }
     return { userMsgCount, interjectionCount, historyEventCount };
@@ -3128,9 +3192,9 @@
       // the wire are the REPLACED REGION of one edit, not snapshots of the
       // file, so splicing the first edit's old onto the last edit's new
       // describes a substitution that never happened — and the host expands it
-      // against disk into a confident whole-file diff of that fiction. A true
-      // one would need a pre-turn baseline the host does not keep. The card's
-      // rows reveal each file's own tool row instead, where the real diff is.
+      // against disk into a confident whole-file diff of that fiction. The
+      // chat card requests the host-captured baseline instead; without one it
+      // reveals the last tool row. Neither path changes these summed counts.
       const created = first.oldText === "" || (first.openDiff && first.openDiff.oldText === "");
       files.push({
         path: g.path,
@@ -3161,10 +3225,12 @@
   function turnDiffSummaryTitle(agg) {
     const n = agg && Array.isArray(agg.files) ? agg.files.length : 0;
     if (n <= 0) return "";
-    return n === 1 ? "Changed 1 file" : `Changed ${n} files`;
+    return n === 1 ? "Changed 1 file" : `Changed ${n.toLocaleString("en-US")} files`;
   }
 
-  const api = { WELCOME_TIPS, welcomeTipById, welcomeTipsFor, welcomeTipCopy, splitWelcomeTipCopy, addProjectMenuItems, addProjectFolderPreview, addProjectForm, parseCloneQuery, filterGithubRepos, githubRepoNameParts, formatWaitElapsed, FILE_EXTS, HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, createPendingOverlay, getMentionQuery, applyMentionPick, looksLikeFileRef, formatRelativeTime, brandUserFacingText, brandModelDisplayName, modelPickerLabel, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, highlightQueryParts, appendHighlightedText, commandProgramLabel, commandTextPreview, MAX_COMMAND_OUTPUT_CHARS, capCommandOutput, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, normalizeTurnEditPathKey, parseShellDeletePaths, aggregateTurnEdits, turnDiffSummaryTitle, parseAttachmentContext, parseSelectionBlocks, parseImageTags, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, panelReclampOnResizeAllowed, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards, GITHUB_FINE_GRAINED_TOKEN_URL, fillFineGrainedTokenHint };
+  const api = { WELCOME_TIPS, welcomeTipById, welcomeTipsFor, welcomeTipCopy, splitWelcomeTipCopy, addProjectMenuItems, addProjectFolderPreview, addProjectForm, parseCloneQuery, filterGithubRepos, githubRepoNameParts, formatWaitElapsed, FILE_EXTS, HOST_MESSAGE_TYPES, WEBVIEW_MESSAGE_TYPES, isKnownHostMessage, composerHasSendIntent, explicitVisibleChips, normalizeQueuedSends, queuedSendsText, queuedSendsChips, contextOverheadTokens, nextContextBreakdown, contextBreakdownIsCurrent, parseContextWindowSize, contextWindowShrinkRisk, createPendingOverlay, getMentionQuery, applyMentionPick, looksLikeFileRef, formatRelativeTime, brandUserFacingText, brandModelDisplayName, modelPickerLabel, modelDisplayName, MIC_STATES, nextMicState, trailingSendPhrase, versionedSiblingUrl, buildQuestionAnswers, isFreeTextOptionLabel, isSubagentToolCall, subagentLabel, cleanSubagentOutput, parseSubagentTaskResult, shouldStickToBottom, stickThresholdPx, splitMath, stripUnsupportedTex, toolFailureText, isMediaGenToolCall, mediaGenZeroRetentionHint, TOOL_LABEL_MAX, middleElide, isAdvertisedSkill, getSlashQuery, applySlashPick, filterCommands, highlightQueryParts, appendHighlightedText, commandProgramLabel, commandTextPreview, MAX_COMMAND_OUTPUT_CHARS, capCommandOutput, extractToolResultOutput, commandOutputWasCancelled, commandOutputTruncationNote, computeLineDiff, normalizeTurnEditPathKey, parseShellDeletePaths, aggregateTurnEdits, turnDiffSummaryTitle, parseAttachmentContext, parseSelectionBlocks, parseImageTags, orderPermissionOptions, defaultPermissionIndex, shouldFocusPermissionCard, isTypeThroughKey, isInterjectionText, stripInterjectionEnvelope, spokenTextFromMarkdown, isRelaySendRejection, panelReclampOnResizeAllowed, wireFullscreenSafeReclamp, distributeSidePanelWidths, chatZoomFactor, unzoomClientPx, exportSessionMarkdown, exportSessionFilename, isExportableSessionEvent, replayedUserBubbleVerdict, truncateExportEvents, flattenHistoryMessages, splitHistoryWindow, countHistoryReplayCounters, partitionHistoryCards, GITHUB_FINE_GRAINED_TOKEN_URL, fillFineGrainedTokenHint };
+
+  Object.assign(api, { PROVIDER_ACTIONS, providerSupports, clearHistoryConfirmation });
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = api;

@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
+import { INTERNAL_PROVIDERS } from "../src/acp-backend";
 import { Session, sessionUiSnapshot } from "../src/session";
 
+const OFFERED_MODES = {
+  grok: ["agent", "plan", "yolo"],
+  claude: ["agent", "auto", "plan", "yolo"],
+  codex: ["agent", "yolo"],
+  muse: ["yolo", "agent", "onRequest"],
+  agy: ["agent", "yolo"],
+};
+
 describe("sessionUiSnapshot", () => {
+  it.each(INTERNAL_PROVIDERS)("advertises %s modes on every modeChanged", (provider) => {
+    const session = new Session();
+    session.provider = provider;
+    session.museShellSandbox = true;
+    expect(sessionUiSnapshot(session, "agent")).toContainEqual({
+      type: "modeChanged",
+      modeId: "agent",
+      modes: OFFERED_MODES[provider],
+    });
+  });
+
   it("restores the focused session's own chips and queued composer state", () => {
     const session = new Session();
     session.chips = [{
@@ -13,8 +33,9 @@ describe("sessionUiSnapshot", () => {
     session.queuedSends = [{ text: "queued for B", chips: [] }];
 
     expect(sessionUiSnapshot(session, "plan")).toEqual([
+      { type: "startupStatus", provider: "grok", stage: null, elapsedMs: 0 },
       { type: "subscriptionUsage", windows: [] },
-      { type: "modeChanged", modeId: "plan" },
+      { type: "modeChanged", modeId: "plan", modes: ["agent", "plan", "yolo"] },
       { type: "planModeAvailability", available: true, reason: undefined, recheckable: false },
       { type: "feedbackAvailability", available: false },
       { type: "chips", chips: session.chips },

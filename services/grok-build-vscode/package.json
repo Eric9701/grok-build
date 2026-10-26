@@ -1,15 +1,15 @@
 {
   "name": "atlas-vscode",
   "displayName": "Atlas for VS Code",
-  "description": "GUI for Atlas CLI (ACP client). Remote Control from your phone, voice control, multiple sessions, images and videos, Mermaid diagrams, and LaTeX. Compatible with Atlas enterprise proxy (/atlas/v1). Fair Source (FSL-1.1-MIT).",
-  "version": "4.6.0",
+  "description": "GUI for Atlas CLI (ACP client). One place for Atlas, Muse Code, Codex, Claude Code, and experimental Google Antigravity. Remote Control from your phone, voice control, multiple sessions, images and videos, Mermaid diagrams, and LaTeX. Compatible with Atlas enterprise proxy (/atlas/v1). Fair Source (FSL-1.1-MIT).",
+  "version": "4.15.3",
   "publisher": "PawelHuryn",
   "author": {
     "name": "Paweł Huryn",
     "url": "https://www.productcompass.pm"
   },
   "license": "FSL-1.1-MIT",
-  "homepage": "https://github.com/phuryn/grok-build-vscode",
+  "homepage": "https://afkpilot.com",
   "bugs": {
     "url": "https://github.com/phuryn/grok-build-vscode/issues"
   },
@@ -33,14 +33,30 @@
     "xai",
     "xai-grok",
     "acp",
-    "acp-client",
     "agent-client-protocol",
     "agent",
     "ai",
     "chat",
-    "thinking",
-    "tool-calls",
-    "sidebar"
+    "codex",
+    "openai-codex",
+    "claude",
+    "claude-code",
+    "muse",
+    "muse-code",
+    "meta",
+    "coding-agent",
+    "gui",
+    "antigravity",
+    "gemini",
+    "afk-pilot",
+    "remote-control",
+    "multi-agent",
+    "argon",
+    "gemini-4",
+    "muse-wonder",
+    "gpt",
+    "opus",
+    "anthropic"
   ],
   "icon": "resources/grok-icon.png",
   "main": "./out/extension.js",
@@ -94,44 +110,59 @@
     },
     "commands": [
       {
+        "command": "atlas.continueOnPhone",
+        "title": "Continue on Phone",
+        "category": "Atlas"
+      },
+      {
         "command": "atlas.open",
-        "title": "Atlas: Open"
+        "title": "Open",
+        "category": "Atlas"
       },
       {
         "command": "atlas.moveView",
-        "title": "Atlas: Move Chat View"
+        "title": "Move Chat View",
+        "category": "Atlas"
       },
       {
         "command": "atlas.newSession",
-        "title": "Atlas: New Session"
+        "title": "New Session",
+        "category": "Atlas"
       },
       {
         "command": "atlas.newWorktreeSession",
-        "title": "Atlas: New Worktree Session"
+        "title": "New Worktree Session",
+        "category": "Atlas"
       },
       {
         "command": "atlas.applyWorktree",
-        "title": "Atlas: Apply Worktree"
+        "title": "Apply Worktree",
+        "category": "Atlas"
       },
       {
         "command": "atlas.removeWorktree",
-        "title": "Atlas: Remove Worktree"
+        "title": "Remove Worktree",
+        "category": "Atlas"
       },
       {
         "command": "atlas.rewind",
-        "title": "Atlas: Rewind Conversation"
+        "title": "Rewind Conversation",
+        "category": "Atlas"
       },
       {
         "command": "atlas.compact",
-        "title": "Atlas: Compact Conversation"
+        "title": "Compact Conversation",
+        "category": "Atlas"
       },
       {
         "command": "atlas.pickModel",
-        "title": "Atlas: Pick Model"
+        "title": "Pick Model",
+        "category": "Atlas"
       },
       {
         "command": "atlas.toggleMode",
-        "title": "Atlas: Toggle Plan / Agent Mode"
+        "title": "Toggle Plan / Agent Mode",
+        "category": "Atlas"
       },
       {
         "command": "atlas.sendSelection",
@@ -143,52 +174,69 @@
       },
       {
         "command": "atlas.insertAtMention",
-        "title": "Atlas: Insert @-Mention"
+        "title": "Insert @-Mention",
+        "category": "Atlas"
+      },
+      {
+        "command": "atlas.rebuildProjects",
+        "title": "Rebuild Projects from recent activity",
+        "category": "Atlas"
       },
       {
         "command": "atlas.showLogs",
-        "title": "Atlas: Show Logs"
+        "title": "Show Logs",
+        "category": "Atlas"
       },
       {
         "command": "atlas.settings",
-        "title": "Atlas: Settings",
+        "title": "Settings",
+        "category": "Atlas",
         "icon": "$(gear)"
       },
       {
         "command": "atlas.expandAllToolDetails",
-        "title": "Atlas: Expand All Tool Details (This Session)"
+        "title": "Expand All Tool Details (This Session)",
+        "category": "Atlas"
       },
       {
         "command": "atlas.collapseAllToolDetails",
-        "title": "Atlas: Collapse All Tool Details (This Session)"
+        "title": "Collapse All Tool Details (This Session)",
+        "category": "Atlas"
       },
       {
         "command": "atlas.findInSession",
-        "title": "Atlas: Find in Conversation"
+        "title": "Find in Conversation",
+        "category": "Atlas"
       },
       {
         "command": "atlas.logout",
-        "title": "Atlas: Log Out"
+        "title": "Log Out",
+        "category": "Atlas"
       },
       {
         "command": "atlas.linkRemote",
-        "title": "AFK Pilot: Link this device"
+        "title": "Link this device",
+        "category": "Atlas"
       },
       {
         "command": "atlas.unlinkRemote",
-        "title": "AFK Pilot: Unlink this device"
+        "title": "Unlink this device",
+        "category": "Atlas"
       },
       {
         "command": "atlas._debugDummyPlan",
-        "title": "Atlas: Debug — Show dummy plan card (for testing Approve/Reject/Cancel)"
+        "title": "Debug — Show dummy plan card (for testing Approve/Reject/Cancel)",
+        "category": "Atlas"
       },
       {
         "command": "atlas.composerForward",
-        "title": "Atlas: Composer — Move Forward"
+        "title": "Composer — Move Forward",
+        "category": "Atlas"
       },
       {
         "command": "atlas.composerPreviousLine",
-        "title": "Atlas: Composer — Move to Previous Line"
+        "title": "Composer — Move to Previous Line",
+        "category": "Atlas"
       }
     ],
     "keybindings": [
@@ -276,10 +324,50 @@
           "default": "",
           "description": "Path to the OpenAI Codex binary. Empty = auto-discover on PATH, then in the newest OpenAI ChatGPT bundle installed by VS Code, Cursor, or remote VS Code."
         },
+        "atlas.museCliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the installed Muse Code CLI on macOS or Linux. Leave empty to discover muse on PATH."
+        },
+        "atlas.museShellSandbox": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use Muse Code's shell sandbox for new conversations in Prompt unmatched. On request always uses it; Allow all disables it. On request is unavailable in a running process without the sandbox."
+        },
+        "atlas.museSandboxNetwork": {
+          "type": "string",
+          "enum": [
+            "proxy-only",
+            "restricted",
+            "enabled"
+          ],
+          "default": "proxy-only",
+          "description": "Muse Code sandbox network access for new conversations in Prompt unmatched or On request."
+        },
+        "atlas.museTrustWorkspaces": {
+          "type": "boolean",
+          "default": false,
+          "description": "Trust workspaces for new Muse Code conversations in Prompt unmatched or On request. Allow all always trusts the workspace. A trusted workspace also runs the repository's hooks."
+        },
         "atlas.claudeCliPath": {
           "type": "string",
           "default": "",
           "description": "Path to the Anthropic Claude Code CLI (`claude`). Empty = auto-discover on PATH, then well-known user-bin locations. Authentication stays in Anthropic's own CLI."
+        },
+        "atlas.askToAddProjects": {
+          "type": "boolean",
+          "default": true,
+          "description": "The first time you send a message in a conversation whose folder is not one of your projects, offer to add it to Projects. Turn off to stop asking; \"Never for this folder\" stops it for one folder."
+        },
+        "atlas.experimentalAntigravity": {
+          "type": "boolean",
+          "default": false,
+          "description": "Experimental: offer Google's Antigravity as an agent on this computer (not on cloud machines). Set it up in Settings → Providers: Install Antigravity downloads Google's ACP server into this app's storage, and Connect signs in with your Google account in the browser, or with a Gemini API key."
+        },
+        "atlas.agyServerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to Google's Antigravity ACP server (`agy_acp_server`). Empty = the copy this app installs."
         },
         "atlas.defaultModel": {
           "type": "string",
@@ -291,15 +379,17 @@
           "enum": [
             "",
             "agent",
+            "auto",
             "yolo"
           ],
           "enumDescriptions": [
-            "Agent mode (CLI default)",
+            "The agent's own default: Auto mode where the agent has one (Claude Code), Agent mode elsewhere",
             "Agent mode",
+            "Auto mode where the agent has one (Claude Code decides what is safe and asks about the rest); Agent mode elsewhere",
             "Auto accept — auto-approve every permission request"
           ],
           "default": "",
-          "description": "Mode for new sessions. Updated automatically to remember your last switch between Agent and Auto accept (Plan is never remembered). Empty = Agent."
+          "description": "Mode for new sessions. Updated automatically to remember your last switch between Agent, Auto and Auto accept (Plan is never remembered). Empty = Auto mode where the agent has one (Claude Code), Agent mode elsewhere. If Claude Code's Auto mode is not available for the model, the conversation stays in Agent mode."
         },
         "atlas.includeActiveFileByDefault": {
           "type": "boolean",
@@ -374,12 +464,12 @@
         "atlas.showThinking": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Show Atlas's reasoning (thinking) traces in chat. Off by default — a lightweight \"Thinking…\" indicator stands in while Atlas reasons. Also toggleable live from the gear menu → **Config & debug → Show thinking traces** (applies to already-loaded sessions too)."
+          "markdownDescription": "Show the agent's reasoning (thinking) traces in chat. Off by default — a lightweight \"Thinking…\" indicator stands in while the agent reasons. Also toggleable live from Settings → **General → Show thinking traces** (applies to already-loaded sessions too)."
         },
         "atlas.expandCommandOutputs": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Expand tool details by default — each shell command's IN/OUT block (full command text + captured output) and each edit's inline diff (useful for auditing Auto-accept sessions). With this setting on, groups containing command or edit details (such as \"Ran N commands\" or \"Edited N files\") open too; read/explore-only groups stay collapsed, and a lone command outside a group opens its details. Off: click a row or group header (›) to expand it — edit rows always show a `+N −M` change count, even when their diff is closed. Also toggleable live from the gear menu → **Config & debug → Expand tool details**."
+          "markdownDescription": "Expand tool details by default — each shell command's IN/OUT block (full command text + captured output) and each edit's inline diff (useful for auditing Auto-accept sessions). With this setting on, groups containing command or edit details (such as \"Ran N commands\" or \"Edited N files\") open too; read/explore-only groups stay collapsed, and a lone command outside a group opens its details. Off: click a row or group header (›) to expand it — edit rows always show a `+N −M` change count, even when their diff is closed. Also toggleable live from Settings → **General → Expand tool details**."
         },
         "atlas.expandDiffCard": {
           "type": "boolean",
@@ -389,7 +479,12 @@
         "atlas.steerByDefault": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Send straight into the running turn instead of queueing it. Off (default): a message you send while the agent is working waits, and is sent as one prompt when the turn ends — you can still steer it on demand with the **Steer** button on the pending message. On: sending while it works **skips the queue** and injects the message into the turn immediately, so the agent changes course mid-answer. Steering never cancels the turn and never discards in-flight tool work — it is not a Stop. It carries your text and the files you attached to that message, but not the ambient editor selection. **Atlas** and **OpenAI Codex** take a mid-turn correction; **Claude Code** does not, and there a message always falls back to the queue. Images are the one thing that can still be refused: an older Atlas CLI ignores them, so a message carrying pictures is queued whole rather than arriving without them. Also toggleable live from the gear menu → **Config & debug → Steer by default**."
+          "markdownDescription": "Send straight into the running turn instead of queueing it. Off (default): a message you send while the agent is working waits, and is sent as one prompt when the turn ends — you can still steer it on demand with the **Steer** button on the pending message. On: sending while it works **skips the queue** and injects the message into the turn immediately, so the agent changes course mid-answer. Steering never cancels the turn and never discards in-flight tool work — it is not a Stop. It carries your text and the files you attached to that message, but not the ambient editor selection. **Grok** and **OpenAI Codex** take a mid-turn correction; **Claude Code** does not, and there a message always falls back to the queue. Images are the one thing that can still be refused: an older Atlas CLI ignores them, so a message carrying pictures is queued whole rather than arriving without them. Also toggleable live from Settings → **General → Steer by default**."
+        },
+        "atlas.pinLiveWorkflows": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show live workflows above the message box. Turn off to show each workflow where it started. On a phone or browser this is a per-device preference and this setting does not apply."
         },
         "atlas.promptNav": {
           "type": "boolean",
@@ -399,27 +494,27 @@
         "atlas.soundNotifications": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Play a short sound when Atlas finishes a turn or hits an error — a rising chime on completion, a lower tone on error. Off by default. Plays **only when the Atlas panel isn't focused** (you've switched to the editor or another window), so it notifies you when you've stepped away without beeping while you watch. Also toggleable live from the gear menu → **Config & debug → Sound notifications**."
+          "markdownDescription": "Play a short sound when the agent finishes a turn or hits an error — a rising chime on completion, a lower tone on error. Off by default. Plays **only when the Atlas panel isn't focused** (you've switched to the editor or another window), so it notifies you when you've stepped away without beeping while you watch. Also toggleable live from Settings → **Notifications → Sound notifications**."
         },
         "atlas.processingSound": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Play a quiet repeating sound while Atlas is still working. The first cue waits seven seconds, then repeats every eight seconds until the turn ends. Off by default and separate from the completion/error sound. Also toggleable live from the gear menu → **Config & debug → Still-processing sound**."
+          "markdownDescription": "Play a quiet repeating sound while the agent is still working. The first cue waits seven seconds, then repeats every eight seconds until the turn ends. Off by default and separate from the completion/error sound. Also toggleable live from Settings → **Notifications → Still-processing sound**."
         },
         "atlas.readRepliesAloud": {
           "type": "boolean",
           "default": false,
-          "description": "Read completed Atlas replies aloud in the VS Code chat. Code blocks are skipped."
+          "description": "Read completed replies aloud in the VS Code chat. Code blocks are skipped."
         },
         "atlas.summarizeRepliesAloud": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Read simplified summaries of spoken Atlas replies. Each reply costs an extra xAI call and adds network delay; the full reply is used if summarization fails. Uses the same credential resolution as Voice input. AFK Pilot keeps its own per-device browser preference."
+          "markdownDescription": "Read simplified summaries of spoken replies. Each reply costs an extra xAI call and adds network delay; the full reply is used if summarization fails. Uses the same credential resolution as Voice input. Atlas keeps its own per-device browser preference."
         },
         "atlas.remote.keepAwake": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Keep this machine awake while it's linked to an **AFK Pilot** account, so a remote turn isn't cut off by idle sleep. Only active once you've signed in (gear → AFK Pilot → *Sign in*); unlinking releases the lock immediately. The display is still free to sleep — only system/idle sleep is blocked. Uses `caffeinate` on macOS, `SetThreadExecutionState` on Windows and `systemd-inhibit` on Linux. **A closed laptop lid still sleeps** on every platform — that's an OS-level decision no application can override."
+          "markdownDescription": "Keep this machine awake while it's linked to an **AFK Pilot** account, so a remote turn isn't cut off by idle sleep. Only active once you've signed in (Settings → Remote control → *Sign in*); unlinking releases the lock immediately. The display is still free to sleep — only system/idle sleep is blocked. Uses `caffeinate` on macOS, `SetThreadExecutionState` on Windows and `systemd-inhibit` on Linux. **A closed laptop lid still sleeps** on every platform — that's an OS-level decision no application can override."
         },
         "atlas.thumbsFeedback": {
           "type": "boolean",
@@ -506,8 +601,9 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "tsc -p .",
-    "compile": "tsc -p .",
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p . && npm run compile:muse-adapter",
+    "compile:muse-adapter": "tsc -p tsconfig.muse-adapter.json",
     "watch": "tsc -p . -w",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -532,6 +628,7 @@
     "e2e:lifecycle-host": "npm run compile && node scripts/lifecycle-host.mjs",
     "smoke:live": "npm run compile && node scripts/live-smoke.mjs",
     "smoke:acp": "npm run compile && node scripts/acp-smoke.mjs",
+    "smoke:render": "npm run compile && node scripts/smoke-render.mjs",
     "telemetry:probe": "tsc -p . && node scripts/telemetry-probe.cjs",
     "check:relay": "node scripts/check-production-relay.mjs",
     "check:vsix": "npm run compile && node scripts/check-vsix-requires.mjs",
@@ -563,8 +660,31 @@
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "0.76.0",
     "@agentclientprotocol/codex-acp": "1.11.0",
+    "@agentclientprotocol/sdk": "1.4.0",
+    "@muse-code/sdk": "1.3.0",
     "electron-updater": "^6.6.4",
     "jpeg-js": "^0.4.4",
+    "qrcode-generator": "2.0.4",
     "ws": "^8.21.0"
+  },
+  "overrides": {
+    "app-builder-lib": {
+      "builder-util-runtime": "9.7.0"
+    },
+    "builder-util": {
+      "builder-util-runtime": "9.7.0"
+    },
+    "dmg-builder": {
+      "builder-util-runtime": "9.7.0"
+    },
+    "electron-builder": {
+      "builder-util-runtime": "9.7.0"
+    },
+    "electron-publish": {
+      "builder-util-runtime": "9.7.0"
+    },
+    "electron-updater": {
+      "builder-util-runtime": "9.7.0"
+    }
   }
 }

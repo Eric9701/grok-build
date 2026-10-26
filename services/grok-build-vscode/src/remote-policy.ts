@@ -209,6 +209,9 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // as archive/pin: rearranges the remote's rail and touches nothing on disk
   // beyond that note.
   setRepoColor: "full",
+  // Same class again: the project's mark is a globalState note that rearranges
+  // the remote's own rail. Nothing here reaches the workspace.
+  setRepoIcon: "full",
   // Writes host state (globalState), same as the repo pin — classified with it
   // rather than as a view op, even though nothing is destroyed.
   toggleSessionPin: "full",
@@ -230,6 +233,12 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // remote can say what, never where.
   createProject: "full",
   cloneProject: "full",
+  // Add a folder to the host's project list, or answer the prompt that offers
+  // it. Only a folder the host itself offered is accepted (sidebar
+  // addToProjects), it touches no disk, and on VS Code that folder is already in
+  // the catalog a remote may reach -- the list only gains a row.
+  addToProjects: "full",
+  answerProjectPrompt: "full",
   // The follow-up when a clone failed on credentials. A remote `auth` runs
   // the same headless device-code flow as `runGrokLogin` and reports the
   // URL and code in the clone form — the person asking is the only one who
@@ -277,15 +286,22 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // GIT_OPTIONAL_LOCKS=0 and no write path at all.
   gitStatus: "view",
   gitFileDiff: "view",
+  turnFileDiff: "view",
   // input/turn control (propose+)
   send: "propose",
   newSession: "propose",
   cancel: "propose",
   setMode: "propose",
   setEffort: "propose",
+  setContextWindow: "propose",
   setModel: "propose",
   installCodex: "host-local",
   cancelCodexInstall: "host-local",
+  installAgy: "host-local",
+  cancelAgyInstall: "host-local",
+  // Carries a pasted Gemini API key: it never crosses the relay.
+  agySignIn: "host-local",
+  setExperimentalAntigravity: "host-local",
   questionAnswer: "propose",
   questionCancel: "propose",
   queueSend: "propose",
@@ -406,6 +422,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // routing it was a promise the code cannot keep — the remote UI already
   // hides the action (found while documenting what works where, 2026-08-31).
   runInstallCmd: "host-local",
+  runMuseInstallCmd: "host-local",
   // WAS host-local until 2026-08-26, and the reason it moved is worth being
   // precise about: the POLICY did not soften, the IMPLEMENTATION changed.
   //
@@ -448,6 +465,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   openUrl: "host-local",
   openText: "host-local",
   openDiff: "host-local",
+  turnFileOpenDiff: "host-local",
   exportExpr: "host-local",
   // Opens a native directory picker on the machine running the host. A remote
   // could neither see nor answer that dialog, so it would hang a phone on a
@@ -506,6 +524,8 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   setExpandCommandOutputs: "host-local",
   setSteerByDefault: "host-local",
   setPromptNav: "host-local",
+  setMuseSetting: "host-local",
+  setPinLiveWorkflows: "host-local",
   setExpandDiffCard: "host-local",
   setSoundNotifications: "host-local",
   setProcessingSound: "host-local",
@@ -523,6 +543,11 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // Same class as the other General host prefs: the desk owns the switch,
   // remotes receive the live value and honour it for thumbs.
   setThumbsFeedback: "host-local",
+  // The tray belongs to the machine the window is on. A phone has no window
+  // there to keep, and a cloud machine has no tray at all, so unlike the other
+  // General prefs this one is not merely desk-owned -- it is desk-only, and a
+  // remote is never offered the row.
+  setDesktopTray: "host-local",
   // Machine-global disclosure preference in ~/.grok/client-state — the web
   // client inherits and may set it (host-owned store, not VS Code settings).
   setAppPurpose: "propose",
@@ -538,6 +563,8 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   // relay account actions (link/unlink/portal) manage THIS machine's device
   // token — only the local webview may drive them
   remoteSignIn: "host-local",
+  remoteHandoff: "host-local",
+  showRemoteHandoff: "host-local",
   remoteSignOut: "host-local",
   // Desktop gear unlink — native confirm then drop THIS machine's device token.
   // A remote must never be able to unlink the desk it is driving.
@@ -545,6 +572,7 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
   openRemotePortal: "host-local",
   // Desktop update notice click-through — a phone cannot update the desk.
   openUpdateRelease: "host-local",
+  cloudHostUpdate: "host-local",
   restartToUpdate: "host-local",
 };
 
@@ -560,6 +588,8 @@ export const INBOUND_DISPOSITION: Record<WebviewMsg["type"], InboundDisposition>
  */
 export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> = {
   ready: false,
+  addToProjects: false,
+  answerProjectPrompt: false,
   remotePreferences: false,
   listSessions: false,
   listRepoSessions: false,
@@ -567,6 +597,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   toggleRepoPin: false,
   setRepoArchived: false,
   setRepoColor: false,
+  setRepoIcon: false,
   toggleSessionPin: false,
   dismissWelcomeTip: false,
   welcomeTipShown: false,
@@ -590,15 +621,21 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   // came back to check on it.
   gitStatus: false,
   gitFileDiff: false,
+  turnFileDiff: false,
   gitRun: false,
   send: true,
   newSession: false,
   cancel: true,
   setMode: true,
   setEffort: true,
+  setContextWindow: true,
   setModel: true,
   installCodex: false,
   cancelCodexInstall: false,
+  installAgy: false,
+  cancelAgyInstall: false,
+  agySignIn: false,
+  setExperimentalAntigravity: false,
   questionAnswer: true,
   questionCancel: true,
   queueSend: true,
@@ -631,6 +668,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   deleteSession: false,
   clearAllSessions: false,
   runInstallCmd: false,
+  runMuseInstallCmd: false,
   runGrokLogin: false,
   cancelDeviceLogin: false,
   submitDeviceLoginCode: false,
@@ -644,6 +682,7 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   openUrl: false,
   openText: false,
   openDiff: false,
+  turnFileOpenDiff: false,
   exportExpr: false,
   addProjectFolder: false,
   removeProjectFolder: false,
@@ -685,6 +724,8 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   setExpandCommandOutputs: false,
   setSteerByDefault: false,
   setPromptNav: false,
+  setMuseSetting: false,
+  setPinLiveWorkflows: false,
   setExpandDiffCard: false,
   setSoundNotifications: false,
   setProcessingSound: false,
@@ -696,16 +737,20 @@ export const REMOTE_REQUIRES_BOUND_SESSION: Record<WebviewMsg["type"], boolean> 
   configureOpenAiVoice: false,
   setTelemetryEnabled: false,
   setThumbsFeedback: false,
+  setDesktopTray: false,
   setAppPurpose: false,
   summarizeSpeech: true,
   requestImageFull: true,
   requestImageOriginal: true,
   composerFocus: false,
   remoteSignIn: false,
+  remoteHandoff: false,
+  showRemoteHandoff: false,
   remoteSignOut: false,
   unlinkRemoteDevice: false,
   openRemotePortal: false,
   openUpdateRelease: false,
+  cloudHostUpdate: false,
   restartToUpdate: false,
 };
 
@@ -731,6 +776,7 @@ const TIER_RANK: Record<RemoteTier, number> = { "read-only": 0, propose: 1, full
  * has to be added deliberately. Everything not listed keeps its desk answer.
  */
 const CLOUD_DISPOSITION: Partial<Record<WebviewMsg["type"], InboundDisposition>> = {
+  cloudHostUpdate: "full",
   logout: "full",
   githubSignOut: "full",
 
@@ -746,6 +792,12 @@ const CLOUD_DISPOSITION: Partial<Record<WebviewMsg["type"], InboundDisposition>>
   // there is no desk, so read-only means never (owner, 2026-08-31).
   setTelemetryEnabled: "full",
   setThumbsFeedback: "full",
+  // setDesktopTray is deliberately NOT promoted. The others are read-only on a
+  // remote only because a desk owner could set them at the desk, so a cloud
+  // machine -- which has no desk -- would otherwise never be able to. The tray
+  // is different: it is about a window someone is looking at, and nobody sits
+  // at a cloud machine's window. Promoting it would offer a phone a switch over
+  // a tray that machine has no use for (#174).
 };
 
 /** May this WebviewMsg type, arriving from a remote connection of `tier`, be
@@ -777,9 +829,12 @@ export function allowFromRemote(
 export function allowRemoteRepoTarget(msg: WebviewMsg, isKnownCwd: (cwd: string) => boolean): boolean {
   switch (msg.type) {
     case "selectRepo":
+    case "addToProjects":
+    case "answerProjectPrompt":
     case "toggleRepoPin":
     case "setRepoArchived":
     case "setRepoColor":
+    case "setRepoIcon":
     case "clearAllSessions":
     case "listRepoSessions":
     // File browse names a cwd. Without this case the default branch returns
@@ -796,6 +851,7 @@ export function allowRemoteRepoTarget(msg: WebviewMsg, isKnownCwd: (cwd: string)
     // most here because gitRun writes.
     case "gitStatus":
     case "gitFileDiff":
+    case "turnFileDiff":
     case "gitRun":
       return isKnownCwd(msg.cwd);
     case "resumeSession":
@@ -893,6 +949,7 @@ export function repoScopeFor(
  * browser, for one — must NOT be listed here.
  */
 export const DESK_ONLY_CAPABILITIES = [
+  "installMuse",
   "servesMediaRanges",
   // Closing folders stays at the desk; archive is available on every surface.
   "removeProjectFolder",
@@ -949,6 +1006,7 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   // first, so a tab sees only routines and projects it may already reach.
   routines: "mirror",
   codexInstallProgress: "host-local",
+  agyInstallProgress: "host-local",
   // Placement is a property of the machine running the extension, and `moveView`
   // is host-local anyway — a remote could neither act on the hint nor need it.
   moveViewHint: "host-local",
@@ -974,9 +1032,11 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   grokUpdateStatus: "mirror",
   // Desk-only installer notice / restart — a remote has nothing useful to do with it.
   updateAvailable: "host-local",
+  cloudHostUpdateState: "mirror",
   updateReady: "host-local",
   initialized: "mirror",
   cliUpdating: "mirror",
+  startupStatus: "mirror",
   session: "mirror",
   // Config.toml `[model.*]` editing is desk-only; the list may still contain
   // endpoint URLs, so it is not mirrored to a phone.
@@ -984,7 +1044,9 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   // Conversation names are already exposed in the remote history list, so
   // the focused-name update has the same display-only sensitivity.
   sessionName: "mirror",
+  composerDraftSession: "mirror",
   sessionRemoved: "mirror",
+  contextWindowSelection: "mirror",
   modelChanged: "mirror",
   modeChanged: "mirror",
   planModeAvailability: "mirror",
@@ -1001,6 +1063,8 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   providerConfigWriteResult: "mirror",
   gitStatusResult: "mirror",
   gitFileDiffResult: "mirror",
+  turnFileDiffResult: "mirror",
+  turnDiffBaseline: "mirror",
   gitRunResult: "mirror",
   userMessage: "mirror",
   agentStart: "mirror",
@@ -1047,6 +1111,8 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   // Not mirrored: a remote holds its OWN Previous-prompt preference in its
   // own storage, so the desk's value would silently overwrite the phone's.
   promptNav: "host-local",
+  museSettings: "host-local",
+  pinLiveWorkflows: "host-local",
   // The phone owns its diff-card default too; never overwrite it from desk.
   expandDiffCard: "host-local",
   soundNotifications: "mirror",
@@ -1061,6 +1127,8 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   imageOriginal: "mirror",
   moveComposerCaret: "host-local",
   remoteStatus: "host-local",
+  remoteHandoff: "host-local",
+  showRemoteHandoff: "host-local",
   setAllToolDetails: "mirror",
   focusInput: "mirror",
   // Desk/VS Code only — a phone opens find from its own ⋯, and a palette
@@ -1071,8 +1139,14 @@ export const OUTBOUND_DISPOSITION: Record<HostMsg["type"], OutboundDisposition> 
   uiConfirmRequest: "mirror",
   uiConfirmResolved: "mirror",
   sessions: "mirror",
+  // Sent only to the tab that tapped: an id it named itself, and no project data.
+  sessionOpening: "mirror",
+  // Asked of whoever is in the conversation, phone included: the answer
+  // writes the host's list.
+  projectPrompt: "mirror",
   repoSessions: "mirror",
   pinnedSessions: "mirror",
+  recentSessions: "mirror",
   repos: "mirror",
   sessionDot: "mirror",
   queuedSends: "mirror",
@@ -1127,6 +1201,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   thumbsFeedback: "none",
   grokUpdateStatus: "none",
   updateAvailable: "none",
+  cloudHostUpdateState: "none",
   updateReady: "none",
   cliUpdating: "none",
   onboarding: "none",
@@ -1138,9 +1213,12 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   mcpConnectorAuthorization: "none",
   routines: "entries",
   codexInstallProgress: "none",
+  agyInstallProgress: "none",
   expandCommandOutputs: "none",
   steerByDefault: "none",
   promptNav: "none",
+  museSettings: "none",
+  pinLiveWorkflows: "none",
   expandDiffCard: "none",
   soundNotifications: "none",
   processingSound: "none",
@@ -1148,6 +1226,8 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   summarizeRepliesAloud: "none",
   moveComposerCaret: "none",
   remoteStatus: "none",
+  remoteHandoff: "none",
+  showRemoteHandoff: "none",
   error: "none",
   hostNotice: "none",
   focusInput: "none",
@@ -1161,6 +1241,7 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   initialState: "optional-cwd",
   // Session-start chrome; delivered via emit → sendRemoteSession with scope.
   initialized: "scope",
+  startupStatus: "scope",
   // voiceConfigured is project-scoped (sendPhrase / key resolution per cwd) —
   // a closed or re-homed tab must not keep the prior project's voice prefs.
   // Content-bearing voiceSubmit / voiceTranscript / voicePartial use scope so a
@@ -1175,13 +1256,20 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   // History / session lists — empty entries are fine; a closed cwd in an entry is not.
   sessions: "entries",
   pinnedSessions: "entries",
+  recentSessions: "entries",
+  sessionOpening: "none",
+  // Names the conversation's own project folder; delivered through emit with
+  // that conversation's scope.
+  projectPrompt: "scope",
   repoSessions: "message-cwd",
   sessionName: "message-cwd",
+  composerDraftSession: "scope",
   sessionRemoved: "message-cwd",
   // Session-scoped live + restore payload — requires authorized session/repo cwd.
   session: "scope",
   sessionDot: "scope",
   chips: "scope",
+  contextWindowSelection: "scope",
   modelChanged: "scope",
   modeChanged: "scope",
   planModeAvailability: "scope",
@@ -1197,6 +1285,8 @@ export const OUTBOUND_PROJECT_AUTH: Record<HostMsg["type"], OutboundProjectAuth>
   providerConfigWriteResult: "none",
   gitStatusResult: "message-cwd",
   gitFileDiffResult: "message-cwd",
+  turnFileDiffResult: "message-cwd",
+  turnDiffBaseline: "scope",
   gitRunResult: "message-cwd",
   userMessage: "scope",
   agentStart: "scope",
@@ -1309,7 +1399,7 @@ export function mayDeliverRemoteHostMsg(
         );
       }
       const entries =
-        msg.type === "sessions" || msg.type === "pinnedSessions"
+        msg.type === "sessions" || msg.type === "pinnedSessions" || msg.type === "recentSessions"
           ? msg.entries
           : [];
       return entries.every(
@@ -1366,6 +1456,7 @@ export function mayDeliverRemoteHostMsg(
         msg.type === "projectFileWriteResult" ||
         msg.type === "gitStatusResult" ||
         msg.type === "gitFileDiffResult" ||
+        msg.type === "turnFileDiffResult" ||
         msg.type === "gitRunResult"
       ) {
         return cwdIsAuthorized(msg.cwd, authorizedCwds, sameCwd);
@@ -1543,7 +1634,7 @@ export function transformHostMsgForRemote(msg: HostMsg, deps: MediaInlineDeps): 
   if (msg.type === "chips") {
     return { ...msg, chips: msg.chips.map((chip) => inlineChipPreviewForRemote(chip, deps)) };
   }
-  if (msg.type === "userMessage") {
+  if (msg.type === "userMessage" || msg.type === "restoreComposer") {
     return {
       ...msg,
       ...(msg.chips ? { chips: msg.chips.map((chip) => inlineChipPreviewForRemote(chip, deps)) } : {}),

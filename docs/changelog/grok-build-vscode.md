@@ -4,6 +4,16 @@
 
 上游版本记在该目录自己的 `CHANGELOG.md`。这里只记 **Atlas overlay** 与合并动作。
 
+## 2026-10
+
+### 2026-10-26 — 合并上游 4.15.3
+
+- **状态**：已落地
+- **会话**：[合并 vscode 4.15.3](5dee06aa-76a9-40a7-9fbd-1b2c8736ea28)
+- 上游 `Eric9701/grok-build-vscode` `main`（与 `phuryn` 同一尖端）从 4.6.0 合到 4.15.3：Muse Code、实验性 Antigravity、上下文窗口、工作流卡片、Projects 只保留自选文件夹、Disconnect 不登出 CLI、Windows 缺 CLI 时不再卡启动。
+- 保留 Atlas overlay：扩展名 Atlas for VS Code、`~/.atlas`、`atlas` CLI、`atlas.*` 设置与命令、本地 `[model.*]`、企业更新通道 `http://10.218.220.237:22255/atlas/cli`。AFK Pilot 只作为手机/浏览器伴侣。
+- 测试对准 Atlas 文案与 `atlas.*` 存储键（`npm test`：338 files / 8307 passed）。
+
 ## 2026-09
 
 ### 2026-09-17 — 用户可见 Grok 文案改为 Atlas

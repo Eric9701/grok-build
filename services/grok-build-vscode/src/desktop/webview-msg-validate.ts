@@ -1,3 +1,5 @@
+import { isModeId } from "../mode-prefs";
+
 /**
  * Runtime schema validation for renderer → host messages.
  *
@@ -25,7 +27,9 @@ import {
 } from "../protocol";
 import { MAX_CONNECTOR_KEY_CHARS } from "../mcp-connectors";
 import { MAX_GITHUB_TOKEN_CHARS } from "../github-auth";
+import { MAX_AGY_API_KEY_CHARS } from "../agy-auth";
 import { ROUTINE_PROMPT_MAX } from "../routines";
+import { isInternalProvider } from "../acp-backend";
 
 /** Generous next to {@link ROUTINE_PROMPT_MAX}: this gate rejects the absurd,
  *  and validateRoutine does the real trimming once past the boundary. */
@@ -78,6 +82,8 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       break;
     case "configureOpenAiVoice":
       break;
+    case "cloudHostUpdate":
+      return Object.keys(raw).length === 1 ? { type: "cloudHostUpdate" } : null;
     case "ready":
       if (!opt(raw.tabToken, isString)) return null;
       break;
@@ -166,15 +172,17 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "closeSettingsSurface":
       break;
     case "runInstallCmd":
+    case "runMuseInstallCmd":
     case "installCodex":
     case "cancelCodexInstall":
+    case "installAgy":
+    case "cancelAgyInstall":
     case "checkGrokUpdate":
     case "updateGrok":
     case "updateCodex":
     case "updateClaude":
     case "refreshContextDetails":
     case "refreshSubscriptionUsage":
-    case "refreshProviders":
     case "pickFile":
     case "voiceStart":
     case "remoteVoiceStart":
@@ -182,7 +190,6 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "newWorktreeSession":
     case "applyWorktree":
     case "removeWorktree":
-    case "remoteSignIn":
     case "remoteSignOut":
     case "unlinkRemoteDevice":
       break;
@@ -190,19 +197,18 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "logout":
     case "recheckConnection":
     case "retryProviderSession":
-      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude") return null;
+      if (!opt(raw.provider, isInternalProvider)) return null;
       break;
     case "cancelDeviceLogin":
       if (raw.provider !== undefined
-        && raw.provider !== "grok" && raw.provider !== "codex"
-        && raw.provider !== "claude" && raw.provider !== "github") return null;
+        && !isInternalProvider(raw.provider) && raw.provider !== "github") return null;
       break;
     case "submitDeviceLoginCode":
       if (!isString(raw.code)) return null;
-      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude") return null;
+      if (!opt(raw.provider, isInternalProvider)) return null;
       break;
     case "setMode":
-      if (raw.modeId !== "agent" && raw.modeId !== "plan" && raw.modeId !== "yolo") {
+      if (!isModeId(raw.modeId)) {
         return null;
       }
       break;
@@ -248,7 +254,15 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
         return null;
       }
       break;
+    case "setMuseSetting":
+      if (raw.key === "museSandboxNetwork") {
+        if (!["proxy-only", "restricted", "enabled"].includes(raw.value as string)) return null;
+      } else if (raw.key === "museShellSandbox" || raw.key === "museTrustWorkspaces") {
+        if (!isBoolean(raw.value)) return null;
+      } else return null;
+      return { type, key: raw.key, value: raw.value } as WebviewMsg;
     case "setShowThinking":
+    case "setExperimentalAntigravity":
     case "setSoundNotifications":
     case "setProcessingSound":
     case "setReadRepliesAloud":
@@ -256,8 +270,10 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "setExpandCommandOutputs":
     case "setSteerByDefault":
     case "setPromptNav":
+    case "setPinLiveWorkflows":
     case "setExpandDiffCard":
     case "setTelemetryEnabled":
+    case "setDesktopTray":
     case "setThumbsFeedback":
     case "composerFocus":
       if (type === "composerFocus") {
@@ -300,9 +316,14 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "questionCancel":
       if (!isStringOrNumber(raw.requestId)) return null;
       break;
+    case "setContextWindow":
+      if (!isString(raw.sessionId) || !raw.sessionId || !isString(raw.modelId) || !raw.modelId) return null;
+      if (!isNumber(raw.generation) || !Number.isSafeInteger(raw.generation) || raw.generation < 0) return null;
+      if (!isNumber(raw.size) || !Number.isSafeInteger(raw.size) || raw.size <= 0) return null;
+      break;
     case "setModel":
       if (!isString(raw.modelId)) return null;
-      if (raw.provider !== undefined && raw.provider !== "grok" && raw.provider !== "codex" && raw.provider !== "claude") return null;
+      if (!opt(raw.provider, isInternalProvider)) return null;
       break;
     case "listSessions":
       if (!opt(raw.offset, isNumber) || !opt(raw.limit, isNumber) || !opt(raw.query, isString)) {
@@ -324,10 +345,15 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       break;
     case "toggleSessionPin":
       if (!isString(raw.id) || !isBoolean(raw.pinned)) return null;
+      if (!opt(raw.requestId, isString) || (typeof raw.requestId === "string" && raw.requestId.length > 128)) return null;
       if (!opt(raw.cwd, isString)) return null;
       break;
     case "selectRepo":
+    case "addToProjects":
       if (!isString(raw.cwd)) return null;
+      break;
+    case "answerProjectPrompt":
+      if (!isString(raw.cwd) || (raw.choice !== "notNow" && raw.choice !== "never")) return null;
       break;
     case "toggleRepoPin":
       if (!isString(raw.cwd) || !isBoolean(raw.pinned)) return null;
@@ -337,6 +363,9 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       break;
     case "setRepoColor":
       if (!isString(raw.cwd) || !isString(raw.color)) return null;
+      break;
+    case "setRepoIcon":
+      if (!isString(raw.cwd) || !isString(raw.icon)) return null;
       break;
     case "resumeSession":
       if (!isString(raw.id)) return null;
@@ -372,6 +401,13 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       if (!isString(raw.cwd) || !isString(raw.path)) return null;
       if (!opt(raw.requestId, isString)) return null;
       break;
+    case "turnFileDiff":
+      if (!isString(raw.cwd) || !isString(raw.path)
+        || !isString(raw.turnId) || !isString(raw.requestId)) return null;
+      break;
+    case "turnFileOpenDiff":
+      if (!isString(raw.turnId) || !isString(raw.cwd) || !isString(raw.path)) return null;
+      break;
     case "gitRun":
       if (!isString(raw.cwd)) return null;
       if (!["commit", "push", "newBranch", "revertFile"].includes(raw.op as string)) return null;
@@ -383,14 +419,14 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       break;
     case "openProviderConfig":
     case "readProviderConfig":
-      if (!["grok", "codex", "claude"].includes(raw.provider as string)) return null;
+      if (!isInternalProvider(raw.provider)) return null;
       if (!opt(raw.requestId, isString)) return null;
       break;
     case "restartProviderSession":
-      if (!["grok", "codex", "claude"].includes(raw.provider as string) || !isString(raw.sessionId) || !raw.sessionId) return null;
+      if (!isInternalProvider(raw.provider) || !isString(raw.sessionId) || !raw.sessionId) return null;
       break;
     case "writeProviderConfig":
-      if (!["grok", "codex", "claude"].includes(raw.provider as string)
+      if (!isInternalProvider(raw.provider)
         || !opt(raw.requestId, isString) || !isString(raw.text) || !isString(raw.expectedAbsPath)
         || !isObject(raw.stamp) || !isNumber(raw.stamp.mtimeMs) || !isNumber(raw.stamp.size)) return null;
       break;
@@ -483,6 +519,10 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
     case "githubLoginWithToken":
       if (!isString(raw.token) || !raw.token || raw.token.length > MAX_GITHUB_TOKEN_CHARS) return null;
       break;
+    case "agySignIn":
+      if (raw.method !== "google" && raw.method !== "api-key") return null;
+      if (raw.key !== undefined && (raw.method !== "api-key" || !isString(raw.key) || raw.key.length > MAX_AGY_API_KEY_CHARS)) return null;
+      break;
     case "welcomeTipShown":
     case "dismissWelcomeTip":
       // Bounded because it becomes a key in a persisted record map. The host
@@ -496,8 +536,26 @@ export function parseWebviewMsg(raw: unknown): WebviewMsg | null {
       }
       if (!isString(raw.displayName)) return null;
       break;
+    case "showRemoteHandoff":
+    case "remoteHandoff":
+      if (!["topbar", "rail", "projects", "settings", "palette"].includes(raw.source as string)
+        || !opt(raw.sessionId, isString) || !opt(raw.repoCwd, isString)) return null;
+      if (type === "remoteHandoff" && (!Number.isSafeInteger(raw.requestId)
+        || (raw.action !== undefined && !["show", "refresh", "open"].includes(raw.action as string)))) return null;
+      if (type === "showRemoteHandoff" && !opt(raw.explain, isBoolean)) return null;
+      break;
+    case "remoteSignIn":
+      if (raw.source !== undefined && !["topbar", "rail", "projects", "settings", "palette"].includes(raw.source as string)) return null;
+      break;
     case "openRemotePortal":
+      if (raw.source !== undefined && !["topbar", "rail", "projects", "settings", "palette"].includes(raw.source as string)) return null;
       if (!opt(raw.withHint, isBoolean)) return null;
+      break;
+    // `credentials: false` asks for the local half only -- locators and
+    // `--version`, contacting nobody. Absent means both halves, which is what
+    // this message has always done and what an older client still sends (#171).
+    case "refreshProviders":
+      if (!opt(raw.credentials, isBoolean)) return null;
       break;
     default:
       return null;

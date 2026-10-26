@@ -49,12 +49,12 @@ describe("CLI startup compatibility", () => {
   it("keeps the original once-per-extension-upgrade update trigger", () => {
     expect(update).toContain("if (this.cliUpdateChecked) return");
     expect(update).toContain("extensionWasUpgraded(lastSeen, current)");
-    expect(update).toContain("execGrokCli(cliPath, args");
+    expect(update).toContain('execProviderCli("grok", cliPath, args');
     // Same store, different accessor: CLI_UPDATE_VERSION_KEY is not one of the
     // keys that moved to ~/.grok, so it still lands in globalState. See
     // persisted-state.ts.
     expect(update).toContain("this.state.update(CLI_UPDATE_VERSION_KEY, current)");
-    expect(sessionStart).toContain("await this.maybeUpdateCliOnUpgrade(cliPath)");
+    expect(sessionStart).toContain("await this.maybeUpdateCliOnUpgrade(cliPath, session)");
   });
 
   it("bounds the silent update at 20s and spends it ONCE per extension version", () => {
@@ -64,7 +64,7 @@ describe("CLI startup compatibility", () => {
     // binary lock (instant, free to retry), pathological for an unreachable
     // x.ai, where a no-op `grok update` costs ~68s and the retry re-charged it
     // on every window forever (funkpopo, PR #129).
-    expect(update).toContain("execGrokCli(cliPath, args, { timeout: 20_000 })");
+    expect(update).toContain('execProviderCli("grok", cliPath, args, { timeout: 20_000 })');
     // No conditional around the marker write: a failed attempt still counts.
     expect(update).not.toContain("updateFailed");
     const finallyBlock = update.slice(update.indexOf("} finally {"));
@@ -79,6 +79,7 @@ describe("CLI startup compatibility", () => {
     expect(compatibility).toContain("CLI_VERSION_CACHE_KEY");
     expect(compatibility).not.toContain("runGrokUpdate");
     expect(compatibility).not.toContain("execGrokCli");
+    expect(compatibility).not.toContain("execProviderCli");
     expect(compatibility).not.toContain("this.pool");
   });
 
@@ -88,7 +89,7 @@ describe("CLI startup compatibility", () => {
     expect(pin).toContain('this.downgradeBrokenCli(cliPath, detected, "proactive")');
     expect(sidebar).toContain('reason: "proactive" | "reactive"');
 
-    const update = sessionStart.indexOf("await this.maybeUpdateCliOnUpgrade(cliPath)");
+    const update = sessionStart.indexOf("await this.maybeUpdateCliOnUpgrade(cliPath, session)");
     const proactivePin = sessionStart.indexOf("await this.maybePinBrokenCli(cliPath)", update);
     const compatibilityCheck = sessionStart.indexOf("await this.planModeCompatibility(cliPath)", proactivePin);
     expect(proactivePin).toBeGreaterThan(update);
@@ -146,7 +147,7 @@ describe("CLI startup compatibility", () => {
     const capture = fullSessionStart.indexOf("const replacedClient = session.client");
     const clear = fullSessionStart.indexOf("session.client = undefined", capture);
     const dispose = fullSessionStart.indexOf("await replacedClient.dispose()", clear);
-    const update = fullSessionStart.indexOf("await this.maybeUpdateCliOnUpgrade(cliPath)", dispose);
+    const update = fullSessionStart.indexOf("await this.maybeUpdateCliOnUpgrade(cliPath, session)", dispose);
 
     expect(capture).toBeGreaterThan(-1);
     expect(clear).toBeGreaterThan(capture);

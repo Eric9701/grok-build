@@ -39,7 +39,11 @@ function makeSidebar(options: {
   const sidebar = Object.create(GrokSidebar.prototype) as any;
   sidebar.pendingConfirms = new Map();
   const connected = options.connected ?? ["grok"];
-  sidebar.providerConnectionState = { grok: true, codex: false };
+  // Saved consent IS what connectedProviders derives from, so a fixture that
+  // pins one and mocks the other can gate a path it meant to exercise (#171).
+  sidebar.providerConnectionState = {
+    grok: connected.includes("grok"), codex: connected.includes("codex"),
+  };
   sidebar.providerConnections = vi.fn(() => sidebar.providerConnectionState);
   sidebar.locateProvider = vi.fn((provider: "grok" | "codex") => provider);
   sidebar.locatedProviders = vi.fn(() => ({
@@ -56,8 +60,9 @@ function makeSidebar(options: {
   sidebar.sessionCache = new Map();
   sidebar.sessionLoadReservations = new Map();
   sidebar.codexSessionCache = new Map();
-  sidebar.codexSessionCacheAt = new Map();
-  sidebar.codexSessionRefresh = new Map();
+  // The shared per-provider history process. Listings reuse one process
+  // across repos, so a double that reaches them needs it.
+  sidebar.adapterHistoryClients = new Map();
   sidebar.loginReprobeTimers = new Map();
   sidebar.worktreeCache = [];
   sidebar.focused = new Session();
@@ -265,10 +270,9 @@ describe("reopening a conversation whose draft was parked", () => {
     };
 
     const restored = await reopen(makeResumableSidebar(memento), "codex-live-1");
-    expect(restored).toContainEqual({ type: "restoreComposer", text: "half-typed idea" });
+    expect(restored).toContainEqual({ type: "restoreComposer", text: "half-typed idea", sessionId: "codex-live-1", draft: true });
 
-    // `restoreComposer` appends, so a draft left in meta would stack another
-    // copy on every reopen.
+    // A draft is handed back only once, even if the renderer kept newer typing.
     const again = await reopen(makeResumableSidebar(memento), "codex-live-1");
     expect(again.some((message) => message.type === "restoreComposer")).toBe(false);
     expect((memento["atlas.sessionMeta"] as any)["codex-live-1"].queuedDraft).toBeUndefined();
@@ -321,7 +325,7 @@ describe("reopening a conversation whose draft was parked", () => {
 
     expect(sidebar.host.revealChatView).toHaveBeenCalledOnce();
     expect(seen.filter((message) => message.type === "restoreComposer")).toEqual([
-      { type: "restoreComposer", text: "rail draft" },
+      { type: "restoreComposer", text: "rail draft", sessionId: "codex-rail-1", draft: true },
     ]);
     expect((memento["atlas.sessionMeta"] as any)["codex-rail-1"].queuedDraft).toBeUndefined();
   }, 20_000);
@@ -338,6 +342,10 @@ describe("startup refusal cleanup", () => {
     sidebar.isAuthorizedCwd = vi.fn(() => false);
     sidebar.locateProvider = vi.fn(() => "codex");
     sidebar.setProviderConnected = vi.fn(async () => {});
+    // Connect is what restores the saved consent; a re-check only re-reads
+    // an account the person already said to use, and since #171 it refuses
+    // to touch one they did not. Signing back in means both.
+    sidebar.providerConnectionState = { ...sidebar.providerConnectionState, ["codex"]: true };
     sidebar.reprobeProviderCredentials = vi.fn(async () => true);
     const emitted: HostMsg[] = [];
     sidebar.emit = vi.fn((_session: Session, message: HostMsg) => emitted.push(message));
@@ -501,6 +509,10 @@ describe("signing back in after the last provider signed out", () => {
     sidebar.connectedProviders = vi.fn(() => ["grok"]);
     sidebar.locateProvider = vi.fn(() => "grok");
     sidebar.setProviderConnected = vi.fn(async () => {});
+    // Connect is what restores the saved consent; a re-check only re-reads
+    // an account the person already said to use, and since #171 it refuses
+    // to touch one they did not. Signing back in means both.
+    sidebar.providerConnectionState = { ...sidebar.providerConnectionState, ["grok"]: true };
     sidebar.warmConnectedCodexModels = vi.fn(async () => {});
     sidebar.reprobeProviderCredentials = vi.fn(async () => true);
     sidebar.startSession = vi.fn(async (_resumeId: undefined, session: Session) => {
@@ -560,6 +572,10 @@ describe("signing back in after the last provider signed out", () => {
     sidebar.connectedProviders = vi.fn(() => ["grok"]);
     sidebar.locateProvider = vi.fn(() => "grok");
     sidebar.setProviderConnected = vi.fn(async () => {});
+    // Connect is what restores the saved consent; a re-check only re-reads
+    // an account the person already said to use, and since #171 it refuses
+    // to touch one they did not. Signing back in means both.
+    sidebar.providerConnectionState = { ...sidebar.providerConnectionState, ["grok"]: true };
     sidebar.reprobeProviderCredentials = vi.fn(async () => true);
     sidebar.startSession = vi.fn(async () => undefined);
     const restored: HostMsg[] = [];

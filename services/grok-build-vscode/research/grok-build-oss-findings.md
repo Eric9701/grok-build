@@ -184,7 +184,7 @@ no feature gate, just never advertised in `initialize`. **Wire form is `_`-prefi
   `{ sessionId }`.
 
 **Implement (staged):** probe the request/response schemas, then adopt **rename/delete** first
-(kills the `grok.sessionMeta` rename-override store and our `deleteSessionDir`), then
+(kills the `atlas.sessionMeta` rename-override store and our `deleteSessionDir`), then
 **list/search** (replaces `indexSessions`/`readSessionEntries`/`sessionCache` disk scraping — §
 History pagination). Keep the disk path as fallback for older builds.
 The full router table (git, worktree, interject, rewind, task/scheduler, compact_conversation…)

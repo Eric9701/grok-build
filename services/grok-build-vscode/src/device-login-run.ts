@@ -13,6 +13,7 @@
  * finishes.
  */
 import { spawn as nodeSpawn } from "node:child_process";
+import { grokCliNeedsShell } from "./cli-process";
 import {
   classifyDeviceLoginFailure,
   deviceLoginEnv,
@@ -112,7 +113,9 @@ export function runDeviceLogin(
 
   let child: ReturnType<typeof nodeSpawn>;
   try {
-    child = spawnIo.spawn(cliPath, [...args], {
+    const shell = grokCliNeedsShell(cliPath);
+    // Node joins shell:true commands without quoting the executable.
+    child = spawnIo.spawn(shell ? `"${cliPath}"` : cliPath, [...args], {
       // Device-code flows (Grok, Codex) must not wait on input: a child holding
       // an open stdin it will never read from looks identical to a child that
       // is working. Paste-code (Claude `auth login`) is the other shape — the
@@ -120,6 +123,7 @@ export function runDeviceLogin(
       // opens the pipe.
       stdio: [needsCode ? "pipe" : "ignore", "pipe", "pipe"],
       env: opts.rawEnv ? runEnv : deviceLoginEnv(runEnv, { needsCode }),
+      shell,
       windowsHide: true,
     });
   } catch (error) {
@@ -228,7 +232,9 @@ export function probeClaudeAuthStatus(
   cliPath: string,
   io?: DeviceLoginIo,
   env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
 ): Promise<boolean | undefined> {
+  if (signal?.aborted) return Promise.resolve(undefined);
   const spawnIo = io ?? REAL_IO;
   const runEnv = env ?? process.env;
   return new Promise((resolve) => {
@@ -246,6 +252,7 @@ export function probeClaudeAuthStatus(
         stdio: ["ignore", "pipe", "pipe"],
         env: deviceLoginEnv(runEnv),
         windowsHide: true,
+        signal,
       });
     } catch {
       done(undefined);

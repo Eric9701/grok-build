@@ -1,5 +1,25 @@
 (function () {
-  const vscode = acquireVsCodeApi();
+  const hostApi = acquireVsCodeApi();
+  let museAdvertised = false;
+  let museAvailable = false;
+  // Antigravity exists only where the host names it in providerState: desk
+  // hosts with the experimental setting on. Nothing else draws or sends it.
+  let agyAdvertised = false;
+  function namesProvider(value, id) {
+    if (!value || typeof value !== "object") return false;
+    return Object.entries(value).some(([key, child]) =>
+      key === "provider" && child === id || child && typeof child === "object" && namesProvider(child, id));
+  }
+  const vscode = { getState: () => hostApi.getState(), setState: value => hostApi.setState(value),
+    postMessage: message => {
+      if (namesProvider(message, "muse") && !museAvailable) return false;
+      if (namesProvider(message, "agy") && !agyAdvertised) return false;
+      return hostApi.postMessage(message);
+    } };
+  function offeredProviders() {
+    return Object.keys(globalThis.GrokWebviewHelpers.PROVIDER_ACTIONS)
+      .filter(id => (id !== "muse" || museAvailable) && (id !== "agy" || agyAdvertised));
+  }
   const hostWait = window.GrokHostWait.get();
   const pendingPreferences = new Map();
   let sendWait = null;
@@ -13,16 +33,21 @@
       setVoiceBackend: ["voiceBackend", "the transcription backend to “" + message.value + "”"],
       setTelemetryEnabled: ["telemetryEnabled", "anonymous analytics to " + (message.value ? "on" : "off")],
       setThumbsFeedback: ["thumbsFeedback", "feedback buttons to " + (message.value ? "on" : "off")],
+      setDesktopTray: ["desktopTray", "the tray to " + (message.value ? "on" : "off")],
     };
     if (fields[message.type]) {
       const [field, target] = fields[message.type];
       return { key: field, field, value: message.value, target };
     }
-    if (message.type === "setRepoColor" || message.type === "setRepoArchived") {
-      const field = message.type === "setRepoColor" ? "color" : "archived";
+    if (message.type === "setRepoColor" || message.type === "setRepoArchived" || message.type === "setRepoIcon") {
+      const field = message.type === "setRepoColor" ? "color"
+        : message.type === "setRepoIcon" ? "icon"
+        : "archived";
       const target = field === "archived"
         ? message.cwd + " to " + (message.archived ? "Archived" : "Projects")
-        : "the colour of " + message.cwd + " to " + (message.color || "none");
+        : field === "icon"
+          ? "the icon of " + message.cwd + " to " + (message.icon || "the default folder")
+          : "the colour of " + message.cwd + " to " + (message.color || "none");
       return { key: field + ":" + message.cwd, field, value: message[field], target };
     }
     if (message.type === "setRoutinePaused") {
@@ -127,6 +152,7 @@
    * have sent one anyway.
    */
   const EXPAND_DIFF_CARD_KEY = "atlas.remote.expandDiffCard";
+  const PIN_LIVE_WORKFLOWS_KEY = IS_REMOTE ? "atlas.remote.pinLiveWorkflows" : "atlas.pinLiveWorkflows";
   const PROMPT_NAV_KEY = IS_REMOTE ? "atlas.remote.promptNav" : "atlas.promptNav";
   const REMOTE_TTS_KEY = "atlas.remote.tts";
   const REMOTE_TTS_SUMMARY_KEY = "atlas.remote.ttsSummary";
@@ -468,6 +494,10 @@
   const newBtn = $("new-btn");
   const historyBtn = $("history-btn");
   const remoteBtn = $("remote-btn");
+  let remoteHandoffPopover = null;
+  let remoteHandoff = null;
+  let remoteHandoffSerial = 0;
+  let remoteLinkReturn = null;
   const repoBtn = $("repo-btn");
   const modeBtn = $("mode-btn");
   const gearBtn = $("gear-btn");
@@ -495,8 +525,10 @@
   const CLAUDE_ACTIVITY_VERB = "Clauding";
   const COMPOSER_PLACEHOLDER = {
     grok: "Ask Atlas\u2026",
-    codex: "Ask GPT\u2026",
+    codex: "Ask Codex\u2026",
     claude: "Ask Claude\u2026",
+    muse: "Ask Muse…",
+    agy: "Ask Antigravity…",
   };
   // What each level MEANS. The name is prepended from `effortLabel` rather than
   // spelled here, so one level cannot be called two things in one popover — the
@@ -544,6 +576,9 @@
     signInCardFor: "",
     currentModelId: null,
     activeProvider: "grok",
+    /** Whether the host named the conversation's agent (a session frame with a
+     *  provider), so copy can say which agent rather than guess Grok. */
+    activeProviderNamed: false,
     providersKnown: false,
     providers: [],
     // Settings → Providers re-observation in flight. Host-owned; see the
@@ -557,11 +592,21 @@
      *  Settings so a connect started there reports where the click happened. */
     deviceLoginByProvider: {},
     codexInstall: { phase: "idle", receivedBytes: 0, totalBytes: 0, reason: "" },
+    agyInstall: { phase: "idle", receivedBytes: 0, totalBytes: 0, reason: "" },
     availableModels: [],
     currentModeId: "agent",
+    // Null until a host sends `modeChanged.modes`. Absent means the old rule:
+    // Muse's button hidden, Codex without Plan.
+    offeredModes: null,
+    disabledModes: {},
     effort: "",
     cwd: "",
     contextWindow: 200000,
+    contextWindowSelection: undefined,
+    contextSelectionSessionId: undefined,
+    // The size this webview asked for, shown in the popup's dropdown while the
+    // host confirms it. Only a `changing` selection reads it.
+    contextWindowRequest: undefined,
     usedTokens: 0,
     useCtrlEnter: false,
     commands: [],
@@ -590,6 +635,10 @@
     voiceKeyterms: [],
     telemetryEnabled: undefined,
     thumbsFeedback: false,
+    // #174. Absent on an older host, which the settings row reads as "no" --
+    // it must not offer a switch that posts a message nothing handles.
+    traySupported: false,
+    desktopTray: true,
     // Client-owned zoom (remote + desktop). VS Code uses hostFontScale only.
     remoteFontScale: CLIENT_OWNS_FONT_SCALE
       ? clampClientFontScale(storedNumber(CLIENT_FONT_SCALE_KEY, 1))
@@ -717,6 +766,9 @@
     // pushes it; the client never has to ask, and an older host simply never
     // sends it, leaving the group absent rather than empty.
     pinnedSessions: [],
+    // The host's own Recent (`recentSessions`): null until a host that builds
+    // one says so, and then the rail shows exactly it. See railRecentRows.
+    recentSessions: null,
     // Capability latch: the host announces per-session pinning by sending the
     // frame at all — even empty. Without this the pin renders against a host
     // that drops `toggleSessionPin`, which is a control that looks broken
@@ -728,6 +780,8 @@
     sessionSuperseded: null,
     /** Desktop update rail — `updateAvailable` (notice) or `updateReady` (restart). */
     appUpdate: null,
+    cloudHostUpdate: null,
+    cloudHostUpdateOutcome: "",
     repoPreviews: {},
     repoPreviewsAsked: {},
     repoPreviewErrors: {},
@@ -816,6 +870,9 @@
     // the last emitted Codex (timestamp,id) tuple. The scalar offset remains the
     // append/legacy contract.
     sessionProviderCursor: null,
+    startupStatus: null,
+    startupStatusSeen: false,
+    startupSeq: 0,
     replaying: false,
     replayDepth: 0,
     // Open-path window (#102): hold the replay stream and render only the last
@@ -851,6 +908,7 @@
     // agentStart / next user message; the card itself stays in the transcript.
     turnEditsByToolCallId: new Map(),
     turnDiffSummaryEl: null,
+    turnDiffBaseline: null,
     // Restored question cards on resume (toolCallId → card element). On replay grok
     // sends a tool_call per question (with rawInput.questions); we render the card
     // immediately and fill the answer in whenever it arrives — on the tool_call
@@ -885,6 +943,10 @@
     // priming spinner clears (setBusy:false). See the initialized/setBusy cases.
     cliVersion: "",
     startingPhase: false,
+    // The model chip has nothing real to offer until THIS conversation's
+    // provider has published its catalog (the `session` frame) -- from boot, and
+    // again from every `initialized`. See modelChipLoading.
+    modelCatalogPending: true,
     planModeAvailable: true,
     planModeUnavailableReason: "",
     // Unverified version probe: Plan row stays clickable so a pick re-probes.
@@ -955,13 +1017,14 @@
     // so someone who went and turned this off keeps it off; only a device that
     // never had an opinion picks up the new default.
     promptNav: IS_REMOTE ? storedBool(PROMPT_NAV_KEY, true) : false,
+    pinLiveWorkflows: IS_REMOTE ? storedBool(PIN_LIVE_WORKFLOWS_KEY, true) : true,
     // Independent of tool expansion; a remote owns its per-device default.
     expandDiffCard: IS_REMOTE ? storedBool(EXPAND_DIFF_CARD_KEY, false) : false,
     // grok.steerByDefault (persisted, global): when true a message sent while
     // grok is working SKIPS the queue and is interjected into the running turn.
     // False = today's behavior (queue, with an on-demand Steer button).
     steerByDefault: false,
-    // grok.soundNotifications (persisted, global): when true a short synth tone
+    // atlas.soundNotifications (persisted, global): when true a short synth tone
     // plays on turn completion / error, but only when the Atlas panel isn't
     // focused (#59). Off by default. Host posts the value on init + config change.
     soundNotifications: false,
@@ -971,14 +1034,12 @@
     // grok.worktree — true when the focused session runs in an isolated git
     // worktree (from the `session` message). Gates the gear Apply/Remove items.
     isWorktree: false,
-    // Whether the host machine holds a relay device token (`remoteStatus`).
-    // Drives the gear AFK Pilot items; never sent to remote clients.
-    // THREE states, not two: null = not answered yet. The host reads the token
-    // from secret storage asynchronously, so defaulting to false told an
-    // already-linked machine to "Sign in (link this device)" for that window —
-    // inviting the user to re-link a device that was working. Unknown shows
-    // nothing at all.
+    // null means the host has not answered: never invite an already-linked desk to link again.
     remoteLinked: null,
+    remoteHandoffSupported: false,
+    remoteHandoffReady: false,
+    remoteHeldElsewhere: false,
+    remoteViewerCount: 0,
     // Display form of the one directory new and cloned projects land in
     // (`projectSetup.root`, e.g. `~/Grok Build`). Empty until the host says —
     // the Add project form shows the destination as you type, so it needs this
@@ -1010,6 +1071,14 @@
 
   // ---------- icons ----------
 
+  // Fences whose body is prose rather than code: no language at all, or one of
+  // the text/markdown ids. The agent proposes AGENTS.md, READMEs and instruction
+  // files inside a fence constantly, and there a sentence sheared off at the
+  // right edge is simply lost (#181) — whereas wrapped code only loses its
+  // alignment. So prose wraps by default and real code keeps its horizontal
+  // scroll, and the per-block toggle covers whichever default is wrong here.
+  const PROSE_FENCES = new Set(["", "md", "markdown", "text", "txt", "plain", "plaintext"]);
+
   const ICON = {
     eye: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>`,
     eyeOff: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>`,
@@ -1038,6 +1107,9 @@
     // as a duplicate; these two do not.
     settings2: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>`,
     shield: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg>`,
+    shieldQuestion: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M9.1 9a3 3 0 0 1 5.82 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>`,
+    box: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>`,
+    construction: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="8" rx="1"/><path d="M17 14v7"/><path d="M7 14v7"/><path d="M17 3v3"/><path d="M7 3v3"/><path d="M10 14 2.3 6.3"/><path d="m14 6 7.7 7.7"/><path d="m8 6 8 8"/></svg>`,
     bot: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>`,
     listTree: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12h-8"/><path d="M21 6H8"/><path d="M21 18h-8"/><path d="M3 6v4c0 1.1.9 2 2 2h3"/><path d="M3 10v6c0 1.1.9 2 2 2h3"/></svg>`,
     zap: `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>`,
@@ -1066,6 +1138,10 @@
     folderOpen: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>`,
     // Palette glyph for "Set color" — stroke-only so it inherits menu icon tint.
     palette: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="0.5" fill="currentColor"/><circle cx="17.5" cy="10.5" r="0.5" fill="currentColor"/><circle cx="8.5" cy="7.5" r="0.5" fill="currentColor"/><circle cx="6.5" cy="12.5" r="0.5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>`,
+    // Lucide shapes — the "Set icon" menu glyph. Stroke-only like its palette
+    // neighbour, so the pair reads as one row of menu chrome rather than one
+    // outline and one filled mark arguing about weight.
+    shapes: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.3 10a.7.7 0 0 1-.626-1.079L11.4 3a.7.7 0 0 1 1.198-.043L16.3 8.9a.7.7 0 0 1-.572 1.1Z"/><rect x="3" y="14" width="7" height="7" rx="1"/><circle cx="17.5" cy="17.5" r="3.5"/></svg>`,
     pin: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="m5 17 2-7V5l-2-2h14l-2 2v5l2 7Z"/></svg>`,
     // Same Lucide pin path with a filled head (outline stroke kept for the needle).
     pinFilled: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="m5 17 2-7V5l-2-2h14l-2 2v5l2 7Z" fill="currentColor"/></svg>`,
@@ -1075,6 +1151,9 @@
     cornerDownRight: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 10 20 15 15 20"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></svg>`,
     gitBranch: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>`,
     gitFork: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9"/><path d="M12 12v3"/></svg>`,
+    // Lucide git-pull-request / external-link, at the chip's 12px size.
+    gitPullRequest: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/></svg>`,
+    externalLink: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>`,
     // Undo / rewind — used on user-bubble action row (P2-9).
     undo: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.7 3L3 13"/></svg>`,
     // Remote Control gear section (sign in / continue remotely / sign out / how it works).
@@ -1087,21 +1166,20 @@
   };
 
   const MODE_META = {
-    agent: {
-      icon: ICON.bot,
-      label: "Agent mode",
-      desc: "Atlas acts directly, asking approval only for changes it judges sensitive",
-    },
-    plan: {
-      icon: ICON.listTree,
-      label: "Plan mode",
-      desc: "Atlas explores and proposes a plan; file writes and commands are blocked until you approve it",
-    },
-    yolo: {
-      icon: ICON.zap,
-      label: "Auto accept",
-      desc: "Atlas automatically approves all permission requests (YOLO)",
-    },
+    agent: { icon: ICON.bot, label: "Agent mode" },
+    // A provider's own Auto mode; only a host that advertises it offers it.
+    auto: { icon: ICON.shield, label: "Auto mode" },
+    plan: { icon: ICON.listTree, label: "Plan mode" },
+    yolo: { icon: ICON.zap, label: "Auto accept" },
+  };
+  // Each provider's own name for what Auto accept runs it in. Antigravity's
+  // is not named here: the host answers its requests itself.
+  const AUTO_ACCEPT_NATIVE_NAMES = { grok: "YOLO", claude: "Bypass permissions", codex: "Full access" };
+  const MUSE_MODE_META = {
+    yolo: { icon: ICON.zap, label: "Allow all", description: "No prompts; everything runs." },
+    agent: { icon: ICON.shieldQuestion, label: "Prompt unmatched", description: "Prompt for anything no rule matches (the interactive default)." },
+    onRequest: { icon: ICON.box, label: "On request", description: "Tools run sandboxed; prompt only on explicit permission requests." },
+    denyUnmatched: { icon: ICON.construction, label: "Deny unmatched", description: "Anything no rule matches is denied." },
   };
 
   // Three blinking dots — the tool rows' in-progress animation, reused by every
@@ -1282,7 +1360,12 @@
   document.addEventListener("pointerdown", unlockAudio, { passive: true });
   document.addEventListener("keydown", unlockAudio, { passive: true });
 
+  /** The meter's label: whole thousands below a million, and from a million up
+   *  millions to two decimals with trailing zeros gone -- 256K, 500K, 1M,
+   *  1.05M for Gemini's 1,048,576 (which read "1049K"). From 999,500, because
+   *  the K branch rounds that to "1000K": a million in the wrong unit. */
   function toK(n) {
+    if (Math.abs(n) >= 999_500) return (n / 1e6).toFixed(2).replace(/\.?0+$/, "") + "M";
     return Math.round(n / 1000) + "K";
   }
 
@@ -1310,6 +1393,10 @@
     return (value < 0 ? "-" : "") + text + suffix;
   }
 
+  function formatCount(value) {
+    return value.toLocaleString("en-US");
+  }
+
   function truncate(s, max) {
     return s.length > max ? s.slice(0, max) + "…" : s;
   }
@@ -1330,18 +1417,62 @@
     return `${h}:${m.toString().padStart(2, "0")} ${ampm}`;
   }
 
+  // Advertised `modes` wins. Absent (an older host) keeps today's rule.
+  function offeredModeIds() {
+    if (Array.isArray(state.offeredModes)) return state.offeredModes;
+    if (state.activeProvider === "muse") return [];
+    return Object.keys(MODE_META).filter((id) => id !== "auto" && (id !== "plan" || state.activeProvider !== "codex"));
+  }
+
+  function offersMuseModes() {
+    // Native Muse menus put Allow all first; legacy hosts send agent, yolo.
+    // Keep that signal when cloud offers only these two native choices.
+    return state.activeProvider === "muse" && Array.isArray(state.offeredModes)
+      && ["yolo", "agent"].every((id, index) => state.offeredModes[index] === id);
+  }
+
+  function modeMeta(id) {
+    const dictionary = offersMuseModes() ? MUSE_MODE_META : MODE_META;
+    return Object.hasOwn(dictionary, id) ? dictionary[id] : { icon: ICON.bot, label: "Unknown mode" };
+  }
+
+  function modeDescription(id) {
+    if (offersMuseModes() && Object.hasOwn(MUSE_MODE_META, id)) return MUSE_MODE_META[id].description;
+    const name = providerDisplayName(state.activeProvider);
+    if (state.activeProvider === "muse") {
+      if (state.hostCaps && state.hostCaps.museNativeModes) {
+        if (id === "agent") return "Muse Code asks for approval. Sandbox and trust change on reopen or in a new conversation";
+        if (id === "yolo") return "Muse Code runs everything without asking (Allow all). Sandbox and trust change on reopen or in a new conversation";
+      }
+      if (id === "agent") return `Follows ${name}'s own approval rules`;
+      if (id === "yolo") return `Answers every approval ${name} raises. This may look the same as Agent, because ${name} asks rarely by default`;
+    }
+    if (id === "auto") return `${name} decides which actions are safe to run and asks you about the rest`;
+    if (id === "plan") return `${name} explores and proposes a plan; file writes and commands are blocked until you approve it`;
+    // "YOLO" is Grok Build's own word for it; elsewhere the provider's name
+    // for the mode this runs in, or none.
+    if (id === "yolo") {
+      const native = AUTO_ACCEPT_NATIVE_NAMES[state.activeProvider];
+      return `${name} automatically approves all permission requests${native ? ` (${native})` : ""}`;
+    }
+    return `${name} acts directly, asking approval only for changes it judges sensitive`;
+  }
+
   // The title carries the mode name because the label beside the glyph is the
   // first thing dropped in a narrow composer — take the id from the caller so
   // the tooltip can never name a different mode than the icon is showing.
   function modeButtonTitle(modeId) {
-    const meta = MODE_META[modeId] || MODE_META.agent;
+    const meta = modeMeta(modeId);
     if (state.busyLocked) return `${meta.label} — available once the session is ready`;
-    if (!state.planModeAvailable) return `${meta.label} — Pick mode — ${state.planModeUnavailableReason}`;
+    if (offeredModeIds().includes("plan") && !state.planModeAvailable) {
+      return `${meta.label} — Pick mode — ${state.planModeUnavailableReason}`;
+    }
     return `${meta.label} — Pick mode`;
   }
 
   function updateModeBtn(modeId) {
-    const meta = MODE_META[modeId] || MODE_META.agent;
+    modeBtn.hidden = offeredModeIds().length === 0;
+    const meta = modeMeta(modeId);
     modeBtn.innerHTML = `${meta.icon}<span class="btn-label">${escapeHtml(meta.label)}</span>`;
     modeBtn.classList.toggle("plan-active", modeId === "plan");
     modeBtn.classList.toggle("yolo-active", modeId === "yolo");
@@ -1351,13 +1482,16 @@
   newBtn.innerHTML = ICON.squarePen;
   historyBtn.innerHTML = ICON.clock;
   ensureVisibleNewSession();
-  // "Continue remotely", one tap from the chat instead of buried in the gear
-  // menu — the desk is where someone decides to get up and keep going on
-  // their phone. Local client only (a remote is already remote), and only
-  // once this machine is linked; syncRemoteButton flips it live.
   if (remoteBtn) {
-    remoteBtn.innerHTML = ICON.smartphone;
-    remoteBtn.onclick = () => vscode.postMessage({ type: "openRemotePortal", withHint: true });
+    remoteBtn.innerHTML = ICON.smartphone + '<span class="remote-viewer-dot" aria-hidden="true"></span>';
+    remoteBtn.setAttribute("aria-haspopup", "dialog");
+    remoteBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (remoteHandoff) { closePopovers(); return; }
+      openRemoteHandoff("topbar");
+    };
+    if (IS_REMOTE) remoteBtn.remove();
+    syncRemoteButton();
   }
   updateSendButton(); // spinner by default — session is starting up (busy+locked)
   gearBtn.classList.remove("icon-btn");
@@ -1793,6 +1927,81 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // HTML in a README cannot become live markup.
   window.__grokRenderMarkdown = (raw) => renderMarkdown(String(raw == null ? "" : raw));
 
+  // Bare http(s) addresses are not markdown links, so a reply like
+  // "abierto: https://github.com/owner/repo/pull/17" used to be plain text.
+  // Those addresses become links. A GitHub pull URL becomes the PR chip
+  // wherever it sits, including mid-sentence. The transcript click handler
+  // already opens http(s) hrefs in the browser.
+  function parseGitHubPullUrl(raw) {
+    let url;
+    try {
+      url = new URL(raw);
+    } catch {
+      return null;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (url.username || url.password) return null;
+    const host = url.hostname.toLowerCase();
+    if (host !== "github.com" && host !== "www.github.com") return null;
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.length < 4 || parts[2] !== "pull" || !/^\d+$/.test(parts[3])) return null;
+    if (!/^[A-Za-z0-9_.-]+$/.test(parts[0]) || !/^[A-Za-z0-9_.-]+$/.test(parts[1])) return null;
+    return {
+      href: url.href,
+      owner: parts[0],
+      repo: parts[1],
+      number: parts[3],
+    };
+  }
+
+  function pullRequestFromLine(line) {
+    let rest = String(line || "").trim();
+    // "Pull request:", "**Pull request:**" (colon inside the marks) and
+    // "**Pull request**:". `\b` so "Preview:" is not read as a "PR" label.
+    rest = rest.replace(/^(?:\*\*|__)?\s*(?:pull request|pr)\b\s*:?\s*(?:\*\*|__)?\s*:?\s*/i, "");
+    rest = rest.replace(/^(\*\*|__)([\s\S]+)\1$/, "$2").trim();
+    const urlMatch = rest.match(/^(https?:\/\/\S+)$/i);
+    if (!urlMatch) return null;
+    return parseGitHubPullUrl(urlMatch[1].replace(/[.,);:\]]+$/, ""));
+  }
+
+  function pullRequestChipHtml(pr) {
+    const href = escapeHtml(pr.href).replace(/"/g, "&quot;");
+    const repo = `${pr.owner}/${pr.repo}`;
+    const aria = escapeHtml(`Open pull request #${pr.number} (${repo}) in the browser`).replace(/"/g, "&quot;");
+    return (
+      `<a class="pr-open" href="${href}" title="${aria}" aria-label="${aria}">` +
+        `<span class="pr-open-mark" aria-hidden="true">${ICON.gitPullRequest}</span>` +
+        `<span class="pr-open-label">${escapeHtml(`PR #${pr.number}`)}</span>` +
+        `<span class="pr-open-repo">${escapeHtml(repo)}</span>` +
+        `<span class="pr-open-ext" aria-hidden="true">${ICON.externalLink}</span>` +
+      `</a>`
+    );
+  }
+
+  function unescapeHtml(s) {
+    return String(s)
+      .replace(/&quot;/g, '"')
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  }
+
+  // Leave sentence punctuation and closing emphasis outside the held URL.
+  function splitUrlTrailing(raw) {
+    let url = raw;
+    let trailing = "";
+    while (url && /[.,;:!?*_]$/.test(url)) {
+      trailing = url.slice(-1) + trailing;
+      url = url.slice(0, -1);
+    }
+    if (url.endsWith(")") && !url.includes("(")) {
+      trailing = ")" + trailing;
+      url = url.slice(0, -1);
+    }
+    return { url, trailing };
+  }
+
   function renderMarkdown(raw) {
     // Normalise line endings FIRST. Everything below splits on a newline and
     // then tests each line with $-anchored patterns -- and a carriage return
@@ -1842,11 +2051,17 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         return `\x00B${i}\x00`;
       }
       const isDiff = lang === "diff";
+      // A diff's alignment IS its content, so it never wraps and gets no toggle.
+      const wraps = !isDiff && PROSE_FENCES.has(lang || "");
       const inner = isDiff
         ? renderDiffCode(code)
         : `<code>${escapeHtml(code).trimEnd()}</code>`;
       codeBlocks.push(
-        `<div class="code-block${isDiff ? " diff" : ""}">` +
+        `<div class="code-block${isDiff ? " diff" : ""}${wraps ? " wrap" : ""}">` +
+          (isDiff ? "" :
+            `<button class="code-wrap-btn" type="button" title="Toggle word wrap" aria-label="Toggle word wrap" aria-pressed="${wraps}">` +
+              `<span class="code-wrap-glyph">${ICON.cornerDownRight}</span>` +
+            `</button>`) +
           `<button class="code-copy-btn" type="button" title="Copy code" aria-label="Copy code">` +
             `<span class="code-copy-glyph">${ICON.copy}</span>` +
           `</button>` +
@@ -1881,11 +2096,27 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       // <code> tags mean nothing to a regex (#143). Same shape reaches a URL
       // containing `*`, and a [link](x) written inside backticks.
       //
-      // Link TEXT is deliberately left live: [**bold**](url) is valid markdown
-      // and worked before, so only the href is held.
+      // Format link labels before holding the whole anchor, so URLs in the
+      // label cannot be linkified again.
       const held = [];
       const hold = (html) => `\x00C${held.push(html) - 1}\x00`;
-      return t
+      const restore = (html) => html.replace(/\x00C(\d+)\x00/g, (_, i) => held[+i]);
+      const emphasis = (text) => text
+        .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+        .replace(/(^|[^\p{L}\p{N}_])_([^_\n]+)_(?=$|[^\p{L}\p{N}_])/gu, "$1<em>$2</em>");
+      // `raw` is the address after HTML escaping. A GitHub pull URL is the chip;
+      // any other http(s) address is an ordinary link. Both are held so the
+      // emphasis pass cannot see characters inside them.
+      function linkifyUrl(raw, autolink = false) {
+        const { url, trailing } = autolink ? { url: raw, trailing: "" } : splitUrlTrailing(raw);
+        if (!url) return raw;
+        const pr = parseGitHubPullUrl(unescapeHtml(url));
+        if (pr) return hold(pullRequestChipHtml(pr)) + trailing;
+        const href = url.replace(/"/g, "&quot;");
+        return hold(`<a href="${href}">${url}</a>`) + trailing;
+      }
+      const protectedText = t
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
         .replace(/`([^`\n]+)`/g, (_, code) => {
           if (looksLikeFileRef(code)) {
@@ -1894,63 +2125,44 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           }
           return hold(`<code>${code}</code>`);
         })
-        .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, text, url) => {
+        // A destination with a space stays text — `[see](the docs)` is not a
+        // link — except an absolute local path, which may contain spaces and
+        // one level of parentheses (`Program Files (x86)`). POSIX `/…` (not
+        // `//…`), Windows `X:\` or `X:/`, UNC `\\…`. No newline, quote, or
+        // placeholder. Angle brackets are the CommonMark spelling; this pass
+        // already escaped them to `&lt;`/`&gt;`, and the brackets are not part
+        // of the path. Titles are not parsed: a `"` ends the special case.
+        .replace(/\[([^\]]+)\]\((?:&lt;((?:[A-Za-z]:[\\/]|\\\\|\/(?!\/))(?:[^()\n\x00"]|\([^()\n\x00"]*\))*)&gt;|((?:[A-Za-z]:[\\/]|\\\\|\/(?!\/))(?:[^()\n\x00"]|\([^()\n\x00"]*\))+)|([^)\s]+))\)/g, (_, text, angled, absolute, plain) => {
+          const url = angled ?? absolute ?? plain;
+          const pr = parseGitHubPullUrl(unescapeHtml(url));
+          // The visible text is the address itself: show the chip, not the raw URL.
+          // A named link ([#82](url), [**bold**](url)) stays a normal anchor so
+          // its label and emphasis survive.
+          if (pr && /^https?:\/\//i.test(text.trim())) return hold(pullRequestChipHtml(pr));
           const safe = url.replace(/"/g, "&quot;");
-          return `<a href="${hold(safe)}">${text}</a>`;
+          return hold(`<a href="${safe}">${restore(emphasis(text))}</a>`);
         })
-        .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
-        .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
-        .replace(/\x00C(\d+)\x00/g, (_, i) => held[+i]);
+        .replace(/&lt;(https?:\/\/[^\s\x00]*?)&gt;/g, (_, url) => linkifyUrl(url, true));
+      // Hold bare URLs before emphasis so their interiors stay literal. Closing
+      // delimiters remain outside the placeholder for the emphasis pass to pair.
+      return restore(emphasis(protectedText
+        .replace(/https?:\/\/[^\s<\x00]+/g, (raw) => linkifyUrl(raw))));
     }
 
-    // GFM tables: header row | separator row (|---|---|) | data rows
+    // GFM tables: header row | separator row (|---|---|) | data rows.
+    // Pulled out inside renderBlocks, not once for the whole document, so a
+    // table under a quote is still a table after the `>` markers are peeled.
     const tables = [];
-    {
-      const isTableRow = (l) => /^\s*\|.+\|\s*$/.test(l);
-      const isSep = (l) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(l);
-      const splitRow = (l) =>
-        l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
-      const srcLines = s.split('\n');
-      const kept = [];
-      let i = 0;
-      while (i < srcLines.length) {
-        if (i + 1 < srcLines.length && isTableRow(srcLines[i]) && isSep(srcLines[i + 1])) {
-          const headers = splitRow(srcLines[i]);
-          const sepCells = splitRow(srcLines[i + 1]);
-          if (headers.length === sepCells.length) {
-            const aligns = sepCells.map(c => {
-              const L = c.startsWith(':'), R = c.endsWith(':');
-              return L && R ? 'center' : R ? 'right' : L ? 'left' : '';
-            });
-            const rows = [];
-            let j = i + 2;
-            while (j < srcLines.length && isTableRow(srcLines[j])) {
-              const cells = splitRow(srcLines[j]);
-              while (cells.length < headers.length) cells.push('');
-              rows.push(cells.slice(0, headers.length));
-              j++;
-            }
-            const styleFor = (k) => aligns[k] ? ` style="text-align:${aligns[k]}"` : '';
-            let html = '<div class="md-table-wrap"><table><thead><tr>';
-            headers.forEach((h, k) => { html += `<th${styleFor(k)}>${inline(h)}</th>`; });
-            html += '</tr></thead><tbody>';
-            for (const row of rows) {
-              html += '<tr>';
-              row.forEach((c, k) => { html += `<td${styleFor(k)}>${inline(c)}</td>`; });
-              html += '</tr>';
-            }
-            html += '</tbody></table></div>';
-            const idx = tables.length;
-            tables.push(html);
-            kept.push(`\x00T${idx}\x00`);
-            i = j;
-            continue;
-          }
-        }
-        kept.push(srcLines[i]);
-        i++;
-      }
-      s = kept.join('\n');
+
+    // A quote marker is 0–3 spaces, `>`, and one optional space or tab. The
+    // marker is syntax. A nested quote is the same marker one level down, so
+    // the peeled body goes back through this pass. Cap the depth so a run of
+    // `>` cannot recurse without bound.
+    const QUOTE_LINE = /^( {0,3})>([ \t]?)(.*)$/;
+    const QUOTE_MAX_DEPTH = 12;
+    function peelQuote(line) {
+      const m = QUOTE_LINE.exec(line);
+      return m ? m[3] : null;
     }
 
     // Expand inline numbered lists: "1. A 2. B 3. C" on one line → separate lines
@@ -1964,122 +2176,269 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       return sequential ? parts.map(p => indent + p) : [line];
     }
 
-    const rawLines = s.split('\n');
-    const lines = [];
-    for (const ln of rawLines) lines.push(...expandInline(ln));
-
-    let out = '';
-    // stack: { tag:'ul'|'ol', indent:number, liOpen:boolean }[]
-    let stack = [];
-    let pendingBreak = false;
-    let lastWasBlock = false;
-    let lastPara = false;
-
-    function closeLiAt(i) {
-      if (stack[i].liOpen) { out += '</li>'; stack[i].liOpen = false; }
-    }
-    function closeFrom(depth) {
-      for (let i = stack.length - 1; i >= depth; i--) {
-        closeLiAt(i);
-        out += `</${stack[i].tag}>`;
-      }
-      stack = stack.slice(0, depth);
-    }
-
-    for (const line of lines) {
-      if (!line.trim()) {
-        if (stack.length === 0 && !lastWasBlock) pendingBreak = true;
-        lastPara = false;
-        continue;
-      }
-      lastWasBlock = false;
-
-      const tm = line.trim().match(/^\x00T(\d+)\x00$/);
-      if (tm) {
-        closeFrom(0);
-        out += `\x00T${tm[1]}\x00`;
-        lastWasBlock = true;
-        lastPara = false;
-        pendingBreak = false;
-        continue;
-      }
-
-      // Display math alone on a line → emit as its own block (no paragraph wrap).
-      const dm = line.trim().match(/^\x00D(\d+)\x00$/);
-      if (dm) {
-        closeFrom(0);
-        out += `\x00D${dm[1]}\x00`;
-        lastWasBlock = true;
-        lastPara = false;
-        pendingBreak = false;
-        continue;
-      }
-
-      // Fenced code block alone on a line → emit as its own block. Without this it
-      // falls through to the paragraph path and gets wrapped in <br><br> before and
-      // after; on top of the .code-block div's own 8px margin that reads as TWO
-      // blank lines around a code block (the model only sent one). Mirrors the
-      // table/math branches above so spacing is just the div's margin.
-      const bm = line.trim().match(/^\x00B(\d+)\x00$/);
-      if (bm) {
-        closeFrom(0);
-        out += `\x00B${bm[1]}\x00`;
-        lastWasBlock = true;
-        lastPara = false;
-        pendingBreak = false;
-        continue;
-      }
-
-      const hm = line.match(/^(#{1,3}) (.+)$/);
-      if (hm) {
-        closeFrom(0);
-        out += `<h${hm[1].length}>${inline(hm[2])}</h${hm[1].length}>`;
-        lastWasBlock = true;
-        lastPara = false;
-        pendingBreak = false;
-        continue;
-      }
-
-      const lm = line.match(/^( *)([-*]|\d+\.) (.+)$/);
-      if (lm) {
-        const indent = lm[1].length;
-        const isOl = /\d/.test(lm[2][0]);
-        const tag = isOl ? 'ol' : 'ul';
-        const content = lm[3];
-
-        while (stack.length > 0 && stack[stack.length - 1].indent > indent) {
-          closeLiAt(stack.length - 1);
-          out += `</${stack[stack.length - 1].tag}>`;
-          stack.pop();
-        }
-
-        if (stack.length === 0 || stack[stack.length - 1].indent < indent) {
-          out += `<${tag}>`;
-          stack.push({ tag, indent, liOpen: false });
-        } else {
-          closeLiAt(stack.length - 1);
-          if (stack[stack.length - 1].tag !== tag) {
-            out += `</${stack[stack.length - 1].tag}><${tag}>`;
-            stack[stack.length - 1].tag = tag;
+    function renderBlocks(src, depth) {
+      let body = src;
+      {
+        const isTableRow = (l) => /^\s*\|.+\|\s*$/.test(l);
+        const isSep = (l) => /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(l);
+        const splitRow = (l) =>
+          l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+        const srcLines = body.split('\n');
+        const kept = [];
+        let ti = 0;
+        while (ti < srcLines.length) {
+          if (ti + 1 < srcLines.length && isTableRow(srcLines[ti]) && isSep(srcLines[ti + 1])) {
+            const headers = splitRow(srcLines[ti]);
+            const sepCells = splitRow(srcLines[ti + 1]);
+            if (headers.length === sepCells.length) {
+              const aligns = sepCells.map(c => {
+                const L = c.startsWith(':'), R = c.endsWith(':');
+                return L && R ? 'center' : R ? 'right' : L ? 'left' : '';
+              });
+              const rows = [];
+              let j = ti + 2;
+              while (j < srcLines.length && isTableRow(srcLines[j])) {
+                const cells = splitRow(srcLines[j]);
+                while (cells.length < headers.length) cells.push('');
+                rows.push(cells.slice(0, headers.length));
+                j++;
+              }
+              const styleFor = (k) => aligns[k] ? ` style="text-align:${aligns[k]}"` : '';
+              let html = '<div class="md-table-wrap"><table><thead><tr>';
+              headers.forEach((h, k) => { html += `<th${styleFor(k)}>${inline(h)}</th>`; });
+              html += '</tr></thead><tbody>';
+              for (const row of rows) {
+                html += '<tr>';
+                row.forEach((c, k) => { html += `<td${styleFor(k)}>${inline(c)}</td>`; });
+                html += '</tr>';
+              }
+              html += '</tbody></table></div>';
+              const idx = tables.length;
+              tables.push(html);
+              kept.push(`\x00T${idx}\x00`);
+              ti = j;
+              continue;
+            }
           }
+          kept.push(srcLines[ti]);
+          ti++;
+        }
+        body = kept.join('\n');
+      }
+
+      const lines = [];
+      for (const ln of body.split('\n')) lines.push(...expandInline(ln));
+
+      let out = '';
+      // stack: { tag:'ul'|'ol', indent:number, liOpen:boolean }[]
+      let stack = [];
+      let pendingBreak = false;
+      let lastWasBlock = false;
+      let lastPara = false;
+
+      function closeLiAt(i) {
+        if (stack[i].liOpen) { out += '</li>'; stack[i].liOpen = false; }
+      }
+      function closeFrom(from) {
+        for (let i = stack.length - 1; i >= from; i--) {
+          closeLiAt(i);
+          out += `</${stack[i].tag}>`;
+        }
+        stack = stack.slice(0, from);
+      }
+
+      const thematicBreak = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+      const setextUnderline = /^ {0,3}(=+|-+)[ \t]*$/;
+      function paragraphLine(line) {
+        return line.trim() && !thematicBreak.test(line) &&
+          !/^(?: {0,3}(?:#{1,6}(?:[ \t]|$)|>|(?:[-*+]|\d+[.)])(?:[ \t]|$))| {4}|\t)/.test(line) &&
+          !/^\x00[BTD]\d+\x00$/.test(line.trim()) && !pullRequestFromLine(line);
+      }
+
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        if (!line.trim()) {
+          if (stack.length === 0 && !lastWasBlock) pendingBreak = true;
+          lastPara = false;
+          i++;
+          continue;
+        }
+        lastWasBlock = false;
+
+        // Consecutive `>` lines are one quote. A blank line stays inside when
+        // another quote line follows it (a paragraph break); a blank line at
+        // the end belongs to whatever comes after. The marker is not text.
+        if (depth < QUOTE_MAX_DEPTH && peelQuote(line) !== null) {
+          const inner = [];
+          while (i < lines.length) {
+            const peeled = peelQuote(lines[i]);
+            if (peeled !== null) {
+              inner.push(peeled);
+              i++;
+              continue;
+            }
+            if (!lines[i].trim()) {
+              let k = i;
+              while (k < lines.length && !lines[k].trim()) k++;
+              if (k < lines.length && peelQuote(lines[k]) !== null) {
+                while (i < k) { inner.push(""); i++; }
+                continue;
+              }
+            }
+            break;
+          }
+          closeFrom(0);
+          out += `<blockquote>${renderBlocks(inner.join("\n"), depth + 1)}</blockquote>`;
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          continue;
         }
 
-        out += `<li>${inline(content)}`;
-        stack[stack.length - 1].liOpen = true;
-        lastPara = false;
-        pendingBreak = false;
-        continue;
+        const tm = line.trim().match(/^\x00T(\d+)\x00$/);
+        if (tm) {
+          closeFrom(0);
+          out += `\x00T${tm[1]}\x00`;
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        // Display math alone on a line → emit as its own block (no paragraph wrap).
+        const dm = line.trim().match(/^\x00D(\d+)\x00$/);
+        if (dm) {
+          closeFrom(0);
+          out += `\x00D${dm[1]}\x00`;
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        // Fenced code block alone on a line → emit as its own block. Without this it
+        // falls through to the paragraph path and gets wrapped in <br><br> before and
+        // after; on top of the .code-block div's own 8px margin that reads as TWO
+        // blank lines around a code block (the model only sent one). Mirrors the
+        // table/math branches above so spacing is just the div's margin.
+        const bm = line.trim().match(/^\x00B(\d+)\x00$/);
+        if (bm) {
+          closeFrom(0);
+          out += `\x00B${bm[1]}\x00`;
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        const pr = pullRequestFromLine(line);
+        if (pr) {
+          closeFrom(0);
+          out += pullRequestChipHtml(pr);
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        const hm = line.match(/^(#{1,6}) (.+)$/);
+        if (hm) {
+          closeFrom(0);
+          out += `<h${hm[1].length}>${inline(hm[2])}</h${hm[1].length}>`;
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        // A spaced break must win over the list rule (e.g. `* * *`).
+        if (thematicBreak.test(line)) {
+          closeFrom(0);
+          out += '<hr>';
+          lastWasBlock = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        const lm = line.match(/^( *)([-*]|\d+\.) (.+)$/);
+        if (lm) {
+          const indent = lm[1].length;
+          const isOl = /\d/.test(lm[2][0]);
+          const tag = isOl ? 'ol' : 'ul';
+          const content = lm[3];
+
+          while (stack.length > 0 && stack[stack.length - 1].indent > indent) {
+            closeLiAt(stack.length - 1);
+            out += `</${stack[stack.length - 1].tag}>`;
+            stack.pop();
+          }
+
+          if (stack.length === 0 || stack[stack.length - 1].indent < indent) {
+            out += `<${tag}>`;
+            stack.push({ tag, indent, liOpen: false });
+          } else {
+            closeLiAt(stack.length - 1);
+            if (stack[stack.length - 1].tag !== tag) {
+              out += `</${stack[stack.length - 1].tag}><${tag}>`;
+              stack[stack.length - 1].tag = tag;
+            }
+          }
+
+          out += `<li>${inline(content)}`;
+          stack[stack.length - 1].liOpen = true;
+          lastPara = false;
+          pendingBreak = false;
+          i++;
+          continue;
+        }
+
+        // Look ahead only within a paragraph. An underline belongs to its
+        // title, including a multiline title, rather than becoming a divider.
+        if (stack.length === 0 && paragraphLine(line)) {
+          let j = i + 1;
+          while (j < lines.length && !setextUnderline.test(lines[j]) && paragraphLine(lines[j])) j++;
+          const sm = j < lines.length && lines[j].match(setextUnderline);
+          if (sm) {
+            const level = sm[1][0] === '=' ? 1 : 2;
+            out += `<h${level}>${inline(lines.slice(i, j).map(l => l.trim()).join(' '))}</h${level}>`;
+            lastWasBlock = true;
+            lastPara = false;
+            pendingBreak = false;
+            i = j + 1;
+            continue;
+          }
+          // Consume the inspected paragraph once; rescanning its suffix on
+          // every line would make long streamed replies quadratic.
+          for (; i < j; i++) {
+            if (pendingBreak) { out += '<br><br>'; pendingBreak = false; }
+            else if (lastPara) out += '<br>';
+            out += inline(lines[i]);
+            lastPara = true;
+          }
+          continue;
+        }
+
+        closeFrom(0);
+        if (pendingBreak) { out += '<br><br>'; pendingBreak = false; }
+        else if (lastPara) out += '<br>';
+        out += inline(line);
+        lastPara = true;
+        i++;
       }
 
       closeFrom(0);
-      if (pendingBreak) { out += '<br><br>'; pendingBreak = false; }
-      else if (lastPara) out += '<br>';
-      out += inline(line);
-      lastPara = true;
+      return out;
     }
 
-    closeFrom(0);
-    return out
+    return renderBlocks(s, 0)
       .replace(/\x00B(\d+)\x00/g, (_, i) => codeBlocks[+i])
       .replace(/\x00T(\d+)\x00/g, (_, i) => tables[+i])
       .replace(/\x00D(\d+)\x00/g, (_, i) => mathHtml[+i])
@@ -2095,7 +2454,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // containers in chat.css. Code deliberately never gets dir=auto: chat.css
   // pins pre/code LTR. Runs after every innerHTML = renderMarkdown(...).
   function applyAutoDir(root) {
-    for (const el of root.querySelectorAll("ul, ol, li, h1, h2, h3, td, th")) {
+    for (const el of root.querySelectorAll("blockquote, ul, ol, li, h1, h2, h3, h4, h5, h6, td, th")) {
       el.setAttribute("dir", "auto");
     }
   }
@@ -2104,6 +2463,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
 
   function closePopovers() {
     flushPicker();
+    if (remoteHandoffPopover) remoteHandoffPopover.hidden = true;
+    remoteHandoff = null;
+    if (remoteBtn) remoteBtn.setAttribute("aria-expanded", "false");
     gearBtn.setAttribute("aria-expanded", "false");
     gearPopover.classList.remove("model-picker");
     gearPopover.removeAttribute("role");
@@ -2154,7 +2516,18 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   function renderContextPopover() {
-    contextPopover.innerHTML = "";
+    // A native <select> closes its open list the moment it leaves the document,
+    // and this popup rebuilds on every usage frame -- including the replies to
+    // the refreshes its own opening requests, which land just as a person may be
+    // reaching for the size dropdown. So a size control that would be redrawn
+    // identically, and still shows what it was drawn with, stays in place while
+    // everything around it is rebuilt.
+    const sizeControl = contextWindowControl();
+    const prior = contextPopover.querySelector(".context-window-control");
+    const priorSelect = prior && prior.querySelector("select");
+    const keep = sizeControl && prior && prior.dataset.key === sizeControl.dataset.key
+      && (!priorSelect || priorSelect.value === sizeControl.querySelector("select").value) ? prior : null;
+    for (const node of [...contextPopover.childNodes]) if (node !== keep) node.remove();
     // A `↳ ` label marks a sub-row (a component of the line above it) — indented
     // via CSS rather than padding the string, so the value column stays aligned.
     const info = (label, value, parent) => {
@@ -2218,11 +2591,14 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       }).format(usd);
     };
 
+    // Built apart so it can go in ahead of a kept size control.
+    const lead = document.createDocumentFragment();
     const used = state.usedTokens || 0;
     const pct = Math.min(100, Math.round((used / state.contextWindow) * 100));
     info(
       "Context used",
       `${tok(used)} / ${tok(state.contextWindow)} (${pct}%)`,
+      lead,
     );
 
     const bar = document.createElement("div");
@@ -2236,7 +2612,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     fill.style.width = pct + "%";
     fill.style.setProperty("--context-fill", contextFullnessColor(pct));
     bar.appendChild(fill);
-    contextPopover.appendChild(bar);
+    lead.appendChild(bar);
 
     const act = document.createElement("button");
     act.type = "button";
@@ -2251,7 +2627,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         closePopovers();
       };
     }
-    contextPopover.appendChild(act);
+    if (globalThis.GrokWebviewHelpers.providerSupports(state.activeProvider, "compact")) lead.appendChild(act);
+    contextPopover.insertBefore(lead, keep);
+    if (!keep && sizeControl) contextPopover.appendChild(sizeControl);
 
     const subscription = document.createElement("section");
     subscription.className = "subscription-usage";
@@ -2466,12 +2844,16 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     popover.style.bottom = (unzoomClientPx(composerRect.bottom - btnRect.top, z) + 4) + "px";
     popover.style.left = unzoomClientPx(btnRect.left - composerRect.left, z) + "px";
     popover.style.right = "auto";
+    // A menu pushed back from the right keeps the gap positionDropdownPopover
+    // keeps. On a phone the composer spans the screen, so a clamp to the
+    // composer's edge put the menu flush against the glass.
+    const EDGE = 6;
     requestAnimationFrame(() => {
       const pw = unzoomClientPx(popover.getBoundingClientRect().width, z);
       const leftOffset = unzoomClientPx(btnRect.left - composerRect.left, z);
       const parentW = unzoomClientPx(composerRect.width, z);
-      if (leftOffset + pw > parentW) {
-        popover.style.left = Math.max(0, parentW - pw) + "px";
+      if (leftOffset + pw > parentW - EDGE) {
+        popover.style.left = Math.max(EDGE, parentW - pw - EDGE) + "px";
       }
     });
   }
@@ -3172,6 +3554,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       steerSupported: steerableProvider(),
       providersKnown: !!state.providersKnown,
       remoteLinked: state.remoteLinked,
+      remoteHandoffSupported: state.remoteHandoffSupported,
+      remoteViewerCount: state.remoteViewerCount,
       hostCaps: state.hostCaps || {},
     };
   }
@@ -3195,11 +3579,16 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       voiceBackendState: state.voiceBackendState,
       telemetryEnabled: state.telemetryEnabled,
       thumbsFeedback: !!state.thumbsFeedback,
+      traySupported: !!state.traySupported,
+      desktopTray: state.desktopTray !== false,
       promptNav: !!state.promptNav,
       expandDiffCard: !!state.expandDiffCard,
       providers: state.providers || [],
+      museSettings: state.museSettings,
       providersChecking: !!state.providersChecking,
       githubState: state.githubState || undefined,
+      cloudHostUpdate: state.cloudHostUpdate,
+      cloudHostUpdateText: cloudHostUpdateText(),
       extVersion: state.extVersion,
       cliVersion: state.cliVersion,
       hostKind: state.hostKind,
@@ -3307,6 +3696,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         break;
       case "thumbsFeedback":
         state.thumbsFeedback = !!value;
+        break;
+      case "desktopTray":
+        state.desktopTray = !!value;
         break;
       default:
         break;
@@ -3452,6 +3844,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         // the Routines page would sit there looking like the button did
         // nothing. Remember that one is outstanding; the relay's refusal below
         // is its answer.
+        if (msg && msg.type === "cloudHostUpdate") { requestCloudHostUpdate(); return; }
         if (msg && msg.type === "saveRoutine") state.routineSavePending = true;
         if (!postPreference(msg)) vscode.postMessage(msg);
         else refreshSettingsOverlay();
@@ -3462,7 +3855,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           void openProviderConfigFiles(name.slice("providerConfig:".length));
         }
         if (name === "explainRemote") showRemoteExplainer();
-        if (name === "openDeviceManager") window.open("/", "_blank", "noopener");
+        // Remote-only row; this page is always served by the relay, which keeps
+        // the device list at /dashboard (/ is the public homepage).
+        if (name === "openDeviceManager") window.open("/dashboard", "_blank", "noopener");
         // Settings → Providers → Connect. The overlay stays open behind the
         // wizard so closing it returns the reader where they were.
         if (typeof name === "string" && name.indexOf("connectWizard:") === 0) {
@@ -3492,6 +3887,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   window.__grokFilePanelConfirm = uiChoice;
   window.__grokFilePanelAskAgent = appendComposerText;
   window.__grokFilePanelOpenSettings = () => openSettingsCategory("providers");
+  // The desktop's docked file tree is injected into THIS document by
+  // src/desktop/file-tree-panel.ts, which builds its own `ui` object and so
+  // cannot reach these directly. Published for it, the same way renderMarkdown
+  // and the settings opener already are.
+  window.__grokProjectMark = (cwd) => repoMarkForCwd(cwd);
+  window.__grokProjectMarkColor = (cwd) => repoColorForCwd(cwd);
 
   /** uiConfirm with a single text field. Resolves to the string, or null on
    *  cancel — an empty string is a real answer the caller may want to reject on
@@ -3553,7 +3954,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     });
   }
 
-  function showRemoteExplainer() {
+  function showRemoteExplainer(source = "settings") {
     const overlay = document.createElement("div");
     overlay.className = "confirm-overlay remote-explainer-overlay";
     const panel = document.createElement("div");
@@ -3632,7 +4033,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     };
     moreBtn.onclick = (e) => {
       e.stopPropagation();
-      vscode.postMessage({ type: "openRemotePortal" });
+      vscode.postMessage({ type: "openRemotePortal", source });
       done();
     };
 
@@ -3720,33 +4121,6 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       `<span class="gear-lead" title="Adds worktrees, thinking traces, and tool details (still off by default).">${ICON.squareChevronRight}<span>Coding</span></span>${state.appPurpose === "coding" ? '<span class="popover-check">✓</span>' : ""}`,
       () => { setAppPurpose("coding"); refresh(); },
     );
-
-    // ── Remote Control ────────────────────────────────────────────────────
-    // Hidden in the browser client: a remote can't (un)link the desk.
-    // `remoteLinked === null` = the host hasn't answered yet: show NOTHING
-    // rather than guessing. Unlink lives only in Settings → Account.
-    if (!IS_REMOTE && state.remoteLinked !== null) {
-      section(target === addPopover ? "Remote control" : "Remote Control");
-      if (state.remoteLinked) {
-        item(`<span class="gear-lead">${ICON.smartphone}<span>Continue remotely</span></span>`, () => {
-          vscode.postMessage({ type: "openRemotePortal", withHint: true });
-          closePopovers();
-        });
-        item(`<span class="gear-lead">${ICON.user}<span>Your account</span></span>`, () => {
-          vscode.postMessage({ type: "openRemotePortal" });
-          closePopovers();
-        });
-      } else {
-        item(`<span class="gear-lead">${ICON.user}<span>Sign in (link this device)</span></span>`, () => {
-          vscode.postMessage({ type: "remoteSignIn" });
-          closePopovers();
-        });
-        item(`<span class="gear-lead">${ICON.info}<span>How it works</span></span>`, () => {
-          closePopovers();
-          showRemoteExplainer();
-        });
-      }
-    }
 
     section("Settings");
     item(`<span class="gear-lead">${ICON.gear}<span>Settings</span></span>`, () => {
@@ -3901,6 +4275,140 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     });
   }
 
+  /** The selection a switch would change, for the model on screen. No picker
+   *  preview is ever pending here: opening the popup closes the picker, and
+   *  every way a typed or dictated `/context-window` is sent commits the
+   *  picker first, so a model on screen but not yet confirmed has no
+   *  selection, and the host refuses the size while that change runs. */
+  function sessionContextWindowSelection() {
+    const selection = state.contextWindowSelection;
+    return state.activeProvider === "grok" && selection && selection.modelId === state.currentModelId ? selection : undefined;
+  }
+
+  function contextWindowLocked(selection) {
+    return !!(state.busy || state.startingPhase || selection.changing);
+  }
+
+  /** Re-checks the lock at the moment of choosing; a rendered control can be a
+   *  frame older than the turn that just started. */
+  function chooseContextWindow(selection, size) {
+    if (state.busy || state.startingPhase || state.contextWindowSelection?.changing) return false;
+    vscode.postMessage({ type: "setContextWindow", sessionId: selection.sessionId, modelId: selection.modelId, generation: selection.generation, size });
+    return true;
+  }
+
+  /** Runs `proceed` now, or once the person agrees to a switch down that can
+   *  cost this conversation an auto-compact (contextWindowShrinkRisk) -- the
+   *  CLI takes the smaller window without a word and compacts before the next
+   *  turn. `declined` runs if they cancel; nothing is sent then. Both ways of
+   *  switching come through here: the popup's dropdown and a typed
+   *  `/context-window <size>`. */
+  function afterShrinkConfirmed(selection, size, proceed, declined = () => {}) {
+    const current = selection.selectedSize ?? state.contextWindow;
+    const risk = globalThis.GrokWebviewHelpers.contextWindowShrinkRisk(state.usedTokens, size, current);
+    if (!risk) { proceed(); return; }
+    const target = compactTokens(size);
+    // No usage figure in the sentence: rounded, 256,400 tokens reads "256K"
+    // beside "more than 256K", while the band itself is exact.
+    uiConfirm({
+      title: `Switch to ${target}?`,
+      body: risk === "will"
+        ? `This conversation no longer fits in ${target}, so switching will trigger auto-compact on your next message.`
+        : `This conversation already fills more than 70% of ${target}, so switching may trigger auto-compact on your next message.`,
+      confirmLabel: `Switch to ${target}`,
+    }).then((ok) => (ok ? proceed() : declined()));
+  }
+
+  /** A typed `/context-window`. Bare, it opens the context popup, the one
+   *  place a size is chosen. With a size, the host parses and applies it, but
+   *  a size that switches down asks here first, like the dropdown does.
+   *  Anything this cannot judge -- an unreadable size, one not offered, a
+   *  locked session the host will refuse anyway -- goes to the host as before. */
+  function sendContextWindowCommand(text) {
+    const argument = text.replace(/^\/context-window/i, "");
+    if (!argument.trim()) { openContextPopover(); return; }
+    const send = () => vscode.postMessage({ type: "send", text, bare: true });
+    const selection = sessionContextWindowSelection();
+    const size = globalThis.GrokWebviewHelpers.parseContextWindowSize(argument);
+    if (!selection || !selection.available || contextWindowLocked(selection) || !selection.sizes.includes(size)) { send(); return; }
+    afterShrinkConfirmed(selection, size, send);
+  }
+
+  /** The one place a size is chosen: a row in the context popup, a label and
+   *  the same native <select> Settings uses, placed after the occupancy block
+   *  because it is rarely changed. A model change only changes the model; a
+   *  bare `/context-window` opens this popup.
+   *
+   *  `dataset.key` names everything the control draws, so a rebuild of the
+   *  popup can keep a control that would come out identical (see
+   *  renderContextPopover). */
+  function contextWindowControl() {
+    const selection = sessionContextWindowSelection();
+    if (!selection) return null;
+    const wrap = document.createElement("div");
+    wrap.className = "context-window-control";
+    const note = (text) => {
+      const el = document.createElement("div");
+      el.className = "popover-fineprint";
+      el.textContent = text;
+      wrap.appendChild(el);
+    };
+    if (!selection.available) {
+      note(selection.reason || "Native selection is unavailable in this session.");
+      wrap.dataset.key = JSON.stringify([selection.sessionId, selection.modelId, selection.generation, wrap.innerHTML]);
+      return wrap;
+    }
+    // While the host confirms, show the size that was asked for rather than
+    // flicking back to the old one; the note underneath says it is pending.
+    const request = state.contextWindowRequest;
+    const shown = selection.changing && request && request.sessionId === selection.sessionId && request.modelId === selection.modelId
+      ? request.size : selection.selectedSize;
+    const row = document.createElement("div");
+    row.className = "popover-info context-window-row";
+    const label = document.createElement("label");
+    label.htmlFor = "context-window-select";
+    label.textContent = "Context window";
+    const select = document.createElement("select");
+    select.id = "context-window-select";
+    select.className = "settings-select context-window-select";
+    select.disabled = contextWindowLocked(selection);
+    select.title = "Applies to this session; server access limits still apply.";
+    // A size nothing has confirmed, or one the model does not offer, gets a
+    // placeholder rather than letting the first choice claim to be the window.
+    const offered = selection.sizes.includes(shown);
+    if (!offered) {
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.disabled = true;
+      placeholder.textContent = shown === undefined ? "—" : compactTokens(shown);
+      select.appendChild(placeholder);
+    }
+    for (const size of selection.sizes) {
+      const option = document.createElement("option");
+      option.value = String(size);
+      option.textContent = compactTokens(size) + (size === selection.defaultSize ? " · CLI default" : "") + (size < state.usedTokens ? " · will compact" : "");
+      select.appendChild(option);
+    }
+    const value = offered ? String(shown) : "";
+    select.value = value;
+    select.onchange = () => {
+      const size = Number(select.value);
+      const putBack = () => { select.value = value; };
+      afterShrinkConfirmed(selection, size, () => {
+        if (chooseContextWindow(selection, size)) state.contextWindowRequest = { sessionId: selection.sessionId, modelId: selection.modelId, size };
+        else putBack();
+      }, putBack);
+    };
+    row.append(label, select);
+    wrap.appendChild(row);
+    // The standing disclaimer lives in the tooltip; only a state that needs
+    // reading takes a line.
+    if (selection.changing) note("Waiting for native confirmation…");
+    else if (selection.stale) note("Last confirmed selection; native state needs a refresh.");
+    wrap.dataset.key = JSON.stringify([selection.sessionId, selection.modelId, selection.generation, value, wrap.innerHTML]);
+    return wrap;
+  }
+
   function renderModelPicker() {
     const scroll = gearPopover.querySelector(".model-picker-list")?.scrollTop || 0;
     state.gearView = "model";
@@ -3925,10 +4433,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // A signed-out agent has no knowable model list, and the placeholder shown
     // in its place ("Codex default") reads as something you can select — so its
     // rows are replaced by the one action that can actually help.
-    const signInProviders = ["grok", "codex", "claude"].filter(providerNeedsLogin);
-    models = models.filter((model) => !signInProviders.includes(model.provider || state.activeProvider));
+    const signInProviders = offeredProviders().filter(providerNeedsLogin);
+    models = models.filter((model) => ((model.provider || state.activeProvider) !== "muse" || museAvailable)
+      && ((model.provider || state.activeProvider) !== "agy" || agyAdvertised)
+      && !signInProviders.includes(model.provider || state.activeProvider));
     if (grouped) {
-      models = ["grok", "codex", "claude"].flatMap((provider) => models.filter((model) =>
+      models = offeredProviders().flatMap((provider) => models.filter((model) =>
         (model.provider || state.activeProvider) === provider));
     }
     let group = "";
@@ -3962,7 +4472,13 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           `<span class="model-picker-name">${escapeHtml(truncate(label, 28))}</span>` +
         `</span>` +
         (active ? '<span class="popover-check">✓</span>' : "");
-      el.title = m.modelId;
+      el.title = m.description || m.modelId;
+      if (modelProvider === "muse" && m.description && m.modelId) {
+        const description = document.createElement("span");
+        description.className = "model-picker-description";
+        description.textContent = m.description;
+        el.appendChild(description);
+      }
       el.disabled = modelSelectionLocked();
       el.setAttribute("role", "radio");
       el.setAttribute("aria-checked", String(active));
@@ -3999,7 +4515,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       }
     };
     if (grouped) {
-      for (const provider of ["grok", "codex", "claude"]) {
+      for (const provider of offeredProviders()) {
         for (const m of models) {
           if ((m.provider || state.activeProvider) === provider) renderModelRow(m);
         }
@@ -4061,6 +4577,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     gearPopover.classList.remove("popover-centered");
     // The chip opens model + effort directly; the rail gear keeps the app menu.
     const surface = fromBtn && fromBtn.id === "rail-gear-btn" ? "rail" : "composer";
+    if (surface === "composer" && modelChipLoading()) return;
     // Clicking the button that is already showing closes it — clicking the OTHER
     // one switches to it. Closing on any open popover made the two surfaces
     // cost two clicks to move between: the first only dismissed the other menu.
@@ -4130,6 +4647,135 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
    * `updateReady` — same capability pattern as pin control + `pinnedSessions`.
    * VS Code never posts either; no IS_DESKTOP gate.
    */
+  const CLOUD_UPDATE_REQUEST_KEY = "grok.cloudHostUpdate:" + REMOTE_STORAGE_SUFFIX;
+  let cloudUpdateRequest = null;
+  let cloudUpdateTimer = null;
+  let cloudUpdateConnection = hostWait.snapshot() ? hostWait.snapshot().connection : null;
+  if (IS_REMOTE) {
+    try { cloudUpdateRequest = JSON.parse(sessionStorage.getItem(CLOUD_UPDATE_REQUEST_KEY) || "null"); }
+    catch (_) { /* Storage can be unavailable. */ }
+    if (cloudUpdateRequest && typeof cloudUpdateRequest === "object" &&
+        typeof cloudUpdateRequest.installed === "string" && typeof cloudUpdateRequest.latest === "string") {
+      cloudUpdateRequest.reconnecting = true;
+      armCloudUpdateDeadline();
+    } else cloudUpdateRequest = null;
+  }
+
+  function saveCloudUpdateRequest() {
+    try {
+      if (cloudUpdateRequest) sessionStorage.setItem(CLOUD_UPDATE_REQUEST_KEY, JSON.stringify(cloudUpdateRequest));
+      else sessionStorage.removeItem(CLOUD_UPDATE_REQUEST_KEY);
+    } catch (_) { /* Private browsing. */ }
+  }
+
+  function armCloudUpdateDeadline() {
+    clearTimeout(cloudUpdateTimer);
+    if (!cloudUpdateRequest || !cloudUpdateRequest.started || cloudUpdateRequest.timedOut) return;
+    cloudUpdateTimer = setTimeout(() => {
+      cloudUpdateRequest.timedOut = true;
+      state.cloudHostUpdateOutcome = "The cloud host has not confirmed its update after 15 minutes. Try reconnecting.";
+      saveCloudUpdateRequest();
+      // An outcome is a notice about our request, not a capability advertisement.
+      // With no frame on this connection, the update controls remain absent.
+      if (!state.cloudHostUpdate) addError(state.cloudHostUpdateOutcome);
+      renderCloudHostUpdate();
+      refreshSettingsOverlay();
+    }, Math.max(0, cloudUpdateRequest.started + 15 * 60_000 - Date.now()));
+  }
+
+  function requestCloudHostUpdate() {
+    const update = state.cloudHostUpdate;
+    if (!update || !["available", "failed"].includes(update.state) || !update.installed || !update.latest) return;
+    cloudUpdateRequest = { installed: update.installed, latest: update.latest, started: null, reconnecting: false };
+    state.cloudHostUpdateOutcome = "";
+    saveCloudUpdateRequest();
+    vscode.postMessage({ type: "cloudHostUpdate" });
+  }
+
+  function forgetCloudHostUpdate() {
+    if (!IS_REMOTE) return;
+    state.cloudHostUpdate = null;
+    if (cloudUpdateRequest) {
+      cloudUpdateRequest.reconnecting = true;
+      if (!cloudUpdateRequest.started) cloudUpdateRequest.started = Date.now();
+      saveCloudUpdateRequest();
+      armCloudUpdateDeadline();
+    }
+    renderCloudHostUpdate();
+    refreshSettingsOverlay();
+  }
+
+  function receiveCloudHostUpdate(msg) {
+    if (!IS_REMOTE) return;
+    state.cloudHostUpdate = msg;
+    if (msg.state === "updating") {
+      if (!cloudUpdateRequest) cloudUpdateRequest = { installed: msg.installed, latest: msg.latest };
+      if (!cloudUpdateRequest.started) cloudUpdateRequest.started = Date.now();
+      saveCloudUpdateRequest();
+      armCloudUpdateDeadline();
+    } else if (cloudUpdateRequest && cloudUpdateRequest.reconnecting && msg.state !== "queued") {
+      const newer = (a, b) => {
+        if (!/^\d+\.\d+\.\d+$/.test(a || "") || !/^\d+\.\d+\.\d+$/.test(b || "")) return false;
+        const aa = a.split(".").map(Number), bb = b.split(".").map(Number);
+        for (let i = 0; i < 3; i++) if (aa[i] !== bb[i]) return aa[i] > bb[i];
+        return true;
+      };
+      state.cloudHostUpdateOutcome = msg.installed !== cloudUpdateRequest.installed && newer(msg.installed, cloudUpdateRequest.latest)
+        ? "Updated to " + msg.installed
+        : "The cloud host came back " + (msg.installed ? "on " + msg.installed : "without an installed version") + ". The update was not confirmed.";
+      cloudUpdateRequest = null;
+      clearTimeout(cloudUpdateTimer);
+      saveCloudUpdateRequest();
+    }
+    renderCloudHostUpdate();
+  }
+
+  function cloudHostUpdateText() {
+    const update = state.cloudHostUpdate;
+    if (!update) return "";
+    if (update.state === "failed" && update.error
+        && (!state.cloudHostUpdateOutcome.startsWith("Updated to ") || cloudUpdateRequest)) return update.error;
+    if (state.cloudHostUpdateOutcome) return state.cloudHostUpdateOutcome;
+    switch (update.state) {
+      case "available": return "Update available — " + update.latest;
+      case "queued": return (update.mandatory ? "Required update — " : "") + "Will update when the agent is idle";
+      case "updating": return "Updating the cloud host… Reconnecting when it is ready.";
+      case "failed": return update.error || "The cloud host update failed. Please try again.";
+      default: return update.installed
+        ? (update.latest ? "Up to date · " : "Installed · ") + update.installed
+        : "No installed cloud release to update";
+    }
+  }
+
+  function renderCloudHostUpdate() {
+    let banner = document.getElementById("cloud-host-update-banner");
+    const update = state.cloudHostUpdate;
+    if (!IS_REMOTE || !update || (update.state === "current" && !state.cloudHostUpdateOutcome)) {
+      if (banner) banner.remove();
+      return;
+    }
+    if (!banner) {
+      const composer = document.querySelector(".composer");
+      if (!composer) return;
+      banner = document.createElement("div");
+      banner.id = "cloud-host-update-banner";
+      banner.className = "cloud-host-update-banner";
+      banner.setAttribute("role", "status");
+      composer.insertBefore(banner, composer.firstChild);
+    }
+    banner.replaceChildren();
+    const text = document.createElement("span");
+    text.textContent = cloudHostUpdateText();
+    banner.appendChild(text);
+    if (["available", "failed"].includes(update.state) && update.installed && update.latest) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "Update now";
+      button.onclick = requestCloudHostUpdate;
+      banner.appendChild(button);
+    }
+  }
+
   function renderAppUpdateAffordance() {
     const foot = document.querySelector("#projects-rail .rail-foot");
     if (!foot) return;
@@ -4459,7 +5105,41 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       && (!m.provider || m.provider === state.activeProvider));
   }
 
+  /**
+   * The chip is a closed door while the catalog is on its way: a session is
+   * starting (Antigravity's server alone can take over a minute on Windows) and
+   * the picker could only show the previous conversation's models or a
+   * placeholder. Not while the agent cannot start at all -- signed out, not
+   * connected -- because the picker is where recovery lives, and not forever:
+   * the end of startup, an error, an exit or a long failsafe all open it again
+   * on whatever the picker shows on failure.
+   */
+  function modelChipLoading() {
+    if (!state.modelCatalogPending) return false;
+    if (!state.providersKnown) return true;
+    const active = state.providers.find((p) => p && p.id === state.activeProvider);
+    return !!(active && active.connected && !active.needsLogin);
+  }
+
+  const MODEL_CATALOG_FAILSAFE_MS = 150000;
+  let modelCatalogFailsafe = null;
+  function setModelCatalogPending(pending) {
+    state.modelCatalogPending = !!pending;
+    clearTimeout(modelCatalogFailsafe);
+    modelCatalogFailsafe = null;
+    if (pending) {
+      modelCatalogFailsafe = setTimeout(() => {
+        modelCatalogFailsafe = null;
+        setModelCatalogPending(false);
+      }, Number(window.__grokModelCatalogFailsafeMs) > 0 ? Number(window.__grokModelCatalogFailsafeMs) : MODEL_CATALOG_FAILSAFE_MS);
+      // A picker already open on the old catalog closes with it.
+      if (!gearPopover.hidden && state.gearSurface === "composer") closePopovers();
+    }
+    syncModelChip();
+  }
+
   function modelSelectionLocked() {
+    if (state.activeProvider === "grok" && (state.busy || state.contextWindowSelection?.changing)) return true;
     return state.busy || !currentModel() || (state.providersKnown
       && !state.providers.some((p) => p.connected && !p.needsLogin));
   }
@@ -4494,10 +5174,16 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     word.className = "model-chip-effort";
     word.textContent = effort;
     gearBtn.replaceChildren(model, word);
-    gearBtn.disabled = false; // Selection can lock; provider recovery cannot.
-    gearBtn.title = [name, effort, "Model and effort"].filter(Boolean).join(" · ")
-      + (modelSelectionLocked() ? " — selection available once the session is ready" : "");
-    gearBtn.setAttribute("aria-label", gearBtn.title);
+    // Selection can lock and stay openable, because provider recovery lives
+    // in there. Only a catalog still on its way closes the chip itself.
+    const loading = modelChipLoading();
+    gearBtn.disabled = loading;
+    gearBtn.setAttribute("aria-disabled", String(loading));
+    gearBtn.classList.toggle("model-chip-loading", loading);
+    gearBtn.title = loading ? "Loading models…"
+      : [name, effort, "Model and effort"].filter(Boolean).join(" · ")
+        + (modelSelectionLocked() ? " — selection available once the session is ready" : "");
+    gearBtn.setAttribute("aria-label", loading ? "Model and effort: loading models" : gearBtn.title);
   }
 
   function refreshModelControls() {
@@ -4554,9 +5240,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const effortMoved = level !== null && level !== wasLevel;
     if (model && (model.modelId !== wasModel.modelId || model.provider !== wasModel.provider)) {
       const message = { type: "setModel", modelId: model.modelId };
-      // The row's OWN provider, not the one the preview resolved: a row that
-      // declares none leaves the host to infer it from the model id, which is
-      // what an older catalog needs (providerForRequestedModel).
+      // Model rows keep the provider that supplied them. Older hosts without
+      // providerState still receive their original model-id-only request.
       if (state.providersKnown && model.declared) message.provider = model.declared;
       if (effortMoved) message.effort = level;
       vscode.postMessage(message);
@@ -4572,9 +5257,30 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   function previewModel(m) {
     if (modelSelectionLocked()) return;
     const provider = m.provider || state.activeProvider;
-    if (!modelBaseline) modelBaseline = { modelId: state.currentModelId, provider: state.activeProvider };
+    if (!modelBaseline) modelBaseline = {
+      modelId: state.currentModelId, provider: state.activeProvider,
+      modeId: state.currentModeId, modes: state.offeredModes, disabledModes: state.disabledModes,
+    };
     state.currentModelId = m.modelId;
+    if (provider !== state.activeProvider) {
+      // The old session's advertised modes do not belong to this preview.
+      // Use the new provider's defaults until the host supplies its modes.
+      // Returning to the original pick is a no-op on close, so restore its
+      // advertised modes as well; there will be no host reply to restore them.
+      const original = provider === modelBaseline.provider;
+      state.offeredModes = original ? modelBaseline.modes : null;
+      state.currentModeId = original ? modelBaseline.modeId : "agent";
+      state.activeProvider = provider;
+      state.activeProviderNamed = true;
+      // Nothing can take a mode until the new provider's session exists, so
+      // show its modes but hold them; the host's modeChanged releases them.
+      const waiting = `Available once ${providerDisplayName(provider)} has started`;
+      state.disabledModes = original ? modelBaseline.disabledModes
+        : Object.fromEntries(offeredModeIds().map((id) => [id, waiting]));
+    }
     state.activeProvider = provider;
+    updateModeBtn(state.currentModeId);
+    syncProviderVoice();
     modelPending = { modelId: m.modelId, provider, declared: m.provider };
     // A model carries its own ladder, so a level previewed against the PREVIOUS
     // model stays a choice only while THIS one still offers it: an off-menu
@@ -4594,6 +5300,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   function renderEffortStrip() {
+    const model = currentModel();
+    if (model?.supportsReasoningEffort === false && !model.reasoningEfforts?.length) return;
     const box = document.createElement("div");
     box.className = "model-effort-strip";
     const levels = currentModel() ? effortLevelsForModel() : [];
@@ -4716,30 +5424,33 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   function openModePopover() {
+    const offered = offeredModeIds();
+    if (!offered.length) return;
     if (!modePopover.hidden) { closePopovers(); return; }
     closePopovers();
     modePopover.innerHTML = "";
-    for (const [id, meta] of Object.entries(MODE_META)) {
-      // Plan is Atlas's extension-owned plan gate. Codex owns its own plan
-      // review permission flow, so showing this item there is both inert and
-      // misleading.
-      if (id === "plan" && state.activeProvider === "codex") continue;
+    for (const id of offered) {
+      const meta = modeMeta(id);
       const el = document.createElement("div");
       const active = id === state.currentModeId;
       // Verified-old CLI: hard-disable Plan. Unverified probe: keep it clickable
       // so the host re-checks on pick instead of forcing a session restart (#105).
+      // The note exists only on a Plan row, so a menu that does not offer Plan
+      // cannot show it.
       const planUnavailable = id === "plan" && !state.planModeAvailable;
       const planRecheckable = planUnavailable && state.planModeRecheckable;
-      const disabled = !!meta.disabled || (planUnavailable && !planRecheckable);
-      const disabledNote = planUnavailable ? state.planModeUnavailableReason : meta.disabledNote;
+      const hostReason = Object.hasOwn(state.disabledModes, id) ? state.disabledModes[id] : "";
+      const disabled = !!hostReason || !!meta.disabled || (planUnavailable && !planRecheckable);
+      const disabledNote = hostReason || (planUnavailable ? state.planModeUnavailableReason : meta.disabledNote);
       el.className = "toolbar-popover-item mode-popover-item" +
         (active ? " active" : "") +
         (disabled ? " disabled" : "");
+      el.setAttribute("aria-disabled", String(disabled));
       el.innerHTML =
         `<span class="mode-item-icon">${meta.icon}</span>` +
         `<span class="mode-item-body">` +
           `<span class="mode-item-label">${escapeHtml(meta.label)}</span>` +
-          `<span class="mode-item-desc">${escapeHtml(meta.desc)}</span>` +
+          `<span class="mode-item-desc">${escapeHtml(modeDescription(id))}</span>` +
           (disabledNote ? `<span class="mode-item-disabled-note">${escapeHtml(disabledNote)}</span>` : "") +
         `</span>` +
         (active ? '<span class="popover-check">✓</span>' : "");
@@ -4817,6 +5528,14 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     codex: "M9.205 8.658v-2.26c0-.19.072-.333.238-.428l4.543-2.616c.619-.357 1.356-.523 2.117-.523 2.854 0 4.662 2.212 4.662 4.566 0 .167 0 .357-.024.547l-4.71-2.759a.797.797 0 00-.856 0l-5.97 3.473zm10.609 8.8V12.06c0-.333-.143-.57-.429-.737l-5.97-3.473 1.95-1.118a.433.433 0 01.476 0l4.543 2.617c1.309.76 2.189 2.378 2.189 3.948 0 1.808-1.07 3.473-2.76 4.163zM7.802 12.703l-1.95-1.142c-.167-.095-.239-.238-.239-.428V5.899c0-2.545 1.95-4.472 4.591-4.472 1 0 1.927.333 2.712.928L8.23 5.067c-.285.166-.428.404-.428.737v6.898zM12 15.128l-2.795-1.57v-3.33L12 8.658l2.795 1.57v3.33L12 15.128zm1.796 7.23c-1 0-1.927-.332-2.712-.927l4.686-2.712c.285-.166.428-.404.428-.737v-6.898l1.974 1.142c.167.095.238.238.238.428v5.233c0 2.545-1.974 4.472-4.614 4.472zm-5.637-5.303l-4.544-2.617c-1.308-.761-2.188-2.378-2.188-3.948A4.482 4.482 0 014.21 6.327v5.423c0 .333.143.571.428.738l5.947 3.449-1.95 1.118a.432.432 0 01-.476 0zm-.262 3.9c-2.688 0-4.662-2.021-4.662-4.519 0-.19.024-.38.047-.57l4.686 2.71c.286.167.571.167.856 0l5.97-3.448v2.26c0 .19-.07.333-.237.428l-4.543 2.616c-.619.357-1.356.523-2.117.523zm5.899 2.83a5.947 5.947 0 005.827-4.756C22.287 18.339 24 15.84 24 13.296c0-1.665-.713-3.282-1.998-4.448.119-.5.19-.999.19-1.498 0-3.401-2.759-5.947-5.946-5.947-.642 0-1.26.095-1.88.31A5.962 5.962 0 0010.205 0a5.947 5.947 0 00-5.827 4.757C1.713 5.447 0 7.945 0 10.49c0 1.666.713 3.283 1.998 4.448-.119.5-.19 1-.19 1.499 0 3.401 2.759 5.946 5.946 5.946.642 0 1.26-.095 1.88-.309a5.96 5.96 0 004.162 1.713z",
     // Four-point sparkle — distinct from the Atlas/Codex marks, currentColor.
     claude: "M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z",
+    // Meta's mark, from the same Lobe set as the three above -- Muse Code is
+    // Meta's agent, and a bare letter beside three real marks read as a
+    // placeholder because it was one. Its two loops are drawn with holes, so
+    // this is the mark that actually needs the evenodd rule; Lobe ships all
+    // four with it and the other three render the same either way.
+    muse: "M6.897 4c1.915 0 3.516.932 5.43 3.376l.282-.373c.19-.246.383-.484.58-.71l.313-.35C14.588 4.788 15.792 4 17.225 4c1.273 0 2.469.557 3.491 1.516l.218.213c1.73 1.765 2.917 4.71 3.053 8.026l.011.392.002.25c0 1.501-.28 2.759-.818 3.7l-.14.23-.108.153c-.301.42-.664.758-1.086 1.009l-.265.142-.087.04a3.493 3.493 0 01-.302.118 4.117 4.117 0 01-1.33.208c-.524 0-.996-.067-1.438-.215-.614-.204-1.163-.56-1.726-1.116l-.227-.235c-.753-.812-1.534-1.976-2.493-3.586l-1.43-2.41-.544-.895-1.766 3.13-.343.592C7.597 19.156 6.227 20 4.356 20c-1.21 0-2.205-.42-2.936-1.182l-.168-.184c-.484-.573-.837-1.311-1.043-2.189l-.067-.32a8.69 8.69 0 01-.136-1.288L0 14.468c.002-.745.06-1.49.174-2.23l.1-.573c.298-1.53.828-2.958 1.536-4.157l.209-.34c1.177-1.83 2.789-3.053 4.615-3.16L6.897 4zm-.033 2.615l-.201.01c-.83.083-1.606.673-2.252 1.577l-.138.199-.01.018c-.67 1.017-1.185 2.378-1.456 3.845l-.004.022a12.591 12.591 0 00-.207 2.254l.002.188c.004.18.017.36.04.54l.043.291c.092.503.257.908.486 1.208l.117.137c.303.323.698.492 1.17.492 1.1 0 1.796-.676 3.696-3.641l2.175-3.4.454-.701-.139-.198C9.11 7.3 8.084 6.616 6.864 6.616zm10.196-.552l-.176.007c-.635.048-1.223.359-1.82.933l-.196.198c-.439.462-.887 1.064-1.367 1.807l.266.398c.18.274.362.56.55.858l.293.475 1.396 2.335.695 1.114c.583.926 1.03 1.6 1.408 2.082l.213.262c.282.326.529.54.777.673l.102.05c.227.1.457.138.718.138.176.002.35-.023.518-.073.338-.104.61-.32.813-.637l.095-.163.077-.162c.194-.459.29-1.06.29-1.785l-.006-.449c-.08-2.871-.938-5.372-2.2-6.798l-.176-.189c-.67-.683-1.444-1.074-2.27-1.074z",
+    // Google Antigravity's mark, from the same Lobe set (1.95.1).
+    agy: "M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z",
   };
 
   /**
@@ -4839,7 +5558,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
    * nobody is at the screen to read it. Same shape as steerableProvider().
    */
   function rewindCapableProvider() {
-    if (state.activeProvider === "claude" || state.activeProvider === "codex") return false;
+    if (state.activeProvider !== "grok") return false;
     // A host older than 4.1.0 classifies rewindSession / editLastMessage as
     // host-local and drops them without a reply, so the buttons would be dead
     // for every remote user who has not updated — and the relay always ships
@@ -4851,17 +5570,27 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   function providerDisplayName(provider) {
     if (provider === "codex") return "Codex";
     if (provider === "claude") return "Claude";
+    if (provider === "muse") return "Muse Code";
+    if (provider === "agy") return "Antigravity";
     return "Atlas";
   }
 
+  // The conversation's agent by name, once the host has named it. A host that
+  // did not is "the agent": this renderer is newer than any host, so a guess
+  // of Grok would be wrong for every other provider.
+  function agentName(capitalized) {
+    if (state.activeProviderNamed) return providerDisplayName(state.activeProvider);
+    return capitalized ? "The agent" : "the agent";
+  }
+
   function providerLogoId(provider) {
-    if (provider === "codex" || provider === "claude") return provider;
+    if (provider === "codex" || provider === "claude" || provider === "muse" || provider === "agy") return provider;
     return "grok";
   }
 
   function providerLogoMarkup(provider) {
     const id = providerLogoId(provider);
-    return `<svg class="provider-logo" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="${PROVIDER_LOGO_PATHS[id]}"></path></svg>`;
+    return `<svg class="provider-logo" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="${PROVIDER_LOGO_PATHS[id]}"></path></svg>`;
   }
 
   function makeProviderGlyph(provider, dotValue, sessionId) {
@@ -4921,6 +5650,62 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   const pendingRepoColor = createPendingOverlay({
     onExpire() { renderRail(); },
   });
+  const pendingRepoIcon = createPendingOverlay({
+    // The mark also rides the top bar and the file panel's title, so a settled
+    // or expired paint has to reach more than the rail.
+    onExpire() { paintRepoSurfaces(); },
+  });
+  const pendingPins = new Map();
+  let pinSequence = 0;
+  let pinRequests = false;
+
+  function pinnedRows() {
+    const rows = new Map(state.pinnedSessions.map((row) => [row.id, row]));
+    for (const [id, pending] of pendingPins) {
+      if (pending.pinned) rows.set(id, pending.row);
+      else rows.delete(id);
+    }
+    return [...rows.values()].sort((a, b) => (b.pinnedAt || 0) - (a.pinnedAt || 0));
+  }
+
+  function sessionIsPinned(row) {
+    const pending = pendingPins.get(row.id);
+    if (pending) return pending.pinned;
+    return state.pinnedSessionsKnown
+      ? state.pinnedSessions.some((entry) => entry.id === row.id)
+      : typeof row.pinnedAt === "number";
+  }
+
+  function togglePinnedRow(row, cwd) {
+    const pinned = !sessionIsPinned(row);
+    const requestId = pinRequests ? `pin-${Date.now()}-${++pinSequence}-${Math.random().toString(36).slice(2)}` : undefined;
+    const previous = pendingPins.get(row.id);
+    if (previous) clearTimeout(previous.timer);
+    const pending = { pinned, requestId, row: { ...row, cwd, pinnedAt: Date.now() } };
+    pending.timer = setTimeout(() => {
+      if (pendingPins.get(row.id) !== pending) return;
+      pendingPins.delete(row.id);
+      renderRail();
+    }, 30000);
+    pendingPins.set(row.id, pending);
+    renderRail();
+    vscode.postMessage({ type: "toggleSessionPin", id: row.id, cwd, pinned,
+      ...(requestId ? { requestId } : {}) });
+  }
+
+  function settlePendingPins(msg) {
+    pinRequests = msg.pinRequests === true;
+    for (const [id, pending] of pendingPins) {
+      const settled = pending.requestId
+        ? pending.requestId === msg.requestId
+        : state.pinnedSessions.some((row) => row.id === id) === pending.pinned;
+      if (settled) {
+        clearTimeout(pending.timer);
+        pendingPins.delete(id);
+      }
+    }
+  }
+
   const pendingRename = createPendingOverlay({
     onExpire() { paintSessionSurfaces(); },
   });
@@ -4929,6 +5714,69 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const painted = pendingRepoColor.valueFor(cwdKey(repo && repo.cwd));
     if (painted !== undefined) return painted;
     return typeof repo?.color === "string" ? repo.color : "";
+  }
+
+  function repoIconOf(repo) {
+    const painted = pendingRepoIcon.valueFor(cwdKey(repo && repo.cwd));
+    if (painted !== undefined) return painted;
+    return typeof repo?.icon === "string" ? repo.icon : "";
+  }
+
+  /**
+   * Markup for a project's mark. The default — and the fallback for an id this
+   * build does not ship — is the filled folder, NOT the open/closed pair: the
+   * chevron beside it is what says open or closed now, so the mark is free to
+   * be an identity rather than a disclosure control. That separation is what
+   * makes any of the other 95 usable.
+   */
+  function repoMarkHTML(repo) {
+    const marks = typeof globalThis !== "undefined" ? globalThis.GrokRepoIcons : null;
+    if (!marks) return ICON.folderClosed;
+    return marks.svg(repoIconOf(repo)) || marks.svg("folder_open");
+  }
+
+  /** Mark for a cwd rather than a catalog row — what the file panel's title and
+   *  any other cwd-addressed surface needs. "" only when the project is UNKNOWN
+   *  (a config directory, say), so callers keep their own folder glyph there.
+   *  A known project that has chosen nothing still gets the default mark: it is
+   *  the one the rail is drawing beside its name, and a title that fell back to
+   *  its own folder glyph instead would put two different folders on screen. */
+  function repoMarkForCwd(cwd) {
+    if (!cwd) return "";
+    const hit = state.repos.find((r) => sameCwd(r.cwd, cwd));
+    if (!hit) return "";
+    return repoMarkHTML(hit);
+  }
+
+  /** Tint for a cwd, for the same cwd-addressed surfaces as repoMarkForCwd. */
+  function repoColorForCwd(cwd) {
+    if (!cwd) return "";
+    const hit = state.repos.find((r) => sameCwd(r.cwd, cwd));
+    return hit ? repoColorOf(hit) : "";
+  }
+
+  /** Every surface that draws a project's mark or tint. The rail is the loud
+   *  one, but the top-bar chip and the file panel's title carry it too, and a
+   *  paint that reached only the rail would leave them disagreeing. */
+  function paintRepoSurfaces() {
+    renderRail();
+    renderRepoChip();
+    if (repoPopover && !repoPopover.hidden) renderRepoPopover();
+    repaintFilePanelTitle();
+  }
+
+  /** Ask a mounted file panel to redraw its title. The panel owns that element;
+   *  this only tells it the answer changed. No panel, or an older shared build
+   *  without the hook, is a no-op — the title keeps its folder. */
+  function repaintFilePanelTitle() {
+    const panel = state.filesBrowse && state.filesBrowse.component;
+    if (panel && typeof panel.repaintTitle === "function") {
+      try { panel.repaintTitle(); } catch (_) { /* unmounted mid-paint */ }
+    }
+    const deskPanel = typeof window !== "undefined" ? window.__grokDeskFilePanel : null;
+    if (deskPanel && typeof deskPanel.repaintTitle === "function") {
+      try { deskPanel.repaintTitle(); } catch (_) { /* unmounted mid-paint */ }
+    }
   }
 
   function sessionRowName(s) {
@@ -4946,7 +5794,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
 
   function paintPendingRepoColor(cwd, color) {
     pendingRepoColor.paint(cwdKey(cwd), color);
-    renderRail();
+    paintRepoSurfaces();
+  }
+
+  function paintPendingRepoIcon(cwd, icon) {
+    pendingRepoIcon.paint(cwdKey(cwd), icon);
+    paintRepoSurfaces();
   }
 
   function paintPendingRename(id, name) {
@@ -4956,7 +5809,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   function settlePendingRepoColor(entries) {
-    pendingRepoColor.settleAny((entries || []).map((r) => r && cwdKey(r.cwd)).filter(Boolean));
+    const keys = (entries || []).map((r) => r && cwdKey(r.cwd)).filter(Boolean);
+    pendingRepoColor.settleAny(keys);
+    pendingRepoIcon.settleAny(keys);
   }
 
   function settlePendingRename(entries) {
@@ -5026,9 +5881,17 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     repoBtn.classList.toggle("disabled", locked);
     repoBtn.setAttribute("aria-disabled", String(locked));
     repoBtn.classList.toggle("browsing", browsing);
+    // A worktree keeps the branch glyph — it says something the mark cannot,
+    // and a worktree is not the project you picked an icon for.
+    const chipMark = selected?.worktreeLabel
+      ? ICON.gitBranch
+      : (selected ? repoMarkHTML(selected) : ICON.folder);
     repoBtn.innerHTML =
-      `<span class="repo-chip-icon">${selected?.worktreeLabel ? ICON.gitBranch : ICON.folder}</span>` +
+      `<span class="repo-chip-icon">${chipMark}</span>` +
       `<span class="repo-chip-label"></span>${ICON.chevronDown}`;
+    const chipColor = selected ? repoColorOf(selected) : "";
+    if (chipColor && !selected?.worktreeLabel) repoBtn.dataset.repoColor = chipColor;
+    else delete repoBtn.dataset.repoColor;
     repoBtn.querySelector(".repo-chip-label").textContent = label;
     repoBtn.title = locked
       ? "Loading conversation... repository switching is disabled until it finishes."
@@ -5059,7 +5922,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       main.type = "button";
       main.className = "repo-row-main";
       main.disabled = !repo.available || repoSwitcherLocked();
-      main.innerHTML = `<span class="repo-row-icon">${repo.worktreeLabel ? ICON.gitBranch : ICON.folder}</span><span class="repo-row-copy"><span class="repo-row-name"></span><span class="repo-row-meta"></span></span>`;
+      main.innerHTML = `<span class="repo-row-icon">${repo.worktreeLabel ? ICON.gitBranch : repoMarkHTML(repo)}</span><span class="repo-row-copy"><span class="repo-row-name"></span><span class="repo-row-meta"></span></span>`;
+      const rowColor = repo.worktreeLabel ? "" : repoColorOf(repo);
+      const rowIcon = main.querySelector(".repo-row-icon");
+      if (rowColor) rowIcon.dataset.repoColor = rowColor;
       main.querySelector(".repo-row-name").textContent = repo.label || cwdLeaf(repo.cwd);
       const meta = main.querySelector(".repo-row-meta");
       meta.textContent = repo.available
@@ -5181,7 +6047,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const clearBtn = document.createElement("button");
     clearBtn.className = "history-clear-all";
     clearBtn.innerHTML = ICON.trash + "<span>Clear all history</span>";
-    clearBtn.title = "Delete all sessions in this repository's history";
+    clearBtn.title = "Delete supported providers' conversations in this repository";
     clearBtn.onclick = (e) => {
       e.stopPropagation();
       closePopovers();
@@ -5190,7 +6056,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       const repoPath = repo?.cwd || state.selectedRepoCwd;
       uiConfirm({
         title: `Clear history for “${repoLabel}”?`,
-        body: `Deletes every session for:\n${repoPath}\n\nThe current session is kept. This cannot be undone.`,
+        body: globalThis.GrokWebviewHelpers.clearHistoryConfirmation(repoPath),
         confirmLabel: "Delete All",
         danger: true,
       }).then((ok) => {
@@ -5370,7 +6236,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       // make the delete "not stick" — and then starts a fresh conversation in
       // the same project. Against a host that cannot, the button stays away
       // rather than posting a message that comes back refused.
-      if (!active || canDeleteActiveSession()) {
+      if (globalThis.GrokWebviewHelpers.providerSupports(s.provider, "deleteHistory") && (!active || canDeleteActiveSession())) {
       const delBtn = document.createElement("button");
       delBtn.className = "history-action-btn history-action-danger";
       delBtn.innerHTML = ICON.trash;
@@ -5454,10 +6320,26 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // cold session/load over a slow link and short enough that a dropped request
   // is still visibly "nothing happened" rather than a stuck selection.
   const RAIL_TRANSITION_TIMEOUT_MS = 10000;
+  // A NEW conversation is a CLI start, not a load: ~7 s warm and ~30 s cold on a
+  // desk (measured 2026-10-16), and the host sends nothing in between. At 10 s
+  // the "New session" placeholder vanished mid-start, so there was no sign the
+  // conversation was being made until its real row appeared. Any error the host
+  // sends still ends the transition at once.
+  const RAIL_NEW_TRANSITION_TIMEOUT_MS = 60000;
+  /** Projects are folders you chose, so an empty list says how they get there. */
+  const RAIL_NO_PROJECTS = "Your projects appear here. Open a folder, create one, or add one from Recent.";
+  // Once the host has said it is opening the click (`sessionOpening`), the
+  // silence that timer guards against is ruled out: the host ends the open with
+  // the conversation or with `failed`. A cold load can take a minute (and a
+  // click can wait behind another view's load), so this only backs up a host
+  // that dies mid-open.
+  const RAIL_TRANSITION_ACKED_TIMEOUT_MS = 10 * 60_000;
 
   let railEl = null;
   let railResolved = false;
   const railProbeTimers = {};
+  /** Projects whose preview has had its one extra wait (armRailProbeDeadline). */
+  const railProbeExtended = {};
   // Monotonic renderer-local counter for railTransition.token. Not a grok
   // session id — never sent to the host; only used so superseded timers and
   // late frames cannot complete a transition that a later click replaced.
@@ -5573,6 +6455,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // leave a stranded picker after a rail rebuild.
   let railColorPickerEl = null;
   let railColorPickerAnchorEl = null;
+  let railIconPickerEl = null;
+  let railIconPickerAnchorEl = null;
+  // The live node answers "was this click on my own anchor"; the KEY is what
+  // survives a rebuild that replaces that node. The menu has always kept one.
+  let railColorPickerAnchorKey = "";
+  let railIconPickerAnchorKey = "";
 
   /** Palette the host accepts — keep ids in lockstep with REPO_COLOR_IDS in
    *  sessions.ts. Labels are accessible names for each swatch. */
@@ -5588,13 +6476,38 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
 
   function closeRailColorPicker() {
     railColorPickerAnchorEl = null;
+    railColorPickerAnchorKey = "";
     if (railColorPickerEl) { railColorPickerEl.remove(); railColorPickerEl = null; }
   }
 
-  function closeRailMenu() {
+  function closeRailIconPicker() {
+    railIconPickerAnchorEl = null;
+    railIconPickerAnchorKey = "";
+    if (railIconPickerEl) { railIconPickerEl.remove(); railIconPickerEl = null; }
+  }
+
+  /** The button carrying a rail menu key, after a rebuild replaced the node.
+   *  Shared by the menu and both pickers so the three cannot disagree about
+   *  where an open popover belongs. Searches the whole document, not just the
+   *  rail: the conversation overflow is outside `#projects-rail`. */
+  function railPopoverAnchorFor(key) {
+    if (!key) return null;
+    const esc = window.CSS && CSS.escape ? CSS.escape(key) : key;
+    return document.querySelector('[data-rail-menu-key="' + esc + '"]');
+  }
+
+  /** Just the menu. Every dismissal wants the pickers gone with it -- except a
+   *  resize, which is usually the on-screen keyboard opening underneath a
+   *  picker the user is working in. */
+  function closeRailMenuOnly() {
     railMenuAnchorEl = null;
     if (railMenuEl) { railMenuEl.remove(); railMenuEl = null; }
+  }
+
+  function closeRailMenu() {
+    closeRailMenuOnly();
     closeRailColorPicker();
+    closeRailIconPicker();
   }
 
   /** Position a fixed popover under/above an anchor (shared by menu + colour
@@ -5714,9 +6627,55 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     });
     document.body.appendChild(picker);
     railColorPickerEl = picker;
+    railColorPickerAnchorEl = anchor;
+    railColorPickerAnchorKey = (anchor.dataset && anchor.dataset.railMenuKey) || "";
     placeRailPopover(picker, anchor);
     const focusBtn = swatches.find((b) => b.classList.contains("is-selected")) || swatches[0];
     if (focusBtn) focusBtn.focus();
+  }
+
+  /**
+   * Ninety-five marks plus the default folder, in six tabs with a search box.
+   * Host-persisted via setRepoIcon; capability-gated by railIconSupported. The
+   * grid itself is media/repo-icon-picker.js, shared with the VS Code rail so
+   * both surfaces offer the same marks in the same order.
+   */
+  function openRepoIconPicker(anchor, repo) {
+    closeRailIconPicker();
+    if (!anchor || !repo) return;
+    const builder = typeof globalThis !== "undefined" ? globalThis.GrokRepoIconPicker : null;
+    if (!builder) return;
+    const picker = builder.create({
+      currentIcon: repoIconOf(repo),
+      onClose() { closeRailIconPicker(); },
+      onPick(id) {
+        closeRailIconPicker();
+        // On a remote postPreference owns the send: it holds the setter through
+        // a dropped socket and reports the outcome, and the `repos` frame it
+        // watches for carries `icon`, so it settles with no extra wiring. Off
+        // remote it returns false and we post + paint, exactly as the colour
+        // beside it does.
+        if (postPreference({ type: "setRepoIcon", cwd: repo.cwd, icon: id })) return;
+        vscode.postMessage({ type: "setRepoIcon", cwd: repo.cwd, icon: id });
+        // Paint now. The next `repos` frame that names this cwd is the
+        // authority — confirm, contradict, or a silent host's expiry.
+        paintPendingRepoIcon(repo.cwd, id);
+      },
+    });
+    if (!picker) return;
+    document.body.appendChild(picker.el);
+    railIconPickerEl = picker.el;
+    railIconPickerAnchorEl = anchor;
+    railIconPickerAnchorKey = (anchor.dataset && anchor.dataset.railMenuKey) || "";
+    placeRailPopover(picker.el, anchor);
+    // On a touch screen the search box is the wrong thing to focus: the
+    // keyboard it raises covers most of a 96-mark grid the moment it opens,
+    // and the user came here to LOOK. Focus the grid instead and let them tap
+    // the box if they would rather type. With a mouse, typing is the fastest
+    // way to 96 marks and the box keeps the focus.
+    let coarse = false;
+    try { coarse = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches); } catch (_) { /* older webview */ }
+    picker.focus(coarse);
   }
 
   /** items: [{ label, icon, danger, disabled, onSelect }] — a `null` entry is a
@@ -5793,6 +6752,13 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // Rail menus are fixed-position under <body>; close on outside click / Esc /
   // resize regardless of remote vs desktop once a rail mount exists (or may).
   document.addEventListener("click", (e) => {
+    if (railIconPickerEl) {
+      if (railIconPickerEl.contains(e.target)) return;
+      closeRailIconPicker();
+      // Same reasoning as the colour picker below: the two are never open
+      // together, so fall through only when no menu is up.
+      if (!railMenuEl) return;
+    }
     if (railColorPickerEl) {
       if (railColorPickerEl.contains(e.target)) return;
       if (railColorPickerAnchorEl && railColorPickerAnchorEl.contains(e.target)) return;
@@ -5812,11 +6778,40 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }, true);
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
+      if (railIconPickerEl) { closeRailIconPicker(); return; }
       if (railColorPickerEl) { closeRailColorPicker(); return; }
       closeRailMenu();
     }
   });
-  window.addEventListener("resize", closeRailMenu);
+  /* A resize used to close everything, which is right for a MENU -- it hangs
+     under a row that has probably moved -- and wrong for a picker the user is
+     working in. The on-screen keyboard is a resize: focusing the icon picker's
+     search box opened it, the resize fired, and the picker vanished the frame
+     after it appeared. The colour picker survived only because a swatch button
+     raises no keyboard, so the bug looked like "icons are broken, colours are
+     fine" rather than what it was.
+
+     So the menu closes and a live picker is re-placed against its anchor
+     WITHOUT leaving the document. Taking it out and putting it straight back
+     looks identical in the markup and is not: removing a node blurs whatever
+     was focused inside it. Tapping the search box would raise the keyboard,
+     the keyboard would fire this resize, and the box would lose the focus that
+     raised it -- every time, so the box could never be typed into. Nothing
+     here removes a picker except the one case that must: the anchor is gone, a
+     rebuild took the row away, and there is nothing left to point at. */
+  window.addEventListener("resize", () => {
+    closeRailMenuOnly();
+    if (railIconPickerEl) {
+      if (railIconPickerAnchorEl && railIconPickerAnchorEl.isConnected) {
+        placeRailPopover(railIconPickerEl, railIconPickerAnchorEl);
+      } else closeRailIconPicker();
+    }
+    if (railColorPickerEl) {
+      if (railColorPickerAnchorEl && railColorPickerAnchorEl.isConnected) {
+        placeRailPopover(railColorPickerEl, railColorPickerAnchorEl);
+      } else closeRailColorPicker();
+    }
+  });
 
   /** The ⋯ button itself — same shape for a project row, a conversation row and
    *  the conversation header, so one class carries all three. */
@@ -6008,6 +7003,15 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // broken on the project a machine boots into: the host stored the choice,
     // this returned false, and the row never moved.
     if (sameCwd(repo.cwd, state.selectedRepoCwd)) return false;
+    // A conversation is being made here. The host has not selected the project
+    // yet and an empty one has no rows, so the age rule hid it -- placeholder
+    // and all -- for the seconds until the new conversation arrived.
+    const pendingNew = state.railTransition;
+    if (pendingNew && pendingNew.kind === "new" && sameCwd(repo.cwd, pendingNew.repoCwd)) return false;
+    // You opened it here: its rows arrive because you asked for them, and the
+    // age rule moving it into Archive under your cursor would answer that by
+    // taking it away. (An explicit Archive, above, still wins.)
+    if (state.railCollapsed[cwdKey(repo.cwd)] === false) return false;
     // The age rule NEVER runs on a guess. Without the project's conversations we
     // do not know when it was last worked in: `repo.updatedAt` is the session
     // DIRECTORY's mtime, and that does not move when you continue an existing
@@ -6215,6 +7219,174 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     }
   }
 
+  // ---------- "Add <folder> to Projects?" ----------
+  // The host asks once, the first time you send in a conversation whose folder
+  // is not one of your projects (projectPrompt). A strip above the message box,
+  // not a dialog: the message is already on its way, and the question can wait
+  // for whenever you look at it. Whoever answers -- desk or phone -- writes the
+  // host's list, and the host takes the strip down everywhere (`done`).
+  let projectPromptFor = null;
+  // The conversation on screen, from its `session` frame: a prompt about any
+  // other one is not for this view.
+  let projectPromptView = "";
+  function removeProjectPrompt() {
+    const strip = document.querySelector(".project-prompt");
+    if (strip) strip.remove();
+    projectPromptFor = null;
+  }
+  function renderProjectPrompt(msg) {
+    removeProjectPrompt();
+    const composer = document.querySelector("footer.composer");
+    if (!composer || !msg.cwd) return;
+    const strip = document.createElement("div");
+    strip.className = "project-prompt";
+    strip.setAttribute("role", "group");
+    strip.setAttribute("aria-label", "Add this folder to Projects");
+    strip.title = msg.cwd;
+    const text = document.createElement("span");
+    text.className = "project-prompt-text";
+    text.textContent = `Add ${msg.label || cwdLeaf(msg.cwd)} to Projects?`;
+    strip.appendChild(text);
+    const answer = (label, primary, message) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "project-prompt-btn" + (primary ? " primary" : "");
+      btn.textContent = label;
+      btn.onclick = () => { removeProjectPrompt(); vscode.postMessage(message); };
+      strip.appendChild(btn);
+    };
+    answer("Add", true, { type: "addToProjects", cwd: msg.cwd });
+    answer("Not now", false, { type: "answerProjectPrompt", cwd: msg.cwd, choice: "notNow" });
+    answer("Never for this folder", false, { type: "answerProjectPrompt", cwd: msg.cwd, choice: "never" });
+    composer.insertBefore(strip, composer.querySelector(".composer-card"));
+    projectPromptFor = { sessionId: msg.sessionId || "", cwd: msg.cwd };
+  }
+  function noteProjectPrompt(msg) {
+    if (msg.done) {
+      if (projectPromptFor && sameCwd(projectPromptFor.cwd, msg.cwd)) removeProjectPrompt();
+      return;
+    }
+    // Asked about another conversation than the one on screen: not ours.
+    const onScreen = state.activeSessionId || projectPromptView;
+    if (msg.sessionId && onScreen && msg.sessionId !== onScreen) return;
+    renderProjectPrompt(msg);
+  }
+
+  /** The host has the click on `msg.sessionId` (see RAIL_TRANSITION_ACKED_TIMEOUT_MS).
+   *  The highlight stays on it until the host confirms or reports `failed`,
+   *  rather than snapping back after ten seconds of a slow load. */
+  function noteSessionOpening(msg) {
+    const t = state.railTransition;
+    if (!t || t.kind !== "resume" || !msg || t.sessionId !== msg.sessionId) return;
+    if (msg.failed) { abortRailTransition(); return; }
+    clearRailTransitionTimer();
+    const token = t.token;
+    railTransitionTimer = setTimeout(() => {
+      railTransitionTimer = null;
+      if (state.railTransition && state.railTransition.token === token) abortRailTransition();
+    }, RAIL_TRANSITION_ACKED_TIMEOUT_MS);
+    if (msg.queued && !t.queued) {
+      t.queued = true;
+      renderRail();
+    }
+  }
+
+  // Composer text belongs to a conversation, independently of transcript replay.
+  const composerDrafts = new Map();
+  let composerSessionId = null;
+  let composerExpectedSessionId = null;
+  const pendingComposerDrafts = new Set();
+  let composerRestoredChips = [];
+  let composerLoadDraft = null;
+
+  function beginComposerLoad() {
+    if (!composerLoadDraft) composerLoadDraft = { text: input.value, chips: composerRestoredChips, edited: false };
+  }
+
+  function setComposerRestoredChips(chips) {
+    if (!composerRestoredChips.length && !chips.length) return;
+    const oldIds = new Set(composerRestoredChips.map((chip) => chip.id));
+    composerRestoredChips = chips;
+    state.chips = [...state.chips.filter((chip) => !oldIds.has(chip.id)), ...chips];
+    renderChips();
+    updateSendButton();
+  }
+
+  function switchComposerDraft(sessionId, completingLoad = false) {
+    if (composerSessionId === sessionId) return;
+    // Keystrokes during a load belong to the conversation being opened, even
+    // when its identity arrives after the transcript. They are kept, merged after
+    // any saved draft, and never replaced. Only a load that began on an empty
+    // composer counts: text already there belongs to the conversation being
+    // left, and a host-driven switch (another repo) must not carry it along.
+    const keepTyped = completingLoad && composerLoadDraft?.edited
+      && !composerLoadDraft.text && !composerLoadDraft.chips.length;
+    if (composerSessionId !== null) {
+      const previous = keepTyped ? composerLoadDraft : { text: input.value, chips: composerRestoredChips };
+      if (previous.text || previous.chips.length) composerDrafts.set(composerSessionId, {
+        text: previous.text, chips: previous.chips,
+      });
+      else composerDrafts.delete(composerSessionId);
+    }
+    if (keepTyped) {
+      const draft = composerDrafts.get(sessionId);
+      if (draft?.text && !input.value.includes(draft.text)) input.value = [draft.text, input.value].filter(Boolean).join("\n\n");
+      if (draft?.chips?.length) setComposerRestoredChips([...new Map([...draft.chips, ...composerRestoredChips].map((chip) => [chip.id, chip])).values()]);
+    } else if (composerSessionId !== null || pendingComposerDrafts.has(sessionId)) {
+      const draft = composerDrafts.get(sessionId);
+      input.value = draft?.text || "";
+      setComposerRestoredChips(draft?.chips || []);
+    }
+    composerSessionId = sessionId;
+    slashPopover.hidden = true;
+    hideMention();
+    renderInputHighlight();
+  }
+
+  function confirmComposerSession(sessionId) {
+    if (!sessionId) return; // A loading host can temporarily have no active id.
+    // Identity echoes can arrive after another gesture. Only the correlated
+    // New reply may bind its draft; ordinary frames cannot guess which New.
+    if (pendingComposerDrafts.has(composerSessionId)) {
+      // A host that predates that reply never sends it. There, the first
+      // identity that can only be the conversation the New created binds it.
+      if (!(state.hostCaps && state.hostCaps.composerDraftSession)
+          && state.railExpectedIdentity?.kind === "new"
+          && railIdentitySatisfies(sessionId)) {
+        bindComposerDraft(composerSessionId, sessionId);
+      }
+      return;
+    }
+    if (composerExpectedSessionId && sessionId !== composerExpectedSessionId) return;
+    switchComposerDraft(sessionId, true);
+    composerLoadDraft = null;
+    composerExpectedSessionId = null;
+    syncFocusedRemoteHandoff();
+  }
+
+  function bindComposerDraft(draftId, sessionId) {
+    if (!sessionId || !pendingComposerDrafts.delete(draftId)) return;
+    if (composerSessionId === draftId) {
+      composerSessionId = sessionId;
+      composerLoadDraft = null;
+    } else if (composerDrafts.has(draftId)) {
+      const draft = composerDrafts.get(draftId);
+      if (composerSessionId === sessionId) {
+        if (!input.value.includes(draft.text)) input.value = [draft.text, input.value].filter(Boolean).join("\n\n");
+        setComposerRestoredChips([...draft.chips, ...composerRestoredChips]);
+        renderInputHighlight();
+      } else composerDrafts.set(sessionId, draft);
+    }
+    composerDrafts.delete(draftId);
+    syncFocusedRemoteHandoff();
+  }
+
+  function postNewSession() {
+    vscode.postMessage(pendingComposerDrafts.has(composerSessionId)
+      ? { type: "newSession", draftId: composerSessionId }
+      : { type: "newSession" });
+  }
+
   /**
    * Replace any in-flight transition. One at a time; a new click bumps the
    * token so a late frame for the old one cannot complete or clear the new.
@@ -6222,6 +7394,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
    * model.
    */
   function startRailTransition(fields) {
+    composerLoadDraft = null;
     if (state.sessionSuperseded) clearSessionSuperseded();
     clearRailTransitionTimer();
     const token = ++railTransitionSeq;
@@ -6248,6 +7421,16 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         // as confirmation of a conversation the host had not created yet.
         knownIds: railKnownSessionIds(),
       };
+    if (fields.kind === "new") {
+      const draftId = newRemoteTabToken();
+      pendingComposerDrafts.add(draftId);
+      switchComposerDraft(draftId);
+      composerExpectedSessionId = null;
+    } else {
+      switchComposerDraft(fields.sessionId);
+      composerExpectedSessionId = fields.sessionId;
+    }
+    syncFocusedRemoteHandoff();
     // Highlight without a veil would claim conversation X while Y is still on
     // screen and fully actionable. Pair them so the click is visibly owned.
     veilTranscriptForPendingOpen();
@@ -6258,7 +7441,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     }
     const ms = Number(window.__grokRailTransitionTimeoutMs) > 0
       ? Number(window.__grokRailTransitionTimeoutMs)
-      : RAIL_TRANSITION_TIMEOUT_MS;
+      : fields.kind === "new" ? RAIL_NEW_TRANSITION_TIMEOUT_MS : RAIL_TRANSITION_TIMEOUT_MS;
     railTransitionTimer = setTimeout(() => {
       railTransitionTimer = null;
       if (state.railTransition && state.railTransition.token === token) {
@@ -6295,8 +7478,15 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
    */
   function abortRailTransition() {
     if (!state.railTransition) return;
+    composerLoadDraft = null;
     clearRailTransitionTimer();
     state.railTransition = null;
+    // The composer moved at the click. Put it back on the conversation the
+    // host still has, or Send would deliver the clicked one's draft there.
+    // A New's pending draft stays bindable if the host creates it after all.
+    composerExpectedSessionId = null;
+    if (state.activeSessionId) switchComposerDraft(state.activeSessionId);
+    syncFocusedRemoteHandoff();
     // historyReplay owns the veil while a transcript is materialising; leave
     // it up if we are mid-replay so aborting a superseded click cannot blank a
     // real load still in progress.
@@ -6440,6 +7630,13 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     return state.repos.some((r) => typeof r.color === "string");
   }
 
+  /** Same capability rule for marks — and the glyph data has to be on the page
+   *  too, since a picker with no paths would offer 95 empty squares. */
+  function railIconSupported() {
+    const marks = typeof globalThis !== "undefined" ? globalThis.GrokRepoIcons : null;
+    return !!marks && state.repos.some((r) => typeof r.icon === "string");
+  }
+
   /** Rows we can draw conclusions FROM, as opposed to rows we merely have none
    *  of yet. The selected project's holder starts empty and stays empty until
    *  its first list arrives, so an empty one proves nothing about the project —
@@ -6498,11 +7695,53 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
    *  entirely until the host proves it answers — one probe for the first repo,
    *  and the rest only once a `repoSessions` frame has come back. Without this
    *  an old host would be sent one dead request per repo on every catalog push. */
+  /** Projects shown open until you fold or open them yourself. Beyond these
+   *  a project starts folded, and its conversations are fetched only when it
+   *  is opened: a phone opening every project at once asked the host for every
+   *  list at the same moment, and many came back as "Loading…" or "Couldn't
+   *  load these conversations". */
+  const RAIL_OPEN_BY_DEFAULT = 3;
+  /** railDefaultOpenKeys for the rows of one render pass, computed once. */
+  let railOpenKeysForRender = null;
+
+  /** The projects that are open when you have not said otherwise: the first
+   *  few available ones in Projects, and those in Project Archive while that
+   *  group is open (opening the group is the act that asks for them). */
+  function railDefaultOpenKeys() {
+    const sections = railSections();
+    const keys = new Set(sections.active.filter((r) => r.available)
+      .slice(0, RAIL_OPEN_BY_DEFAULT).map((r) => cwdKey(r.cwd)));
+    if (!railGroupIsCollapsed("archived")) for (const r of sections.archived) keys.add(cwdKey(r.cwd));
+    return keys;
+  }
+
+  /**
+   * Whether a project's section is open. `railCollapsed[key]` is your own
+   * choice -- `true` folded, `false` opened -- and is kept per viewer. Without
+   * one: the selected project, the one holding the live conversation, an
+   * unavailable one (it has nothing to fetch) and railDefaultOpenKeys are open,
+   * the rest folded.
+   */
+  function railRepoExpanded(repo, openKeys) {
+    const key = cwdKey(repo.cwd);
+    const choice = state.railCollapsed[key];
+    if (choice === true) return false;
+    if (choice === false) return true;
+    if (!repo.available) return true;
+    if (sameCwd(repo.cwd, state.selectedRepoCwd) || key === state.railLiveRepoKey) return true;
+    return (openKeys || railDefaultOpenKeys()).has(key);
+  }
+
   function requestRailPreviews() {
     if (!rail() || !state.reposKnown) return;
     // Before capability proof there is exactly one probe. If it failed, only
     // the visible Retry may send it again; catalog repaints are not retries.
     if (!state.repoPreviewsSupported && Object.keys(state.repoPreviewErrors).length) return;
+    // Every project, folded or not, as the VS Code rail does: the Archive's age
+    // rule needs a project's own rows, so a folded project fetched only on
+    // opening stayed in Projects here while VS Code had archived it. Folding is
+    // display only. Fetching on open was a workaround for previews that took a
+    // second each on a large desk; they take milliseconds now.
     const wanted = railRepos().filter(
       (r) => r.available
         && !sameCwd(r.cwd, state.selectedRepoCwd)
@@ -6566,6 +7805,17 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     railProbeTimers[key] = setTimeout(() => {
       delete railProbeTimers[key];
       if (!state.repoPreviewsAsked[key]) return;
+      // One more round of "Loading…" before saying it failed: a host busy
+      // starting up, or a tab that reconnected under the request, answers
+      // late, and "Couldn't load" followed by the rows read as broken. The
+      // request is sent again, since one sent before a reconnect is lost.
+      if (!railProbeExtended[key]) {
+        railProbeExtended[key] = true;
+        delete state.repoPreviewsAsked[key];
+        const repo = railRepos().find((r) => sameCwd(r.cwd, cwd));
+        if (repo) { requestRailPreview(repo); return; }
+      }
+      delete railProbeExtended[key];
       failRailPreview(cwd, "deadline-expired");
     }, ms);
   }
@@ -6657,8 +7907,11 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // user most needs the rail, because it is where the only useful control
     // lives. Hiding it made the empty-state action unreachable and left the
     // File menu — which the desktop hides — as the sole route in.
+    // Projects are folders you chose now, so a host can have none while Recent
+    // holds conversations you sent in -- that is still a rail worth showing.
     const on = railChromeBeforeCatalog() ||
-      (railAvailable() && (state.repos.length > 0 || canAddProjectFolder()));
+      (railAvailable() && (state.repos.length > 0 || canAddProjectFolder()
+        || (Array.isArray(state.recentSessions) && state.recentSessions.length > 0)));
     const panel = railPanel();
     if (panel) panel.hidden = !on;
     root.hidden = !on;
@@ -6700,7 +7953,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // PINNED is not collapsible — that is what pinning means.
     // PROJECT ARCHIVE only mounts when ≥1 project qualifies (put-away or age-quiet);
     // an empty section is deliberately omitted rather than an always-on empty state.
-    const pinned = uniqueSessionRows(state.pinnedSessions).filter(
+    const pinned = uniqueSessionRows(pinnedRows()).filter(
       (s) => railMatches(s.displayName) || railMatches(railRepoLabelFor(s.cwd)),
     );
     if (pinned.length) {
@@ -6757,7 +8010,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // a rail with nothing to press -- and `!shownAnything` could not rescue it,
     // because the archive section below had already set it.
     const emptyProjects = !repos.length && !q && archivedRepos.length > 0;
-    if (repos.length || emptyProjects) {
+    // No project at all yet while Recent or Pinned are showing: Projects still
+    // says where they come from. (With nothing showing, the note below does.)
+    const noProjects = !repos.length && !archivedRepos.length && !q && state.reposKnown && shownAnything;
+    if (repos.length || emptyProjects || noProjects) {
       const forcedOpen = !!q;
       const open = forcedOpen || !railGroupIsCollapsed("projects");
       root.appendChild(railCollapsibleGroupHead({
@@ -6773,9 +8029,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       if (open) {
         const list = document.createElement("div");
         list.className = "rail-list rail-projects";
+        railOpenKeysForRender = railDefaultOpenKeys();
         for (const repo of repos) list.appendChild(renderRailRepo(repo, false));
+        railOpenKeysForRender = null;
         root.appendChild(list);
         if (emptyProjects) root.appendChild(railNote("Every project is archived."));
+        if (noProjects) root.appendChild(railNote(RAIL_NO_PROJECTS));
         // Full-width target under the list, not only the small "+" in the group
         // head. With one project or none the rail is mostly empty space and the
         // header glyph is easy to miss — and on a phone, easy to miss AND hard
@@ -6795,7 +8054,6 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         group: "archived",
         open,
         forcedOpenBySearch: forcedOpen,
-        icon: ICON.archive,
         openTitle: "Hide archived projects",
         closedTitle: "Show archived projects",
         searchTitle: "Open while your search matches an archived project",
@@ -6803,7 +8061,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       if (open) {
         const list = document.createElement("div");
         list.className = "rail-list rail-archived";
+        railOpenKeysForRender = railDefaultOpenKeys();
         for (const repo of archived) list.appendChild(renderRailRepo(repo, true));
+        railOpenKeysForRender = null;
         root.appendChild(list);
       }
       shownAnything = true;
@@ -6815,11 +8075,11 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       } else if (!q && canAddProjectFolder()) {
         // An empty rail that only says "No projects yet" is a dead end on the
         // one screen where the user has nothing else to click.
-        const empty = railNote("No projects yet");
+        const empty = railNote(RAIL_NO_PROJECTS);
         empty.appendChild(railAddProjectWide());
         root.appendChild(empty);
       } else {
-        root.appendChild(railNote(q ? "No matches." : "No projects yet"));
+        root.appendChild(railNote(q ? "No matches." : RAIL_NO_PROJECTS));
       }
     }
 
@@ -6831,10 +8091,28 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // menu and the header menu survive the wipe.
     renderSessionHead();
     reanchorOpenRailMenu(openMenuKey);
-    // Colour picker is one-shot and short-lived — the rebuild destroys its
-    // anchor button, and re-opening it mid-catalog-refresh is not worth the
-    // bookkeeping. Closing avoids a fixed popover stranded over a gone row.
-    if (railColorPickerEl) closeRailColorPicker();
+    // And so do the pickers. They used to be closed here, on the reasoning
+    // that a picker is one-shot and short-lived and the rebuild destroys the
+    // ⋯ it points at. The second half is true of the menu one line up, which
+    // has been re-anchored by key ever since the owner reported it slamming
+    // shut; the first half was never true of the icon grid. It is the one
+    // popover people SIT in -- ninety-six marks, a search box, six tabs -- and
+    // the host re-sends this catalog whenever the files behind it change, so
+    // another agent writing transcripts closed it every second or two. That is
+    // the report `136eae6` answered on the VS Code side bar by holding the
+    // rebuild; here the key is already stamped on every ⋯ and the answer costs
+    // one lookup. Gone anchor still closes: a fixed popover pointing at a row
+    // that no longer exists is worse than no popover.
+    if (railIconPickerEl) {
+      const a = railPopoverAnchorFor(railIconPickerAnchorKey);
+      if (a) { railIconPickerAnchorEl = a; placeRailPopover(railIconPickerEl, a); }
+      else closeRailIconPicker();
+    }
+    if (railColorPickerEl) {
+      const a = railPopoverAnchorFor(railColorPickerAnchorKey);
+      if (a) { railColorPickerAnchorEl = a; placeRailPopover(railColorPickerEl, a); }
+      else closeRailColorPicker();
+    }
     railHoldHoverAfterRebuild();
     // Let the browser paint this rebuild with transitions off, then restore them
     // so an ordinary hover still fades. rAF (not a timer) so it lands after the
@@ -6851,8 +8129,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
    *  rail: the conversation overflow is outside `#projects-rail`. */
   function reanchorOpenRailMenu(openMenuKey) {
     if (!openMenuKey) return;
-    const esc = window.CSS && CSS.escape ? CSS.escape(openMenuKey) : openMenuKey;
-    const anchor = document.querySelector('[data-rail-menu-key="' + esc + '"]');
+    const anchor = railPopoverAnchorFor(openMenuKey);
     if (anchor) {
       railMenuAnchorEl = anchor;
       // Re-place it. Keeping the menu open but leaving it at the old fixed
@@ -6886,7 +8163,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     let html = "";
     if (opts.icon) html += `<span class="rail-head-icon">${opts.icon}</span>`;
     html += `<span class="rail-head-title"></span>`;
-    html += `<span class="rail-head-twisty">${opts.open ? ICON.chevronDown : ICON.chevronRight}</span>`;
+    html += `<span class="rail-head-twisty" aria-hidden="true">${opts.open ? ICON.chevronDown : ICON.chevronRight}</span>`;
     btn.innerHTML = html;
     btn.querySelector(".rail-head-title").textContent = opts.title;
     btn.disabled = !!opts.forcedOpenBySearch;
@@ -6898,6 +8175,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       // Toggle: currently open → collapse; currently closed → expand.
       setRailGroupCollapsed(opts.group, opts.open);
       renderRail();
+      // Opening Project Archive opens the projects in it, which fetches them.
+      if (!opts.open) requestRailPreviews();
     };
     head.appendChild(btn);
     if (opts.action) head.appendChild(opts.action());
@@ -7139,7 +8418,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       githubState: state.githubState || undefined,
       repos: state.githubRepos,
       terminalSignIn: !IS_REMOTE,
-      onRecheck: () => vscode.postMessage({ type: "refreshProviders" }),
+      // "Did my GitHub sign-in land?" — answered by the host's GitHub state,
+      // which this refresh carries either way. `credentials: false` keeps it
+      // from also starting Claude Code and Codex to find out (#171).
+      onRecheck: () => vscode.postMessage({ type: "refreshProviders", credentials: false }),
       touch: remoteUsesTouchComposer() || (typeof window.matchMedia === "function"
         && window.matchMedia("(hover: none), (pointer: coarse)").matches),
       onCancel: closeAddProjectForm,
@@ -7221,6 +8503,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
    * Newest first. The final rail render assigns every id to one visible group.
    */
   function railRecentRows() {
+    // A host that builds Recent itself (conversations you sent in or opened,
+    // across every folder, automation left out) is the whole answer: composing
+    // one from the loaded previews would add every listed conversation back.
+    if (Array.isArray(state.recentSessions)) return state.recentSessions.slice();
     const byId = new Map();
     for (const repo of state.repos || []) {
       const known = railKnownRows(repo);
@@ -7486,7 +8772,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // transcript must not grow an empty-state panel on top of it.
     startRailNewTransition(repoCwd, "creating", previousSessionId);
     resetForNewSession();
-    vscode.postMessage({ type: "newSession" });
+    postNewSession();
   }
 
   function wireSessionNewButton(btn) {
@@ -7605,7 +8891,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     if (!record) return;
     menuSlot.appendChild(railMenuButton(
       "Session actions",
-      () => railSessionMenuItems(record, repo, true, { inlineRename: true }),
+      () => railSessionMenuItems(record, repo, true, { inlineRename: true, followsFocus: true }),
       "session-head",
     ));
   }
@@ -7770,7 +9056,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // the positive form so the icon cannot drift from the list (closed icon on
     // an open section was a real screenshot bug when the two read different
     // shapes of the same store).
-    const expanded = !state.railCollapsed[key];
+    const expanded = railRepoExpanded(repo, railOpenKeysForRender || undefined);
 
     // No marker for the selected or the live project. The conversation you are
     // reading is highlighted where it sits, which says which project you are in
@@ -7795,12 +9081,22 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       (expanded ? "Collapse " : "Expand ") + (repo.label || cwdLeaf(repo.cwd)),
     );
 
-    // Folder open/closed indicator — same `expanded` flag as the session list.
-    // Colour tints the stroke via currentColor (`data-repo-color` → CSS vars);
+    // Disclosure first, identity second. The folder used to be both — open when
+    // expanded, closed when not — which is exactly why no other glyph could
+    // replace it: a rocket has no open variant. Splitting them frees the mark to
+    // say WHICH project while the chevron says open or closed, and the chevron
+    // states it without being pointed at, which dimming does not.
+    const chev = document.createElement("span");
+    chev.className = "rail-chevron";
+    chev.innerHTML = expanded ? ICON.chevronDown : ICON.chevronRight;
+    chev.setAttribute("aria-hidden", "true");
+    head.appendChild(chev);
+
+    // Colour tints the mark via currentColor (`data-repo-color` → CSS vars);
     // none/absent leaves the default descriptionForeground.
     const twisty = document.createElement("span");
     twisty.className = "rail-twisty";
-    twisty.innerHTML = expanded ? ICON.folderOpen : ICON.folderClosed;
+    twisty.innerHTML = repoMarkHTML(repo);
     twisty.setAttribute("aria-hidden", "true");
     const repoColor = repoColorOf(repo);
     if (repoColor) twisty.dataset.repoColor = repoColor;
@@ -7816,9 +9112,14 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     head.appendChild(name);
 
     const toggleRepoExpand = () => {
-      if (expanded) state.railCollapsed[key] = true;
-      else delete state.railCollapsed[key];
+      // Remembered either way, so a project you opened stays open on this
+      // device and one you folded stays folded.
+      state.railCollapsed[key] = expanded;
       saveRailShape();
+      if (!expanded && repo.available && !sameCwd(repo.cwd, state.selectedRepoCwd)
+        && !state.repoPreviews[key] && state.repoPreviewsSupported !== false) {
+        requestRailPreview(repo);
+      }
       renderRail();
     };
     head.onclick = (e) => {
@@ -7940,9 +9241,18 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       ...(railColorSupported() ? [{
         label: "Set color",
         icon: ICON.palette,
-        title: "Tint this project's folder icon so it is easy to find",
+        title: "Tint this project's icon so it is easy to find",
         onSelect: () => openRepoColorPicker(projectMenuBtn, repo),
-      }, null] : []),
+      }] : []),
+      // Under the colour, because they answer the same question in the same
+      // place: how do I recognise this project at a glance.
+      ...(railIconSupported() ? [{
+        label: "Set icon",
+        icon: ICON.shapes,
+        title: "Give this project its own icon instead of a folder",
+        onSelect: () => openRepoIconPicker(projectMenuBtn, repo),
+      }] : []),
+      ...(railColorSupported() || railIconSupported() ? [null] : []),
       // Hide closes a local folder; archiving only changes its rail group.
       ...(canRemoveProjectFolder() ? [{
         label: "Hide project",
@@ -7975,12 +9285,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           ? "Update Atlas on your computer to clear another project's history from here"
           : knownEmpty
             ? "This project has no history"
-            : "Delete all sessions in this repository's history",
+            : "Delete supported providers' conversations in this repository",
         onSelect: () => {
           const repoLabel = repo.label || cwdLeaf(repo.cwd);
           uiConfirm({
             title: `Clear history for “${repoLabel}”?`,
-            body: `Deletes every session for:\n${repo.cwd}\n\nThe current session is kept. This cannot be undone.`,
+            body: globalThis.GrokWebviewHelpers.clearHistoryConfirmation(repo.cwd),
             confirmLabel: "Delete All",
             danger: true,
           }).then((ok) => {
@@ -8150,6 +9460,15 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     if (s.worktreeLabel && name.startsWith("(WT)")) name = name.slice(4).trim() || "Worktree";
     label.textContent = name;
     row.appendChild(label);
+    // The click is waiting for a load another view started (sessionOpening).
+    const opening = state.railTransition;
+    if (active && opening && opening.kind === "resume" && opening.queued && opening.sessionId === s.id) {
+      row.classList.add("opening");
+      const note = document.createElement("span");
+      note.className = "rail-session-opening";
+      note.textContent = "opening…";
+      row.appendChild(note);
+    }
 
     // In the Pinned group a row has left its project behind, so it has to say
     // which one it came from — two conversations called "Untitled" are otherwise
@@ -8167,7 +9486,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       row.appendChild(where);
     }
 
-    const isPinned = typeof s.pinnedAt === "number";
+    const isPinned = sessionIsPinned(s);
     if (isPinned) row.classList.add("pinned");
 
     // Optimistic new-session placeholder: presentation only. No pin/rename/
@@ -8187,12 +9506,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         pinBtn.setAttribute("aria-label", pinBtn.title);
         pinBtn.onclick = (e) => {
           e.stopPropagation();
-          vscode.postMessage({
-            type: "toggleSessionPin",
-            id: s.id,
-            cwd: s.cwd || repo.cwd,
-            pinned: !isPinned,
-          });
+          togglePinnedRow(s, s.cwd || repo.cwd);
         };
         actions.appendChild(pinBtn);
       }
@@ -8223,7 +9537,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
    *  cannot click the name of a conversation you are not in. */
   function railSessionMenuItems(s, repo, active, opts) {
     const cwd = s.cwd || repo.cwd;
-    const isPinned = typeof s.pinnedAt === "number";
+    const isPinned = sessionIsPinned(s);
     const items = opts?.inlineRename ? [] : [
       {
         label: "Rename",
@@ -8261,6 +9575,11 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         icon: ICON.gitFork,
         ...waiting,
         onSelect: () => beginContinueInNewChat(s.id),
+      });
+      if (!IS_REMOTE) items.push({
+        label: "Continue on phone…", icon: ICON.smartphone,
+        onSelect: () => opts?.followsFocus
+          ? openRemoteHandoff("rail") : openRemoteHandoff("rail", s.id, repo.cwd),
       });
       // The live transcript this client is showing — same scope as Continue.
       items.push({
@@ -8307,6 +9626,17 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         });
       }
     }
+    if (!active && !IS_REMOTE) items.push({
+      label: "Continue on phone…", icon: ICON.smartphone,
+      onSelect: () => openRemoteHandoff("rail", s.id, repo.cwd),
+    });
+    // A Recent conversation in a folder that is not one of your projects. The
+    // host names the folder (`addableCwd`) only where it can add it.
+    if (s.addableCwd) items.push({
+      label: "Add to Projects",
+      icon: ICON.folder,
+      onSelect: () => vscode.postMessage({ type: "addToProjects", cwd: s.addableCwd }),
+    });
     // Capability, never a version: a host that has never sent `pinnedSessions`
     // will silently drop `toggleSessionPin`, so offering the control there gives
     // a control that does nothing — worse than not having one. The frame arrives
@@ -8315,14 +9645,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       items.push({
         label: isPinned ? "Unpin conversation" : "Pin conversation",
         icon: ICON.pin,
-        onSelect: () => vscode.postMessage({
-          type: "toggleSessionPin",
-          id: s.id,
-          // The row's own cwd, so the host files the pin under the repo this
-          // conversation actually lives in rather than the one we are viewing.
-          cwd,
-          pinned: !isPinned,
-        }),
+        onSelect: () => togglePinnedRow(s, cwd),
       });
     }
     // The open conversation can be deleted too, where the host can do it: it
@@ -8332,7 +9655,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // stays visibly disabled and says why — the menu keeps its shape, and the
     // reason is the truth rather than "the open session can't be deleted".
     const activeUndeletable = !!active && !canDeleteActiveSession();
-    items.push(null, {
+    if (globalThis.GrokWebviewHelpers.providerSupports(s.provider, "deleteHistory")) items.push(null, {
       label: "Delete",
       icon: ICON.trash,
       danger: true,
@@ -8372,7 +9695,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
    *  to it, and says the extra part out loud when a turn is still running. */
   function deleteSessionWarning(active) {
     if (!active) return "This cannot be undone.";
-    const stopping = state.busy ? " Atlas is still working; that stops." : "";
+    const stopping = state.busy ? ` ${agentName(true)} is still working; that stops.` : "";
     return "This is the conversation you have open. It will close and a new one will start in the same project."
       + stopping + " This cannot be undone.";
   }
@@ -8473,6 +9796,14 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     if (identityRestoring()) return;
     const ver = $("welcome-version");
     if (!ver) return;
+    // Arrival is the capability: until a startupStatus frame arrives (and on an
+    // old host that never sends one) these lines show as before, including the
+    // remote shell's pre-host Connecting; after it, the strip owns startup.
+    // Actionable onboarding and errors always stay.
+    // An on-demand CLI update sets no startup stage, so its line stays unless
+    // the strip is showing one right now.
+    ver.hidden = state.startupStatusSeen && (/^(Starting|Connecting|Loading conversation|Connected(?: · v.*)?)$/.test(text)
+      || text === "Updating Atlas CLI" && !!state.startupStatus);
     ver.classList.toggle("welcome-status-busy", !!busy);
     ver.dataset.status = busy ? text : "";
     if (!busy) {
@@ -8531,15 +9862,13 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   function setConversationLoading(active) {
+    if (active) beginComposerLoad();
     // Either branch stamps the empty-state line. A painted conversation must
     // not pick up Connected / Loading conversation, including when those
     // messages arrive before clearMessages has marked the nodes.
     if (welcomeHoldActive()) return;
     if (active) {
-      // Deliberately the only indicator. A second banner above the transcript
-      // used to double it up, and the transcript arrives as one batch anyway \u2014
-      // so the wait that's worth announcing happens while the welcome is still
-      // on screen, and the banner only ever duplicated this line.
+      // Older hosts keep this fallback until a startupStatus frame arrives.
       setWelcomeStatus("Loading conversation", true);
       return;
     }
@@ -8636,7 +9965,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const host = state.welcomeTips || {};
     const providers = state.providers || [];
     const altConnected = providers.some(
-      (p) => p && (p.id === "codex" || p.id === "claude") && p.connected,
+      (p) => p && (p.id === "codex" || p.id === "claude" || p.id === "muse" && museAdvertised || p.id === "agy" && agyAdvertised) && p.connected,
     );
     return {
       appPurpose: state.appPurpose === "coding" ? "coding" : "knowledge",
@@ -9258,7 +10587,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   const REPLAY_HOLD_TYPES = new Set([
-    "userMessage", "agentStart", "thoughtChunk", "messageChunk", "media",
+    "userMessage", "agentStart", "turnDiffBaseline", "thoughtChunk", "messageChunk", "media",
     "userMessageChunk", "historyBatch", "toolCall", "toolCallUpdate",
     "permissionRequest", "permissionOptions", "permissionResolved",
     "exitPlanRequest", "planResolved", "questionRequest", "questionResolved", "planNotice",
@@ -9383,6 +10712,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       // its card would be pinned into the history nodes.
       turnEdits: [...state.turnEditsByToolCallId],
       turnDiffSummaryEl: state.turnDiffSummaryEl,
+      turnDiffBaseline: state.turnDiffBaseline,
       turnRating: state.turnRating,
       suppressReplayTurn: state.suppressReplayTurn,
       skipUserBubble: state.skipUserBubble,
@@ -9404,6 +10734,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     state.activeToolGroupEl = null;
     state.turnAgentActionsEl = null;
     state.turnEditsByToolCallId.clear();
+    state.turnDiffBaseline = null;
     state.turnDiffSummaryEl = null;
     state.suppressReplayTurn = false;
     state.skipUserBubble = false;
@@ -9449,6 +10780,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     state.turnEditsByToolCallId.clear();
     for (const [id, entry] of saved.turnEdits) state.turnEditsByToolCallId.set(id, entry);
     state.turnDiffSummaryEl = saved.turnDiffSummaryEl;
+    state.turnDiffBaseline = saved.turnDiffBaseline;
     state.turnRating = saved.turnRating;
     state.suppressReplayTurn = saved.suppressReplayTurn;
     state.skipUserBubble = saved.skipUserBubble;
@@ -9496,6 +10828,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   function resetForNewSession() {
+    beginComposerLoad();
+    state.startupStatus = null;
+    renderStartupStatus();
     clearSessionSuperseded();
     stopProcessingCue();
     cancelPendingSpeech();
@@ -9546,6 +10881,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     state.mediaGenCallIds.clear();
     state.subagentCards.clear();
     state.runProgressCards.clear();
+    clearWorkflowPin();
     // Question/restored-card maps too, or a new session's tool updates could
     // attach to the previous session's (now-detached) cards by toolCallId.
     state.questionToolCalls.clear();
@@ -9554,6 +10890,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     state.toolExpandOverride = null; // the Expand/Collapse All latch is per-session; a swap/restore starts clean (the replay buffer re-applies it for a warm re-focus)
     state.turnAgentActionsEl = null;
     state.turnEditsByToolCallId.clear();
+    state.turnDiffBaseline = null;
     state.turnDiffSummaryEl = null;
     state.activeAgentEl = null;
     state.activeAgentRaw = "";
@@ -9674,6 +11011,14 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   function applyOnboardingLaunchState() {
     const onb = $("welcome-onboarding");
     if (!onb) return;
+    if (state.onboardingChecking) {
+      const btn = onb.querySelector(`[data-act="connectProvider"][data-provider="${state.onboardingChecking}"]`);
+      if (btn) {
+        btn.disabled = true;
+        btn.setAttribute("aria-busy", "true");
+        (btn.querySelector("small") || btn).textContent = "Checking…";
+      }
+    }
     if (state.onboardingRanMode !== state.onboardingMode) return;
     const ran = state.onboardingRan || [];
     const launched = state.onboardingLaunched || [];
@@ -9733,11 +11078,11 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   function remoteConnectPanel(mode, info, ver) {
     const device = info.device;
     const provider = info.provider
-      || (mode === "codex-login" ? "codex" : mode === "claude-login" ? "claude" : mode === "auth-required" ? "grok" : "");
+      || (mode === "codex-login" ? "codex" : mode === "claude-login" ? "claude" : mode === "muse-login" ? "muse" : mode === "agy-login" ? "agy" : mode === "auth-required" ? "grok" : "");
     // The products' own names, everywhere this panel speaks. Not "Grok": that
-    // is the model, the extension is Grok Build, and a heading that disagrees
+    // is the model, the extension is Atlas, and a heading that disagrees
     // with the button beneath it reads as two different things to connect.
-    const NAMES = { grok: "Atlas", codex: "Codex", claude: "Claude Code" };
+    const NAMES = { grok: "Atlas", codex: "Codex", claude: "Claude Code", muse: "Muse Code", agy: "Antigravity" };
     const name = NAMES[provider] || "an agent";
     const status = (text) => { if (ver) setWelcomeStatus(text, false); };
 
@@ -9818,7 +11163,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       status("Starting sign-in");
       return `<div class="onb">` +
         `<p class="onb-heading">Connecting ${escapeHtml(name)}</p>` +
-        `<p class="onb-desc">Asking the ${escapeHtml(name)} CLI for a sign-in code&hellip;</p>` +
+        `<p class="onb-desc">${provider === "agy"
+          ? "Starting Antigravity&hellip; Google's sign-in opens in your browser in a moment."
+          : `Asking the ${escapeHtml(name)} CLI for a sign-in code&hellip;`}</p>` +
         cancel +
       `</div>`;
     }
@@ -9894,7 +11241,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // frame's provider is the specific thing being asked for again.
     const nothingConnected = !((state.providers || []).some((p) => p && p.connected));
     const cloudFresh = !!(state.hostCaps && state.hostCaps.remoteAgentSignOut) && nothingConnected;
-    const offer = provider && !cloudFresh ? [provider] : ["grok", "codex", "claude"];
+    const offer = (provider && !cloudFresh ? [provider] : offeredProviders())
+      .filter(id => (id !== "muse" || museAvailable) && (id !== "agy" || !IS_REMOTE));
     // A cloud machine's three agents are not equal offers: Grok is the native
     // one. Ranking is the cloud-only part; every agent that has a headless
     // flow is offered, including Claude Code's paste-code sign-in.
@@ -9987,6 +11335,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     document.addEventListener("keydown", onKey, true);
     document.body.appendChild(overlay);
     connectWizard = { provider, overlay, panel, body, onKey, opener: opener || document.activeElement };
+    if (!IS_REMOTE) connectWizard.checking = !(state.providers || []).some(p => p.id === provider && p.connected);
     // Nothing has come back from the host yet — and on a cloud machine the
     // first frame is seconds away. Open on "starting" rather than repainting
     // the offer that was just clicked, which read as a click that did nothing
@@ -10003,10 +11352,32 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   function renderConnectWizard() {
     if (!connectWizard) return;
     const provider = connectWizard.provider;
+    if (connectWizard.museOnboarding) {
+      connectWizard.body.innerHTML = museOnboardingPanel(connectWizard.museOnboarding.mode, connectWizard.museOnboarding.info);
+      return;
+    }
+    if (connectWizard.agyOnboarding) {
+      const { mode, info } = connectWizard.agyOnboarding;
+      connectWizard.body.innerHTML = mode === "agy-login" ? agyChoicePanel(info) : agyOnboardingPanel(mode, info);
+      return;
+    }
     // The mirror is the live source, but a confirmed account retires its
     // mirror, so a settled panel keeps its own copy of the last thing it was
     // told rather than falling back to the empty-state offer.
     const device = state.deviceLoginByProvider[provider] || connectWizard.lastDevice;
+    if (!IS_REMOTE && !state.deviceLoginByProvider[provider] && !connectWizard.settled) {
+      const command = provider === "claude" ? "claude auth login" : `${provider} login`;
+      const launched = connectWizard.launched;
+      connectWizard.body.innerHTML = connectWizard.checking
+        ? `<div class="onb"><p class="onb-heading">Checking…</p><p class="onb-desc">Checking the CLI's existing sign-in.</p></div>`
+        : provider === "muse" ? museOnboardingPanel("muse-login", {})
+        : provider === "agy" ? agyChoicePanel({})
+        : `<div class="onb"><p class="onb-heading">Sign in to continue</p>`
+          + `<p class="onb-desc">${launched ? "Finish signing in in the terminal, then continue here." : "Start sign-in with the CLI when you are ready."}</p>`
+          + `<button class="onb-action" data-act="connectProvider" data-provider="${provider}">Open terminal &amp; run <code>${command}</code></button>`
+          + `<button class="onb-action onb-secondary" data-act="recheckProvider" data-provider="${provider}">Re-check connection</button></div>`;
+      return;
+    }
     // `ver` is null on purpose: the welcome status line belongs to the welcome
     // card, and a modal must not rewrite it.
     connectWizard.body.innerHTML = remoteConnectPanel(
@@ -10020,8 +11391,64 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
    * Keep the wizard in step with the host, and open it when a flow begins
    * wherever the click came from — the card, Settings, or another tab.
    */
-  function syncConnectWizard(provider, device) {
-    if (!IS_REMOTE || !provider) return;
+  function syncConnectWizard(provider, device, mode, info) {
+    if (!provider) return;
+    if (!IS_REMOTE && connectWizard && connectWizard.provider === provider) {
+      connectWizard.checking = false;
+      connectWizard.launched = !!(info && info.launched);
+      if (!device && provider !== "muse" && provider !== "agy") {
+        if (mode === "provider-connected" || !CONNECT_ONBOARDING_MODES[mode]) closeConnectWizard();
+        else renderConnectWizard();
+        return;
+      }
+    }
+    if (!IS_REMOTE && provider !== "muse" && provider !== "agy") return;
+    // Antigravity's install and sign-in panels, at the desk. A missing server
+    // answers with a `failed` device, as Muse's does, so the wizard opens on
+    // the Install button wherever Connect was pressed. Its sign-in itself is a
+    // device flow, handled below like every other one.
+    if (provider === "agy" && agyAdvertised && !IS_REMOTE) {
+      const ownsWizard = !!connectWizard && connectWizard.provider === provider;
+      // A Connect press answers with the choice of how to sign in, wherever
+      // it was pressed: Settings, the card, the composer's sign-in prompt.
+      if (mode === "agy-login" && !device && info && info.agyChoice) {
+        openConnectWizard(provider);
+        connectWizard.agyOnboarding = { mode, info };
+        renderConnectWizard();
+        return;
+      }
+      if (mode === "missing-agy" && (device || ownsWizard)) {
+        openConnectWizard(provider);
+        connectWizard.agyOnboarding = { mode, info: info || {} };
+        renderConnectWizard();
+        return;
+      }
+      if (ownsWizard && !device) {
+        if (mode === "agy-login") {
+          connectWizard.agyOnboarding = { mode, info: info || {} };
+          renderConnectWizard();
+        } else if (mode === "provider-connected") closeConnectWizard();
+        return;
+      }
+      if (ownsWizard) connectWizard.agyOnboarding = null;
+    }
+    // A missing CLI never started a login flow. Keep its response over Settings
+    // and existing conversations, including bare replies from older hosts.
+    if (provider === "muse" && museAdvertised && mode === "missing-muse"
+      && (device || connectWizard && connectWizard.provider === provider)) {
+      openConnectWizard(provider);
+      connectWizard.museOnboarding = { mode, info: info || {} };
+      renderConnectWizard();
+      return;
+    }
+    if (provider === "muse" && connectWizard && connectWizard.provider === provider) {
+      if ((connectWizard.museOnboarding || !IS_REMOTE) && mode === "muse-login" && !device) {
+        connectWizard.museOnboarding = { mode, info: info || {} };
+        renderConnectWizard();
+        return;
+      }
+      connectWizard.museOnboarding = null;
+    }
     // Only a RUNNING flow opens a wizard. A settled outcome renders wherever
     // the reader already is: in this dialog when one is open (which it is
     // whenever they got here by clicking Connect), and in the card otherwise.
@@ -10067,6 +11494,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     "connect-agent": true,
     "codex-login": true,
     "claude-login": true,
+    "muse-login": true,
+    "agy-login": true,
     "auth-required": true,
   };
 
@@ -10092,8 +11521,122 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     return !typed;
   }
 
+  function museOnboardingPanel(mode, info) {
+    const provider = (state.providers || []).find(p => p.id === "muse");
+    const reason = provider && provider.unavailableReason;
+    if (reason) return `<div class="onb"><p class="onb-heading">Muse Code</p><p class="onb-desc">${escapeHtml(reason)}</p></div>`;
+    if (mode !== "missing-muse") {
+      if (IS_REMOTE) return remoteConnectPanel(mode, { provider: "muse" }, null);
+      const connected = provider && provider.connected;
+      return `<div class="onb"><p class="onb-heading">${connected ? "Sign in to Muse Code" : "Connect Muse Code"}</p>`
+        + `<p class="onb-desc">${connected ? "Start sign-in with Meta's CLI, then open the link shown here." : "Use Meta's CLI's existing sign-in."}</p>`
+        + `<button class="onb-action" data-act="connectProvider" data-provider="muse">${connected ? "Sign in with Muse Code" : "Connect Muse Code"}</button>`
+        + `<button class="onb-action" data-act="recheckProvider" data-provider="muse">Re-check</button></div>`;
+    }
+    const command = info.platform === "win32"
+      ? "irm https://dev.meta.ai/install.ps1 | iex"
+      : "curl -fsSL https://dev.meta.ai/install.sh | bash";
+    return `<div class="onb"><p class="onb-heading">Muse Code is not installed</p>`
+      + `<p class="onb-desc">${IS_REMOTE
+        ? "Muse Code is not installed on the machine running this workspace. Install it on that machine, then Re-check."
+        : "Install Meta's Muse Code CLI on this computer. When installation finishes, click Re-check, then Connect Muse Code."}</p>`
+      + (!IS_REMOTE ? `<div class="onb-cmd"><code>${escapeHtml(command)}</code><button class="onb-copy" type="button" title="Copy" data-cmd="${escapeHtml(command)}">${ICON.copy}</button></div>` : "")
+      + (!IS_REMOTE && state.hostCaps && state.hostCaps.installMuse === true
+        ? '<button class="onb-action" type="button" data-act="installMuse">Install Muse Code</button>' : "")
+      + '<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="muse">Re-check</button></div>';
+  }
+
+  /**
+   * Antigravity's own panels: install (a managed download, like Codex's) and
+   * Google sign-in. A remote gets neither -- signing in opens a browser on the
+   * desk, so it says where to do it instead.
+   */
+  function agyOnboardingPanel(mode, info) {
+    if (IS_REMOTE) {
+      return `<div class="onb"><p class="onb-heading">Connect Antigravity at the computer</p>`
+        + `<p class="onb-desc">Antigravity signs in with Google in a browser on the computer running this workspace. Connect it there, then use it from here.</p></div>`;
+    }
+    if (mode === "missing-agy") {
+      const install = state.agyInstall;
+      const installing = install.phase !== "idle";
+      const percent = install.totalBytes > 0
+        ? Math.min(100, Math.round((install.receivedBytes / install.totalBytes) * 100))
+        : null;
+      const progressLabel = install.phase === "downloading"
+        ? `Downloading Antigravity${percent == null ? "" : ` (${percent}%)`}...`
+        : install.phase === "verifying" ? "Verifying the download..."
+        : install.phase === "installing" ? "Unpacking Antigravity..." : "";
+      const reason = (info && info.reason) || install.reason;
+      return `<div class="onb"><p class="onb-heading">Install Antigravity</p>`
+        + `<p class="onb-desc">Download Google's Antigravity agent server into this app's storage. It is a large download: about 125 MB, and more on Linux.</p>`
+        + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
+        + (installing
+          ? `<div class="onb-install-progress" role="status"><span>${escapeHtml(progressLabel)}</span>`
+            + (percent == null ? "" : `<progress max="100" value="${percent}">${percent}%</progress>`)
+            + `<button class="onb-action onb-secondary" type="button" data-act="cancelAgyInstall">Cancel</button></div>`
+          : `<button class="onb-action" type="button" data-act="installAgy">Install Antigravity</button>`)
+        + `<button class="onb-action onb-secondary" type="button" data-act="recheckProvider" data-provider="agy">Re-check</button></div>`;
+    }
+    const provider = (state.providers || []).find(p => p.id === "agy");
+    const connected = !!(provider && provider.connected);
+    const reason = info && info.reason;
+    return `<div class="onb"><p class="onb-heading">${connected ? "Sign in to Antigravity" : "Connect Antigravity"}</p>`
+      + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
+      + `<p class="onb-desc">Sign in with your Google account, or use a Gemini API key.</p>`
+      + `<button class="onb-action" data-act="connectProvider" data-provider="agy">${connected ? "Sign in again" : "Connect Antigravity"}</button></div>`;
+  }
+
+  /**
+   * The choice of how Antigravity signs in: Google, or a pasted Gemini API
+   * key. One card, in the connect dialog. Stored ways are marked so a person
+   * who Disconnected can see what Connect will reuse; the key itself never
+   * reaches the renderer -- only that one is saved.
+   */
+  function agyChoicePanel(info) {
+    const provider = (state.providers || []).find(p => p.id === "agy") || {};
+    const saved = Array.isArray(provider.savedSignIns) ? provider.savedSignIns : [];
+    const last = provider.signInMethod;
+    const reason = info && info.reason;
+    const lastUsed = (method) => last === method ? " (last used)" : "";
+    return `<div class="onb onb-agy-choice"><p class="onb-heading">Connect Antigravity</p>`
+      + (reason ? `<p class="onb-install-error" role="alert">${escapeHtml(reason)}</p>` : "")
+      + `<p class="onb-desc">Choose how Antigravity signs in on this computer.</p>`
+      + `<button class="onb-action" type="button" data-act="agySignInGoogle">Sign in with Google${lastUsed("google")}</button>`
+      + `<p class="onb-desc">${saved.includes("google")
+        ? "Already signed in on this computer, so no browser is needed."
+        : "Opens Google's sign-in page in your browser."}</p>`
+      + `<p class="onb-or">or</p>`
+      + `<p class="onb-desc"><strong>Gemini API key${lastUsed("api-key")}</strong> &mdash; get one at `
+      + `<a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a>. `
+      + `It is kept in this app's secure storage on this computer.</p>`
+      + (saved.includes("api-key")
+        ? `<button class="onb-action onb-secondary" type="button" data-act="agySignInSavedKey">Use the saved key</button>`
+          + `<p class="onb-desc">Or replace it:</p>`
+        : "")
+      + `<div class="onb-cmd onb-code-entry">`
+      + `<input class="onb-code-input onb-agy-key" type="password" maxlength="512" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Paste API key" aria-label="Gemini API key">`
+      + `<button class="onb-action" type="button" data-act="agySignInKey">Use key</button></div></div>`;
+  }
+
+  /** A host that did not name Muse or Antigravity gets no card for it. */
+  function onboardingAdvertised(mode, info) {
+    if ((info.provider === "muse" || mode === "muse-login" || mode === "missing-muse") && !museAdvertised) return false;
+    return agyAdvertised || !(info.provider === "agy" || mode === "agy-login" || mode === "missing-agy");
+  }
+
+  /** Antigravity's install and sign-in cards; its live sign-in flow is drawn
+   *  by the shared device-flow panel instead. True when it painted. */
+  function paintAgyCard(mode, info, onb, ver) {
+    if (!(mode === "missing-agy" || mode === "agy-login" && (IS_REMOTE || !info.device))) return false;
+    if (ver) setWelcomeStatus(mode === "missing-agy" ? "Antigravity not installed" : "Connect Antigravity", false);
+    onb.innerHTML = agyOnboardingPanel(mode, info);
+    updateSendButton();
+    return true;
+  }
+
   function showOnboarding(mode, info, beforeRender) {
     info = info || {};
+    if (!onboardingAdvertised(mode, info)) return;
     state.onboardingMode = mode;
     state.onboardingInfo = info;
     if (beforeRender) beforeRender();
@@ -10110,7 +11653,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const onb = $("welcome-onboarding");
     const ver = $("welcome-version");
     if (!onb) return;
-    if (IS_REMOTE && (mode === "connect-agent" || mode === "codex-login" || mode === "claude-login" || mode === "auth-required")) {
+    if (paintAgyCard(mode, info, onb, ver)) return;
+    if ((IS_REMOTE || info.device && (info.provider === "muse" && museAvailable || info.provider === "agy")) && (mode === "connect-agent" || mode === "codex-login" || mode === "claude-login" || mode === "auth-required" || mode === "muse-login" && museAvailable || mode === "agy-login")) {
       // The card is an ENTRY POINT, not a second renderer: a live flow belongs
       // to the wizard, so the card keeps showing the offer underneath it.
       // The card NEVER renders a live flow. Stripping it only while the wizard
@@ -10130,6 +11674,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         ? Object.assign({}, info, { device: undefined })
         : info;
       onb.innerHTML = remoteConnectPanel(mode, forCard, ver);      return;
+    }
+    if ((mode === "muse-login" || mode === "missing-muse") && museAdvertised) {
+      onb.innerHTML = museOnboardingPanel(mode, info);
+      return;
     }
     if (mode === "no-project") {
       // Desktop with nothing open. Names the block and points at the same
@@ -10163,7 +11711,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       const id = info.provider || "grok";
       const done = id === "codex"
         ? "You can start working with OpenAI!"
-        : id === "claude" ? "You can start clauding!" : "You can start grokking!";
+        : id === "claude" ? "You can start clauding!" : id === "muse" ? "Muse Code is connected."
+        : id === "agy" ? "Antigravity is connected." : "You can start grokking!";
       if (ver) setWelcomeStatus("Connected", false);
       onb.innerHTML =
         `<div class="onb onb-connected">` +
@@ -10195,6 +11744,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
             `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="claude">` +
               `<span class="onb-agent-mark">${providerLogoMarkup("claude")}</span><span><strong>Claude Code</strong><small>Claude Code CLI</small></span>` +
             `</button>` +
+            (museAvailable ? `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="muse">` +
+              `<span class="onb-agent-mark">${providerLogoMarkup("muse")}</span><span><strong>Muse Code</strong><small>Meta Muse CLI</small></span>` +
+            `</button>` : "") +
+            (agyAdvertised ? `<button class="onb-agent-tile onb-action" type="button" data-act="connectProvider" data-provider="agy">` +
+              `<span class="onb-agent-mark">${providerLogoMarkup("agy")}</span><span><strong>Antigravity</strong><small>Google Antigravity (experimental)</small></span>` +
+            `</button>` : "") +
           `</div>` +
         `</div>`;
     } else if (mode === "missing-cli") {
@@ -10254,7 +11809,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       onb.innerHTML =
         `<div class="onb">` +
           `<p class="onb-heading">Complete <code>codex login</code></p>` +
-          `<p class="onb-desc">Finish the sign-in flow in the terminal, then continue here.</p>` +
+          `<p class="onb-desc">Open a terminal to sign in with the Codex CLI, then continue here.</p>` +
           `<button class="onb-action onb-secondary" type="button" data-act="connectProvider" data-provider="codex">Open terminal &amp; run <code>codex login</code></button>` +
           `<button class="onb-action" type="button" data-act="recheckProvider" data-provider="codex">Done - connect Codex</button>` +
         `</div>`;
@@ -10378,6 +11933,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const el = document.createElement("div");
     el.className = `msg ${role}`;
     el._copyText = text || "";
+    el._chips = chips || [];
     // A steered (interjected) message rides inside the turn that was already
     // running — it is not its own prompt and has no rewind point, so it must be
     // excluded from the bubble→rewind-point mapping (see refreshUserRewindButtons).
@@ -10411,12 +11967,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     if (role === "user" || role === "agent") {
       const actions = document.createElement("div");
       actions.className = "msg-actions";
-      const copyBtn = document.createElement("button");
-      copyBtn.className = "msg-action-btn msg-copy-btn";
-      copyBtn.type = "button";
-      copyBtn.title = "Copy message";
-      copyBtn.innerHTML = `<span class="msg-action-glyph">${ICON.copy}</span>`;
-      actions.appendChild(copyBtn);
+      actions.appendChild(makeMessageCopyButton());
       // Rewind sits next to Copy on user bubbles only (P2-9). Latest message
       // has nothing after it to discard — hidden via refreshUserRewindButtons.
       //
@@ -10582,7 +12133,104 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // Leave any previous turn's card in the transcript; only drop the live
     // pointer + per-call map so this turn starts empty.
     state.turnEditsByToolCallId.clear();
+    state.turnDiffBaseline = null;
     state.turnDiffSummaryEl = null;
+  }
+
+  const turnFileDiffPending = new Map();
+  let turnFileDiffRequestSeq = 0;
+
+  function showTurnFileDiff(card, row, path, revealId) {
+    const fallback = () => { if (revealId) revealToolDiff(revealId); };
+    const baseline = card._turnDiffBaseline;
+    const parser = window.GrokFilePanel;
+    if (!baseline || !parser || !parser.patchRowsToDiffHunks) { fallback(); return; }
+    if (row._turnDiffRegion) {
+      row._turnDiffRegion.remove();
+      row._turnDiffRegion = null;
+      row.setAttribute("aria-expanded", "false");
+      return;
+    }
+    const region = document.createElement("div");
+    region.className = "turn-file-diff";
+    region.textContent = "Loading diff…";
+    row.after(region);
+    row._turnDiffRegion = region;
+    row.setAttribute("aria-expanded", "true");
+    const requestId = "turn-diff-" + (++turnFileDiffRequestSeq);
+    const request = { type: "turnFileDiff", requestId, turnId: baseline.turnId, cwd: baseline.cwd, path };
+    const finish = (msg) => {
+      clearTimeout(timer);
+      turnFileDiffPending.delete(requestId);
+      // A repaint, collapse or session switch invalidates only this request's DOM.
+      if (!row.isConnected || row._turnDiffRegion !== region || !region.isConnected) return;
+      if (!msg.ok) {
+        // With a tool row to reveal, revealing it IS the answer and the region
+        // gets out of the way. Without one there is nothing to reveal — a
+        // deleted file has no edit call, so `lastCallByPath` never named it —
+        // and removing the region silently would leave a button that does
+        // nothing when pressed. Say why instead; a dead control is the whole
+        // complaint in #160 and it is not worth re-earning here.
+        if (revealId) {
+          region.remove();
+          row._turnDiffRegion = null;
+          row.setAttribute("aria-expanded", "false");
+          fallback();
+          return;
+        }
+        region.textContent = "";
+        const note = document.createElement("div");
+        note.className = "tool-diff-more";
+        note.textContent = msg.reason || "Could not read this file's diff for the turn.";
+        region.appendChild(note);
+        return;
+      }
+      region.textContent = "";
+      const hunks = parser.patchRowsToDiffHunks(parser.parseUnifiedDiff(msg.patch));
+      if (hunks.length) region.appendChild(buildInlineDiffRegion(hunks, { inlineOnly: true }));
+      else {
+        const note = document.createElement("div");
+        note.className = "tool-diff-more";
+        note.textContent = msg.patch ? "No text diff available for this file." : "No changes since this turn started.";
+        region.appendChild(note);
+      }
+      if (msg.truncated) {
+        const note = document.createElement("div");
+        note.className = "tool-diff-more";
+        note.textContent = "Diff truncated — this preview is incomplete.";
+        region.appendChild(note);
+      }
+      // Only where there is a text diff to escape into. "No changes since this
+      // turn started" would open two identical sides, and a patch we could not
+      // parse (a binary file) would open two screens of mojibake — our sides
+      // are grok-diff: text documents, so VS Code's native image diff never
+      // applies. A truncated diff still has hunks, so the case this exists for
+      // keeps its button.
+      if (!IS_REMOTE && hunks.length) {
+        const preview = document.createElement("button");
+        preview.className = "preview-link";
+        preview.textContent = "open diff →";
+        preview.onclick = (e) => {
+          e.stopPropagation();
+          // Only the host has the whole sides. previewInApp's renderer-owned
+          // texts would reconstruct a lie from this capped patch; Electron's
+          // host.openDiff can open the full texts in its native viewer instead.
+          vscode.postMessage({ type: "turnFileOpenDiff", turnId: baseline.turnId, cwd: baseline.cwd, path });
+        };
+        region.appendChild(preview);
+      }
+    };
+    const timer = setTimeout(() => finish({ ok: false }), 60000);
+    turnFileDiffPending.set(requestId, { request, finish });
+    vscode.postMessage(request);
+  }
+
+  function handleTurnFileDiffResult(msg) {
+    const pending = turnFileDiffPending.get(msg.requestId);
+    if (!pending) return;
+    const request = pending.request;
+    if (msg.turnId !== request.turnId || msg.cwd !== request.cwd || msg.path !== request.path) return;
+    pending.finish(msg);
   }
 
   function pinTurnDiffSummary() {
@@ -10591,10 +12239,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   /** Workspace-relative path for the summary list (falls back to the raw path). */
-  function turnEditDisplayPath(p) {
+  function turnEditDisplayPath(p, root) {
     if (!p) return "Unknown file";
     let s = String(p).replace(/\\/g, "/");
-    const cwd = (state.cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
+    const cwd = (root || state.cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
     if (cwd) {
       const sl = s.toLowerCase();
       const cl = cwd.toLowerCase();
@@ -10704,6 +12352,14 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     }
   }
 
+  // Does this host capture per-turn baselines at all? A desk always agrees
+  // with its own renderer; a remote is served the current client against
+  // whatever extension its desk has installed, and every released extension
+  // (the card shipped in v4.4.0, baselines did not) answers no here.
+  function hostKeepsTurnBaselines() {
+    return !!(state.hostCaps && state.hostCaps.turnDiffBaselines);
+  }
+
   function refreshTurnDiffSummaryUi() {
     const agg = aggregateTurnEdits(state.turnEditsByToolCallId.values());
     if (!agg.files.length) {
@@ -10719,6 +12375,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       el.className = "turn-diff-summary" + (state.expandDiffCard ? " expanded" : "");
       el.setAttribute("role", "region");
       el.setAttribute("aria-label", "Files changed this turn");
+      // Past cards remain live: never read the current turn at click time.
+      el._turnDiffBaseline = state.turnDiffBaseline;
       state.turnDiffSummaryEl = el;
     }
     while (el.firstChild) el.removeChild(el.firstChild);
@@ -10756,14 +12414,24 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     list.className = "turn-diff-summary-list";
     for (const f of agg.files) {
       const isDel = f.action === "deleted";
-      // The row opens that file's own tool row, on every surface. There is no
-      // whole-turn diff to open instead: a wire diff carries the REPLACED
-      // REGION, not a snapshot, so a file edited twice has no honest before/
-      // after without host-side baselines — and the tool row it reveals holds
-      // the real diff, with its own "open diff →" to the native editor beside
-      // it. A remote could not have posted openDiff anyway (host-local).
       const revealId = lastCallByPath.get(normalizeTurnEditPathKey(f.path || ""));
-      const clickable = !isDel && !!revealId;
+      // Clickable while this turn's baseline is still on the host — or on a
+      // host too old to have baselines at all.
+      //
+      // With a baseline the row opens the turn's merged diff. Without one it
+      // used to fall back to revealing the LAST tool call that touched the file
+      // — which on a file edited three times in a turn is edit #3 of 3, while
+      // the row's own `+/−` counts describe all three merged. The row and the
+      // thing it opened actively disagreed, and the counts were the honest
+      // half, so on a host that keeps baselines that fallback is gone and the
+      // foot explains the absence.
+      //
+      // On an OLDER host it stays, because there the absence means something
+      // else entirely and the reveal is the only thing the card ever had.
+      // `revealId` is wired below in both cases for a third one: a baseline
+      // exists and the host's git capture failed.
+      const clickable = !!el._turnDiffBaseline || (!hostKeepsTurnBaselines() && !isDel && !!revealId);
+      const diffPath = turnEditDisplayPath(f.path, el._turnDiffBaseline && el._turnDiffBaseline.cwd);
       const row = document.createElement(clickable ? "button" : "div");
       row.className = "turn-diff-file"
         + (clickable ? " has-diff" : "")
@@ -10771,11 +12439,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       if (clickable) {
         row.type = "button";
         row.title = "Show the diff";
+        if (el._turnDiffBaseline) row.setAttribute("aria-expanded", "false");
         row.onclick = (e) => {
           e.stopPropagation();
-          // Expands the row and its group, and scrolls it into view — the same
-          // answer the permission card gives a remote.
-          revealToolDiff(revealId);
+          showTurnFileDiff(el, row, diffPath, revealId);
         };
       }
       // M / A / D in front of the path — git's own letters, the ones the
@@ -10794,17 +12461,41 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     }
     el.appendChild(list);
 
+    // The foot: what the card cannot do, then the way out of it.
+    const foot = document.createElement("div");
+    foot.className = "turn-diff-summary-foot";
+
+    // Why the rows above are not clickable, said out loud.
+    //
+    // `turnDiffBaselines` is a Map on the host, filled at turn START and never
+    // persisted, so reloading the window leaves every turn already in the
+    // transcript without one. Making those rows inert was the fix; making them
+    // inert SILENTLY was not, and the owner said so: "explain not available
+    // after session reload instead of silently disabling. Maybe at the bottom
+    // of the card?" A row that opened a diff yesterday and does nothing today
+    // with nothing said is the #160 complaint over again — the note is what
+    // makes the absence a fact about the session rather than a fault in the
+    // card. The counts stay either way: those come from the tool calls in the
+    // transcript, which history does restore.
+    if (!el._turnDiffBaseline && hostKeepsTurnBaselines() && agg.files.length) {
+      const note = document.createElement("div");
+      note.className = "turn-diff-summary-note";
+      note.textContent =
+        "File diffs aren't available for this turn — they're kept only while the session stays open.";
+      foot.appendChild(note);
+    }
+
     // The way OUT of the card, and into the whole picture.
     //
     // The card answers "what did this turn touch"; the next question is almost
     // always "what is uncommitted now", and until this link the only route was
     // to find the panel and press a glyph. Offered only where the panel exists
     // AND has a repository to talk about — a dead link on a knowledge-work
-    // session would be worse than no link, and both are ordinary states.
+    // session would be worse than no link, and both are ordinary states. It is
+    // also the one thing a reloaded turn can still offer, which is why the note
+    // above sits beside it rather than instead of it.
     const panel = filePanelController();
     if (panel && typeof panel.canShowChanges === "function" && panel.canShowChanges()) {
-      const foot = document.createElement("div");
-      foot.className = "turn-diff-summary-foot";
       const open = document.createElement("button");
       open.type = "button";
       open.className = "turn-diff-open-changes";
@@ -10814,8 +12505,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         panel.showChanges();
       };
       foot.appendChild(open);
-      el.appendChild(foot);
     }
+    if (foot.childElementCount) el.appendChild(foot);
 
     setTurnDiffSummaryExpanded(el, el.classList.contains("expanded"));
     appendTranscriptChild(el); // live: always ride at the end of the turn
@@ -10823,7 +12514,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   function feedbackOffered() {
-    return state.feedbackAvailable === true && state.activeProvider !== "codex" && state.activeProvider !== "claude";
+    return state.feedbackAvailable === true && state.activeProvider === "grok";
   }
 
   function stripTurnThumbs(actions) {
@@ -10915,7 +12606,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   const TOOL_VERB = {
-    read_file: "Read", file_read: "Read",
+    read_file: "Read", file_read: "Read", view_file: "Read", view: "Read",
     write_file: "Write", file_write: "Write", write: "Write",
     bash: "Run", execute: "Run", run_command: "Run", run_terminal_command: "Run",
     shell: "Run", run_bash: "Run",
@@ -10939,9 +12630,11 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   function pathFromToolTitle(call) {
     const title = String(call && call.title || "").trim();
     if (!title) return "";
+    const listed = title.match(/^List files in '(.+)'$/);
+    if (listed) return listed[1];
     const tick = title.match(/`([^`]+)`/);
     if (tick && tick[1]) return tick[1].trim();
-    const stripped = title.replace(/^(edit|write|read|delete|create|update)\s+/i, "").trim();
+    const stripped = title.replace(/^(edit|write|read|view|delete|create|update)\s+/i, "").trim();
     if (stripped && stripped !== title && /[\\/]|\.\w{1,8}$/.test(stripped)) return stripped;
     return "";
   }
@@ -10953,13 +12646,30 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       r.new_path || r.new_file || r.file || r.filename ||
       r.target_directory || r.directory || r.dir ||
       (Array.isArray(r.paths) ? r.paths[0] : "") ||
+      (call.locations && call.locations[0] && call.locations[0].path) ||
       pathFromToolTitle(call);
   }
   function isReadTool(call) {
     if (!call) return false;
     const name = toolName(call);
     const kind = toolKind(call);
-    return name === "read_file" || name === "file_read" || kind === "read";
+    return /^(read_file|file_read|view_file|view)$/.test(name) || kind === "read";
+  }
+  function isDirectoryListTool(call) {
+    const name = toolName(call);
+    return /(?:^|__)(?:list_dir|list_directory|list_files|read_directory|readdir)$/i.test(name)
+      || toolKind(call) === "read" && /^List (?:files|directory)(?:\s|$)/i.test(name);
+  }
+  function isMissingPathRead(call, message) {
+    if (!call || /^(glob|grep|search)/i.test(toolName(call))) return false;
+    if (/^list/i.test(toolName(call)) && !isDirectoryListTool(call)) return false;
+    if (!isReadTool(call) && !isDirectoryListTool(call)) return false;
+    // Match failure text only, never a successful file's contents. Leave mixed
+    // missing/permission/I/O failures red. Provider evidence: research/missing-file-reads.md.
+    return typeof message === "string"
+      && !/permission denied|access (?:is )?denied|operation not permitted|\b(?:EACCES|EPERM|EIO)\b|(?:input\/output|I\/O) error/i.test(message)
+      && (/\bENOENT\b|\bNo such file or directory\b|\bFile does not exist\b/i.test(message)
+        || isDirectoryListTool(call) && /\bdoes not exist\b/i.test(message));
   }
   function asLineNum(v) {
     return typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -11064,7 +12774,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // through to the "command" catch-all.
   function titleKind(call) {
     const t = (call.title || "").trim().toLowerCase();
-    if (/^read\b/.test(t)) return "read";
+    if (/^(read|view)\b/.test(t)) return "read";
     if (/^(grep|glob|search|ripgrep)\b/.test(t)) return "search";
     if (/^(shell|execute|run|bash)\b/.test(t)) return "execute";
     if (/^(write|create)\b/.test(t)) return "write";
@@ -11113,12 +12823,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     }
     n.edit = editFiles.size;
     const parts = [];
-    if (n.explore) parts.push(`explored ${n.explore} item${n.explore === 1 ? "" : "s"}`);
-    if (n.edit) parts.push(`edited ${n.edit} file${n.edit === 1 ? "" : "s"}`);
-    if (n.delete) parts.push(`deleted ${n.delete} file${n.delete === 1 ? "" : "s"}`);
-    if (n.generate) parts.push(`generated ${n.generate} item${n.generate === 1 ? "" : "s"}`);
+    if (n.explore) parts.push(`explored ${formatCount(n.explore)} item${n.explore === 1 ? "" : "s"}`);
+    if (n.edit) parts.push(`edited ${formatCount(n.edit)} file${n.edit === 1 ? "" : "s"}`);
+    if (n.delete) parts.push(`deleted ${formatCount(n.delete)} file${n.delete === 1 ? "" : "s"}`);
+    if (n.generate) parts.push(`generated ${formatCount(n.generate)} item${n.generate === 1 ? "" : "s"}`);
     if (n.web) parts.push("searched web");
-    if (n.command) parts.push(`ran ${n.command} command${n.command === 1 ? "" : "s"}`);
+    if (n.command) parts.push(`ran ${formatCount(n.command)} command${n.command === 1 ? "" : "s"}`);
     return parts.length ? parts.join(", ").replace(/^./, (c) => c.toUpperCase()) : "Tool calls";
   }
 
@@ -11185,6 +12895,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const r = call.rawInput || call.input || {};
     const filePath = toolFilePath(call);
     const command = r.command || r.cmd;
+    const failure = state.toolFailuresById.get(call.toolCallId) || toolFailureText(call);
+    if (isMissingPathRead(call, failure)) return `${filePath ? prettyPath(filePath) : isDirectoryListTool(call) ? "Directory" : "File"} — doesn't exist yet`;
     const pattern = r.glob_pattern || r.pattern || r.query || r.regex || r.search;
     const url = r.url || r.uri;
     // Collapsed rows read as a scannable summary, not a wall of shell — the
@@ -11305,6 +13017,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     search: `<svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v3.5"/><circle cx="16.5" cy="16.5" r="2.5"/><path d="M21 21l-1.6-1.6"/></svg>`,
     pencil: `<svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.17 6.81a1 1 0 0 0-3.98-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="M15 5l4 4"/></svg>`,
     terminal: `<svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/></svg>`,
+    workflow: `<svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>`,
   };
   function toolIconRank(call) {
     const k = toolKind(call);
@@ -11358,6 +13071,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         if (!carrier) wireCommandToggle(flat, detailsEl);
       }
       el.replaceWith(flat);
+      flat._call = calls[0];
+      if (calls[0].toolCallId) state.toolItemsByToolCallId.set(calls[0].toolCallId, flat);
       const fail = calls[0].toolCallId && state.toolFailuresById.get(calls[0].toolCallId);
       if (fail) applyToolFailure(flat, fail); // a single tool that failed carries its error
     } else {
@@ -11380,6 +13095,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     clearWelcome();
     hideGrokking(); // a tool card is the first content of this turn
     hideThinkingIndicator(); // a running tool now conveys the activity
+    if (addWorkflowToolMarker(call)) return;
     // Deletes never carry a type:"diff" block — catch kind:delete + shell
     // Remove-Item/rm here (and on restore's completed tool_call).
     maybeRecordTurnDelete(call);
@@ -11434,7 +13150,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // captured output once the terminal finishes. MCP rows reuse this
     // shell via host-normalized `detailInput` (never an empty pending block).
     const cmd = commandDetailText(call);
-    if (cmd) attachCommandDetails(item, cmd, call.toolCallId);
+    if (cmd) attachCommandDetails(item, cmd, call.toolCallId, hasShellCommand(call));
     else if (isReadTool(call) && !item.querySelector(".cmd-block")) {
       const path = String(toolFilePath(call) || "");
       const ref = readLinkRef(call);
@@ -11588,6 +13304,11 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   const MAX_COMMAND_PREVIEW_LINES = 6;
+  // A command you are asked to approve shows more of itself than one in the
+  // transcript: 4 lines was too few to judge it (#208). Still clipped, never a
+  // nested scroller -- a scroll box inside the chat catches the wheel while you
+  // scroll the conversation, which #71 asked us to remove. View all has the rest.
+  const PERMISSION_COMMAND_PREVIEW_LINES = 10;
 
   function makeInlineExpandToggle(collapsedText, className, onToggle) {
     let currentCollapsedText = collapsedText;
@@ -11610,7 +13331,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     return toggle;
   }
 
-  function appendCommandPreview(container, text, className, language, maxLines = MAX_COMMAND_PREVIEW_LINES, openRef) {
+  function appendCommandPreview(container, text, className, language, maxLines = MAX_COMMAND_PREVIEW_LINES, openRef, isCommand = false) {
     const fullText = text == null ? "" : String(text);
     const logicalPreview = commandTextPreview(fullText, maxLines);
     const pre = document.createElement("pre");
@@ -11626,7 +13347,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     let viewAll = null;
     let expanded = false;
     let previewLabel = logicalPreview.truncated
-      ? `View all (${logicalPreview.lineCount} lines) →`
+      ? `View all (${formatCount(logicalPreview.lineCount)} lines) →`
       : "View all →";
     const ensureViewAll = () => {
       if (viewAll) {
@@ -11668,7 +13389,15 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
             });
             return;
           }
-          const message = { type: "openText", content: fullText };
+          // VS Code names an untitled tab after its first line, which for a
+          // long command is its cut-off start (#175). A comment line on top
+          // names the tab and leaves the command runnable as written. Output
+          // stays untouched so the editor can still detect JSON and the like.
+          const content = isCommand
+            ? `${openLanguage === "bat" ? "REM" : "#"} Command
+${fullText}`
+            : fullText;
+          const message = { type: "openText", content };
           if (openLanguage) message.language = openLanguage;
           vscode.postMessage(message);
         };
@@ -11684,7 +13413,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       if (!expanded) pre.classList.add("command-preview-capped");
       const renderedTruncated = hasLayout && pre.scrollHeight > pre.clientHeight;
       const truncated = logicalTruncated || renderedTruncated;
-      previewLabel = truncated ? `View all (${logicalPreview.lineCount} lines) →` : "View all →";
+      previewLabel = truncated ? `View all (${formatCount(logicalPreview.lineCount)} lines) →` : "View all →";
       if (!expanded) {
         if (hasLayout && !truncated) pre.classList.remove("command-preview-capped");
         pre.classList.remove("command-full");
@@ -11727,7 +13456,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // fills it through the identical path.
     state.pendingCommandDetails.push({ command: path, details, done: false, toolCallId });
   }
-  function attachCommandDetails(item, command, toolCallId) {
+  /** `isShell`: the IN text is the shell command itself, not MCP arguments or a
+   *  file path that reuse this box. Only then does View all add a comment line. */
+  function attachCommandDetails(item, command, toolCallId, isShell = false) {
     // Chevron at the END of the (possibly ellipsized) command line: › when
     // collapsed, rotated to v while expanded.
     const chevron = document.createElement("span");
@@ -11752,7 +13483,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // Command View all uses the host-supplied shell language (click time, from
     // state.commandLanguage). Output below omits language so the untitled
     // editor can detect file-shaped content.
-    appendCommandPreview(body, command, "tool-cmd");
+    appendCommandPreview(body, command, "tool-cmd", undefined, MAX_COMMAND_PREVIEW_LINES, undefined, isShell);
     inRow.appendChild(body);
     block.appendChild(inRow);
     details.appendChild(block);
@@ -11785,6 +13516,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // IN text for the shared command-detail shell. Shell rows use
   // `rawInput.command` / `.cmd`. MCP rows use the host-stamped `detailInput`
   // (`null` / absent = pending or not MCP; `{}` is a no-argument call).
+  function hasShellCommand(call) {
+    const raw = (call && (call.rawInput || call.input)) || {};
+    return (typeof raw.command === "string" && !!raw.command.trim())
+      || (typeof raw.cmd === "string" && !!raw.cmd.trim());
+  }
+
   function commandDetailText(call) {
     const raw = (call && (call.rawInput || call.input)) || {};
     if (typeof raw.command === "string" && raw.command.trim()) return raw.command.trim();
@@ -11814,6 +13551,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       merged.detailInput = update.detailInput;
     }
     item._call = merged;
+    if (item.classList.contains("workflow-tool-marker")) syncWorkflowToolMarkers();
     // Flatten / summarize read `_calls`, not `item._call`. Atlas's first
     // use_tool row is titled "use_tool" until this update; leave the
     // group's copy stale and the flat label stays the wrapper name.
@@ -11822,7 +13560,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       const idx = groupCalls._calls.findIndex((c) => c && c.toolCallId === id);
       if (idx >= 0) groupCalls._calls[idx] = merged;
     }
-    const labelEl = item.querySelector(".tool-item-label");
+    const labelEl = item.querySelector(".tool-item-label, .tool-label");
     if (labelEl) applyToolLabel(labelEl, merged);
     // The running header names the NEWEST call (addToToolGroup), and its
     // argument often arrives on an update rather than the first tool_call —
@@ -11842,7 +13580,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // box; attachCommandDetails is a no-op once the row already has one.
     // MCP args that arrive after a pending row use the same attach.
     const cmd = commandDetailText(merged);
-    if (cmd && !item.querySelector(".cmd-block")) attachCommandDetails(item, cmd, id);
+    if (cmd && !item.querySelector(".cmd-block")) attachCommandDetails(item, cmd, id, hasShellCommand(merged));
     else if (isReadTool(merged) && !item.querySelector(".cmd-block")) {
       const path = String(toolFilePath(merged) || "");
       const ref = readLinkRef(merged);
@@ -12078,7 +13816,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     if (remaining > 0) {
       const more = document.createElement("div");
       more.className = "tool-diff-more";
-      more.textContent = "... " + remaining + " more line(s) - open diff for the full change";
+      more.textContent = "... " + remaining + " more line(s)"
+        + (opts && opts.inlineOnly ? " — preview limit reached" : " - open diff for the full change");
       more.hidden = true;
       previewOverflow.push(more);
       wrap.appendChild(more);
@@ -12199,6 +13938,14 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // reconstruction in the native editor.
     for (const { diff, hunks } of blocks) {
       details.appendChild(buildInlineDiffRegion(hunks));
+      // Desk only, and this was the inconsistency the owner asked about from
+      // the other side: a remote's click posts `openDiff`, which is host-local,
+      // so policy refuses it and NOTHING happens. Unlike the permission card
+      // there is no `revealToolDiff` fallback worth reaching for either — this
+      // button sits INSIDE the inline region it would reveal, so the diff a
+      // phone would "open" is already on screen directly above it. #160 is
+      // exactly this complaint about a control that does nothing.
+      if (IS_REMOTE) continue;
       const preview = document.createElement("button");
       preview.className = "preview-link";
       preview.textContent = "open diff →";
@@ -12222,10 +13969,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     sub.className = "tool-item-subtitle diff-stat";
     const a = document.createElement("span");
     a.className = "diff-stat-add";
-    a.textContent = `+${added}`;
+    a.textContent = `+${formatCount(added)}`;
     const d = document.createElement("span");
     d.className = "diff-stat-del";
-    d.textContent = `−${removed}`;
+    d.textContent = `−${formatCount(removed)}`;
     sub.appendChild(a);
     sub.appendChild(document.createTextNode(" "));
     sub.appendChild(d);
@@ -12406,6 +14153,30 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // (grok's "image reference not readable: …" etc.) shows beneath it. Idempotent.
   function applyToolFailure(rowEl, message) {
     if (!rowEl || rowEl.classList.contains("tool-failed")) return;
+    if (isMissingPathRead(rowEl._call, message)) {
+      applyToolLabel(rowEl.querySelector(".tool-item-label, .tool-label"), rowEl._call);
+      if (rowEl.querySelector(".tool-missing-message")) return;
+      let details = rowEl.querySelector(".tool-item-details");
+      if (!details) {
+        details = document.createElement("div");
+        details.className = "tool-item-details";
+        rowEl.appendChild(details);
+      }
+      details.classList.remove("tool-read-carrier");
+      details.hidden = !detailShouldExpand();
+      const reason = document.createElement("pre");
+      reason.className = "tool-missing-message";
+      reason.textContent = message;
+      details.replaceChildren(reason);
+      if (!rowEl.classList.contains("has-details")) {
+        const chevron = document.createElement("span");
+        chevron.className = "tool-chevron";
+        chevron.textContent = "›";
+        rowEl.insertBefore(chevron, details);
+        wireCommandToggle(rowEl, details, "Show read result");
+      }
+      return;
+    }
     rowEl.classList.add("tool-failed");
     const err = document.createElement("div");
     err.className = "tool-error";
@@ -12420,7 +14191,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     if (item) {
       applyToolFailure(item, message);
       const group = item.closest && item.closest(".tool-group");
-      if (group) group.classList.add("has-error"); // collapsed group still signals the failure
+      if (group && item.classList.contains("tool-failed")) group.classList.add("has-error");
       scrollToBottom();
     }
   }
@@ -12575,7 +14346,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // Capability, never a version check: a host built before remote sign-in
     // drops `runGrokLogin` silently, and a button that does nothing is worse
     // than the honest dead end. Same rule the connect panel already follows.
-    const canSignIn = !IS_REMOTE || !!(state.hostCaps && state.hostCaps.remoteAgentSignIn);
+    // Antigravity signs in only at the desk: Google's page opens there.
+    const canSignIn = !IS_REMOTE || !!(state.hostCaps && state.hostCaps.remoteAgentSignIn) && provider !== "agy";
     // A sign-in already running is not an offer to make one. The code entry
     // closes the moment the code is submitted, but verifying it takes a second
     // or two -- and the card underneath went straight back to "Sign in", which
@@ -12837,90 +14609,166 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const titleEl = el.querySelector(".subagent-title");
     if (!t || /^subagent$/i.test(t)) {
       if (!titleEl.textContent) {
-        el.querySelector(".subagent-sep").hidden = true;
         titleEl.hidden = true;
       }
       return;
     }
-    el.querySelector(".subagent-sep").hidden = false;
     titleEl.hidden = false;
     titleEl.textContent = t;
   }
 
-  // Complete a card: stop the dots, stamp the duration, attach the expandable
-  // result under an "Output of the subagent:" label. Completion can arrive
-  // twice — a completed tool_call_update AND a subagent_finished lifecycle
-  // event (and a re-focus replays both) — so this is idempotent, except that a
-  // late duplicate may still fill in a missing duration (Composer's completed
-  // update carries no duration_ms; its lifecycle event does).
-  function finishSubagentCard(el, info) {
-    const failed = !!info.failed;
-    const cancelled = !!info.cancelled && !failed;
-    const ms = typeof info.durationMs === "number" ? info.durationMs : null;
-    const dur = ms != null ? `· ${Math.max(1, Math.round(ms / 1000))}s` : "";
-    // A failure/cancel is visible on the row itself ("· failed"/"· cancelled",
-    // red via .subagent-failed CSS, muted via .subagent-cancelled) — you
-    // shouldn't have to expand the result to see it went wrong.
-    const statusWord = failed ? "failed" : cancelled ? "cancelled" : "";
-    const timeText = statusWord ? (dur ? `· ${statusWord} ${dur}` : `· ${statusWord}`) : dur;
-    if (el.classList.contains("subagent-done")) {
-      // Already finished (a tool-channel completion routinely races ahead of the
-      // lifecycle finish for the SAME card) — upgrade a missing duration AND a
-      // not-yet-shown failure/cancel marker, the two things a later event adds.
-      if (failed) el.classList.add("subagent-failed");
-      if (cancelled && !el.classList.contains("subagent-failed")) el.classList.add("subagent-cancelled");
-      const timeEl = el.querySelector(".subagent-time");
-      if (timeEl) {
-        if (statusWord) timeEl.textContent = timeText;
-        else if (ms != null && !timeEl.textContent) timeEl.textContent = dur;
-      }
-      return;
+  function makeMessageCopyButton() {
+    const button = document.createElement("button");
+    button.className = "msg-action-btn msg-copy-btn";
+    button.type = "button";
+    button.title = "Copy message";
+    button.setAttribute("aria-label", "Copy message");
+    button.innerHTML = `<span class="msg-action-glyph">${ICON.copy}</span>`;
+    return button;
+  }
+
+  function renderDelegationResult(el, text, bodyClass) {
+    if (el._copyText === text) return;
+    el.classList.add("delegation-result");
+    el._copyText = text;
+    el.replaceChildren();
+    const body = workflowText(el, bodyClass, "");
+    body.innerHTML = renderMarkdown(text);
+    applyAutoDir(body);
+    renderMermaidIn(body);
+    workflowText(el, "msg-actions", "").appendChild(makeMessageCopyButton());
+  }
+
+  // A long run keeps the header short. Past four steps the header shows the
+  // current step with one on each side, and an ellipsis where steps are
+  // hidden; the full list is inside the card. The focus is the current step,
+  // else a failed one, else the first unfinished one, else the last.
+  function windowWorkflowDots(dots) {
+    const items = [...dots.children].filter(d => d.classList.contains("workflow-dot"));
+    if (items.length <= 4) return;
+    const find = (test) => items.findIndex(test);
+    let at = find(d => d.getAttribute("aria-current") === "step" || d.dataset.state === "active");
+    if (at < 0) at = find(d => d.dataset.state === "failed");
+    if (at < 0) at = find(d => !/^(done|complete|completed|failed|cancelled|stopped)$/.test(d.dataset.state || ""));
+    if (at < 0) at = items.length - 1;
+    const start = Math.max(0, Math.min(at - 1, items.length - 3));
+    items.forEach((d, i) => { d.hidden = i < start || i >= start + 3; });
+    const more = () => {
+      const el = document.createElement("span");
+      el.className = "workflow-dots-more";
+      el.textContent = "…";
+      el.setAttribute("aria-hidden", "true");
+      return el;
+    };
+    if (start > 0) dots.insertBefore(more(), items[0]);
+    if (start + 3 < items.length) dots.appendChild(more());
+  }
+
+  // All delegation surfaces use these slots, including terminal reports.
+  function makeDelegationHeader(kind, tag = "button", report = false) {
+    const sub = kind === "Subagent";
+    const header = document.createElement(tag);
+    header.className = `delegation-header ${sub ? "subagent-row" : report ? "workflow-report-toggle" : "workflow-pin-toggle run-progress-row"}`;
+    if (tag === "button") header.type = "button";
+    const slot = (name, alias, text = "") => workflowText(header, `delegation-${name} ${alias}`, text, "span");
+    slot("icon", sub ? "subagent-badge" : "run-progress-badge").innerHTML = sub ? ICON.bot : TOOL_ICON.workflow;
+    slot("kind", sub ? "subagent-label" : "run-progress-kind", kind);
+    slot("name", sub ? "subagent-title" : report ? "workflow-report-name" : "run-progress-title");
+    if (!sub) slot("dots", report ? "workflow-report-dots workflow-dots" : "workflow-dots");
+    slot("status", sub ? "subagent-status" : report ? "workflow-report-state" : "run-progress-phase", "running");
+    slot("time", sub ? "subagent-time" : report ? "workflow-report-elapsed" : "run-progress-elapsed");
+    return header;
+  }
+
+  function setDelegationExpandable(header, expandable, expanded) {
+    header.classList.toggle("expandable", expandable);
+    header.setAttribute("aria-expanded", String(!!expandable && !!expanded));
+    header.setAttribute("aria-disabled", String(!expandable));
+    header.tabIndex = expandable ? 0 : -1;
+    let chevron = header.querySelector(".delegation-chevron");
+    if (!expandable) { if (chevron) chevron.remove(); return; }
+    if (!chevron) {
+      chevron = workflowText(header, "delegation-chevron " + (header.classList.contains("workflow-report-toggle")
+        ? "workflow-report-chevron" : "workflow-chevron"), "", "span");
+      chevron.setAttribute("aria-hidden", "true");
+      chevron.innerHTML = ICON.chevronRight;
     }
-    flushChildStream(el);
-    el.classList.add("subagent-done");
-    if (failed) el.classList.add("subagent-failed");
-    else if (cancelled) el.classList.add("subagent-cancelled");
-    const dots = el.querySelector(".blink-dots");
-    if (dots) dots.remove();
-    const timeEl = el.querySelector(".subagent-time");
-    if (timeEl) timeEl.textContent = timeText;
-    // cleanSubagentOutput strips the CLI envelope (plumbing tags, boilerplate
-    // lead-ins, one wrapping <response> pair, the trailing Agent ID hint) so
-    // only the child's actual words render — as markdown, since subagent
-    // answers routinely carry fences/bold/lists.
-    const liveStatus = el.querySelector(".subagent-status");
-    if (liveStatus) liveStatus.textContent = "";
+    chevron.classList.toggle("is-open", !!expanded);
+  }
+
+  function refreshSubagentCard(el) {
+    const done = el.classList.contains("subagent-done");
+    const background = el.classList.contains("subagent-background");
+    el.querySelector(".subagent-status").textContent = el.classList.contains("subagent-failed") ? "failed"
+      : el.classList.contains("subagent-cancelled") ? "stopped" : done ? "done" : background ? "in background" : "running";
+    const ms = background ? undefined : done ? el._subagentDurationMs : el._liveStartedAt != null ? Date.now() - el._liveStartedAt : el._subagentDurationMs;
+    const time = el.querySelector(".subagent-time");
+    time.hidden = !Number.isFinite(ms);
+    time.textContent = time.hidden ? "" : workflowElapsed(ms);
+    const meta = el.querySelector(".delegation-meta");
+    meta.textContent = Number.isFinite(el._subagentTokens) ? `${compactTokens(el._subagentTokens)} tokens` : "";
+    wireSubagentExpand(el);
+  }
+
+  function observeSubagentLive(el) {
+    if (state.replaying || el.classList.contains("subagent-done") || el.classList.contains("subagent-background") || el._liveStartedAt != null) return;
+    el._liveStartedAt = Date.now();
+    if (!workflowAgeTimer) workflowAgeTimer = setInterval(refreshWorkflowAges, 1000);
+  }
+
+  function finishSubagentCard(el, info) {
+    el.classList.remove("subagent-background");
+    if (!el.classList.contains("subagent-done")) {
+      flushChildStream(el);
+      if (el._liveStartedAt != null) el._subagentDurationMs = Date.now() - el._liveStartedAt;
+      el.classList.add("subagent-done");
+    }
+    if (Number.isFinite(info.durationMs)) el._subagentDurationMs = info.durationMs;
+    if (Number.isFinite(info.tokens)) el._subagentTokens = info.tokens;
+    if (info.failed) el.classList.add("subagent-failed");
+    if (info.cancelled && !el.classList.contains("subagent-failed")) el.classList.add("subagent-cancelled");
     const result = cleanSubagentOutput(info.output || "");
     if (result) {
-      const body = el.querySelector(".subagent-result");
-      body.innerHTML = `<div class="subagent-result-label">Output of the subagent:</div>` + renderMarkdown(result);
-      applyAutoDir(body);
-      wireSubagentExpand(el, "Show the subagent's result");
+      el._explicitSubagentResult = result;
+      renderDelegationResult(el.querySelector(".subagent-result"), result, "subagent-result-body");
     }
+    settleChildResult(el);
+    refreshSubagentCard(el);
+  }
+
+  // Codex ends the child session without repeating its final reply on the tool
+  // update. Its trailing message is already here, including on cold replay.
+  function settleChildResult(el) {
+    if (!el.classList.contains("subagent-done") || !el._childProseEl) return;
+    const text = el._childProse || "";
+    if (!el._explicitSubagentResult && text.trim()
+      && !el.classList.contains("subagent-failed") && !el.classList.contains("subagent-cancelled")) {
+      renderDelegationResult(el.querySelector(".subagent-result"), text, "subagent-result-body");
+    }
+    const result = el.querySelector(".subagent-result")._copyText;
+    el._childProseEl.hidden = !!result && result.trim() === text.trim();
   }
 
   function hasChildStreamContent(el) {
     const stream = el.querySelector(".subagent-stream");
-    return !!(stream && stream.childNodes.length);
+    return !!(stream && [...stream.children].some(child => !child.hidden));
   }
 
-  function toggleSubagentDetails(el) {
+  function wireSubagentExpand(el) {
+    const row = el.querySelector(".subagent-row");
     const stream = el.querySelector(".subagent-stream");
     const result = el.querySelector(".subagent-result");
-    const anyOpen = (stream && !stream.hidden) || (result && !result.hidden);
-    const hide = anyOpen;
-    if (stream && hasChildStreamContent(el)) stream.hidden = hide;
-    if (result && result.innerHTML) result.hidden = hide;
-  }
-
-  function wireSubagentExpand(el, title) {
-    const row = el.querySelector(".subagent-row");
-    if (!row) return;
-    row.classList.add("expandable");
-    if (title) row.title = title;
-    if (row._expandWired) return;
-    row._expandWired = true;
-    row.onclick = () => toggleSubagentDetails(el);
+    const meta = el.querySelector(".delegation-meta");
+    const expandable = hasChildStreamContent(el) || !!result.textContent || !!meta.textContent;
+    setDelegationExpandable(row, expandable, el._expanded);
+    stream.hidden = !el._expanded || !hasChildStreamContent(el);
+    result.hidden = !el._expanded || !result.textContent;
+    meta.hidden = !el._expanded || !meta.textContent;
+    row.onclick = () => {
+      if (!expandable) return;
+      el._expanded = !el._expanded;
+      wireSubagentExpand(el);
+    };
   }
 
   function findSubagentCardByChildSession(id) {
@@ -12938,14 +14786,6 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     }
     const childId = update.child_session_id || update.subagent_id;
     if (childId && !el.dataset.childSessionId) el.dataset.childSessionId = String(childId);
-  }
-
-  function setSubagentLiveStatus(el, text) {
-    if (el.classList.contains("subagent-done")) return;
-    const status = el.querySelector(".subagent-status");
-    if (!status) return;
-    const t = String(text || "").replace(/\s+/g, " ").trim();
-    status.textContent = t.length > 72 ? t.slice(0, 71) + "…" : t;
   }
 
   // Child chunks arrive word-level. Paint once per frame per card — same
@@ -12972,6 +14812,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       applyAutoDir(el._childProseEl);
     }
     if (el._childThoughtEl) el._childThoughtEl.textContent = el._childThought || "";
+    settleChildResult(el);
+    wireSubagentExpand(el);
   }
 
   // A tool row is a hard close, like addToToolGroup nulling activeAgentEl:
@@ -12993,7 +14835,6 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       el._childProse = "";
     }
     el._childProse = (el._childProse || "") + (text || "");
-    setSubagentLiveStatus(el, el._childProse);
     scheduleChildStreamFlush(el);
   }
 
@@ -13029,27 +14870,50 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     row.className = "subagent-tool";
     if (id) row.dataset.toolCallId = id;
     applyToolLabel(row, call);
+    paintChildHook(row, call);
     stream.appendChild(row);
     if (id) el._childTools.set(id, row);
-    setSubagentLiveStatus(el, toolLabel(call));
   }
 
   function updateChildToolRow(el, stream, call) {
     const id = call && call.toolCallId;
     const row = id && el._childTools && el._childTools.get(id);
+    // A subagent's hook that succeeded leaves no line, like the parent's (#215).
+    if (call?._meta?.afkPilotHook && call.status === "completed") {
+      if (row) { row.remove(); el._childTools.delete(id); }
+      return;
+    }
     if (!row) {
       addChildToolRow(el, stream, call);
       return;
     }
     const label = toolLabel(call);
     if (label && label !== "tool") applyToolLabel(row, call);
+    paintChildHook(row, call);
     const status = String(call && call.status || "").toLowerCase();
     if (status === "failed") row.classList.add("subagent-tool-failed");
+  }
+
+  function paintChildHook(row, call) {
+    if (!call?._meta?.afkPilotHook) return;
+    if (call.status === "in_progress") {
+      row.textContent = `Running ${call.tool}`;
+      row.insertAdjacentHTML("beforeend", BLINK_DOTS);
+    }
+    const failure = toolFailureText(call);
+    if (failure) {
+      row.classList.add("subagent-tool-failed");
+      const error = document.createElement("div");
+      error.className = "tool-error";
+      error.textContent = failure;
+      row.appendChild(error);
+    }
   }
 
   function applyChildStream(msg) {
     const el = findSubagentCardByChildSession(msg && msg.childSessionId);
     if (!el) return;
+    observeSubagentLive(el);
     const stream = el.querySelector(".subagent-stream");
     if (!stream) return;
     if (msg.event === "messageChunk") appendChildProse(el, stream, msg.text);
@@ -13060,33 +14924,28 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   function addSubagentCard(call) {
+    if (call?.child_session_id && call.toolCallId && state.subagentCards.has(call.toolCallId)) {
+      applySubagentUpdate(call);
+      return;
+    }
     closeToolGroup();
     clearWelcome();
     hideGrokking();
     const el = document.createElement("div");
     el.className = "subagent-card";
-    el.innerHTML =
-      `<div class="subagent-row">` +
-        `<span class="subagent-badge">${ICON.bot || "🤖"}</span>` +
-        `<span class="subagent-label">Subagent</span>` +
-        `<span class="subagent-sep">·</span>` +
-        `<span class="subagent-title"></span>` +
-        `<span class="subagent-status"></span>` +
-        BLINK_DOTS +
-        `<span class="subagent-time"></span>` +
-      `</div>` +
-      `<div class="subagent-stream" hidden></div>` +
-      `<div class="subagent-result" hidden></div>`;
+    el.appendChild(makeDelegationHeader("Subagent"));
+    workflowText(el, "subagent-stream", "").hidden = true;
+    workflowText(el, "subagent-result", "").hidden = true;
+    workflowText(el, "delegation-meta", "").hidden = true;
     setSubagentTitle(el, call);
-    // Cards rebuilt by a cold restore never receive their own subagent_spawned
-    // (session/load strips the lifecycle rail), so they'd sit permanently
-    // untagged — a magnet for a LATER live spawn's FIFO tag, corrupting the old
-    // card with the new run's duration/output. Mark them so live spawn-tagging
-    // and the no-id finish fallback skip them.
+    // Replay may omit lifecycle IDs. A later live spawn must not claim an
+    // untagged historical card through the Grok FIFO fallback.
     if (state.replaying) el.dataset.subagentReplayed = "1";
     appendTranscriptChild(el);
     if (call && call.toolCallId) state.subagentCards.set(call.toolCallId, el);
+    tagSubagentChildSession(el, call);
     applySubagentUpdate(call, el); // a replayed call may already be completed
+    refreshSubagentCard(el);
     scrollToBottom();
   }
 
@@ -13103,10 +14962,16 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // Task → status "completed" + rawOutput {type:"Text", text} with NO
     // duration (the subagent_finished lifecycle event fills that in).
     const out = call && call.rawOutput;
+    const usage = call?._meta?.subagentUsage;
+    if (typeof usage?.durationMs === "number") el._subagentDurationMs = usage.durationMs;
+    if (typeof usage?.tokens === "number") el._subagentTokens = usage.tokens;
     const status = String(call?.status || "").toLowerCase();
+    el.classList.toggle("subagent-background", status === "background");
+    // A launch receipt says nothing about elapsed work or its eventual outcome.
+    if (status === "background") el._liveStartedAt = null;
     const finished = status === "completed" || status === "failed" || status === "cancelled" ||
       (out && out.type === "SubagentCompleted");
-    if (!finished) return;
+    if (!finished) { observeSubagentLive(el); refreshSubagentCard(el); return; }
     // Output lives in rawOutput.output (SubagentCompleted), rawOutput.text
     // ({type:"Text"} — Composer + background acks), or the content text.
     const output = out && typeof out.output === "string" ? out.output
@@ -13114,18 +14979,24 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       : toolUpdateText(call);
     // A background spawn (rawInput.background: true) "completes" immediately
     // with a started-ack while the child keeps running — that's not the
-    // result. Keep the dots; the real output arrives on the
+    // result. Keep running; the real output arrives on the
     // get_command_or_subagent_output poller's TaskOutput, matched back to this
     // card by the child id parsed here (wire capture: accredia session).
     if (/^subagent started in background\b/i.test(String(output || "").trim())) {
       const ackId = /subagent_id:\s*([0-9a-f-]+)/i.exec(String(output));
       if (ackId && !el.dataset.subagentId) el.dataset.subagentId = ackId[1];
+      observeSubagentLive(el);
       return;
+    }
+    // A provider can correct a provisional stopped edge with its final outcome.
+    if (call?._meta?.subagentStatusAuthoritative === true) {
+      el.classList.toggle("subagent-failed", status === "failed");
+      el.classList.toggle("subagent-cancelled", status === "cancelled");
     }
     // Thread the failure/cancel through the tool-channel path too — not just the
     // lifecycle rail — since the tool-channel completion is the common ordering.
     finishSubagentCard(el, {
-      durationMs: out && typeof out.duration_ms === "number" ? out.duration_ms : null,
+      durationMs: out && typeof out.duration_ms === "number" ? out.duration_ms : el._subagentDurationMs ?? null,
       output,
       failed: status === "failed",
       cancelled: status === "cancelled",
@@ -13193,13 +15064,844 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   // ---------- Workflow / Goal / Deep-research progress cards (P2-10) ----------
-  // Host normalizes `_x.ai/session_notification` workflow_updated / goal_updated
-  // into a stable shape; we upsert one card per id and stop the dots on done.
+  // Host normalizes workflow_updated / goal_updated. Local clocks only start
+  // on live observations; replay never invents a missing duration.
+
+  let workflowPin = null;
+  let workflowAgeTimer = null;
+  let workflowMoveFrame = 0;
+
+  function addWorkflowToolMarker(call) {
+    if (state.activeProvider === "muse" && call?.title === "workflow") return true;
+    if (!/^Workflow: [\w.:-]+$/.test(call?.title || "")) return false;
+    closeToolGroup();
+    flushAgent();
+    state.activeAgentEl = null;
+    state.activeAgentRaw = "";
+    const item = document.createElement("div");
+    item.className = "tool-flat workflow-tool-marker";
+    item.innerHTML = toolIconFor([call]);
+    applyToolLabel(workflowText(item, "tool-item-label", "", "span"), call);
+    item._call = call;
+    if (call.toolCallId) state.toolItemsByToolCallId.set(call.toolCallId, item);
+    appendTranscriptChild(item);
+    syncWorkflowToolMarkers();
+    return true;
+  }
+
+  function syncWorkflowLaunchRows() {
+    for (const item of state.toolItemsByToolCallId.values()) {
+      const result = item._call?.rawOutput;
+      if (result?.type !== "Workflow" || typeof result.run_id !== "string") continue;
+      const card = state.runProgressCards.get(result.run_id);
+      if (!card?.parentNode) continue;
+      const row = item.closest(".tool-group") || item;
+      // Replay can report the run before its launch receipt. The receipt's
+      // run id anchors it exactly; names can be reused by later launches.
+      if (card.parentNode === row.parentNode && (card.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+        row.after(card);
+      }
+    }
+  }
+
+  function syncWorkflowToolMarkers() {
+    const records = [...state.runProgressCards.values()].map((el) => el._workflow).filter(Boolean);
+    for (const item of messagesEl.querySelectorAll(".workflow-tool-marker")) {
+      const call = item._call;
+      const name = /^Workflow: ([\w.:-]+)$/.exec(call.title || "")?.[1];
+      // The tool remains the fallback until a matching named run arrives.
+      item.hidden = !!name && !toolFailureText(call) && records.filter((r) => r.update.displayName === name).length === 1;
+    }
+  }
+
+  function clearWorkflowPin() {
+    if (workflowMoveFrame) cancelAnimationFrame(workflowMoveFrame);
+    workflowMoveFrame = 0;
+    if (workflowPin) workflowPin.remove();
+    workflowPin = null;
+    clearInterval(workflowAgeTimer);
+    workflowAgeTimer = null;
+  }
+
+  function workflowText(parent, className, text, tag = "div") {
+    const el = document.createElement(tag);
+    el.className = className;
+    el.textContent = text;
+    parent.appendChild(el);
+    return el;
+  }
+
+  // The roster printed the label and the phase side by side, and the label
+  // almost always already contained the phase: an agent labelled `pick` in
+  // phase `Pick` read "pick Pick", `read:readme` in `Read` read
+  // "read:readme Read". Compose ONE name -- the phase, then only what the
+  // label actually adds.
+  const AGENT_NAME_SEPARATORS = " :_-/";
+
+  function workflowAgentName(agent) {
+    const phase = String(agent.phase || "").trim();
+    const label = String(agent.label || "").trim();
+    if (!phase || !label) return label || phase;
+    // Compared and stripped with an explicit character list rather than a
+    // regex class: an earlier spelling lost its backslash and silently ate
+    // the letter s, turning `report-synthesizer` into `Report / ynthesizer`.
+    const sep = (c) => AGENT_NAME_SEPARATORS.includes(c);
+    const bare = (s) => s.toLowerCase().split("").filter((c) => !sep(c)).join("");
+    if (bare(label) === bare(phase)) return phase;
+    if (label.toLowerCase().startsWith(phase.toLowerCase())) {
+      const tail = label.slice(phase.length);
+      let i = 0;
+      while (i < tail.length && sep(tail[i])) i++;
+      const rest = tail.slice(i);
+      if (!rest) return phase;
+      // `read:readme` adds "readme" after a separator, so the phase leads and
+      // the label contributes the rest. `researcher-0` has no separator: it
+      // already reads as its own phase and stands alone, because
+      // "Research / researcher-0" is the repetition again.
+      return i > 0 ? `${phase} / ${rest}` : label;
+    }
+    return `${phase} / ${label}`;
+  }
+
+  // Under its step's heading a row says only what its label adds: the step is
+  // already printed above it. A label that IS the step keeps the label.
+  function workflowAgentNameInStep(agent) {
+    const full = workflowAgentName(agent);
+    const phase = String(agent.phase || "").trim();
+    if (phase && full.startsWith(`${phase} / `)) return full.slice(phase.length + 3);
+    return full === phase ? String(agent.label || "").trim() || phase : full;
+  }
+
+  const WORKFLOW_TERMINAL_STEP = /^(done|complete|completed|failed|cancelled|stopped)$/;
+  const WORKFLOW_DONE_STEP = /^(done|complete|completed)$/;
+
+  // Position and state are both reported fields. Never guess completion from
+  // an index, or select an ambiguous name as the current step. The key names
+  // a step across frames: its id, else its title and which repeat of it.
+  function workflowPhaseStates(u) {
+    const phases = u.phases || [];
+    const reference = u.currentPhaseId || u.currentPhase;
+    const ids = reference ? phases.filter((p) => p.id === reference) : [];
+    const matches = u.currentPhaseId || ids.length ? ids : phases.filter((p) => reference && p.title === reference);
+    const repeats = new Map();
+    return phases.map((phase) => {
+      const atPosition = matches.length === 1 ? phase === matches[0] : !reference && phase.state === "active";
+      const reportedTerminal = WORKFLOW_TERMINAL_STEP.test(phase.state || "");
+      const current = !u.done && !reportedTerminal && atPosition;
+      // current_phase survives completion. It locates the final step; it must
+      // not revive it, nor leave an active step in a terminal transcript card.
+      const state = u.done && !reportedTerminal && (atPosition || phase.state === "active" || (!phase.state && !u.failed && !u.cancelled))
+        ? u.failed ? "failed" : u.cancelled ? "cancelled" : "done"
+        : current ? "active" : phase.state || "unknown";
+      const repeat = repeats.get(phase.title) || 0;
+      repeats.set(phase.title, repeat + 1);
+      return { phase, state, current, key: phase.id ? `id:${phase.id}` : `title:${phase.title}#${repeat}` };
+    });
+  }
+
+  // Which declared step an agent ran in, only when its reported phase names
+  // exactly one of them. Anything else goes under "Other", never a guess.
+  function workflowAgentStepIndex(agent, steps) {
+    const ref = String(agent.phase || "").trim();
+    if (!ref) return -1;
+    const byId = steps.filter((s) => s.phase.id && s.phase.id === ref);
+    const hits = byId.length ? byId : steps.filter((s) => String(s.phase.title).trim() === ref);
+    return hits.length === 1 ? steps.indexOf(hits[0]) : -1;
+  }
+
+  // The live lifecycle word, humanized. An empty phase means ordinarily
+  // running: the CLI only fills it once something has happened to the run.
+  function workflowLiveStatus(update) {
+    return /paus/i.test(update.phase || "") ? "paused" : "running";
+  }
+
+  function workflowClock(record) {
+    const u = record.update;
+    if (Number.isFinite(u.elapsedMs)) return u.elapsedMs + (!u.done && record.elapsedAt != null && workflowLiveStatus(u) === "running" ? Date.now() - record.elapsedAt : 0);
+    return record.finishedMs ?? (record.startedAt != null ? Date.now() - record.startedAt : null);
+  }
+
+  function refreshWorkflowHeader(header, record) {
+    if (!header) return;
+    const u = record.update;
+    const status = u.failed ? "failed" : u.cancelled ? "stopped" : u.done ? "done" : workflowLiveStatus(u);
+    header.querySelector(".delegation-status").textContent = status === "running" && record.receivedAt != null && Date.now() - record.receivedAt >= 120000
+      ? "no update for 2 min" : status;
+    const ms = workflowClock(record);
+    const time = header.querySelector(".delegation-time");
+    time.hidden = !Number.isFinite(ms);
+    time.textContent = time.hidden ? "" : workflowElapsed(ms);
+  }
+
+  function workflowElapsed(ms) {
+    const seconds = Math.floor(Math.max(0, ms) / 1000);
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  }
+
+  function workflowAgentKey(agent, agents) {
+    if (agent.id) return agents.filter((a) => a.id === agent.id).length === 1 ? `id:${agent.id}` : null;
+    // A label is usable only when unique. Never carry evidence by array index.
+    return agents.filter((a) => a.label === agent.label).length === 1 ? `label:${agent.label}` : null;
+  }
+
+  function workflowAgentActivity(record, agent) {
+    const key = workflowAgentKey(agent, record.update.agents || []);
+    const event = key && record.activity.get(key);
+    // A snapshot can include a total before this view observes an increase.
+    const noTokens = Number.isFinite(agent.tokensUsed) && agent.tokensUsed > 0 ? "" : "no token activity observed";
+    if (!event) return noTokens;
+    const label = record.update.done ? event.kind : workflowAge(event.at, event.kind,
+      event.kind === "tokens moved" ? "no recent token movement (30s+)" : "no recent state change (30s+)");
+    return `${label}${!event.tokensObserved && noTokens ? ` · ${noTokens}` : ""}`;
+  }
+
+  // Receipt silence is not proof a run stopped. Keep the two clocks distinct,
+  // but replace unbounded seconds with a quiet, stable observation after 30s.
+  function workflowAge(at, label, quiet) {
+    const seconds = Math.max(0, Math.floor((Date.now() - at) / 1000));
+    return seconds >= 30 ? quiet : `${label} ${formatCount(seconds)}s ago`;
+  }
+
+  function workflowBlockages(update) {
+    return (update.agents || []).filter((a) => /fail|error|permission|block|await.*approval|waiting.*approval/i.test(a.state || ""));
+  }
+
+  function refreshWorkflowAges() {
+    for (const el of state.subagentCards.values()) refreshSubagentCard(el);
+    for (const el of state.runProgressCards.values()) {
+      const record = el._workflow;
+      if (!record) continue;
+      for (const surface of [el, record.pin].filter((surface) => surface?.isConnected)) {
+        refreshWorkflowHeader(surface.querySelector(".delegation-header"), record);
+        for (const row of surface.querySelectorAll(".workflow-agent")) {
+          const agent = record.update.agents[Number(row.dataset.agentIndex)];
+          row.querySelector(".workflow-agent-activity").textContent = workflowAgentActivity(record, agent);
+        }
+      }
+    }
+  }
+
+  function workflowOutputText(raw) {
+    if (typeof raw !== "string") return "";
+    const text = raw.trim();
+    // The CLI renders a null completion value as "done".
+    if (!text || text === "done") return "";
+    try {
+      const value = JSON.parse(text);
+      if (typeof value === "string") return workflowOutputText(value);
+      if (value && !Array.isArray(value) && typeof value === "object") {
+        // Known human-facing fields, not arbitrary strings such as status,
+        // paths or ids. Workflow completion values have no universal schema.
+        for (const field of ["report", "summary", "sentence"]) {
+          const content = workflowOutputText(value[field]);
+          if (content) return content;
+        }
+      }
+      // Keep backticks inside JSON strings from closing the Markdown fence.
+      return value == null ? "" : "```json\n" + JSON.stringify(value, null, 2).replace(/`/g, "\\u0060") + "\n```";
+    } catch {
+      // summarize_result caps at 16KiB: a truncated JSON object must not
+      // fall back to a raw blob. Nor should a JSON code fence bypass this.
+      if (/^(?:\{|\[\s*(?:["{[\d-]|true\b|false\b|null\b|\]))/.test(text) || /^```(?:json)?\s*[\r\n]/i.test(text)) return "";
+      return text;
+    }
+  }
+
+  function workflowMarker(parent, state) {
+    const marker = workflowText(parent, "workflow-state-marker", "", "span");
+    marker.dataset.state = state;
+    marker.setAttribute("aria-hidden", "true");
+    return marker;
+  }
+
+  function workflowAgentState(state) {
+    return /^(started|usage|running|active)$/.test(state) ? "active"
+      : /^(complete|completed|done)$/.test(state) ? "done"
+      : /^(failed|error|rejected|timedOut|aborted)$/.test(state) ? "failed" : state || "unknown";
+  }
+
+  // The words the card header already uses, whichever agent reported the row:
+  // Muse says "completed" and "active" where Grok says "done" and "running".
+  // Anything outside that vocabulary (a permission wait) keeps its own words.
+  function workflowAgentStateLabel(state) {
+    const marker = workflowAgentState(state);
+    if (marker === "active") return "running";
+    if (marker === "done" || marker === "failed") return marker;
+    if (/^(cancelled|canceled|stopped)$/.test(state)) return "stopped";
+    if (/^(scheduled|queued|pending)$/.test(state)) return "queued";
+    return state.replace(/[_-]+/g, " ");
+  }
+
+  function applyPinLiveWorkflows(value) {
+    if (state.pinLiveWorkflows === value) return;
+    state.pinLiveWorkflows = value;
+    const cards = [...state.runProgressCards.values()].filter(el => el._workflow && !el._workflow.update.done && !el._workflow.update.launchOnly);
+    if (!cards.length) return;
+    const focused = document.activeElement;
+    const scrollTop = messagesEl.scrollTop;
+    if (workflowMoveFrame) cancelAnimationFrame(workflowMoveFrame);
+    // Composer resizing and transcript mutations both normally follow the
+    // bottom. Hold the reader's position through this move's layout instead.
+    workflowMoveFrame = requestAnimationFrame(() => {
+      messagesEl.scrollTop = scrollTop;
+      workflowMoveFrame = requestAnimationFrame(() => {
+        messagesEl.scrollTop = scrollTop;
+        workflowMoveFrame = 0;
+      });
+    });
+    let focusTarget;
+    for (const el of cards) {
+      const record = el._workflow;
+      const source = value ? el : record.pin;
+      const hadFocus = source?.contains(focused) && focused.classList.contains("workflow-pin-pref");
+      // Move the body too: open agent details and pending interactions belong
+      // to the run, regardless of which surface currently holds it.
+      if (value) {
+        if (!record.pin) {
+          record.pin = document.createElement("article");
+          record.pin.className = "workflow-pin-run run-progress-card";
+          record.pin.dataset.runId = record.update.id;
+        }
+        record.pin.replaceChildren(...el.childNodes);
+      } else {
+        el.replaceChildren(...record.pin.childNodes);
+      }
+      renderWorkflowTranscript(el, record);
+      if (hadFocus) focusTarget = value ? record.pin : el;
+    }
+    syncWorkflowPin();
+    focusTarget?.querySelector(".workflow-pin-pref")?.focus({ preventScroll: true });
+    messagesEl.scrollTop = scrollTop;
+  }
+
+  // The open card draws the run as rings on a track. A long run keeps the
+  // header's rule -- the step in progress with one on each side -- and folds
+  // the steps outside that window into a "+N done" ring before it and a "+N"
+  // ring after it, so five slots at most ever share a phone's width.
+  const WORKFLOW_STEPPER_SLOTS = 5;
+
+  function windowWorkflowSteps(strip, steps, record) {
+    const items = [...strip.children];
+    let start = 0;
+    let end = items.length;
+    if (items.length > WORKFLOW_STEPPER_SLOTS) {
+      const find = (test) => steps.findIndex(test);
+      let at = find((s) => s.current || s.state === "active");
+      if (at < 0) at = find((s) => s.state === "failed");
+      if (at < 0) at = find((s) => !WORKFLOW_TERMINAL_STEP.test(s.state));
+      if (at < 0) at = steps.length - 1;
+      start = Math.max(0, Math.min(at - 1, steps.length - 3));
+      end = start + 3;
+      items.forEach((item, i) => { item.hidden = i < start || i >= end; });
+    }
+    const fold = (from, to) => {
+      const folded = steps.slice(from, to);
+      const done = folded.every((s) => WORKFLOW_DONE_STEP.test(s.state));
+      const state = done ? "done" : folded.some((s) => s.state === "failed") ? "failed" : "pending";
+      const item = document.createElement("li");
+      item.className = "workflow-step-more";
+      item.dataset.state = state;
+      const target = folded.find((step) => step.hasGroup);
+      const button = workflowText(item, "workflow-step", "", target ? "button" : "span");
+      if (target) button.type = "button";
+      button.title = `${folded.length} more ${folded.length === 1 ? "step" : "steps"}: ${folded.map((s) => s.phase.title).join(", ")}`;
+      button.setAttribute("aria-label", button.title);
+      workflowMarker(button, state).classList.add("workflow-step-ring");
+      workflowText(button, "workflow-phase-label", `+${folded.length}${done ? " done" : ""}`, "span");
+      if (target) button.onclick = () => openWorkflowStep(button, record, target.key);
+      return item;
+    };
+    if (start > 0) strip.insertBefore(fold(0, start), items[0]);
+    if (end < items.length) strip.appendChild(fold(end, items.length));
+    // The track fills green into a slot once the slot before it is done.
+    let previous = null;
+    for (const slot of strip.children) {
+      if (slot.hidden) continue;
+      slot.dataset.track = !previous ? "none" : WORKFLOW_DONE_STEP.test(previous.dataset.state || "") ? "done" : "todo";
+      previous = slot;
+    }
+  }
+
+  // A ring opens its step's group below and brings it into view. The group is
+  // found in whichever surface holds the run now: pinning moves the body.
+  function openWorkflowStep(button, record, key) {
+    const body = button.closest(".workflow-expanded");
+    const group = body && [...body.querySelectorAll(".workflow-group")].find((g) => g._groupKey === key);
+    if (!group) return;
+    if (group._hasRows) {
+      record.groupOpen.set(key, true);
+      applyWorkflowGroupOpen(group, record);
+    }
+    if (typeof group.scrollIntoView === "function") group.scrollIntoView({ block: "nearest" });
+  }
+
+  // Finished steps fold to their heading; the step in progress stays open. A
+  // choice made by hand holds for the run, whichever surface shows it.
+  function applyWorkflowGroupOpen(item, record) {
+    const chosen = record.groupOpen.get(item._groupKey);
+    const open = item._hasRows && (chosen === undefined ? item._defaultOpen : chosen);
+    item._open = open;
+    item.classList.toggle("is-open", open);
+    const head = item.querySelector(".workflow-group-head");
+    head.disabled = !item._hasRows;
+    if (item._hasRows) head.setAttribute("aria-expanded", String(open));
+    else head.removeAttribute("aria-expanded");
+    const chevron = head.querySelector(".workflow-group-chevron");
+    chevron.hidden = !item._hasRows;
+    chevron.classList.toggle("is-open", open);
+    item.querySelector(".workflow-group-rows").hidden = !open;
+  }
+
+  function workflowGroupMeta(record, group) {
+    const count = group.rows.length;
+    const terminal = WORKFLOW_TERMINAL_STEP.test(group.state);
+    if (!count) {
+      return terminal ? workflowAgentStateLabel(group.state) : group.state === "active" ? "running"
+        : /^(pending|queued|scheduled)$/.test(group.state) ? "not started" : "";
+    }
+    const parts = [`${formatCount(count)} ${count === 1 ? "agent" : "agents"}`];
+    if (terminal) {
+      parts.push(workflowAgentStateLabel(group.state));
+      const span = record.stepSpans.get(group.key);
+      if (span && span.start != null && span.end != null) parts.push(workflowElapsed(span.end - span.start));
+      const tokens = group.agents.filter((a) => Number.isFinite(a.tokensUsed));
+      if (tokens.length === group.agents.length && tokens.some((a) => a.tokensUsed > 0)) {
+        parts.push(`${compactTokens(tokens.reduce((sum, a) => sum + a.tokensUsed, 0))} tokens`);
+      }
+    }
+    return parts.join(" · ");
+  }
+
+  // Agents under the step they ran in. A row whose phase names no single
+  // declared step goes into a last "Other" group.
+  function renderWorkflowGroups(roster, record, steps, rows, stepOf) {
+    const agents = record.update.agents || [];
+    const groups = steps.map((step) => ({ key: step.key, title: step.phase.title, state: step.state, rows: [], agents: [] }));
+    const other = { key: "other", title: "Other", state: "unknown", rows: [], agents: [] };
+    rows.forEach((row, i) => {
+      const group = stepOf[i] >= 0 ? groups[stepOf[i]] : other;
+      group.rows.push(row);
+      group.agents.push(agents[i]);
+    });
+    if (other.rows.length) {
+      const states = other.agents.map((a) => workflowAgentState(a.state || ""));
+      other.state = states.includes("failed") ? "failed" : states.includes("active") ? "active"
+        : states.every((s) => s === "done") ? "done" : "unknown";
+      groups.push(other);
+    }
+    const existing = new Map([...roster.children].filter((g) => g._groupKey).map((g) => [g._groupKey, g]));
+    // Unstarted steps without agents appear only in the stepper.
+    const waiting = (group) => !group.rows.length && /^(pending|queued|scheduled)$/.test(group.state);
+    const items = groups.filter((group) => !waiting(group)).map((group) => {
+      let item = existing.get(group.key);
+      if (!item) {
+        item = document.createElement("li");
+        item.className = "workflow-group";
+        item._groupKey = group.key;
+        const head = workflowText(item, "workflow-group-head", "", "button");
+        head.type = "button";
+        workflowMarker(head, "unknown");
+        workflowText(head, "workflow-group-title", "", "span");
+        workflowText(head, "workflow-group-meta", "", "span");
+        const chevron = workflowText(head, "workflow-group-chevron", "", "span");
+        chevron.setAttribute("aria-hidden", "true");
+        chevron.innerHTML = ICON.chevronRight;
+        workflowText(item, "workflow-group-rows", "", "ul");
+        const target = item;
+        head.onclick = () => {
+          if (!target._hasRows) return;
+          record.groupOpen.set(target._groupKey, !target._open);
+          applyWorkflowGroupOpen(target, record);
+        };
+      }
+      item.dataset.state = group.state;
+      if (group.rows.length) delete item.dataset.empty;
+      else item.dataset.empty = "true";
+      const head = item.querySelector(".workflow-group-head");
+      head.querySelector(".workflow-state-marker").dataset.state = group.state;
+      head.querySelector(".workflow-group-title").textContent = group.title;
+      head.querySelector(".workflow-group-meta").textContent = workflowGroupMeta(record, group);
+      const list = item.querySelector(".workflow-group-rows");
+      for (const child of [...list.children]) if (!group.rows.includes(child)) child.remove();
+      group.rows.forEach((row, i) => { if (list.children[i] !== row) list.insertBefore(row, list.children[i] || null); });
+      item._hasRows = group.rows.length > 0;
+      item._defaultOpen = item._hasRows && !WORKFLOW_DONE_STEP.test(group.state);
+      applyWorkflowGroupOpen(item, record);
+      return item;
+    });
+    return items;
+  }
+
+  function renderWorkflowSurface(el, record, reportHeader) {
+    const u = record.update;
+    if (!el.firstChild) {
+      if (!reportHeader) workflowText(el, "workflow-heading", "").appendChild(makeDelegationHeader("Workflow"));
+      const body = workflowText(el, "workflow-expanded", "");
+      body.innerHTML = `<section class="workflow-steps"><ol class="workflow-phases"></ol></section>` +
+        `<section class="workflow-agents"><ul class="workflow-roster"></ul></section>` +
+        `<div class="run-progress-detail" hidden></div><div class="workflow-spend delegation-meta" hidden></div><div class="run-progress-actions"></div>`;
+    }
+    const toggle = reportHeader || el.querySelector(".delegation-header");
+    const body = el.querySelector(".workflow-expanded");
+    const expanded = !!reportHeader || !!el._expanded;
+    body.hidden = !expanded;
+    el.classList.toggle("is-expanded", expanded);
+    el.classList.toggle("run-progress-failed", !!u.failed);
+    const title = toggle.querySelector(".delegation-name");
+    title.textContent = u.title && u.title !== u.id ? u.title : u.displayName || "";
+    title.title = title.textContent;
+    refreshWorkflowHeader(toggle, record);
+    const strip = el.querySelector(".workflow-phases");
+    const dots = toggle.querySelector(".workflow-dots");
+    dots.replaceChildren();
+    const hasPhases = Array.isArray(u.phases) && u.phases.length;
+    strip.hidden = !hasPhases;
+    el.querySelector(".workflow-steps").hidden = !hasPhases;
+    dots.hidden = !hasPhases;
+    strip.setAttribute("aria-label", "Reported workflow phases");
+    dots.setAttribute("aria-label", "Reported workflow steps");
+    const steps = workflowPhaseStates(u);
+    const stepOf = (u.agents || []).map((agent) => hasPhases ? workflowAgentStepIndex(agent, steps) : -1);
+    steps.forEach((step, i) => { step.hasGroup = stepOf.includes(i) || !/^(pending|queued|scheduled)$/.test(step.state); });
+    const describe = (step) => `${step.phase.title}: ${step.current ? "current" : step.state === "unknown" ? "state unavailable" : step.state}`;
+    for (const step of steps) {
+      const dot = workflowText(dots, "workflow-dot workflow-state-marker", "", "span");
+      dot.dataset.state = step.state;
+      if (step.phase.id) dot.dataset.phaseId = step.phase.id;
+      dot.title = describe(step);
+      dot.setAttribute("aria-label", dot.title);
+      if (step.current) dot.setAttribute("aria-current", "step");
+    }
+    // Rebuilt only when what it draws changed, so a focused ring survives the
+    // frames a live run sends every few seconds.
+    const stripKey = JSON.stringify(steps.map((s) => [s.key, s.phase.title, s.state, s.current, s.hasGroup]));
+    if (strip.dataset.stepsKey !== stripKey) {
+      strip.dataset.stepsKey = stripKey;
+      strip.replaceChildren();
+      for (const step of steps) {
+        const item = workflowText(strip, "workflow-phase", "", "li");
+        item.dataset.state = step.state;
+        if (step.phase.id) item.dataset.phaseId = step.phase.id;
+        if (step.current) item.setAttribute("aria-current", "step");
+        const button = workflowText(item, "workflow-step", "", step.hasGroup ? "button" : "span");
+        if (step.hasGroup) button.type = "button";
+        button.title = describe(step);
+        button.setAttribute("aria-label", button.title);
+        workflowMarker(button, step.state).classList.add("workflow-step-ring");
+        workflowText(button, "workflow-phase-label", step.phase.title, "span");
+        if (step.hasGroup) button.onclick = () => openWorkflowStep(button, record, step.key);
+      }
+      windowWorkflowSteps(strip, steps, record);
+    }
+    if (!hasPhases && u.agentProgressDots && Array.isArray(u.agents)) {
+      dots.hidden = !u.agents.length;
+      for (const agent of u.agents) {
+        const dot = workflowText(dots, "workflow-dot workflow-agent-dot workflow-state-marker", "", "span");
+        const state = agent.state || "unknown";
+        dot.dataset.state = workflowAgentState(state);
+        dot.title = `${workflowAgentName(agent)}: ${state}`;
+        dot.setAttribute("aria-label", dot.title);
+      }
+    }
+    windowWorkflowDots(dots);
+    // Legacy detail mixes results, pause reasons and arbitrary CLI events.
+    // Its provenance cannot be recovered by splitting on a separator. Only
+    // source-preserving hosts can provide output; do not guess on old hosts.
+    const detail = el.querySelector(".run-progress-detail");
+    const detailText = u.workflowContent?.pauseMessage;
+    detail.hidden = !detailText;
+    detail.innerHTML = renderMarkdown(detailText || "");
+    applyAutoDir(detail);
+    renderMermaidIn(detail);
+    const spend = el.querySelector(".workflow-spend");
+    const tokens = (u.agents || []).filter(a => Number.isFinite(a.tokensUsed));
+    const completeTokenTotal = tokens.length && tokens.length === u.agents.length
+      && (!Number.isFinite(u.agentsUsed) || u.agentsUsed === tokens.length);
+    const totals = [Number.isFinite(u.agentsUsed) ? `${formatCount(u.agentsUsed)} ${u.agentsUsed === 1 ? "agent" : "agents"}` : "",
+      // A zero total is a run that has not spent yet, not information.
+      completeTokenTotal && tokens.some(a => a.tokensUsed > 0) ? `${compactTokens(tokens.reduce((sum, a) => sum + a.tokensUsed, 0))} tokens` : ""].filter(Boolean);
+    spend.textContent = totals.join(" \u00b7 ");
+    spend.hidden = !totals.length;
+    const outputText = workflowOutputText(u.workflowContent?.resultSummary);
+    let output = el.querySelector(".workflow-output");
+    if (!outputText) {
+      if (output) output.remove();
+    } else {
+      if (!output) {
+        output = document.createElement("section");
+        output.className = "workflow-output";
+        body.insertBefore(output, spend);
+      }
+      renderDelegationResult(output, outputText, "workflow-output-body");
+    }
+    const roster = el.querySelector(".workflow-roster");
+    // Pausing a Grok run cancels its in-flight agent while the run itself stays
+    // paused and resumable, so that agent is paused, not stopped.
+    const runPaused = !u.done && /paus/i.test(u.phase || "");
+    const shownState = (agent) => runPaused && /^(cancelled|canceled)$/.test(agent.state || "") ? "paused" : agent.state;
+    const existing = new Map([...roster.querySelectorAll(".workflow-agent")].filter((row) => row._agentKey).map((row) => [row._agentKey, row]));
+    const rows = (u.agents || []).map((agent, i, agents) => {
+      const key = workflowAgentKey(agent, agents);
+      const row = existing.get(key) || document.createElement("li");
+      row.className = "workflow-agent";
+      row._agentKey = key;
+      row.dataset.agentIndex = String(i);
+      row.dataset.state = shownState(agent) || "unknown";
+      const activity = workflowAgentActivity(record, agent);
+      // A finished run has nothing behind the row worth opening -- the detail
+      // is the live activity line, which reads "tokens moved" and no more.
+      // It also only EXISTS when this view watched the run finish: activity is
+      // recorded off the live rail only, so the same report drew chevrons or
+      // not depending on whether you happened to be looking. Now neither does.
+      const hasDetails = !!activity && !record.update.done;
+      if (row._hasDetails !== hasDetails) row.replaceChildren();
+      row._hasDetails = hasDetails;
+      if (!row.firstChild) {
+        const button = workflowText(row, "workflow-agent-toggle", "", hasDetails ? "button" : "div");
+        if (hasDetails) {
+          button.type = "button";
+          button.setAttribute("aria-expanded", "false");
+        }
+        workflowMarker(button, "unknown");
+        workflowText(button, "workflow-agent-name", "", "span");
+        workflowText(button, "workflow-agent-state", "", "span");
+        const chevron = hasDetails ? workflowText(button, "workflow-agent-chevron", "", "span") : null;
+        if (chevron) {
+          chevron.setAttribute("aria-hidden", "true");
+          chevron.innerHTML = ICON.chevronRight;
+        }
+        const detail = workflowText(row, "workflow-agent-detail", "");
+        detail.hidden = true;
+        workflowText(detail, "workflow-agent-activity", "");
+        if (hasDetails) button.onclick = () => {
+          detail.hidden = !detail.hidden;
+          button.setAttribute("aria-expanded", String(!detail.hidden));
+          chevron.innerHTML = detail.hidden ? ICON.chevronRight : ICON.chevronDown;
+        };
+      }
+      row.querySelector(".workflow-state-marker").dataset.state = workflowAgentState(shownState(agent));
+      row.querySelector(".workflow-agent-name").textContent = stepOf[i] >= 0 ? workflowAgentNameInStep(agent) : workflowAgentName(agent);
+      row.querySelector(".workflow-agent-state").textContent = [agent.state ? workflowAgentStateLabel(shownState(agent)) : "",
+        agent.tokensUsed > 0 ? `${compactTokens(agent.tokensUsed)} tokens` : ""].filter(Boolean).join(" · ");
+      row.querySelector(".workflow-agent-activity").textContent = activity;
+      return row;
+    });
+    // A run that declares no steps (Muse) keeps the flat list of agents.
+    const listed = hasPhases ? renderWorkflowGroups(roster, record, steps, rows, stepOf) : rows;
+    roster.hidden = !listed.length;
+    el.querySelector(".workflow-agents").hidden = roster.hidden;
+    for (const child of [...roster.children]) if (!listed.includes(child)) child.remove();
+    listed.forEach((item, i) => { if (roster.children[i] !== item) roster.insertBefore(item, roster.children[i] || null); });
+
+    const actions = el.querySelector(".run-progress-actions");
+    const paused = /paus/i.test(u.phase || "");
+    const live = !u.done && !u.launchOnly;
+    const controlsAvailable = live && u.controlsAvailable !== false && /^[\w.:-]+$/.test(u.displayName || "");
+    // Deliberately NOT gated on `receivedAt`. The handle is what a control
+    // needs, and the host owns the run either way -- a Stop for a run that has
+    // since ended is ignored there, while greying the controls out on a live
+    // run a phone joined is the out-of-reach complaint this card was built for.
+    // Preserve focused controls and pending pointer clicks across rollup frames.
+    const controlsKey = JSON.stringify([u.done, u.launchOnly, paused, u.displayName, u.controlsAvailable, state.pinLiveWorkflows]);
+    if (actions.dataset.controlsKey !== controlsKey) {
+      actions.dataset.controlsKey = controlsKey;
+      actions.replaceChildren();
+      actions.hidden = !live;
+      if (controlsAvailable) {
+        for (const action of [paused ? "resume" : "pause", "stop"]) {
+          const button = workflowText(actions, "run-progress-btn", action[0].toUpperCase() + action.slice(1), "button");
+          button.type = "button";
+          button.title = `${button.textContent} ${u.displayName}`;
+          button.onclick = () => {
+            if (!button.disabled) vscode.postMessage({ type: "workflowControl", action, displayName: u.displayName });
+          };
+        }
+      }
+      if (live) {
+        const button = workflowText(actions, "workflow-pin-pref msg-action-btn", "", "button");
+        button.type = "button";
+        button.innerHTML = ICON.pin;
+        button.setAttribute("aria-pressed", String(state.pinLiveWorkflows));
+        button.title = state.pinLiveWorkflows ? "Unpin: show it where it started" : "Pin above the message box";
+        button.setAttribute("aria-label", button.title);
+        button.onclick = () => {
+          applyPinLiveWorkflows(!state.pinLiveWorkflows);
+          if (IS_REMOTE) storeRemotePref(PIN_LIVE_WORKFLOWS_KEY, state.pinLiveWorkflows);
+          else vscode.postMessage({ type: "setPinLiveWorkflows", value: state.pinLiveWorkflows });
+        };
+      }
+    }
+    const expandable = !!(hasPhases || u.agents?.length || !actions.hidden || detailText || outputText || totals.length);
+    setDelegationExpandable(toggle, expandable, reportHeader ? toggle.parentElement.open : expanded);
+    if (!reportHeader) toggle.onclick = () => {
+      if (!expandable) return;
+      el._expanded = !el._expanded;
+      record.expanded = el._expanded;
+      renderWorkflowSurface(el, record);
+      if (workflowPin) workflowPin.classList.toggle("is-expanded", !!record.expanded);
+    };
+  }
+
+  function renderWorkflowTranscript(el, record) {
+    const u = record.update;
+    el.classList.toggle("run-progress-failed", !!u.failed);
+    el.classList.toggle("run-progress-cancelled", !!u.cancelled && !u.failed);
+    el.classList.toggle("run-progress-done", !!u.done);
+    const trace = !u.done && !u.launchOnly && state.pinLiveWorkflows;
+    el.classList.toggle("workflow-trace", trace);
+    if (trace) {
+      el.replaceChildren();
+      workflowText(el, "run-progress-badge", "", "span").innerHTML = TOOL_ICON.workflow;
+      workflowText(el, "workflow-trace-label", `Workflow ${u.title && u.title !== u.id ? u.title : u.displayName || ""} started \u00b7 live below`, "span");
+      return;
+    }
+    if (!u.done) {
+      el._expanded = record.expanded;
+      renderWorkflowSurface(el, record);
+      return;
+    }
+    let report = el.querySelector(".workflow-report");
+    if (!report) {
+      el.replaceChildren();
+      report = workflowText(el, "workflow-report", "", "details");
+      report.appendChild(makeDelegationHeader("Workflow", "summary", true));
+      workflowText(report, "workflow-report-body", "");
+    }
+    const header = report.querySelector(".delegation-header");
+    renderWorkflowSurface(report.querySelector(".workflow-report-body"), record, header);
+    report.ontoggle = () => setDelegationExpandable(header, header.classList.contains("expandable"), report.open);
+    header.onclick = (event) => { if (!header.classList.contains("expandable")) event.preventDefault(); };
+  }
+
+  function syncWorkflowPin() {
+    // Every live run, including one this view only learned about from a replay.
+    // A phone joining a conversation replays the transcript, so `receivedAt` is
+    // null until the NEXT frame lands -- and a deep-research run emits about a
+    // dozen frames across its whole length. Gating the pin on freshness meant
+    // the owner watched "deep-research - running" sit in the transcript with
+    // nothing above the composer, which is the complaint the pin exists to fix.
+    // Receipt silence is shown in the header without withholding the pin.
+    const records = [...state.runProgressCards.values()].map((el) => el._workflow)
+      .filter((r) => r && state.pinLiveWorkflows && !r.update.done && !r.update.launchOnly)
+      .sort((a, b) => Number(workflowBlockages(b.update).length > 0) - Number(workflowBlockages(a.update).length > 0));
+    if (!records.length) {
+      if (workflowPin) workflowPin.remove();
+      workflowPin = null;
+      return;
+    }
+    if (!workflowPin) {
+      workflowPin = document.createElement("section");
+      workflowPin.className = "workflow-pin";
+      workflowPin.setAttribute("aria-label", "Live workflows");
+      workflowText(workflowPin, "workflow-pin-runs", "");
+      // INSIDE the composer, not between it and the transcript. The
+      // scroll-to-bottom pill and the previous-prompt circle are absolutely
+      // positioned against the composer's padding box, so a pin that is a
+      // SIBLING lands underneath both: the pill sat across the receipt line and
+      // the circle on top of Stop. As a child it lifts them by its own height,
+      // whatever that height is, collapsed or expanded, on every surface.
+      const composer = document.querySelector(".composer");
+      if (composer) composer.insertBefore(workflowPin, composer.firstChild);
+      else messagesEl.parentNode.insertBefore(workflowPin, messagesEl.nextSibling);
+    }
+    workflowPin.classList.toggle("is-expanded", records.some((r) => r.expanded));
+    const stack = workflowPin.querySelector(".workflow-pin-runs");
+    for (const child of [...stack.children]) {
+      if (!records.some((r) => r.pin === child)) child.remove();
+    }
+    const focused = document.activeElement;
+    for (const [index, record] of records.entries()) {
+      if (!record.pin) {
+        record.pin = document.createElement("article");
+        record.pin.className = "workflow-pin-run run-progress-card";
+        record.pin.dataset.runId = record.update.id;
+      }
+      if (stack.children[index] !== record.pin) stack.insertBefore(record.pin, stack.children[index] || null);
+      record.pin._expanded = record.expanded;
+      renderWorkflowSurface(record.pin, record);
+    }
+    if (focused && focused.isConnected && stack.contains(focused) && document.activeElement !== focused) focused.focus({ preventScroll: true });
+    refreshWorkflowAges();
+  }
+
+  function applyWorkflowProgress(update) {
+    // Older hosts recognized the lifecycle word but sent done:false for
+    // `complete`. Repair only explicit terminal evidence, never quiet receipts
+    // or a roster whose agents could be between workflow stages.
+    const terminal = /^(complete|completed|failed|cancelled|cleared|stopped|budget_exceeded|error|success)$/.test(update.phase || "");
+    if (terminal && !update.done) update = { ...update, done: true,
+      failed: update.failed || /^(failed|budget_exceeded|error)$/.test(update.phase),
+      cancelled: update.cancelled || /^(cancelled|cleared|stopped)$/.test(update.phase) };
+    const id = String(update.id);
+    let el = state.runProgressCards.get(id);
+    // Loading older transcript pages must not rewind a live run or its pin.
+    if (state.historyHydrating && el) return;
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "run-progress-card workflow-card";
+      el.dataset.runId = id;
+      state.runProgressCards.set(id, el);
+      appendTranscriptChild(el);
+    }
+    let record = el._workflow;
+    if (!record) record = el._workflow = { update, activity: new Map(), receivedAt: null, pin: null, expanded: false, stepSpans: new Map(), groupOpen: new Map() };
+    const historical = state.replaying;
+    const stale = Number.isFinite(update.revision) && Number.isFinite(record.update.revision) && update.revision < record.update.revision;
+    if (!stale) {
+      if (!historical) {
+        record.receivedAt = Date.now();
+        // Repeated snapshots refresh the receipt, but must not rewind a clock.
+        if (record.elapsedAt == null || update.elapsedMs !== record.update.elapsedMs || update.phase !== record.update.phase) record.elapsedAt = Date.now();
+        if (!update.done && record.startedAt == null) record.startedAt = Date.now();
+        if (update.done && record.startedAt != null && record.finishedMs == null) record.finishedMs = Date.now() - record.startedAt;
+      }
+      const before = record.update.agents || [];
+      const agents = update.agents || [];
+      const nextActivity = new Map();
+      for (const agent of agents) {
+        const key = workflowAgentKey(agent, agents);
+        if (!key) continue;
+        const previous = before.find((a) => workflowAgentKey(a, before) === key);
+        let event = record.activity.get(key);
+        if (!historical && previous) {
+          if (Number.isFinite(previous.tokensUsed) && Number.isFinite(agent.tokensUsed) && agent.tokensUsed > previous.tokensUsed) {
+            event = { kind: "tokens moved", at: Date.now(), tokensObserved: true };
+          } else if (previous.state && agent.state && previous.state !== agent.state) {
+            event = { kind: "state changed", at: Date.now(), tokensObserved: !!event?.tokensObserved };
+          }
+        }
+        if (event && !historical) nextActivity.set(key, event);
+      }
+      record.activity = nextActivity;
+      record.update = update;
+      // How long a step took, from the frames that saw it start and finish on
+      // the run's own clock. Nothing is shown for a step not seen doing both.
+      const clock = Number.isFinite(update.elapsedMs) ? update.elapsedMs
+        : !historical && record.startedAt != null ? Date.now() - record.startedAt : null;
+      if (clock != null) for (const step of workflowPhaseStates(update)) {
+        const span = record.stepSpans.get(step.key) || {};
+        if (step.state === "active" && span.start == null) span.start = clock;
+        else if (WORKFLOW_TERMINAL_STEP.test(step.state) && span.start != null && span.end == null) span.end = clock;
+        record.stepSpans.set(step.key, span);
+      }
+    }
+    renderWorkflowTranscript(el, record);
+    syncWorkflowLaunchRows();
+    syncWorkflowToolMarkers();
+    syncWorkflowPin();
+    refreshWorkflowAges();
+    if (!historical && !update.launchOnly && !workflowAgeTimer) workflowAgeTimer = setInterval(refreshWorkflowAges, 1000);
+    scrollToBottom();
+  }
 
   function applyRunProgress(update) {
     if (!update || !update.id) return;
     clearWelcome();
     hideGrokking();
+    if (update.kind === "workflow") {
+      applyWorkflowProgress(update);
+      return;
+    }
     const id = String(update.id);
     let el = state.runProgressCards.get(id);
     if (!el) {
@@ -13212,8 +15914,17 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           `<span class="run-progress-kind"></span>` +
           `<span class="run-progress-sep">·</span>` +
           `<span class="run-progress-title"></span>` +
-          BLINK_DOTS +
+          // After the PHASE, not after the title. `.run-progress-title` is
+          // `text-overflow: ellipsis`, so a long run name really does end in
+          // "…" — and three dots glued to its right edge (the dots carry
+          // `margin-left: 1px`) are indistinguishable from that truncation.
+          // The owner read the card exactly that way the first time he saw a
+          // real one: "those dots in the middle" don't look like liveness,
+          // they look like a name cut short. Past the phase they pulse on the
+          // thing that is actually in progress, which is also the idiom
+          // everywhere else in this file — `Thinking⋯`, never `Think⋯ing`.
           `<span class="run-progress-phase"></span>` +
+          BLINK_DOTS +
         `</div>` +
         `<div class="run-progress-sub" hidden></div>` +
         `<div class="run-progress-detail" hidden></div>` +
@@ -13224,11 +15935,24 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
 
     const kindLabel = update.kind === "goal" ? "Goal" : "Workflow";
     el.querySelector(".run-progress-kind").textContent = kindLabel;
+    // A goal_updated with no display handle sets `title` to the kind label
+    // itself (src/run-progress.ts), which drew the row as "Goal - Goal". Drop
+    // the redundant half AND its separator -- an emptied span still costs the
+    // row a 6px flex gap.
     const title = update.title || id;
-    el.querySelector(".run-progress-title").textContent = title;
-    el.querySelector(".run-progress-title").title = title;
+    const redundant = title === kindLabel;
+    const titleEl = el.querySelector(".run-progress-title");
+    titleEl.textContent = redundant ? "" : title;
+    titleEl.title = redundant ? "" : title;
+    titleEl.hidden = redundant;
+    el.querySelector(".run-progress-sep").hidden = redundant;
 
     const phase = String(update.phase || "running");
+    // Paused is neither working nor finished, and three places need to agree
+    // on it: the dots (removed), the controls (Resume rather than Pause), and
+    // the phase label. Derived from the machine value, never from the label —
+    // `user_paused` is what a real pause puts here.
+    const paused = /paus/.test(phase);
     const pct =
       typeof update.progress === "number" && Number.isFinite(update.progress)
         ? ` ${Math.round(update.progress * 100)}%`
@@ -13241,7 +15965,15 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         : update.done
           ? (phase === "completed" || phase === "success" ? "done" : phase)
           : phase;
-    phaseEl.textContent = `· ${statusWord}${pct}`;
+    // Underscores are wire syntax. Most phases are single words, but the ones
+    // that arrive when a run ends badly are not — `budget_exceeded`,
+    // `budget_limited`, `accounting_incomplete` — and neither is the
+    // discriminator the parser falls back to when no phase field arrives at
+    // all. The machine value stays on `update.phase`, which the pause/resume
+    // test below still reads; this is only what the row shows.
+    // (src/run-progress.ts documents why this lives here and not there: the
+    // machine value has to survive the trip intact.)
+    phaseEl.textContent = `· ${String(statusWord).replace(/[_-]+/g, " ").trim()}${pct}`;
 
     const sub = el.querySelector(".run-progress-sub");
     if (update.subtitle) {
@@ -13264,43 +15996,29 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     el.classList.toggle("run-progress-cancelled", !!update.cancelled && !update.failed);
     el.classList.toggle("run-progress-done", !!update.done);
 
+    // Goal elapsed display retains its existing local clock.
+    const row = el.querySelector(".run-progress-row");
+    if (update.done) clearWaitElapsed(row);
+    else if (row && !row._waitTimer && !state.replaying) armWaitElapsed(row, "run-progress-elapsed");
+
     const dots = el.querySelector(".blink-dots");
-    if (update.done) {
+    // Not while paused, and this was the owner's sharpest observation on the
+    // real card: "the timer continued, then stopped. But the three blinking
+    // dots didn't." Three dots pulsing beside the word "paused" says the card
+    // does not believe its own label — the dots mean "working", and a paused
+    // run is the one state that is neither working nor finished. The clock
+    // above keeps running on purpose: wall-clock time really is still passing,
+    // and freezing it would need a second timebase we do not have.
+    if (update.done || paused) {
       if (dots) dots.remove();
     } else if (!dots) {
-      // Restarted (e.g. resume) — put dots back after the title.
-      const titleEl = el.querySelector(".run-progress-title");
-      if (titleEl) titleEl.insertAdjacentHTML("afterend", BLINK_DOTS);
+      // Restarted (e.g. resume) — put dots back where the template puts them,
+      // after the phase. Anchoring this on the title instead is what would
+      // quietly reintroduce the ellipsis ambiguity on resumed runs only.
+      const phaseAnchor = el.querySelector(".run-progress-phase");
+      if (phaseAnchor) phaseAnchor.insertAdjacentHTML("afterend", BLINK_DOTS);
     }
 
-    // Workflow control buttons (pause/resume/stop) while running or paused.
-    const actions = el.querySelector(".run-progress-actions");
-    if (update.kind === "workflow" && update.displayName && !update.done) {
-      actions.hidden = false;
-      const paused = /paus/.test(phase);
-      actions.innerHTML = "";
-      const mk = (label, action) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "run-progress-btn";
-        b.textContent = label;
-        b.onclick = (e) => {
-          e.stopPropagation();
-          vscode.postMessage({
-            type: "workflowControl",
-            action,
-            displayName: update.displayName,
-          });
-        };
-        return b;
-      };
-      if (paused) actions.appendChild(mk("Resume", "resume"));
-      else actions.appendChild(mk("Pause", "pause"));
-      actions.appendChild(mk("Stop", "stop"));
-    } else {
-      actions.hidden = true;
-      actions.innerHTML = "";
-    }
 
     scrollToBottom();
   }
@@ -13349,22 +16067,50 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       el.className = "msg thinking";
       const hdr = document.createElement("div");
       hdr.className = "thinking-header";
+      hdr.tabIndex = 0;
+      hdr.setAttribute("role", "button");
+      hdr.setAttribute("aria-expanded", "false");
       // Chevron on the RIGHT (after the label), same glyph as tool groups; expand
       // state is driven by the `.expanded` class (CSS rotates it), like tools.
       hdr.innerHTML = `<span class="thinking-icon">${ICON.brain}</span><span class="thinking-label">Thinking</span>${BLINK_DOTS}<span class="thinking-chevron" aria-hidden="true">${ICON.chevronRight}</span>`;
       const body = document.createElement("div");
       body.className = "thinking-body";
       body.hidden = true;
-      hdr.onclick = () => {
-        body.hidden = !body.hidden;
-        el.classList.toggle("expanded", !body.hidden);
+      const less = document.createElement("button");
+      less.type = "button";
+      less.className = "thinking-show-less";
+      less.textContent = "Show Less";
+      less.hidden = true;
+      el._setExpanded = (expanded) => {
+        body.hidden = !expanded;
+        less.hidden = !expanded;
+        el.classList.toggle("expanded", expanded);
+        hdr.setAttribute("aria-expanded", String(expanded));
+      };
+      hdr.onclick = () => el._setExpanded(body.hidden);
+      hdr.onkeydown = (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        hdr.click();
+      };
+      less.onclick = () => {
+        // Reading a trace is deliberate navigation, even during streaming.
+        state.stickToBottom = false;
+        el._setExpanded(false);
+        hdr.focus({ preventScroll: true });
+        hdr.scrollIntoView({ block: "nearest", inline: "nearest" });
+        updateScrollBtn();
       };
       el.appendChild(hdr);
       el.appendChild(body);
+      el.appendChild(less);
       appendTranscriptChild(el);
       state.activeThoughtEl = body;
       state.activeThoughtHdrEl = hdr;
     }
+    // A block never opens on a blank line: an agent separating its thoughts
+    // (Muse, between reasoning items) cannot tell where a new block starts.
+    if (!state.thoughtBuffer) text = text.replace(/^\n+/, "");
     state.thoughtBuffer += text;
     if (!state.thoughtRenderScheduled) {
       state.thoughtRenderScheduled = true;
@@ -13466,8 +16212,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     };
     window.addEventListener("keydown", (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-      // Ignore when an editable field is composing IME, but allow zoom over inputs
-      // (desktop apps zoom the whole UI regardless of focus).
+      // Allow zoom over inputs, as before #155.
       const key = e.key;
       if (key === "=" || key === "+" || key === "Add") {
         e.preventDefault();
@@ -13476,24 +16221,24 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         e.preventDefault();
         setClientFontScale(stepClientFontScale(state.remoteFontScale, -CLIENT_FONT_SCALE_STEP));
       } else if (key === "0" || key === "Digit0" || key === "Numpad0") {
-        // Ctrl/Cmd+0 resets to 100%.
         if (key === "0" || e.code === "Digit0" || e.code === "Numpad0") {
           e.preventDefault();
           setClientFontScale(1);
         }
       }
     });
-    window.addEventListener(
-      "wheel",
-      (e) => {
-        if (!(e.ctrlKey || e.metaKey)) return;
-        // Continuous scale; prevent Chromium page-zoom fighting us.
-        e.preventDefault();
-        const delta = e.deltaY === 0 ? 0 : e.deltaY > 0 ? -0.05 : 0.05;
-        if (delta) setClientFontScale(stepClientFontScale(state.remoteFontScale, delta));
-      },
-      { passive: false },
-    );
+
+    // Browser clients keep native page zoom, including trackpad pinch (Ctrl+wheel).
+    // Only the desktop shell suppresses accidental modifier+wheel zoom.
+    if (IS_DESKTOP_CLIENT) {
+      window.addEventListener(
+        "wheel",
+        (e) => {
+          if (e.ctrlKey || e.metaKey) e.preventDefault();
+        },
+        { passive: false, capture: true },
+      );
+    }
   }
 
   function setRemoteTtsEnabled(enabled) {
@@ -13883,8 +16628,19 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // state-keyed timer would stop counting a wait the user is still looking at.
   // It also stops itself once the node is detached, so any path that removes
   // the indicator — not just hideGrokking — cleans up.
-  function armWaitElapsed(el) {
-    el._waitStart = Date.now();
+  //
+  // `cls` names the span so a second caller can use the same timer without a
+  // second implementation: the run-progress card has the identical problem one
+  // level up (#163 — a workflow that sits on one number for an hour is
+  // indistinguishable from a dead one), and it wants the readout inside its own
+  // row rather than at the end of a label. An existing `_waitStart` is kept, so
+  // re-arming a node that is already counting continues its clock instead of
+  // restarting it — a resumed run has not been running for zero seconds.
+  function armWaitElapsed(el, cls) {
+    if (!el) return;
+    clearWaitElapsed(el);
+    const klass = cls || "grokking-elapsed";
+    if (!el._waitStart) el._waitStart = Date.now();
     // Painted at once and then every second, with NO threshold to cross.
     //
     // A delay was the first design and it was wrong twice over. It guaranteed
@@ -13899,10 +16655,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         clearWaitElapsed(el);
         return;
       }
-      let out = el.querySelector(".grokking-elapsed");
+      let out = el.querySelector("." + klass);
       if (!out) {
         out = document.createElement("span");
-        out.className = "grokking-elapsed";
+        out.className = klass;
         // The verb is already announced. A value that changes every second
         // would otherwise be read out every second.
         out.setAttribute("aria-hidden", "true");
@@ -13932,13 +16688,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   function activityVerb() {
     if (state.activeProvider === "codex") return CODEX_ACTIVITY_VERB;
     if (state.activeProvider === "claude") return CLAUDE_ACTIVITY_VERB;
+    if (state.activeProvider === "muse" || state.activeProvider === "agy") return "Working";
     return GROK_ACTIVITY_VERB;
   }
 
   function activityAriaLabel() {
-    if (state.activeProvider === "codex") return "OpenAI is working";
-    if (state.activeProvider === "claude") return "Claude is working";
-    return "Atlas is working";
+    return `${agentName(true)} is working`;
   }
 
   function syncProviderVoice() {
@@ -13963,7 +16718,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const el = document.createElement("div");
     el.className = "thinking-indicator";
     el.innerHTML = `<span class="thinking-indicator-icon">${ICON.brain}</span><span class="thinking-indicator-label">Thinking</span>${BLINK_DOTS}`;
-    el.setAttribute("aria-label", "Atlas is thinking");
+    el.setAttribute("aria-label", `${agentName(true)} is thinking`);
     appendTranscriptChild(el);
     state.thinkingIndicatorEl = el;
     scrollToBottom();
@@ -14135,7 +16890,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const h = messagesEl.clientHeight;
     if (h === lastScrollportHeight) return;
     lastScrollportHeight = h;
-    if (state.stickToBottom && !state.replaying) messagesEl.scrollTop = messagesEl.scrollHeight;
+    if (state.stickToBottom && !state.replaying && !workflowMoveFrame) messagesEl.scrollTop = messagesEl.scrollHeight;
   }).observe(messagesEl);
 
   // The scrollport's own border-box does not resize when content inside an
@@ -14144,10 +16899,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // pinned; a deliberate scroll-up has cleared stickToBottom and is untouched.
   let contentFollowFrame = 0;
   new MutationObserver(() => {
-    if (state.replaying || state.historyHydrating || prependLock || contentFollowFrame) return;
+    if (state.replaying || state.historyHydrating || prependLock || workflowMoveFrame || contentFollowFrame) return;
     contentFollowFrame = requestAnimationFrame(() => {
       contentFollowFrame = 0;
-      if (state.stickToBottom && !state.replaying && !prependLock) messagesEl.scrollTop = messagesEl.scrollHeight;
+      if (state.stickToBottom && !state.replaying && !prependLock && !workflowMoveFrame) messagesEl.scrollTop = messagesEl.scrollHeight;
       updatePromptNav();
     });
   }).observe(messagesEl, {
@@ -14246,10 +17001,17 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     el.className = "card permission resolved perm-resolved";
     el.innerHTML = "";
     const line = document.createElement("div");
-    line.className = "perm-resolved-line perm-" + (kind === "reject_once" ? "rejected" : "allowed");
+    // ONE test drives both the colour and the word. They used to disagree: a
+    // host-answered card (#61) carries no options, so the kind is unknown here
+    // and the verb fell through to "Answered" while the class ternary landed on
+    // perm-allowed anyway -- a green line that would not say Allowed. The same
+    // split mislabelled a reject_always as allowed. `/reject|deny/i` is the
+    // test resolvePermissionCardEl already uses a few lines below.
+    const rejected = /reject|deny/i.test(String(kind || ""));
+    line.className = "perm-resolved-line perm-" + (rejected ? "rejected" : "allowed");
     const verb = document.createElement("span");
     verb.className = "perm-resolved-verb";
-    verb.textContent = PERM_VERB[kind] || "Answered";
+    verb.textContent = PERM_VERB[kind] || (rejected ? "Rejected" : "Allowed");
     line.appendChild(verb);
     const what = document.createElement("span");
     what.className = "perm-resolved-what";
@@ -14435,7 +17197,11 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // card replays as active on every re-focus.
     el.dataset.permReqId = String(req.id);
     el._permTitle = cardTitle;
-    appendCommandPreview(el, cardTitle, "card-title command-card-title", undefined, 4);
+    // Only an execute card's title is a shell command; other kinds fall into
+    // categorize()'s "command" bucket without being one.
+    const isCommandCard = toolKind(req.toolCall) === "execute";
+    appendCommandPreview(el, cardTitle, "card-title command-card-title",
+      isCommandCard ? state.commandLanguage : undefined, PERMISSION_COMMAND_PREVIEW_LINES, undefined, isCommandCard);
 
     const diff = state.pendingDiffByToolCallId.get(req.toolCall?.toolCallId);
     if (diff) {
@@ -14443,7 +17209,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       subtitle.className = "card-subtitle";
       const oldLines = (diff.oldText || "").split("\n").length;
       const newLines = (diff.newText || "").split("\n").length;
-      subtitle.textContent = `${diff.path} — ${oldLines} → ${newLines} lines`;
+      subtitle.textContent = `${diff.path} — ${formatCount(oldLines)} → ${formatCount(newLines)} lines`;
       el.appendChild(subtitle);
 
       const openDiff = () => {
@@ -14561,7 +17327,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
 
   // ---------- question card (ask_user_question) ----------
 
-  // A "Atlas is asking" label + the question text, prominent. Shared by the live
+  // An "<agent> is asking" label + the question text, prominent. Shared by the live
   // and restored cards so they look identical.
   function buildQuestionHead(el, headingText) {
     const title = document.createElement("div");
@@ -14603,7 +17369,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     el.className = "card question";
     el.dataset.questionReqId = String(req.id);
 
-    const title = buildQuestionHead(el, "Atlas is asking");
+    const title = buildQuestionHead(el, `${agentName(true)} is asking`);
 
     // selections[i] = array of chosen labels for question i.
     const selections = questions.map(() => []);
@@ -15071,7 +17837,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     feedback.className = "plan-feedback";
     feedback.rows = 2;
     feedback.setAttribute("dir", "auto");
-    feedback.placeholder = "Optional comment — Atlas decides what to do with it";
+    feedback.placeholder = `Optional comment — ${agentName(true)} decides what to do with it`;
     el.appendChild(feedback);
 
     const actions = document.createElement("div");
@@ -15441,6 +18207,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         rm.onclick = (e) => {
           e.stopPropagation();
           if (chip.previewId) imagePreviews.delete(chip.previewId);
+          if (composerRestoredChips.some((c) => c.id === chip.id)) {
+            setComposerRestoredChips(composerRestoredChips.filter((c) => c.id !== chip.id));
+            return;
+          }
           vscode.postMessage({ type: "removeChip", id: chip.id });
         };
         el.appendChild(rm);
@@ -15452,7 +18222,11 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       el.title = chip.path + rangeTitle;
       el.innerHTML = (chip.hidden ? ICON.eyeOff : ICON.file) +
         `<span>${escapeHtml(label)}</span>`;
-      el.onclick = () => vscode.postMessage({ type: "toggleChip", id: chip.id });
+      el.onclick = () => {
+        if (composerRestoredChips.some((c) => c.id === chip.id)) {
+          setComposerRestoredChips(composerRestoredChips.map((c) => c.id === chip.id ? { ...c, hidden: !c.hidden } : c));
+        } else vscode.postMessage({ type: "toggleChip", id: chip.id });
+      };
       chipsEl.appendChild(el);
     }
   }
@@ -15477,8 +18251,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     donutArc.setAttribute("stroke-dasharray", `${arc} ${circumference}`);
     donutArc.setAttribute("stroke", contextFullnessColor(pct));
     donutLabel.textContent = `${toK(used)}/${toK(max)}`;
-    donutLabel.title = `${used.toLocaleString()} / ${max.toLocaleString()} tokens`;
-    donutEl.title = `Context usage — ${used.toLocaleString()} / ${max.toLocaleString()} tokens`;
+    // The percentage belongs here too. The label has no room for it, and the
+    // arc encodes it only to the eye — so the one place a reader can get the
+    // number was the popover, a click away (#172).
+    const reading = `${used.toLocaleString()} / ${max.toLocaleString()} tokens (${pct}%)`;
+    donutLabel.title = reading;
+    donutEl.title = `Context usage — ${reading}`;
     // Occupancy can move without a contextUsage frame (promptComplete,
     // modelChanged). Re-paint, then re-fetch session/info while the popover
     // is open so the group stays and catches up instead of vanishing.
@@ -15602,7 +18380,45 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
 
   // ---------- send ----------
 
+  let startupTimer = null;
+  function renderStartupStatus() {
+    if (startupTimer !== null) clearTimeout(startupTimer);
+    startupTimer = null;
+    const startup = state.startupStatus;
+    let strip = $("startup-strip");
+    if (!startup) { if (strip) strip.hidden = true; return; }
+    if (!strip) {
+      strip = document.createElement("div");
+      strip.id = "startup-strip";
+      strip.className = "startup-strip";
+      strip.innerHTML = '<span class="host-wait-spinner" aria-hidden="true"></span><span class="startup-stage" role="status"></span><span class="startup-detail"></span><span class="startup-seconds" aria-hidden="true"></span><button type="button" class="startup-output" hidden>Show output</button>';
+      strip.querySelector("button").onclick = () => vscode.postMessage({ type: "showLogs" });
+      document.querySelector(".composer-card").prepend(strip);
+    }
+    const link = hostWait.snapshot();
+    strip.hidden = !!(link && (!link.reachable || !link.restored));
+    const seconds = Math.floor(Math.max(0, Date.now() - startup.startedAt) / 1000);
+    // A CLI update routinely takes minutes; only a stalled start is "slow".
+    // Antigravity's Windows server unpacks itself on every start: 15-25 s is
+    // its ordinary start, not a stall.
+    const slow = seconds >= (startup.provider === "agy" ? 60 : 20) && startup.stage !== "updating";
+    const provider = { grok: "Atlas", codex: "Codex", claude: "Claude", muse: "Muse", agy: "Antigravity" }[startup.provider] || "Atlas";
+    const count = Number.isInteger(startup.messageCount) && startup.messageCount >= 0 ? startup.messageCount + " " : "";
+    const label = { updating: "Updating the " + provider + " CLI", starting: "Starting " + provider,
+      opening: "Opening the conversation", loading: "Loading " + count + "messages" }[startup.stage];
+    strip.classList.toggle("startup-slow", slow);
+    strip.querySelector(".startup-stage").textContent = label;
+    strip.querySelector(".startup-detail").textContent = slow ? "· taking longer than usual" : startup.detail ? "· " + startup.detail : "";
+    strip.querySelector(".startup-seconds").textContent = seconds >= 3 ? seconds + "s" : "";
+    strip.querySelector(".startup-output").hidden = !slow || IS_REMOTE || state.hostCaps?.showOutput !== true;
+    startupTimer = setTimeout(renderStartupStatus, 1000 - Math.max(0, Date.now() - startup.startedAt) % 1000);
+  }
+
   function updateSendButton() {
+    if (state.contextControlsBusy !== state.busy) {
+      state.contextControlsBusy = state.busy;
+      if (!contextPopover.hidden) renderContextPopover();
+    }
     // Four states:
     //  - idle (!busy): send icon, enabled, click → send the typed message.
     //  - busy + locked: spinner icon, disabled, no click action. Used for
@@ -15642,6 +18458,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         newBtn.disabled = true;
         newBtn.title = "Add a project folder first";
       }
+    } else if (state.startupStatus) {
+      sendBtn.innerHTML = ICON.spinner;
+      const name = { grok: "Atlas", codex: "Codex", claude: "Claude", muse: "Muse", agy: "Antigravity" }[state.startupStatus.provider] || "Atlas";
+      sendBtn.title = name + (state.startupStatus.stage === "updating" ? " is updating" : " is still starting");
+      sendBtn.classList.add("initializing");
+      sendBtn.disabled = true;
     } else if (!state.busy) {
       sendBtn.innerHTML = ICON.arrowUp;
       sendBtn.title = "Send";
@@ -15657,7 +18479,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       sendBtn.disabled = true;
     } else if (composerHasSendIntent(input.value, state.chips)) {
       sendBtn.innerHTML = ICON.arrowUp;
-      sendBtn.title = "Queue — sends when Atlas finishes";
+      sendBtn.title = `Queue — sends when ${agentName()} finishes`;
       sendBtn.disabled = false;
     } else {
       sendBtn.innerHTML = ICON.square;
@@ -15680,12 +18502,13 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // Everything or nothing: an older host would ignore extra chips and queue
     // the text alone. Refuse rather than silently drop attachments.
     if (chips.length && !(state.hostCaps && state.hostCaps.queueSendChips)) {
-      addError("This host cannot queue attachments. Wait until Atlas finishes, then send.");
+      addError(`This host cannot queue attachments. Wait until ${agentName()} finishes, then send.`);
       return true;
     }
     stopVoiceForManualSend();
     queueOutgoing(t, chips);
     input.value = "";
+    setComposerRestoredChips([]);
     renderInputHighlight(); // also flips the busy button back to Stop (empty composer)
     updateSlash();
     updateMention();
@@ -15694,7 +18517,155 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   }
 
   function syncRemoteButton() {
-    if (remoteBtn) remoteBtn.hidden = IS_REMOTE || !state.remoteLinked;
+    if (!remoteBtn) return;
+    remoteBtn.hidden = IS_REMOTE;
+    const connected = state.remoteLinked === true && state.remoteViewerCount > 0;
+    remoteBtn.classList.toggle("phone-connected", connected);
+    remoteBtn.title = connected ? "Remote control · phone connected" : "Remote control";
+    remoteBtn.setAttribute("aria-label", remoteBtn.title);
+  }
+
+  function focusedRemoteHandoffSessionId() {
+    // The composer follows the navigation gesture, including correlated New
+    // drafts. activeSessionId can still name the conversation being left.
+    if (composerExpectedSessionId || pendingComposerDrafts.has(composerSessionId)) return undefined;
+    return composerSessionId || undefined;
+  }
+
+  function syncFocusedRemoteHandoff() {
+    if (!remoteHandoff?.followsFocus) return;
+    const sessionId = focusedRemoteHandoffSessionId();
+    if (remoteHandoff.sessionId === sessionId) return;
+    remoteHandoff.sessionId = sessionId;
+    remoteHandoff.result = null;
+    // Retire the old reply even while no replacement request can be sent.
+    remoteHandoff.requestId = ++remoteHandoffSerial;
+    renderRemoteHandoff();
+    requestRemoteHandoff();
+  }
+
+  function requestRemoteHandoff(action) {
+    if (!remoteHandoff || !state.remoteHandoffSupported) return;
+    if (remoteHandoff.followsFocus && !remoteHandoff.sessionId) return;
+    if (action !== "open") remoteHandoff.requestId = ++remoteHandoffSerial;
+    vscode.postMessage({ type: "remoteHandoff", requestId: remoteHandoff.requestId,
+      source: remoteHandoff.source, sessionId: remoteHandoff.sessionId,
+      repoCwd: remoteHandoff.repoCwd, action: action || (remoteHandoff.requested ? "refresh" : "show") });
+    remoteHandoff.requested = true;
+  }
+
+  function openRemoteHandoff(source, sessionId, repoCwd, afterLink) {
+    if (IS_REMOTE) return;
+    closeSettingsOverlay();
+    closePopovers();
+    // Old hosts only know the portal action. No unanswered QR request or guessed identity.
+    if (state.remoteLinked === true && !state.remoteHandoffSupported) {
+      vscode.postMessage({ type: "openRemotePortal", withHint: true, source });
+      return;
+    }
+    remoteHandoff = { source, followsFocus: !sessionId,
+      sessionId: sessionId || focusedRemoteHandoffSessionId(),
+      repoCwd, afterLink: !!afterLink, requested: false, requestId: ++remoteHandoffSerial };
+    if (!remoteHandoffPopover) {
+      remoteHandoffPopover = document.createElement("div");
+      remoteHandoffPopover.className = "toolbar-popover remote-handoff-popover";
+      remoteHandoffPopover.setAttribute("role", "dialog");
+      remoteHandoffPopover.setAttribute("aria-label", "Remote control");
+      remoteHandoffPopover.addEventListener("click", (e) => e.stopPropagation());
+      remoteHandoffPopover.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closePopovers(); remoteBtn?.focus(); }
+      });
+      document.body.appendChild(remoteHandoffPopover);
+    }
+    remoteBtn?.setAttribute("aria-expanded", "true");
+    renderRemoteHandoff();
+    requestRemoteHandoff();
+    remoteHandoffPopover.querySelector("button")?.focus();
+  }
+
+  function renderRemoteHandoff() {
+    if (!remoteHandoff || !remoteHandoffPopover) return;
+    const context = remoteHandoff;
+    const result = context.result;
+    const popover = remoteHandoffPopover;
+    const focusedLabel = popover.contains(document.activeElement)
+      ? document.activeElement.getAttribute("aria-label") || document.activeElement.textContent : null;
+    popover.replaceChildren();
+    const close = document.createElement("button");
+    close.className = "icon-btn remote-handoff-close";
+    close.innerHTML = ICON.x;
+    close.setAttribute("aria-label", "Close remote control");
+    close.onclick = () => { closePopovers(); remoteBtn?.focus(); };
+    popover.appendChild(close);
+    const title = document.createElement("h3");
+    title.textContent = state.remoteLinked === null ? "Checking…"
+      : !state.remoteLinked ? "Use this chat from your phone"
+      : context.afterLink ? (result?.qrSvg ? "Linked. Now scan this." : "Linked. Getting your code ready…")
+      : "Continue on your phone";
+    popover.appendChild(title);
+    const button = (label, action, primary) => {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "confirm-btn" + (primary ? " confirm-primary" : "");
+      el.textContent = label;
+      el.onclick = action;
+      return el;
+    };
+    const text = document.createElement("p");
+    if (state.remoteLinked === false) {
+      text.textContent = "Sign in once and this machine shows up on afkpilot.com on any phone or browser; keep this app open and it stays awake while you are away; prompts and code are never stored.";
+      popover.append(text, button("Sign in and link this machine", () => {
+        remoteLinkReturn = { source: context.source,
+          sessionId: context.followsFocus ? undefined : context.sessionId, repoCwd: context.repoCwd };
+        vscode.postMessage({ type: "remoteSignIn", source: context.source });
+        closePopovers();
+      }, true), button("How it works", () => { closePopovers(); showRemoteExplainer(context.source); }));
+    } else if (state.remoteLinked === true) {
+      const waitingForSession = context.followsFocus && !context.sessionId;
+      if (result?.url && result.qrSvg && state.remoteHandoffReady) {
+        const qr = document.createElement("div");
+        qr.className = "remote-handoff-qr";
+        qr.setAttribute("role", "img");
+        qr.setAttribute("aria-label", "Scan to continue on your phone");
+        qr.innerHTML = result.qrSvg; // SVG generated by the local host's pinned encoder.
+        popover.appendChild(qr);
+        text.textContent = `Scan with your phone camera to open ${result.title} there.`;
+      } else if (result?.url) {
+        text.textContent = "The code could not be displayed. Copy the link or open it in your browser.";
+      } else if (state.remoteHeldElsewhere) {
+        // One link, one connection: another window of this app holds it, and a
+        // code from here would open that window's conversations, not this one's.
+        text.textContent = "Another window on this computer is connected to AFK Pilot. Use Remote control in that window, or close it and this one takes over.";
+      } else {
+        // Hold the code's space while the host resolves the conversation or
+        // learns its device id, so the popover does not jump when it lands.
+        const pending = document.createElement("div");
+        pending.className = "remote-handoff-qr-pending";
+        pending.setAttribute("role", "status");
+        pending.innerHTML = '<span class="host-wait-spinner" aria-hidden="true"></span><span>Generating QR code…</span>';
+        popover.appendChild(pending);
+      }
+      const actions = document.createElement("div");
+      actions.className = "remote-handoff-actions";
+      const open = button("Open in browser", () => {
+        if (state.remoteHandoffSupported) requestRemoteHandoff("open");
+        else vscode.postMessage({ type: "openRemotePortal", withHint: true, source: context.source });
+      }, true);
+      open.disabled = waitingForSession;
+      actions.appendChild(open);
+      const copy = button("Copy link", async () => {
+        try { await navigator.clipboard.writeText(result.url); copy.textContent = "Copied"; }
+        catch { copy.textContent = "Could not copy"; }
+      });
+      copy.disabled = !result?.url;
+      actions.appendChild(copy);
+      if (text.textContent) popover.append(text);
+      popover.append(actions);
+    }
+    popover.hidden = false;
+    positionDropdownPopover(popover, remoteBtn || gearBtn);
+    if (focusedLabel) [...popover.querySelectorAll("button")].find((el) =>
+      (el.getAttribute("aria-label") || el.textContent) === focusedLabel)?.focus();
   }
 
   // REMOTE ONLY — paint the user's message the instant they send it.
@@ -15746,7 +18717,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       actualIds.every((id, index) => id === expectedIds[index]);
   }
 
-  function sendOrStop() {
+  function sendOrStop(event) {
     // A model or effort the picker is still SHOWING belongs to this send. The
     // document's own click listener flushes on the way out, but it sits on the
     // bubble phase -- this button's handler runs first, so without this line
@@ -15757,7 +18728,21 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // corner. Committing here is also what gives the host a `pickerChange` for
     // `handleSend` to wait on. Idempotent: the close that follows posts
     // nothing, and a flush with nothing pending posts nothing either.
+    //
+    // First, ahead of `/context-window` too. Sent before the model it was
+    // typed beside, a size started a context change, and the host then
+    // dropped the `setModel` behind it: the chip showed the new model while
+    // the CLI kept the old one. Committed first, the size meets the host's
+    // `pickerChange` and is refused with its visible wait message.
     flushPicker();
+    if (/^\/context-window(?:\s|$)/i.test(input.value.trim())) {
+      sendContextWindowCommand(input.value.trim());
+      // A bare command opens the context popup; the Send click that did it
+      // must not close it again on its way to the document's closer.
+      if (event && !contextPopover.hidden) event.stopPropagation();
+      return;
+    }
+    if (state.contextWindowSelection?.changing) return;
     if (state.sessionSuperseded) return;
     if (state.onboardingMode === "no-project") return;
     if (state.busy) {
@@ -15814,8 +18799,15 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // comes back via postChips) — the host snapshots its own copy on send.
     if (sendWait) sendWait.cancel();
     sendWait = hostWait.begin({ label: "Sending your message", success: "Message sent.", failure: "Couldn't send your message." });
-    vscode.postMessage({ type: "send", text, ...(submissionId ? { submissionId } : {}) });
+    // The wait keeps its own id: a clearMessages between send and echo (a relay
+    // reattach, a CLI respawn) resets the pending-submission state below, and
+    // the echo must still be able to settle the strip it belongs to.
+    sendWait.submissionId = submissionId;
+    vscode.postMessage({ type: "send", text,
+      ...(composerRestoredChips.length ? { chips: explicitVisibleChips(state.chips) } : {}),
+      ...(submissionId ? { submissionId } : {}) });
     input.value = "";
+    setComposerRestoredChips([]);
     renderInputHighlight();
     slashPopover.hidden = true;
     hideMention();
@@ -16284,6 +19276,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   // ("atlas send"), whose composer is cleared separately so the mic can keep
   // listening for the next utterance.
   function submitMessage(text) {
+    if (/^\/context-window(?:\s|$)/i.test((text || "").trim())) {
+      sendContextWindowCommand((text || "").trim());
+      return;
+    }
     const t = (text || "").trim();
     if (!t) return;
     state.busy = true;
@@ -16396,7 +19392,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     tag.innerHTML = `${ICON.clock}<span>${state.queuedSubmissionRejected || rejected ? "Not sent" : "Queued"}</span>`;
     tag.title = state.queuedSubmissionRejected || rejected
       ? "The relay rejected this prompt. Edit it to retry, or remove it."
-      : "Sends when Atlas finishes";
+      : `Sends when ${agentName()} finishes`;
     const actions = document.createElement("span");
     actions.className = "queued-actions";
     const editBtn = document.createElement("button");
@@ -16444,7 +19440,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     if (state.steerSupported && steerableProvider()) {
       const steerBtn = document.createElement("button");
       steerBtn.className = "queued-action queued-steer";
-      steerBtn.title = "Steer — submit now without interrupting Atlas";
+      steerBtn.title = `Steer — submit now without interrupting ${agentName()}`;
       steerBtn.innerHTML = `${ICON.cornerDownRight}<span>Steer</span>`;
       // pointerdown, NOT click: the queued block is pinned to the end of the
       // chat and every streamed chunk runs scrollToBottom, so while the agent is
@@ -16783,10 +19779,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     if (find.countEl) {
       if (!q) find.countEl.textContent = "";
       else if (find.invalid) find.countEl.textContent = "—";
-      else if (!n) find.countEl.textContent = find.lastCapped ? "0/" + FIND_MAX_MATCHES + "+" : "0/0";
+      else if (!n) find.countEl.textContent = find.lastCapped ? "0/" + formatCount(FIND_MAX_MATCHES) + "+" : "0/0";
       else {
         const cap = find.lastCapped ? "+" : "";
-        find.countEl.textContent = (find.index + 1) + "/" + n + cap;
+        find.countEl.textContent = formatCount(find.index + 1) + "/" + formatCount(n) + cap;
       }
     }
     if (find.hiddenBtn) {
@@ -16833,8 +19829,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       thinking.classList.add("find-reveal");
       const body = thinking.querySelector(".thinking-body");
       if (body && body.hidden) {
-        body.hidden = false;
-        thinking.classList.add("expanded");
+        thinking._setExpanded(true);
       }
     }
     const group = el.closest(".tool-group");
@@ -16844,13 +19839,29 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       const row = details.closest(".has-details");
       if (row) setDetailExpanded(row, true);
     }
+    // A hit inside a closed delegation card opens that card through its own
+    // state, so the card's refresh timer and later updates keep it open.
+    // Unhiding the body alone was undone within a second.
+    // Only a card that has something to open is opened: an empty card still
+    // carries hidden section labels, and forcing it open left a chevron that
+    // could not close it.
+    const openable = (card) => !!card?.querySelector(".delegation-header.expandable");
     const sub = el.closest(".subagent-card");
-    if (sub) {
-      const stream = sub.querySelector(".subagent-stream");
-      const result = sub.querySelector(".subagent-result");
-      if (stream && stream.contains(el)) stream.hidden = false;
-      if (result && result.contains(el)) result.hidden = false;
+    if (sub && !sub._expanded && openable(sub)) {
+      sub._expanded = true;
+      wireSubagentExpand(sub);
     }
+    const workflowBody = el.closest(".workflow-expanded");
+    if (workflowBody && workflowBody.hidden && openable(workflowBody.parentElement)) {
+      const surface = workflowBody.parentElement;
+      surface._expanded = true;
+      if (surface._workflow) surface._workflow.expanded = true;
+      workflowBody.hidden = false;
+      surface.classList.add("is-expanded");
+      setDelegationExpandable(surface.querySelector(".delegation-header"), true, true);
+    }
+    const report = el.closest("details.workflow-report");
+    if (report && !report.open && openable(report)) report.open = true;
   }
 
   function scrollToFindMatch(m) {
@@ -17001,7 +20012,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           find.matches = acc;
           find.invalid = false;
           rebuildFindNav();
-          if (find.countEl) find.countEl.textContent = find.nav.length + "…";
+          if (find.countEl) find.countEl.textContent = formatCount(find.nav.length) + "…";
           find.sliceTimer = setTimeout(step, 0);
           return;
         }
@@ -17026,7 +20037,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         find.matches = acc;
         find.invalid = false;
         rebuildFindNav();
-        if (find.countEl) find.countEl.textContent = find.nav.length + "…";
+        if (find.countEl) find.countEl.textContent = formatCount(find.nav.length) + "…";
         find.sliceTimer = setTimeout(step, 0);
         return;
       }
@@ -17342,7 +20353,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   ]);
 
   const SETTINGS_LIVE_MSGS = new Set([
-    "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
+    "museSettings",
+    "cloudHostUpdateState", "initialState", "showThinking", "appPurpose", "expandCommandOutputs",
     "steerByDefault", "promptNav", "expandDiffCard", "steerUnavailable", "soundNotifications", "processingSound",
     "readRepliesAloud", "summarizeRepliesAloud", "fontScale", "voiceConfigured",
     "providerState", "githubState", "mcpServers", "mcpConnectors", "remoteStatus", "telemetryEnabled", "thumbsFeedback", "grokUpdateStatus", "initialized",
@@ -17356,6 +20368,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       return;
     }
     switch (msg.type) {
+      case "cloudHostUpdateState":
+        receiveCloudHostUpdate(msg);
+        break;
       case "initialState":
         state.useCtrlEnter = msg.useCtrlEnter;
         state.effort = msg.effort || "";
@@ -17377,6 +20392,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         // any control is drawn — and a host that says nothing is a host that
         // cannot, which is the safe way round.
         state.hostCaps = (msg.capabilities && typeof msg.capabilities === "object") ? msg.capabilities : {};
+        renderStartupStatus();
         if (providerConfigPanel && !providerConfigFilesAvailable()) providerConfigPanel.setOpen(false);
         renderQueuedBlocks();
         // Field presence: an older host never sends this, and command View all
@@ -17400,7 +20416,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         if (typeof msg.steerByDefault === "boolean") state.steerByDefault = msg.steerByDefault;
         // A remote ignores the desk's value and keeps its own: the frame is
         // suppressed on the way out, but initialState is mirrored wholesale.
+        if (!IS_REMOTE) applyPinLiveWorkflows(msg.pinLiveWorkflows !== false);
         if (!IS_REMOTE && typeof msg.promptNav === "boolean") state.promptNav = msg.promptNav;
+        state.museSettings = msg.museSettings;
         if (!IS_REMOTE) {
           state.expandDiffCard = msg.expandDiffCard === true;
           applyExpandDiffCard();
@@ -17419,6 +20437,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         }
         if (typeof msg.telemetryEnabled === "boolean") state.telemetryEnabled = msg.telemetryEnabled;
         if (typeof msg.thumbsFeedback === "boolean") state.thumbsFeedback = msg.thumbsFeedback;
+        if (typeof msg.traySupported === "boolean") state.traySupported = msg.traySupported;
+        if (typeof msg.desktopTray === "boolean") state.desktopTray = msg.desktopTray;
         applyThinkingVisibility();
         applyExpandCommandOutputs();
         syncGearPlacement();
@@ -17437,6 +20457,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         // more detail and with the phase attached. Answering both would abandon
         // the in-flight reads twice for one reconnection.
         if (hostWait.snapshot()) break;
+        forgetCloudHostUpdate();
         onRemoteHostReachable(null);
         break;
       case "hostLink":
@@ -17446,6 +20467,11 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         // free to receive, so the strip can say what is happening without a
         // `git status` riding on every flap of a phone's radio.
         if (!msg.link) break;
+        if (!msg.link.reachable || (cloudUpdateConnection !== null && cloudUpdateConnection !== msg.link.connection)) {
+          forgetCloudHostUpdate();
+        }
+        cloudUpdateConnection = msg.link.connection;
+        renderStartupStatus();
         if (msg.link.reachable) onRemoteHostReachable(msg.link);
         else noteRemoteFileDisconnect();
         break;
@@ -17510,9 +20536,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         renderWelcomeTip();
         break;
       case "providerState":
+        museAdvertised = Array.isArray(msg.providers) && msg.providers.some(p => p && p.id === "muse");
+        museAvailable = museAdvertised && msg.providers.some(p => p && p.id === "muse" && !p.unavailableReason);
+        agyAdvertised = Array.isArray(msg.providers) && msg.providers.some(p => p && p.id === "agy");
         state.providersKnown = true;
         state.providers = Array.isArray(msg.providers) ? msg.providers.filter((provider) =>
-          provider && (provider.id === "grok" || provider.id === "codex" || provider.id === "claude")) : [];
+          provider && Object.hasOwn(globalThis.GrokWebviewHelpers.PROVIDER_ACTIONS, provider.id)) : [];
         // A confirmed account retires its device-flow mirror. Without this the
         // "Connected" flow row would resurface in Settings after a later
         // sign-out, describing a connection that no longer exists.
@@ -17538,6 +20567,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         // sends no frame at all, and a locally-set flag would spin forever.
         // Absent means idle, which is also what every pre-refresh host means.
         state.providersChecking = msg.checking === true;
+        if (!IS_REMOTE && connectWizard && state.providers.some(p => p.id === connectWizard.provider && p.connected && p.needsLogin !== true)) {
+          closeConnectWizard();
+        }
         renderCodexUpdateNudge();
         refreshSettingsOverlay();
         // Connecting an additional account happens from the gear while the
@@ -17605,7 +20637,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         state.routineSavePending = false;
         state.routines = Array.isArray(msg.entries) ? msg.entries : [];
         state.routineProjects = Array.isArray(msg.projects) ? msg.projects : [];
-        state.routineModels = Array.isArray(msg.models) ? msg.models : [];
+        state.routineModels = (Array.isArray(msg.models) ? msg.models : [])
+          .filter(m => (m.provider !== "muse" || museAvailable) && (m.provider !== "agy" || agyAdvertised));
         state.routineError = msg.error || "";
         state.routineErrorId = msg.errorId || "";
         refreshSettingsOverlay();
@@ -17621,6 +20654,21 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           showOnboarding("missing-codex", { ...state.onboardingInfo, reason: state.codexInstall.reason });
         }
         break;
+      case "agyInstallProgress":
+        state.agyInstall = {
+          phase: msg.phase || "idle",
+          receivedBytes: Number.isFinite(msg.receivedBytes) ? msg.receivedBytes : 0,
+          totalBytes: Number.isFinite(msg.totalBytes) ? msg.totalBytes : 0,
+          reason: typeof msg.reason === "string" ? msg.reason : "",
+        };
+        if (state.onboardingMode === "missing-agy") {
+          showOnboarding("missing-agy", { ...state.onboardingInfo, reason: state.agyInstall.reason });
+        }
+        if (connectWizard && connectWizard.agyOnboarding && connectWizard.agyOnboarding.mode === "missing-agy") {
+          connectWizard.agyOnboarding.info = { ...connectWizard.agyOnboarding.info, reason: state.agyInstall.reason };
+          renderConnectWizard();
+        }
+        break;
       case "planModeAvailability":
         state.planModeAvailable = msg.available !== false;
         state.planModeUnavailableReason = state.planModeAvailable
@@ -17630,17 +20678,40 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         state.planModeRecheckable = !state.planModeAvailable && msg.recheckable === true;
         updateSendButton();
         break;
-      case "remoteStatus":
+      case "showRemoteHandoff":
+        if (!IS_REMOTE) {
+          if (msg.explain) { closeSettingsOverlay(); closePopovers(); showRemoteExplainer(msg.source); }
+          else openRemoteHandoff(msg.source, msg.sessionId, msg.repoCwd);
+        }
+        break;
+      case "remoteHandoff":
+        if (!IS_REMOTE && remoteHandoff && msg.requestId === remoteHandoff.requestId) {
+          remoteHandoff.result = msg;
+          renderRemoteHandoff();
+        }
+        break;
+      case "remoteStatus": {
+        const changed = state.remoteLinked !== !!msg.linked || state.remoteHandoffReady !== (msg.handoffReady === true)
+          || state.remoteHeldElsewhere !== (msg.heldElsewhere === true);
+        state.remoteHeldElsewhere = msg.heldElsewhere === true;
         state.remoteLinked = !!msg.linked;
+        state.remoteHandoffSupported = typeof msg.handoffReady === "boolean";
+        state.remoteHandoffReady = msg.handoffReady === true;
+        state.remoteViewerCount = Number.isFinite(msg.viewerCount) ? msg.viewerCount : 0;
         syncRemoteButton();
-        // The answer can land while the gear is already open (it usually
-        // arrives within a frame of boot, but a slow secret read is exactly
-        // the case this guards): repaint so the section appears rather than
-        // waiting for the next open.
-        if (!gearPopover.hidden && state.gearView === "main") renderGearMain();
-        if (!addPopover.hidden) renderAddPopover();
+        if (state.remoteLinked && remoteLinkReturn) {
+          const pending = remoteLinkReturn;
+          remoteLinkReturn = null;
+          openRemoteHandoff(pending.source, pending.sessionId, pending.repoCwd, true);
+        } else if (remoteHandoff && changed) {
+          remoteHandoff.result = null;
+          renderRemoteHandoff();
+          requestRemoteHandoff();
+        }
+        refreshSettingsOverlay();
         refreshModelControls();
         break;
+      }
       case "steerByDefault":
         // Live toggle (grok.steerByDefault). Pure policy for the next send —
         // the queued block's Steer button is unaffected.
@@ -17654,6 +20725,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           applyExpandDiffCard();
         }
         break;
+      case "pinLiveWorkflows":
+        if (!IS_REMOTE) applyPinLiveWorkflows(!!msg.value);
+        break;
+      case "museSettings":
+        state.museSettings = msg.value;
+        break;
       case "promptNav":
         // Arrives after the host writes grok.promptNav, which is how a
         // toggle flipped in the VS Code settings TAB reaches this webview.
@@ -17662,7 +20739,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         updateScrollBtn();
         break;
       case "soundNotifications":
-        // Live toggle (grok.soundNotifications). Only affects future turn-end/
+        // Live toggle (atlas.soundNotifications). Only affects future turn-end/
         // error beeps.
         state.soundNotifications = !!msg.value;
         releaseAudioIfSilent();
@@ -17740,7 +20817,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         // The CSS derives both `zoom` and the containing-block height
         // compensation from this one variable, so the composer stays pinned.
         // Client-owned zoom (remote + desktop) ignores host updates so local
-        // keyboard/wheel/slider choice is not clobbered.
+        // keyboard/slider choice is not clobbered.
         state.hostFontScale = Number(msg.value) || 1;
         if (!CLIENT_OWNS_FONT_SCALE) applyChatZoom();
         break;
@@ -17844,6 +20921,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         state.activeToolGroupEl = null;
         state.turnAgentActionsEl = null;
         state.turnEditsByToolCallId.clear();
+        state.turnDiffBaseline = null;
         state.turnDiffSummaryEl = null;
         // The host has just rebuilt the aggregate from the surviving ledger.
         // No completed-turn figure survives a rewind; when the whole transcript
@@ -17862,13 +20940,34 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         forceScrollToBottom();
         break;
       }
+      case "composerDraftSession":
+        bindComposerDraft(msg.draftId, msg.sessionId);
+        break;
       case "restoreComposer": {
+        // The renderer's navigation gesture can precede the host's focus move.
+        // Keep a reply for the old conversation with that conversation's draft.
+        if (msg.sessionId && composerSessionId && msg.sessionId !== composerSessionId) {
+          const draft = composerDrafts.get(msg.sessionId);
+          const chips = new Map((draft?.chips || []).map((chip) => [chip.id, chip]));
+          for (const chip of msg.chips || []) chips.set(chip.id, chip);
+          composerDrafts.set(msg.sessionId, {
+            text: msg.draft && draft?.text?.includes(msg.text) ? draft.text : [draft?.text, msg.text].filter(Boolean).join("\n\n"), chips: [...chips.values()],
+          });
+          break;
+        }
         // Edit-and-resend (#56): the rewound message comes back so it can be
         // fixed and sent again. APPEND rather than overwrite — anything already
         // typed is the user's, and silently destroying it would be the same
         // class of bug as the one Edit exists to fix.
         const existing = input.value.trim();
-        input.value = existing ? existing + "\n\n" + (msg.text || "") : (msg.text || "");
+        // A parked draft (`draft`) is skipped only when the composer already
+        // holds it; anything else typed during the load is kept beside it.
+        if (!msg.draft || !input.value.includes(msg.text || "")) input.value = existing ? existing + "\n\n" + (msg.text || "") : (msg.text || "");
+        if (msg.chips) {
+          const merged = new Map(composerRestoredChips.map((chip) => [chip.id, chip]));
+          for (const chip of msg.chips) merged.set(chip.id, chip);
+          setComposerRestoredChips([...merged.values()]);
+        }
         input.focus();
         updateSlash();
         updateMention();
@@ -17913,6 +21012,26 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         }
         break;
       }
+      case "startupStatus": {
+        state.startupStatusSeen = true;
+        // A frame older than one already handled must not re-arm a cleared
+        // strip (seen live: an "opening" delivered after its clear). Frames
+        // without `seq` (snapshots, older hosts) always apply.
+        if (Number.isFinite(msg.seq)) {
+          if (msg.seq <= state.startupSeq) break;
+          state.startupSeq = msg.seq;
+        }
+        const stages = ["updating", "starting", "opening", "loading"];
+        if (stages.includes(msg.stage)) beginComposerLoad();
+        state.startupStatus = stages.includes(msg.stage) ? {
+          ...msg, startedAt: Date.now() - (Number.isFinite(msg.elapsedMs) ? Math.max(0, msg.elapsedMs) : 0),
+        } : null;
+        renderStartupStatus();
+        const welcomeStatus = $("welcome-version");
+        if (welcomeStatus) setWelcomeStatus(welcomeStatus.dataset.status || welcomeStatus.textContent, welcomeStatus.classList.contains("welcome-status-busy"));
+        updateSendButton();
+        break;
+      }
       case "initialized": {
         state.steeringProvider = msg.info.provider || "grok";
         state.steerSupported = msg.info.steeringSupported === true;
@@ -17922,6 +21041,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         if (!msg.info.provider || msg.info.provider === "grok") state.cliVersion = msg.info.version || "";
         state.startingPhase = true;
         state.onboardingMode = null;
+        setModelCatalogPending(true);
         if (!welcomeHoldActive()) setWelcomeStatus("Starting", true);
         const onb = $("welcome-onboarding");
         if (onb) onb.innerHTML = "";
@@ -17937,10 +21057,34 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       }
       case "localModels":
         break;
+      case "contextWindowSelection": {
+        const selection = msg.selection;
+        if (state.contextSelectionSessionId && selection.sessionId !== state.contextSelectionSessionId) break;
+        if (selection.modelId !== state.currentModelId) break;
+        if (state.contextWindowSelection?.sessionId === selection.sessionId && state.contextWindowSelection.generation > selection.generation) break;
+        state.contextWindowSelection = selection;
+        if (!selection.changing) state.contextWindowRequest = undefined;
+        // State only. An unreleased host also sent `openPicker` here to pop a
+        // size picker after a model change; nothing opens on its own now, so
+        // that field is ignored.
+        if (!contextPopover.hidden) renderContextPopover();
+        break;
+      }
       case "session": {
+        // The question was about the conversation that was on screen.
+        if (projectPromptFor && projectPromptFor.sessionId && msg.sessionId !== projectPromptFor.sessionId) removeProjectPrompt();
+        projectPromptView = msg.sessionId || "";
+        if (state.contextSelectionSessionId !== msg.sessionId) state.contextWindowSelection = undefined;
+        state.contextSelectionSessionId = msg.sessionId;
+
         state.subscriptionWindows = [];
         state.currentModelId = msg.currentModelId;
-        state.activeProvider = msg.provider === "codex" || msg.provider === "claude" ? msg.provider : "grok";
+        state.activeProvider = msg.provider === "codex" || msg.provider === "claude" || msg.provider === "muse" && museAvailable
+          || msg.provider === "agy" && agyAdvertised ? msg.provider : "grok";
+        state.activeProviderNamed = typeof msg.provider === "string" && !!msg.provider;
+        // modeChanged is posted before session, so the button was painted for
+        // the previous provider. Repaint once this frame names the new one.
+        updateModeBtn(state.currentModeId);
         renderQueuedBlocks();
         syncFeedbackButtons();
         syncProviderVoice();
@@ -17951,12 +21095,17 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         renderCodexUpdateNudge();
         if (state.railTransition?.kind === "new") renderRail();
         state.isWorktree = !!msg.worktree; // gates the gear Apply/Remove worktree items
-        state.availableModels = msg.models || [];
+        // Untagged rows from older hosts belong to THIS session frame, not to
+        // whichever provider a later optimistic model pick happens to select.
+        state.availableModels = (msg.models || [])
+          .map(m => ({ ...m, provider: m.provider || state.activeProvider }))
+          .filter(m => (m.provider !== "muse" || museAvailable) && (m.provider !== "agy" || agyAdvertised));
         if (currentModel()?.reasoningEffort) state.effort = currentModel().reasoningEffort;
         refreshModelControls();
         renderProviderSignInCard();
         const m = state.availableModels.find((x) => x.modelId === msg.currentModelId && (!x.provider || x.provider === state.activeProvider));
         if (m?.totalContextTokens) state.contextWindow = m.totalContextTokens;
+        setModelCatalogPending(false);
         state.contextBreakdown = null;
         updateDonut(0);
         reportRemotePreferences();
@@ -17980,6 +21129,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           && (prev.repoCwd || "") === (next.repoCwd || ""));
         state.sessionName = next;
         // Host-confirmed identity only. Optimistic rail clicks never write here.
+        confirmComposerSession(msg.sessionId);
         state.activeSessionId = msg.sessionId;
         // May complete a resume (id match) or bind a new-session resolved id.
         noteRailTransitionSessionName(msg);
@@ -18020,7 +21170,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       }
       case "modeChanged":
         state.currentModeId = msg.modeId;
+        state.offeredModes = Array.isArray(msg.modes)
+          ? msg.modes.filter((id) => Object.hasOwn(MODE_META, id) || Object.hasOwn(MUSE_MODE_META, id))
+          : null;
+        state.disabledModes = msg.disabledModes && typeof msg.disabledModes === "object" ? msg.disabledModes : {};
         updateModeBtn(msg.modeId);
+        if (!modePopover.hidden) { modePopover.hidden = true; openModePopover(); }
         break;
       case "openModePopover":
         openModePopover();
@@ -18078,6 +21233,20 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           ? composeVoiceInsertion(state.voiceBefore, msg.text || "", state.voiceAfter).value
           : (msg.text || "");
         const t = composed.trim();
+        // A context-window change refuses sends, and it is not a busy turn,
+        // so nothing below would send or queue these words. Leave them in the
+        // composer as ordinary text, as a typed send meeting the same lock
+        // does, and end this insertion: the next utterance anchors afresh on
+        // whatever the composer holds then, corrections and the draft of a
+        // conversation opened meanwhile included.
+        if (t && !state.busy && state.contextWindowSelection?.changing) {
+          input.value = composed;
+          input.setSelectionRange(composed.length, composed.length);
+          state.voiceLive = false;
+          clearVoiceInsertion();
+          renderInputHighlight();
+          break;
+        }
         state.voiceBefore = "";
         state.voiceAfter = "";
         state.voiceInsertionActive = true;
@@ -18126,7 +21295,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         setMic("error");
         break;
       case "chips":
-        state.chips = msg.chips;
+        state.chips = composerRestoredChips.length
+          ? [...msg.chips.filter((chip) => !composerRestoredChips.some((c) => c.id === chip.id)), ...composerRestoredChips]
+          : msg.chips;
         renderChips();
         updateSendButton();
         break;
@@ -18151,6 +21322,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         break;
       }
       case "userMessage":
+        // The host's echo of our own submission is its acknowledgement, whatever
+        // a reset in between did to the pending-submission fields.
+        if (sendWait && msg.submissionId && msg.submissionId === sendWait.submissionId) {
+          sendWait.succeed();
+          sendWait = null;
+        }
         for (const pending of queuedWaits) {
           if (pending.sessionId === state.activeSessionId && msg.text === pending.text && sameChipIds(msg.chips, pending.chipIds)) {
             pending.op.success = "Message sent.";
@@ -18198,6 +21375,12 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         }
         addMessage("user", msg.text, msg.chips || [], { steer: msg.steer });
         forceScrollToBottom(); // jump back to the bottom on the user's own send (#16)
+        break;
+      case "turnDiffBaseline":
+        state.turnDiffBaseline = { turnId: msg.turnId, cwd: msg.cwd };
+        break;
+      case "turnFileDiffResult":
+        handleTurnFileDiffResult(msg);
         break;
       case "agentStart":
         // A user-initiated turn began. Show Grokking until content replaces it.
@@ -18349,7 +21532,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         state.historyEventCount = 0;
         break;
       case "toolCall":
-        advanceHistoryEvent();
+        // Hook rows never count as history events (see emitToolCallEvent).
+        if (!msg.call?._meta?.afkPilotHook) advanceHistoryEvent();
         if (state.suppressReplayTurn) break; // tool calls inside the primer turn (unlikely but defensive)
         if (isPlanReviewTool(msg.call)) {
           // Plan text belongs on the review card, not a generic tool row.
@@ -18382,10 +21566,14 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       if (isMediaGenToolCall(msg.call, state.activeProvider) && msg.call.toolCallId) {
           state.mediaGenCallIds.add(msg.call.toolCallId);
         }
+        // A lifecycle hook gets its own row, including after a tool-only turn.
+        if (msg.call?._meta?.afkPilotHook) closeToolGroup();
         addToToolGroup(msg.call);
+        if (msg.call?._meta?.afkPilotHook && msg.call.status !== "in_progress") closeToolGroup();
+        syncWorkflowLaunchRows();
         // Reads replay as a completed tool_call with the file text in `content`.
         // Shell rows wait for host `commandOutput` (grok) or a later update (Claude).
-        if (isReadTool(msg.call)) maybeAttachToolResultOutput(msg.call);
+        if (isReadTool(msg.call) && !toolFailureText(msg.call)) maybeAttachToolResultOutput(msg.call);
         // On session/load a completed edit replays as a single `tool_call` that
         // already carries its diff (no follow-up update) — attach the preview here
         // or the restored edit has no "open diff →" (#30).
@@ -18406,7 +21594,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         renderRestoredPermissionForTool(msg.call.toolCallId, msg.call.title);
         break;
       case "toolCallUpdate": {
-        advanceHistoryEvent();
+        if (!msg.call?._meta?.afkPilotHook) advanceHistoryEvent();
         if (state.suppressReplayTurn) break;
         if (isPlanReviewTool(msg.call)) break;
         // Resume: anchor a restored permission card here — the update carries the
@@ -18452,6 +21640,16 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         // arrive on this update. Attach the IN box first so maybeAttach can
         // fill OUT from this same completed payload.
         refreshToolRowFromUpdate(msg.call);
+        if (msg.call?._meta?.afkPilotHook && msg.call.status !== "in_progress"
+          && state.activeToolGroupEl?._calls.some((call) => call.toolCallId === msg.call.toolCallId)) closeToolGroup();
+        // A hook that succeeded leaves no row: only the running state and failures
+        // are worth showing (#215). The closed lone row is its own element.
+        if (msg.call?._meta?.afkPilotHook && msg.call.status === "completed") {
+          state.toolItemsByToolCallId.get(msg.call.toolCallId)?.remove();
+          state.toolItemsByToolCallId.delete(msg.call.toolCallId);
+          break;
+        }
+        syncWorkflowLaunchRows();
         // A self-executed command (cursor/Composer runs it in its own shell and
         // reports the result here, not via terminal/create) — fill the row's #41
         // IN/OUT box by toolCallId. Same path now fills a Read row's View all.
@@ -18541,6 +21739,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
             const failed = !cancelled && status !== "completed";
             finishSubagentCard(el, {
               durationMs: typeof u.duration_ms === "number" ? u.duration_ms : null,
+              tokens: u.tokens_used,
               output: typeof u.output === "string" && u.output ? u.output
                 : (failed || cancelled) ? `*Subagent ${status}${u.error ? ": " + String(u.error) : ""}.*` : "",
               failed,
@@ -18554,14 +21753,27 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         applyChildStream(msg);
         break;
       case "runProgress":
+        if (msg.replaceOnly) {
+          // A repair must not append a report outside this surface's window.
+          // Keep parked desk history current for a later prepend as well.
+          for (const entry of state.historyPrefix) {
+            if (entry.type === "runProgress" && entry.update.id === msg.update.id
+              && entry.update.kind === msg.update.kind) entry.update = msg.update;
+          }
+          if (!state.runProgressCards.has(String(msg.update.id))) break;
+        }
         applyRunProgress(msg.update);
         break;
       case "permissionRequest":
         addPermissionCard(msg.req);
-        if (!state.replaying) {
+        // A card with no options cannot be answered, so nothing is waiting on
+        // anyone. A session-granted command (#61) arrives already resolved in
+        // one batch, and announcing a wait for it would be false on exactly the
+        // commands the grant exists to keep quiet.
+        if (!state.replaying && (msg.req.options || []).length > 0) {
           // Tool titles can expose commands or file operations. The accessibility
           // cue says what the user must do without reading tool details aloud.
-          speakWaitingPrompt("Atlas is waiting for your permission. Review the request and choose an option.");
+          speakWaitingPrompt(`${agentName(true)} is waiting for your permission. Review the request and choose an option.`);
         }
         break;
       case "permissionOptions":
@@ -18608,7 +21820,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
             .map((question) => questionText(question))
             .filter(Boolean)
             .join(" ");
-          speakWaitingPrompt(questions || "Atlas is waiting for your answer.");
+          speakWaitingPrompt(questions || `${agentName(true)} is waiting for your answer.`);
         }
         break;
       case "planHistory":
@@ -18690,7 +21902,8 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
               const cmd = commandDetailText(item._call)
                 || (typeof msg.command === "string" && msg.command.trim())
                 || "{}";
-              if (!item.querySelector(".cmd-block")) attachCommandDetails(item, cmd, wantedId);
+              const isShell = hasShellCommand(item._call) || (typeof msg.command === "string" && !!msg.command.trim());
+              if (!item.querySelector(".cmd-block")) attachCommandDetails(item, cmd, wantedId, isShell);
               pending = state.pendingCommandDetails.find((p) => p.toolCallId === wantedId);
             }
           }
@@ -18778,6 +21991,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         speakCompletedTurn();
         break;
       case "exit":
+        if (state.modelCatalogPending) setModelCatalogPending(false);
         stopProcessingCue();
         hideGrokking();
         // A clean exit on an empty view is not an error: the composer's own
@@ -18843,6 +22057,14 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         // Matched on text because the queue deliberately collapses several
         // contributions into one string and cannot carry a submission id (see
         // divertRacingSend in the host).
+        // A queued send is answered: the queue snapshot is the host's reply to
+        // it, as it already is for queuedWaits and the placeholder below. Its
+        // later echo can carry merged text or a different implicit chip.
+        if (sendWait && state.pendingSubmissionText && queueHoldsContribution(state.sendQueue, state.pendingSubmissionText)) {
+          sendWait.success = "Message queued.";
+          sendWait.succeed();
+          sendWait = null;
+        }
         if (state.optimisticSendEl && state.pendingSubmissionText) {
           if (queueHoldsContribution(state.sendQueue, state.pendingSubmissionText)) {
             // ONLY the placeholder. The pending submission id and text stay put:
@@ -18916,7 +22138,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         // a spinner and is disabled (no interrupt option); when false (or
         // omitted) the button shows a stop icon and clicks cancel the in-flight
         // CLI work.
+        if (!msg.value) { state.startupStatus = null; renderStartupStatus(); }
         state.busy = !!msg.value;
+        if (!contextPopover.hidden) renderContextPopover();
         state.busyLocked = !!msg.locked;
         if (!state.busy && !state.replaying) {
           state.repoSwitchPending = false;
@@ -18932,6 +22156,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
             if (!welcomeHoldActive()) setWelcomeStatus(`Connected${ver}`, false); // settled — no spinner
           }
         }
+        // The end of startup opens the chip whether or not a catalog came: on
+        // a failed start it shows what the picker shows on failure.
+        if (!state.busy && !state.replaying && state.modelCatalogPending) setModelCatalogPending(false);
         // Refresh the gear popover's model/effort lock state if it's open.
         if (!gearPopover.hidden) renderGearMain();
         syncModelChip();
@@ -18951,12 +22178,14 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         addSessionContextBanner();
         break;
       case "clearMessages":
+        removeProjectPrompt();
         for (const el of document.querySelectorAll(".confirm-overlay[data-confirm-req-id]")) {
           el._resolveConfirm();
         }
         resetForNewSession();
         break;
       case "onboarding":
+          if (!msg.provider || msg.provider === state.onboardingChecking) state.onboardingChecking = "";
           // Record the host-launched terminal BEFORE rendering, so the panel is
           // painted with the done mark already on rather than flashing an
           // untouched button first.
@@ -18986,7 +22215,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
             // AFTER the mirror: renderConnectWizard reads it, and syncing
             // first painted the previous state every time (caught by driving
             // the states in a browser, 2026-08-31).
-            syncConnectWizard(msg.provider, msg.device);
+            syncConnectWizard(msg.provider, msg.device, msg.state, { platform: msg.platform, launched: msg.launched, agyChoice: msg.agyChoice, reason: msg.reason });
             // The composer card reads the same mirror, and this is the only
             // frame that moves it. Without this call its "Signing in…" state
             // waits for the next providerState -- which is the frame that
@@ -18995,6 +22224,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           }
         break;
       case "error":
+        if (state.modelCatalogPending) setModelCatalogPending(false);
         // The host refused to restore a specific conversation, and named it.
         // Keeping that id meant the next reload asked for the same dead
         // session, drew the same error, and re-armed itself — the owner could
@@ -19099,12 +22329,22 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         break;
       case "xaiNotification":
         break;
+      case "sessionOpening":
+        noteSessionOpening(msg);
+        break;
+      case "projectPrompt":
+        noteProjectPrompt(msg);
+        break;
       case "sessionRemoved": {
         if (!msg.id) break;
         const removed = state.sessions.find((s) => s.id === msg.id);
         state.sessions = state.sessions.filter((s) => s.id !== msg.id);
         state.railSelectedRows = state.railSelectedRows.filter((s) => s.id !== msg.id);
+        const pendingPin = pendingPins.get(msg.id);
+        if (pendingPin) clearTimeout(pendingPin.timer);
+        pendingPins.delete(msg.id);
         state.pinnedSessions = state.pinnedSessions.filter((s) => s.id !== msg.id);
+        if (Array.isArray(state.recentSessions)) state.recentSessions = state.recentSessions.filter((s) => s.id !== msg.id);
         for (const preview of Object.values(state.repoPreviews)) {
           const before = preview.entries.length;
           preview.entries = preview.entries.filter((s) => s.id !== msg.id);
@@ -19144,6 +22384,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           // Still an identity frame for the rail transition — activeId is this
           // tab's, even when the popover is about to re-request a filtered page.
           if (msg.activeId !== undefined) {
+            confirmComposerSession(msg.activeId || null);
             state.activeSessionId = msg.activeId || null;
             noteRailTransitionSessions(msg, entries);
             noteHostIdentityKnown(msg.activeId || null);
@@ -19177,6 +22418,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           // noteHostIdentityKnown is deliberately NOT here — this handler's
           // noteRailTransitionSessions runs at the end (it needs the adopted
           // rows), and the latch has to be read after it. See below.
+          confirmComposerSession(msg.activeId || null);
           state.activeSessionId = msg.activeId || null;
           if (state.activeSessionId) {
             const activeEntry = entries.find((entry) => entry.id === state.activeSessionId)
@@ -19264,9 +22506,15 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         if (msg.activeId !== undefined && offset === 0) noteHostIdentityKnown(msg.activeId || null);
         break;
       }
+      case "recentSessions":
+        state.recentSessions = uniqueSessionRows(Array.isArray(msg.entries) ? msg.entries : []);
+        state.dots = Object.assign({}, state.dots, msg.dots || {});
+        renderRail();
+        break;
       case "pinnedSessions": {
         state.pinnedSessionsKnown = true;
         state.pinnedSessions = uniqueSessionRows(msg.entries);
+        settlePendingPins(msg);
         state.dots = Object.assign({}, state.dots, msg.dots || {});
         if (settlePendingRename(state.pinnedSessions)) {
           renderSessionName();
@@ -19282,6 +22530,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
         const key = cwdKey(msg.cwd);
         state.repoPreviewsSupported = true;
         clearRailProbeDeadline(msg.cwd);
+        delete railProbeExtended[key];
         delete state.repoPreviewsAsked[key];
         if (msg.error) {
           delete state.repoPreviews[key];
@@ -19359,7 +22608,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
             // the placeholder stays in creating rather than looking stuck on
             // a switch that already completed.
             noteRailTransitionRepos(msg);
-            vscode.postMessage({ type: "newSession" });
+            postNewSession();
           } else {
             noteRailTransitionRepos(msg);
           }
@@ -19997,6 +23246,13 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
           fileIcons: { baseUrl: iconBase },
           askAgent: appendComposerText,
           openSettings: window.__grokFilePanelOpenSettings,
+          // The folder above the files is the SAME project, so it wears the
+          // same mark as the rail row — that was the point of asking for one
+          // ("we use the same icon over files and folders"). Supplied per
+          // mount, not globally: the provider-config panel's scope is a config
+          // directory, not a project, and must keep its folder.
+          projectMark: repoMarkForCwd,
+          projectMarkColor: repoColorForCwd,
         },
         // No purpose gate here on purpose. People clone repositories in
         // Knowledge work too, and `changesAvailable()` already answers the real
@@ -20183,6 +23439,17 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       }
       return;
     }
+    const wrapBtn = e.target.closest(".code-wrap-btn");
+    if (wrapBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const block = wrapBtn.closest(".code-block");
+      // Per block and not a setting: one transcript mixes proposed prose with
+      // real code, and the right answer differs between two blocks on screen.
+      const on = block ? block.classList.toggle("wrap") : false;
+      wrapBtn.setAttribute("aria-pressed", String(on));
+      return;
+    }
     const copyBtn = e.target.closest(".code-copy-btn");
     if (copyBtn) {
       e.preventDefault();
@@ -20204,14 +23471,42 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       return;
     }
     const onbAction = e.target.closest(".onb-action");
-    if (onbAction) {
+    if (onbAction && (IS_REMOTE || !onbAction.matches("a[href]"))) {
       e.preventDefault();
       e.stopPropagation();
       const act = onbAction.dataset.act;
-      if (LAUNCH_ACTS.includes(act)) markOnboardingLaunched(act, onbAction.dataset.provider);
+      const connecting = !IS_REMOTE && act === "connectProvider"
+        && !(state.providers || []).some(p => p.id === onbAction.dataset.provider && p.connected);
+      if (connecting) {
+        state.onboardingChecking = onbAction.dataset.provider;
+        onbAction.disabled = true;
+        onbAction.setAttribute("aria-busy", "true");
+        (onbAction.querySelector("small") || onbAction).textContent = "Checking…";
+        if (connectWizard && connectWizard.provider === onbAction.dataset.provider) {
+          connectWizard.museOnboarding = null;
+          connectWizard.agyOnboarding = null;
+          connectWizard.checking = true;
+          renderConnectWizard();
+        }
+      } else if (LAUNCH_ACTS.includes(act)) markOnboardingLaunched(act, onbAction.dataset.provider);
       if (act === "runInstall") vscode.postMessage({ type: "runInstallCmd" });
+      else if (act === "installMuse" && !IS_REMOTE && museAvailable && state.hostCaps && state.hostCaps.installMuse === true) {
+        vscode.postMessage({ type: "runMuseInstallCmd" });
+      }
       else if (act === "installCodex") vscode.postMessage({ type: "installCodex" });
       else if (act === "cancelCodexInstall") vscode.postMessage({ type: "cancelCodexInstall" });
+      else if (act === "installAgy" && !IS_REMOTE && agyAdvertised) vscode.postMessage({ type: "installAgy" });
+      else if (act === "agySignInGoogle" && !IS_REMOTE && agyAdvertised) vscode.postMessage({ type: "agySignIn", method: "google" });
+      else if (act === "agySignInSavedKey" && !IS_REMOTE && agyAdvertised) vscode.postMessage({ type: "agySignIn", method: "api-key" });
+      else if (act === "agySignInKey" && !IS_REMOTE && agyAdvertised) {
+        const input = onbAction.closest(".onb") && onbAction.closest(".onb").querySelector(".onb-agy-key");
+        const key = input ? String(input.value || "").trim() : "";
+        if (!key) return;
+        // Not kept in the page once it is on its way to the host.
+        input.value = "";
+        vscode.postMessage({ type: "agySignIn", method: "api-key", key });
+      }
+      else if (act === "cancelAgyInstall" && !IS_REMOTE) vscode.postMessage({ type: "cancelAgyInstall" });
       else if (act === "runLogin") vscode.postMessage({ type: "runGrokLogin" });
       else if (act === "recheck") vscode.postMessage({ type: "recheckConnection", provider: onbAction.dataset.provider });
       else if (act === "connectProvider") vscode.postMessage({ type: "runGrokLogin", provider: onbAction.dataset.provider });
@@ -20286,7 +23581,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     if (msgCopyBtn) {
       e.preventDefault();
       e.stopPropagation();
-      const msgEl = msgCopyBtn.closest(".msg");
+      const msgEl = msgCopyBtn.closest(".msg, .delegation-result");
       const text = (msgEl && msgEl._copyText) || "";
       navigator.clipboard.writeText(text).then(() => {
         const glyph = msgCopyBtn.querySelector(".msg-action-glyph");
@@ -20336,12 +23631,16 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       // yields, and exactly what belongs back in the composer. NOT the rewind
       // result's `prompt_text` — that IS this message, but in raw wire form
       // (envelope + tags still attached).
-      vscode.postMessage({
+      const editMsg = {
         type: "editLastMessage",
         userBubbleIndex: idx,
         text: (msgEl && msgEl._copyText) || "",
         totalUserBubbles: visibleUserBubbleCount(),
-      });
+      };
+      if (msgEl && msgEl._chips && msgEl._chips.length) {
+        editMsg.chips = msgEl._chips;
+      }
+      vscode.postMessage(editMsg);
       return;
     }
     closePopovers();
@@ -20377,7 +23676,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const input = e.target && e.target.closest && e.target.closest(".onb-code-input");
     if (!input || input.disabled) return;
     e.preventDefault();
-    const btn = input.closest(".onb") && input.closest(".onb").querySelector('[data-act="submitDeviceLoginCode"]');
+    const btn = input.closest(".onb") && input.closest(".onb").querySelector('[data-act="submitDeviceLoginCode"], [data-act="agySignInKey"]');
     if (btn && !btn.disabled) btn.click();
   });
 
@@ -20500,6 +23799,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
   });
   input.addEventListener("pointerdown", () => { composerPreferredColumn = null; });
   input.addEventListener("input", () => {
+    if (composerLoadDraft) composerLoadDraft.edited = true;
     composerPreferredColumn = null;
     updateSlash();
     updateMention();

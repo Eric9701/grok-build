@@ -24,7 +24,7 @@ fs.mkdirSync(OUT, { recursive: true });
 const qa = buildQaFixture();
 const workspace = qa.project;
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "grok-stick-ud-"));
-fs.writeFileSync(path.join(userData, "test-config.json"), JSON.stringify({ "grok.cliPath": fixtureCli }), "utf8");
+fs.writeFileSync(path.join(userData, "test-config.json"), JSON.stringify({ "atlas.cliPath": fixtureCli }), "utf8");
 
 const env = { ...process.env, GROK_HOME: qa.grokHome };
 delete env.ELECTRON_RUN_AS_NODE;
