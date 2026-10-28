@@ -2078,7 +2078,7 @@ describe("settings About section", () => {
     expect(api.GITHUB_ISSUE_FEATURE_URL).toBe("https://github.com/phuryn/grok-build-vscode/issues/new?labels=enhancement");
     expect(api.ROWS.find((r: { id: string }) => r.id === "reportBug")?.href).toBe(api.GITHUB_ISSUE_BUG_URL);
     expect(api.ROWS.find((r: { id: string }) => r.id === "requestFeature")?.href).toBe(api.GITHUB_ISSUE_FEATURE_URL);
-    expect(api.SUPPORT_MAILTO).toBe("mailto:support@productcompass.pm");
+    expect(api.SUPPORT_MAILTO).toBe("mailto:contact@afkpilot.com");
   });
 
   it("puts the non-affiliation disclaimer only at the bottom of the About page", () => {
@@ -2101,7 +2101,7 @@ describe("settings About section", () => {
     expect(body.lastElementChild).toBe(disclaimer);
     expect(root.textContent).toContain("Report a bug");
     expect(root.textContent).toContain("Request a feature");
-    expect(root.textContent).toContain("support@productcompass.pm");
+    expect(root.textContent).toContain("contact@afkpilot.com");
 
     const general = doc.createElement("div");
     doc.body.appendChild(general);
@@ -2461,7 +2461,7 @@ describe("the account button says what it does on each surface (#203)", () => {
       { id: "claude", connected: true, keepsCliSignIn: true },
       { id: "muse", connected: true, keepsCliSignIn: true },
     ] } });
-    for (const [row, cli] of [["Grok", "Grok"], ["Codex", "Codex"], ["Claude", "Claude Code"], ["Muse", "Muse"]]) {
+    for (const [row, cli] of [["Grok", "Atlas"], ["Codex", "Codex"], ["Claude", "Claude Code"], ["Muse", "Muse"]]) {
       const action = h.root.querySelector<HTMLButtonElement>(`${deskRow(row)} .settings-action`)!;
       expect(action.textContent).toBe("Disconnect");
       expect(h.root.querySelector(deskRow(row))!.textContent).toContain(`the ${cli} CLI stays signed in`);

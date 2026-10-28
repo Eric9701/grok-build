@@ -12609,9 +12609,9 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     read_file: "Read", file_read: "Read", view_file: "Read", view: "Read",
     write_file: "Write", file_write: "Write", write: "Write",
     bash: "Run", execute: "Run", run_command: "Run", run_terminal_command: "Run",
-    shell: "Run", run_bash: "Run",
+    shell: "Run", run_bash: "Run", powershell: "Run",
     list_dir: "List", list_directory: "List",
-    search_files: "Search", grep: "Search", ripgrep: "Search",
+    search_files: "Search", grep: "Search", ripgrep: "Search", search: "Search",
     search_replace: "Edit", edit_file: "Edit", str_replace: "Edit",
     web_search: "Web search", search_web: "Web search",
     web_fetch: "Fetch", webfetch: "Fetch",
@@ -12851,8 +12851,42 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
    */
   function searchPatternText(call) {
     const r = (call && (call.rawInput || call.input)) || {};
-    const p = r.glob_pattern || r.pattern || r.query || r.regex || r.search;
+    const p = searchPattern(r);
     return typeof p === "string" && p.trim() ? clampToolTarget(p.trim()) : "";
+  }
+
+  /**
+   * The pattern a search ran — or, when the pattern matches every line and the
+   * search is really by file name, the globs it filtered on. Muse lists files
+   * that way, `{pattern: "^", glob: ["*.md", "*.txt"]}`, which read "Search ^".
+   */
+  const MATCH_ALL = new Set(["", "^", "$", ".", ".*", ".+", "^.*", "^.*$"]);
+  function searchPattern(r) {
+    const p = r.glob_pattern || r.pattern || r.query || r.regex || r.search;
+    const globs = (Array.isArray(r.glob) ? r.glob : [r.glob]).filter((g) => typeof g === "string" && g.trim());
+    if (globs.length && (typeof p !== "string" || MATCH_ALL.has(p.trim()))) return globs.join(", ");
+    return p;
+  }
+
+  /**
+   * #220: the folder a search looked in, when it narrowed the search. grep
+   * ships `path: "."` and Cursor the workspace root on most calls, so those say
+   * nothing ("in root folder" on every row would be noise). A folder outside
+   * the workspace shows its own name, never a machine path.
+   */
+  function searchDirText(call) {
+    const r = (call && (call.rawInput || call.input)) || {};
+    const p = r.path || r.target_directory || r.directory || r.dir || (Array.isArray(r.paths) ? r.paths[0] : "");
+    if (typeof p !== "string") return "";
+    const s = p.trim().replace(/\\/g, "/").replace(/\/+$/, "").replace(/^\.\//, "");
+    if (!s || s === ".") return "";
+    let shown = workspaceRelPath(s);
+    if (!shown) {
+      const cwd = String(state.cwd || "").replace(/\\/g, "/").replace(/\/+$/, "");
+      if (cwd && s.toLowerCase() === cwd.toLowerCase()) return "";
+      shown = s.split("/").pop() || s;
+    }
+    return middleElide(shown, 40);
   }
 
   function inProgressLabel(call) {
@@ -12870,9 +12904,10 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       return q ? `Searching web for "${q}"` : "Searching web";
     }
     if (/^(web_fetch|webfetch)$/.test(name)) return "Fetching page";
-    if (/^(grep|ripgrep|search_files)$/.test(name) || kind === "search") {
+    if (/^(grep|ripgrep|search_files|search)$/.test(name) || kind === "search") {
       const p = searchPatternText(call);
-      return p ? `Searching for "${p}"` : "Searching";
+      const dir = searchDirText(call);
+      return (p ? `Searching for "${p}"` : "Searching") + (dir ? ` in ${dir}` : "");
     }
     if (/^(write_file|file_write|write|edit_file|search_replace|str_replace)$/.test(name) || kind === "edit" || kind === "write") {
       const renamed = toolRenamePaths(call);
@@ -12881,7 +12916,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     }
     if (kind === "delete") return filePath ? `Deleting ${prettyPath(filePath)}` : "Deleting file";
     if (kind === "fetch") return "Generating";
-    if (/^(bash|execute|run_command|run_terminal_command|shell|run_bash)$/.test(name) || kind === "execute") {
+    if (/^(bash|execute|run_command|run_terminal_command|shell|run_bash|powershell)$/.test(name) || kind === "execute") {
       return "Running command";
     }
     // A tool we didn't predict still shows — but never echo a long title verbatim.
@@ -12897,7 +12932,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     const command = r.command || r.cmd;
     const failure = state.toolFailuresById.get(call.toolCallId) || toolFailureText(call);
     if (isMissingPathRead(call, failure)) return `${filePath ? prettyPath(filePath) : isDirectoryListTool(call) ? "Directory" : "File"} — doesn't exist yet`;
-    const pattern = r.glob_pattern || r.pattern || r.query || r.regex || r.search;
+    const pattern = searchPattern(r);
     const url = r.url || r.uri;
     // Collapsed rows read as a scannable summary, not a wall of shell — the
     // full command lives one click away in the IN/OUT detail. (CSS still
@@ -12908,14 +12943,15 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // render the unhelpful "root folder"). Match by kind OR name so it still wins
     // when the first tool_call arrives before grok finalizes `kind`.
     const isSearch =
-      kind === "search" || /\b(grep|glob|ripgrep|search_files|web_search|search_web)\b/i.test(name);
+      kind === "search" || name === "search" || /\b(grep|glob|ripgrep|search_files|web_search|search_web)\b/i.test(name);
 
     let target = "";
     const renamed = toolRenamePaths(call);
     if (renamed && (kind === "edit" || kind === "write" || kind === "delete" || verb === "Edit" || verb === "Write")) {
       target = `${prettyPath(renamed.from)} → ${prettyPath(renamed.to)}`;
     } else if (isSearch && pattern) {
-      target = clamp(pattern);
+      const dir = searchDirText(call);
+      target = clamp(pattern) + (dir ? ` in ${dir}` : "");
     } else if (url) {
       target = clamp(url.replace(/^https?:\/\//i, ""));
     } else if (filePath) {
@@ -12947,6 +12983,29 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     return name || "tool";
   }
 
+  // #226: a narrow row ellipsized a long file name from its END, and the link
+  // being one unbreakable box left just "Read …". The end of the name and the
+  // line range are what tell rows apart (reads of similarly named files
+  // otherwise make a column of identical rows), so that tail never shrinks and
+  // the start gives way — the ellipsis lands in the middle (chat.css).
+  const READ_REF_TAIL = 16;
+  function fillReadRefText(link, target) {
+    const range = / lines \d+-\d+$/.exec(target);
+    const name = range ? target.slice(0, range.index) : target;
+    const head = document.createElement("span");
+    head.className = "tool-label-ref-head";
+    if (name.length <= READ_REF_TAIL) {
+      head.textContent = target;
+      link.append(head);
+      return;
+    }
+    head.textContent = name.slice(0, name.length - READ_REF_TAIL);
+    const tail = document.createElement("span");
+    tail.className = "tool-label-ref-tail";
+    tail.textContent = name.slice(name.length - READ_REF_TAIL) + (range ? range[0] : "");
+    link.append(head, tail);
+  }
+
   // Flatten rebuilds the label span (details/chevron nodes move; the label
   // does not), so title has to be painted wherever textContent is set.
   function applyToolLabel(el, call) {
@@ -12956,6 +13015,7 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
     // Assigning textContent first is what keeps this idempotent across the
     // repaints that call it — it drops any link node an earlier pass appended.
     el.textContent = full;
+    el.classList.remove("tool-label-split");
     const ref = readLinkRef(call);
     const target = ref ? readTargetLabel(call) : "";
     // Split only when the rendered label really ends with the target: a row that
@@ -12971,10 +13031,11 @@ const { formatWaitElapsed, looksLikeFileRef, formatRelativeTime, brandModelDispl
       || el.classList.contains("tool-label");
     if (readLinkMode() !== "file" && !carrierCapable) return;
     el.textContent = full.slice(0, full.length - target.length);
+    el.classList.add("tool-label-split");
     const link = document.createElement("button");
     link.type = "button";
     link.className = "tool-label-ref";
-    link.textContent = target;
+    fillReadRefText(link, target);
     link.title = `Open ${ref.replace(/#L(\d+)-L(\d+)$/, " at lines $1-$2")}`;
     link.onclick = (e) => {
       e.stopPropagation(); // must not toggle the row or the group
@@ -24045,6 +24106,12 @@ ${fullText}`
   wireClientFontScaleShortcuts();
   window.addEventListener("focus", () => {
     if (takeDesktopLaunchComposerFocus()) return;
+    // A highlight in the transcript leaves focus on <body>, and VS Code's
+    // Ctrl+C / Copy refocuses the webview before it copies (#223, #225).
+    // Claiming the composer here collapsed the highlight, so the copy read
+    // the composer instead.
+    const sel = window.getSelection && window.getSelection();
+    if (sel && !sel.isCollapsed) return;
     const el = document.activeElement;
     if (!el || el === document.body) input.focus({ preventScroll: true });
   });

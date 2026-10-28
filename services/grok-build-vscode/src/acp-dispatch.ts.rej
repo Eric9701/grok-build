@@ -1,0 +1,14 @@
+diff a/services/grok-build-vscode/src/acp-dispatch.ts b/services/grok-build-vscode/src/acp-dispatch.ts	(rejected hunks)
+@@ -1298,6 +1323,12 @@ export function entitlementNoticeText(err: unknown): string {
+ export function promptErrorText(err: unknown): string {
+   if (isRateLimitError(err)) return rateLimitNoticeText(err);
+   const detail = errorDetail(err);
++  const foreignHost = foreignEndpointAuthHost(detail);
++  if (foreignHost) {
++    return `Not a Grok sign-in issue \u{2014} ${foreignHost} rejected this model's API key. `
++      + "Check the variable its env_key names in ~/.grok/config.toml; one set after VS Code or the app started is only seen after a full restart. "
++      + detail;
++  }
+   if (!isCredentialError(err) && isAuthErrorText(detail)) return entitlementNoticeText(err);
+   return detail;
+ }

@@ -173,7 +173,7 @@
   };
   const GITHUB_ISSUE_BUG_URL = GITHUB_REPO_URL + "/issues/new?labels=bug";
   const GITHUB_ISSUE_FEATURE_URL = GITHUB_REPO_URL + "/issues/new?labels=enhancement";
-  const SUPPORT_MAILTO = "mailto:support@productcompass.pm";
+  const SUPPORT_MAILTO = "mailto:contact@afkpilot.com";
   const ABOUT_DISCLAIMER =
     "Unofficial · community-built · MIT | " +
     "A VS Code UI for Atlas CLI - not affiliated with or endorsed by SpaceXAI (formerly xAI). " +
@@ -407,7 +407,7 @@
     return provider.keepsCliSignIn === true ? "Disconnect" : "Sign out";
   }
 
-  const PROVIDER_CLI_NAMES = { grok: "Grok", codex: "Codex", claude: "Claude Code", muse: "Muse" };
+  const PROVIDER_CLI_NAMES = { grok: "Atlas", codex: "Codex", claude: "Claude Code", muse: "Muse" };
 
   function agyAdvertised(s) {
     return ((s && s.providers) || []).some((p) => p && p.id === "agy");
@@ -1589,7 +1589,7 @@
       category: "about",
       icon: "mail",
       title: "Contact",
-      description: "support@productcompass.pm",
+      description: "contact@afkpilot.com",
       kind: "action",
       actionLabel: "Email",
       href: SUPPORT_MAILTO,
@@ -3378,7 +3378,7 @@
   }
 
   function mount(container, opts) {
-    if (!container) throw new Error("GrokSettings.mount requires a container");
+    if (!container) throw new Error("Atlas settings mount requires a container");
     const env = defaultEnv({ ...(opts.env || {}), standalone: !!opts.standalone });
     let snapshot = defaultSnapshot(opts.snapshot);
     let categoryId = opts.category || "general";

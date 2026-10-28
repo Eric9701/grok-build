@@ -3198,9 +3198,14 @@ button.workflow-step:focus-visible { outline: 1px solid var(--vscode-focusBorder
   transform: rotate(90deg);
 }
 /* Single-line labels: truncate instead of wrapping (long grep patterns,
-   commands); the details block still breaks onto its own full-width row. */
+   commands); the details block still breaks onto its own full-width row.
+   The row wraps, and a wrapping row breaks lines on each item's BASE size, so
+   an `auto` basis put any label wider than the row on a line of its own, under
+   its icon. A zero basis never breaks the line; growing up to max-content
+   keeps a short label hugging its chevron. */
 .tool-item-label, .tool-flat .tool-label {
-  flex: 0 1 auto;
+  flex: 1 1 0;
+  max-width: max-content;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3228,6 +3233,18 @@ button.workflow-step:focus-visible { outline: 1px solid var(--vscode-focusBorder
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+/* #226: a <button> is one unbreakable box, so under the label's ellipsis a long
+   name collapsed to "Read …". A label holding the link lays out as a row the
+   link can shrink in; the name's start ellipsizes and its tail (end of the
+   name + line range, applyToolLabel) never does. `pre` keeps the space after
+   the verb, which a flex item would drop — and it has to outrank the `nowrap`
+   on a lone settled row and a subagent's row, or those read "ReadREADME.md". */
+.tool-label-split { display: flex; white-space: pre; }
+.tool-flat .tool-label.tool-label-split { white-space: pre; }
+.subagent-card .subagent-tool.tool-label-split { white-space: pre; }
+.tool-label-split > .tool-label-ref { display: flex; flex: 0 1 auto; min-width: 0; }
+.tool-label-ref-head { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tool-label-ref-tail { flex: 0 0 auto; }
 .tool-item-details {
   flex-basis: 100%;
   min-width: 0;
