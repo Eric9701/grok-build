@@ -24104,12 +24104,66 @@ ${fullText}`
   // preventScroll: a taller-than-window first frame must not stick html.
   applyChatZoom();
   wireClientFontScaleShortcuts();
+  // #223 / #225. Two ways a transcript highlight never reaches the clipboard:
+  // the composer keeps keyboard focus, so Ctrl+C copies its caret; and VS
+  // Code refocuses the webview before Copy, which can collapse the highlight
+  // before this listener runs. Remember the highlight while it exists, and
+  // on copy write that text unless the user is copying a range inside the
+  // composer. A pointerdown clears it — that click is the user leaving the
+  // highlight, and the copy command itself never clicks.
+  let transcriptCopy = "";
+  function transcriptHighlightText() {
+    const sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.anchorNode) return "";
+    const node = sel.anchorNode;
+    if (node === input || (typeof input.contains === "function" && input.contains(node))) return "";
+    if (!messagesEl.contains(node)) return "";
+    return String(sel.toString() || "");
+  }
+  function rememberTranscriptHighlight() {
+    const text = transcriptHighlightText();
+    if (text) transcriptCopy = text;
+  }
+  document.addEventListener("selectionchange", rememberTranscriptHighlight);
+  // Typing or a key that isn't Copy means the composer is what the user is
+  // working in. Ctrl/Cmd+C must not clear — it is the key that then copies.
+  input.addEventListener("input", () => { transcriptCopy = ""; });
+  input.addEventListener("keydown", (e) => {
+    const copyKey = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey
+      && String(e.key).toLowerCase() === "c";
+    if (!copyKey) transcriptCopy = "";
+  });
+  document.addEventListener("pointerdown", (e) => {
+    const t = e.target;
+    if (t === input || (t && t.nodeType === 1 && input.contains(t))) {
+      transcriptCopy = "";
+      return;
+    }
+    const before = transcriptCopy;
+    requestAnimationFrame(() => {
+      if (transcriptCopy !== before) return;
+      if (!transcriptHighlightText()) transcriptCopy = "";
+    });
+  }, true);
+  document.addEventListener("copy", (e) => {
+    const live = transcriptHighlightText();
+    const composerRange = document.activeElement === input
+      && input.selectionStart != null
+      && input.selectionEnd != null
+      && input.selectionStart !== input.selectionEnd;
+    if (composerRange && !live) return;
+    const text = live || transcriptCopy;
+    if (!text || !e.clipboardData || typeof e.clipboardData.setData !== "function") return;
+    e.clipboardData.setData("text/plain", text);
+    e.preventDefault();
+  }, true);
   window.addEventListener("focus", () => {
     if (takeDesktopLaunchComposerFocus()) return;
     // A highlight in the transcript leaves focus on <body>, and VS Code's
     // Ctrl+C / Copy refocuses the webview before it copies (#223, #225).
     // Claiming the composer here collapsed the highlight, so the copy read
-    // the composer instead.
+    // the composer instead. The copy listener above still writes a highlight
+    // this refocus already collapsed.
     const sel = window.getSelection && window.getSelection();
     if (sel && !sel.isCollapsed) return;
     const el = document.activeElement;

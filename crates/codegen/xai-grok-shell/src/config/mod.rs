@@ -1316,6 +1316,13 @@ fn apply_requirements_inner(
         config.endpoints.cli_chat_proxy_base_url = Some(val.to_owned());
         push("endpoints.cli_chat_proxy_base_url", val.to_owned());
     }
+    if let Some(val) = req_str(req, "endpoints", "login_base_url")
+        && config.endpoints.login_base_url.as_deref() != Some(val)
+    {
+        config.endpoints.login_base_url = Some(val.to_owned());
+        push("endpoints.login_base_url", val.to_owned());
+    }
+    config.apply_login_base_url();
     enforce_str!(
         "endpoints",
         "models_base_url",

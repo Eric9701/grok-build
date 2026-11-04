@@ -388,6 +388,50 @@ try {
 
 $ConfigFile = Join-Path $GrokDir 'config.toml'
 $cliLines = @('installer = "internal"', 'channel = "enterprise"')
+$AtlasServerForEndpoints = if ($env:GROK_ATLAS_SERVER) {
+    $env:GROK_ATLAS_SERVER.TrimEnd('/')
+} else {
+    'http://10.218.220.237:22255'
+}
+$endpointLines = @(
+    "login_base_url = `"$AtlasServerForEndpoints/atlas`"",
+    "cli_chat_proxy_base_url = `"$AtlasServerForEndpoints/atlas/v1`"",
+    "cli_update_base_url = `"$BaseUrl`""
+)
+
+function Upsert-TomlSection([string]$Path, [string]$Section, [string[]]$KeysToReplace, [string[]]$NewLines) {
+    if (-not (Test-Path $Path)) {
+        New-Item -ItemType Directory -Path (Split-Path $Path) -Force | Out-Null
+        $content = "[$Section]`r`n" + ($NewLines -join "`r`n") + "`r`n"
+        [System.IO.File]::WriteAllText($Path, $content, [System.Text.Encoding]::UTF8)
+        return
+    }
+    $raw = Get-Content -Raw $Path
+    if ($raw -notmatch "(?m)^\[$([regex]::Escape($Section))\]") {
+        Add-Content -Path $Path -Value "`r`n[$Section]`r`n$($NewLines -join "`r`n")`r`n"
+        return
+    }
+    $existingLines = Get-Content $Path
+    $output = [System.Collections.ArrayList]::new()
+    $inSection = $false
+    $keyPattern = '^\s*(' + ($KeysToReplace -join '|') + ')\s*='
+    foreach ($line in $existingLines) {
+        if ($line -match "^\[$([regex]::Escape($Section))\]\s*(#.*)?$") {
+            [void]$output.Add($line)
+            foreach ($nl in $NewLines) { [void]$output.Add($nl) }
+            $inSection = $true
+            continue
+        }
+        if ($line -match '^\[.+\]\s*(#.*)?$') {
+            $inSection = $false
+        }
+        if ($inSection -and $line -match $keyPattern) {
+            continue
+        }
+        [void]$output.Add($line)
+    }
+    [System.IO.File]::WriteAllLines($Path, [string[]]$output.ToArray(), [System.Text.Encoding]::UTF8)
+}
 
 if (-not (Test-Path $ConfigFile)) {
     New-Item -ItemType Directory -Path (Split-Path $ConfigFile) -Force | Out-Null
@@ -418,6 +462,8 @@ if (-not (Test-Path $ConfigFile)) {
 } else {
     Add-Content -Path $ConfigFile -Value "`r`n[cli]`r`n$($cliLines -join "`r`n")`r`n"
 }
+
+Upsert-TomlSection $ConfigFile 'endpoints' @('login_base_url', 'cli_chat_proxy_base_url', 'cli_update_base_url') $endpointLines
 
 # --- Fetch deployment config (deployment key only) ---
 

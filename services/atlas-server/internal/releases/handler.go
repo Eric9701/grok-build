@@ -17,7 +17,7 @@ import (
 //
 //	stable | alpha | enterprise   — plain-text semver
 //	grok-{version}-{platform}[.exe]
-//	latest.yml / latest-mac.yml   — optional Desktop electron-updater feeds
+//	latest.yml / latest-mac.yml   — legacy electron-updater feeds (AtlasBuddy uses /desktop/*)
 //	install.ps1 / install.sh / install-enterprise.* — optional bootstrap scripts
 type Handler struct {
 	Dir string

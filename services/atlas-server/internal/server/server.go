@@ -12,6 +12,7 @@ import (
 	"github.com/atlas-build/atlas-server/internal/auth"
 	"github.com/atlas-build/atlas-server/internal/config"
 	"github.com/atlas-build/atlas-server/internal/crypto"
+	"github.com/atlas-build/atlas-server/internal/desktop"
 	"github.com/atlas-build/atlas-server/internal/grokdata"
 	"github.com/atlas-build/atlas-server/internal/inference"
 	"github.com/atlas-build/atlas-server/internal/proxy"
@@ -43,6 +44,7 @@ func New(cfg config.Config, st store.Store, users store.UserStore, pages Pages) 
 
 	releases.EnsureDir(cfg.ReleasesDir)
 	releasesH := releases.NewHandler(cfg.ReleasesDir)
+	desktopH := desktop.NewHandler(cfg.ReleasesDir)
 
 	accountH := account.NewHandler(cfg, users, pages.Login)
 	authH := auth.NewHandler(cfg, st, users, accountH, pages.Device)
@@ -100,6 +102,10 @@ func New(cfg config.Config, st store.Store, users store.UserStore, pages Pages) 
 		// CLI update artifacts (channel pointers + binaries).
 		r.Get("/cli/*", releasesH.ServeHTTP)
 		r.Head("/cli/*", releasesH.ServeHTTP)
+
+		// Desktop self-update feed + payloads (AtlasBuddy).
+		r.Get("/desktop/{channel}/{name}", desktopH.ServeHTTP)
+		r.Head("/desktop/{channel}/{name}", desktopH.ServeHTTP)
 
 		// Web account login (required before device-code approval).
 		r.Get("/login", accountH.LoginPage)

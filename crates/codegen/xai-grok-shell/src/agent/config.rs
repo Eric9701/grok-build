@@ -136,6 +136,10 @@ pub struct EndpointsConfig {
     /// Tracking explicitness (vs comparing to the default value) lets an org pin the proxy to the default on purpose.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cli_chat_proxy_base_url: Option<String>,
+    /// Enterprise device-login issuer (`{issuer}/oauth2/device/code`).
+    /// Independent of `cli_chat_proxy_base_url` (`…/atlas/v1`). Blank counts as unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub login_base_url: Option<String>,
     /// Base URL for the public xAI API.
     pub xai_api_base_url: String,
     /// Optional extra access-header value (applied only with the optional non-production feature, and only for matching first-party hosts).
@@ -496,6 +500,7 @@ impl Default for EndpointsConfig {
     fn default() -> Self {
         Self {
             cli_chat_proxy_base_url: std::env::var("GROK_CLI_CHAT_PROXY_BASE_URL").ok(),
+            login_base_url: None,
             xai_api_base_url: std::env::var("GROK_XAI_API_BASE_URL")
                 .unwrap_or_else(|_| XAI_API_BASE_URL_DEFAULT.to_owned()),
             alpha_test_key: None,
@@ -1235,6 +1240,9 @@ pub struct Config {
     /// Not a `GrokComConfig` field (that struct is public and exhaustive); passed into the login flow by callers.
     #[serde(skip)]
     pub login_device_flow: Option<bool>,
+    /// User toml set `[auth.oauth2].issuer` or `[auth.oidc]`. `login_base_url` must not replace that IdP.
+    #[serde(skip)]
+    pub(crate) oauth2_issuer_explicit: bool,
     /// `[auth_provider.<name>]` tables, populated by [`parse_auth_providers`] from trusted config layers only.
     #[serde(skip)]
     pub auth_providers: IndexMap<String, xai_grok_config_types::AuthProviderConfig>,
@@ -1627,6 +1635,7 @@ impl Default for Config {
                 gc
             },
             login_device_flow: None,
+            oauth2_issuer_explicit: false,
             auth_providers: IndexMap::new(),
             model_providers: IndexMap::new(),
             hints: None,
@@ -1891,6 +1900,35 @@ impl Config {
         };
         Ok((config, unrecognized_keys))
     }
+    /// Point enterprise device login at `[endpoints].login_base_url`.
+    ///
+    /// No-op when that field is blank, when `[auth.oidc]` / env OIDC is active,
+    /// or when the user wrote an OAuth issuer. `client_id` stays on the existing
+    /// enterprise provider (compiled default unless env already replaced it).
+    pub(crate) fn apply_login_base_url(&mut self) {
+        if self.oauth2_issuer_explicit || self.grok_com_config.oidc.is_some() {
+            return;
+        }
+        let Some(issuer) = self
+            .endpoints
+            .login_base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return;
+        };
+        let issuer = issuer.trim_end_matches('/').to_owned();
+        if issuer.is_empty() {
+            return;
+        }
+        if let Some(oauth2) = self.grok_com_config.oauth2.as_mut() {
+            oauth2.issuer = issuer;
+        } else {
+            self.grok_com_config.oauth2 =
+                Some(xai_grok_login::default_enterprise_oauth2(&issuer));
+        }
+    }
     pub fn new_from_toml_cfg(raw_config: &toml::Value) -> Result<Self, String> {
         let raw_config = &Self::expand_auth_alias(raw_config);
         let super::config_model_override_parse::ParsedModelOverrides {
@@ -2085,6 +2123,8 @@ impl Config {
         if config.grok_com_config.oidc.is_none() && config.grok_com_config.oauth2.is_none() {
             config.grok_com_config.oauth2 = xai_grok_login::OAuth2ProviderConfig::from_env();
         }
+        config.oauth2_issuer_explicit = Self::raw_auth_idp_explicit(raw_config);
+        config.apply_login_base_url();
         config.login_device_flow = match raw_config
             .get("grok_com_config")
             .and_then(toml::Value::as_table)
@@ -2308,6 +2348,22 @@ impl Config {
         };
         self.resolve_runtime_fields(&ctx);
         crate::util::config::set_remote_campaigns_from_settings(self.remote_settings.as_ref());
+    }
+    /// True when the expanded toml names a customer IdP (`[auth.oidc]` / `[auth.oauth2].issuer`).
+    fn raw_auth_idp_explicit(raw_config: &toml::Value) -> bool {
+        let Some(auth) = raw_config
+            .get("grok_com_config")
+            .and_then(toml::Value::as_table)
+        else {
+            return false;
+        };
+        if auth.get("oidc").is_some() {
+            return true;
+        }
+        auth.get("oauth2")
+            .and_then(|oauth2| oauth2.get("issuer"))
+            .and_then(toml::Value::as_str)
+            .is_some_and(|issuer| !issuer.trim().is_empty())
     }
     /// If the TOML contains `[auth]`, copy its contents under `[grok_com_config]`.
     /// `[grok_com_config]` takes precedence if both are present (explicit wins).

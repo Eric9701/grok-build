@@ -180,13 +180,58 @@ pub fn xai_oauth2_issuer() -> &'static str {
     }
 }
 /// Returns `true` if `issuer` is a recognised first-party OAuth2 issuer
-/// (Atlas default, loopback, or legacy auth.x.ai). Use this instead of
-/// comparing against [`XAI_OAUTH2_ISSUER`] directly.
+/// (Atlas default, loopback, legacy auth.x.ai, or an enterprise `/atlas` issuer).
+/// Use this instead of comparing against [`XAI_OAUTH2_ISSUER`] directly.
 pub fn is_xai_oauth2_issuer(issuer: &str) -> bool {
     issuer == XAI_OAUTH2_ISSUER
         || issuer == XAI_OAUTH2_LOCAL_ISSUER
         || issuer == XAI_OAUTH2_LOCAL_ISSUER_LEGACY
         || issuer == XAI_OAUTH2_LEGACY_ISSUER
+        || is_enterprise_atlas_issuer(issuer)
+}
+/// Enterprise device-login issuer: path ends at `/atlas`.
+/// HTTPS is accepted for any host. Plain HTTP only for loopback, private,
+/// link-local, or the compiled Atlas host.
+fn is_enterprise_atlas_issuer(issuer: &str) -> bool {
+    let Ok(url) = url::Url::parse(issuer) else {
+        return false;
+    };
+    let path = url.path().trim_end_matches('/');
+    if path != "/atlas" && !path.ends_with("/atlas") {
+        return false;
+    }
+    match url.scheme() {
+        "https" => true,
+        "http" => url
+            .host_str()
+            .is_some_and(enterprise_login_host_allowed),
+        _ => false,
+    }
+}
+fn enterprise_login_host_allowed(host: &str) -> bool {
+    if matches!(host, "localhost" | "127.0.0.1" | "::1" | "10.218.220.237") {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+        return ip.is_loopback() || ip.is_private() || ip.is_link_local();
+    }
+    if let Ok(ip) = host.parse::<std::net::Ipv6Addr>() {
+        return ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local();
+    }
+    false
+}
+/// Enterprise OAuth2 provider with the compiled client id and `issuer` as given.
+/// Trailing slashes are stripped. Used when `[endpoints].login_base_url` is set
+/// and the user did not configure a customer IdP.
+pub fn default_enterprise_oauth2(issuer: &str) -> OAuth2ProviderConfig {
+    OAuth2ProviderConfig {
+        issuer: issuer.trim().trim_end_matches('/').to_owned(),
+        client_id: obfstr::obfstr!("b1a00492-073a-47ea-816f-4c329264a828").to_owned(),
+        scopes: default_oauth2_scopes(),
+        principal_type: None,
+        principal_id: None,
+        referrer: Some(DEFAULT_OAUTH2_REFERRER.to_owned()),
+    }
 }
 /// auth.json scope key used by the pre-OIDC `atlas login --legacy` flow.
 /// Matches the key format produced by the original `accounts.x.ai` relay auth.
@@ -411,6 +456,22 @@ impl OidcAuthConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn enterprise_atlas_issuer_accepts_private_http_and_https_atlas_path() {
+        assert!(is_xai_oauth2_issuer(XAI_OAUTH2_ISSUER));
+        assert!(is_xai_oauth2_issuer("http://10.1.2.3:22255/atlas"));
+        assert!(is_xai_oauth2_issuer("http://10.1.2.3:22255/atlas/"));
+        assert!(is_xai_oauth2_issuer("https://atlas.example.com/atlas"));
+        assert!(!is_xai_oauth2_issuer("https://idp.acme.example"));
+        assert!(!is_xai_oauth2_issuer("http://example.com/atlas"));
+        assert!(!is_xai_oauth2_issuer("http://10.1.2.3:22255/atlas/v1"));
+    }
+    #[test]
+    fn default_enterprise_oauth2_keeps_compiled_client_and_strips_slash() {
+        let cfg = default_enterprise_oauth2("http://10.1.2.3:22255/atlas/");
+        assert_eq!(cfg.issuer, "http://10.1.2.3:22255/atlas");
+        assert_eq!(cfg.client_id, "b1a00492-073a-47ea-816f-4c329264a828");
+    }
     #[test]
     fn team_auth_scope_is_base_scope() {
         let cfg = OAuth2ProviderConfig {

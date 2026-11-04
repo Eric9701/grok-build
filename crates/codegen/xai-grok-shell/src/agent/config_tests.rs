@@ -371,6 +371,82 @@ fn resolve_runtime_fields_propagates_disable_web_search() {
     assert!(cfg.disable_web_search);
 }
 #[test]
+fn login_base_url_sets_oauth_issuer_without_changing_proxy() {
+    let raw: toml::Value = toml::from_str(
+        r#"
+        [endpoints]
+        login_base_url = "http://10.1.2.3:22255/atlas/"
+        cli_chat_proxy_base_url = "http://10.1.2.3:22255/atlas/v1"
+        "#,
+    )
+    .unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config");
+    assert_eq!(
+        cfg.endpoints.cli_chat_proxy_base_url.as_deref(),
+        Some("http://10.1.2.3:22255/atlas/v1")
+    );
+    assert_eq!(cfg.endpoints.proxy_url(), "http://10.1.2.3:22255/atlas/v1");
+    let oauth2 = cfg.grok_com_config.oauth2.expect("enterprise oauth2");
+    assert_eq!(oauth2.issuer, "http://10.1.2.3:22255/atlas");
+    assert!(xai_grok_login::is_xai_oauth2_issuer(&oauth2.issuer));
+}
+#[test]
+fn missing_login_base_url_keeps_compiled_issuer() {
+    let raw: toml::Value = toml::from_str(
+        r#"
+        [endpoints]
+        cli_chat_proxy_base_url = "http://10.9.9.9:22255/atlas/v1"
+        "#,
+    )
+    .unwrap();
+    let cfg = Config::new_from_toml_cfg(&raw).expect("config");
+    let oauth2 = cfg.grok_com_config.oauth2.expect("default oauth2");
+    assert_eq!(oauth2.issuer, xai_grok_login::xai_oauth2_issuer());
+    assert_eq!(
+        cfg.endpoints.proxy_url(),
+        "http://10.9.9.9:22255/atlas/v1"
+    );
+}
+#[test]
+fn explicit_oauth2_issuer_and_oidc_ignore_login_base_url() {
+    let oauth: toml::Value = toml::from_str(
+        r#"
+        [endpoints]
+        login_base_url = "http://10.1.2.3:22255/atlas"
+        [auth.oauth2]
+        issuer = "https://idp.example/real"
+        client_id = "cust"
+        "#,
+    )
+    .unwrap();
+    let cfg = Config::new_from_toml_cfg(&oauth).expect("oauth config");
+    assert_eq!(
+        cfg.grok_com_config.oauth2.expect("oauth2").issuer,
+        "https://idp.example/real"
+    );
+    let oidc: toml::Value = toml::from_str(
+        r#"
+        [endpoints]
+        login_base_url = "http://10.1.2.3:22255/atlas"
+        [auth.oidc]
+        issuer = "https://idp.acme.example"
+        client_id = "cust"
+        "#,
+    )
+    .unwrap();
+    let cfg = Config::new_from_toml_cfg(&oidc).expect("oidc config");
+    assert_eq!(
+        cfg.grok_com_config.oidc.expect("oidc").issuer,
+        "https://idp.acme.example"
+    );
+    assert!(
+        cfg.grok_com_config
+            .oauth2
+            .as_ref()
+            .is_none_or(|oauth2| oauth2.issuer != "http://10.1.2.3:22255/atlas")
+    );
+}
+#[test]
 fn new_from_toml_cfg_restores_web_search_and_session_summary_models() {
     let empty: toml::Value = toml::Value::Table(toml::map::Map::new());
     let cfg = Config::new_from_toml_cfg(&empty).expect("empty config should parse");

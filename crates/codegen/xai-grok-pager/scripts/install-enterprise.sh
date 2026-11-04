@@ -263,9 +263,36 @@ if mkdir -p "$HOME/.config/fish/completions" 2>/dev/null; then
     "$BIN_DIR/atlas" completions fish > "$HOME/.config/fish/completions/atlas.fish" 2>/dev/null || true
 fi
 
-# Persist installer source and channel to config
+# Persist installer source, channel, and enterprise endpoints
 CONFIG_FILE="$HOME/.atlas/config.toml"
 CLI_BLOCK="installer = \"internal\"\nchannel = \"enterprise\""
+ATLAS_SERVER="${GROK_ATLAS_SERVER:-http://10.218.220.237:22255}"
+ATLAS_SERVER="${ATLAS_SERVER%/}"
+LOGIN_BASE_URL="${ATLAS_SERVER}/atlas"
+PROXY_URL_DEFAULT="${ATLAS_SERVER}/atlas/v1"
+ENDPOINTS_BLOCK="login_base_url = \"${LOGIN_BASE_URL}\"\ncli_chat_proxy_base_url = \"${PROXY_URL_DEFAULT}\"\ncli_update_base_url = \"${BASE_URL}\""
+
+upsert_toml_section() {
+    local file="$1" section="$2" keys_regex="$3" block="$4"
+    if [ ! -f "$file" ]; then
+        printf '[%s]\n%b\n' "$section" "$block" > "$file"
+        return
+    fi
+    if ! grep -q "^\[${section}\]" "$file"; then
+        printf '\n[%s]\n%b\n' "$section" "$block" >> "$file"
+        return
+    fi
+    local tmp="$file.tmp.$$"
+    awk -v section="$section" -v block="$block" -v keys_regex="$keys_regex" '
+        $0 ~ "^\\[" section "\\][[:space:]]*(#.*)?$" {
+            print; printf "%s\n", block; in_sec=1; next
+        }
+        /^\[.*\][[:space:]]*(#.*)?$/ { in_sec=0 }
+        in_sec && $0 ~ "^[[:space:]]*(" keys_regex ")[[:space:]]*=" { next }
+        { print }
+    ' "$file" > "$tmp" && mv "$tmp" "$file"
+}
+
 if [ ! -f "$CONFIG_FILE" ]; then
     printf '[cli]\n%b\n' "$CLI_BLOCK" > "$CONFIG_FILE"
 elif grep -q '^\[cli\]' "$CONFIG_FILE"; then
@@ -280,9 +307,11 @@ else
     printf '\n[cli]\n%b\n' "$CLI_BLOCK" >> "$CONFIG_FILE"
 fi
 
+upsert_toml_section "$CONFIG_FILE" "endpoints" "login_base_url|cli_chat_proxy_base_url|cli_update_base_url" "$ENDPOINTS_BLOCK"
+
 # Fetch managed_config.toml + requirements.toml from server (deployment key only).
 if [ -n "$GROK_DEPLOYMENT_KEY" ]; then
-    PROXY_URL="${GROK_PROXY_URL:-${GROK_ATLAS_SERVER:-http://10.218.220.237:22255}/atlas/v1}"
+    PROXY_URL="${GROK_PROXY_URL:-$PROXY_URL_DEFAULT}"
     # Refuse userinfo / empty-host proxies before attaching the key.
     # Atlas enterprise may use an internal http atlas-server; https is not required.
     proxy_authority="${PROXY_URL#*://}"

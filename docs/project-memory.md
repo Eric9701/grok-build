@@ -34,6 +34,7 @@
 ## 登录与身份
 
 - 企业登录：`atlas login --device-auth`。默认 OAuth issuer 走企业 atlas-server，不是 `auth.x.ai`。
+- 换环境改 `[endpoints].login_base_url`（安装脚本写成 `{服务器}/atlas`）。task-report 仍用 `cli_chat_proxy_base_url`（`{服务器}/atlas/v1`）。不要从代理基址截 `/v1` 当登录地址。改完 issuer 要重新 `atlas login --device-auth`（`auth.json` scope 是 `issuer::client_id`）。已写 `[auth.oauth2].issuer` 或 `[auth.oidc]` 时 `login_base_url` 不生效。
 - 拉 xAI probe（`probe_xai_proxy.py`）必须用 **官方** Device Login：`python services/atlas-server/scripts/xai_login.py`，凭证写 `services/atlas-server/scripts/auth.json`。不要拿 `~/.atlas/auth.json` 打 `cli-chat-proxy.grok.com`。
 - **Startup Session Gate** 默认开：登出或凭证被清后，**下一次新进程**才要求再登录。
 - 机器码登录：用户须先在 Admin 开户。未开户不能只靠机器码。

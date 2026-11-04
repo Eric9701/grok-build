@@ -206,20 +206,48 @@ releases_dir = "./releases"
 
 ## Desktop 应用更新
 
-Atlas Desktop（electron-updater）与 CLI **共用** `cli_update_base_url` /
-`GROK_CLI_BASE_URL`（默认 `http://10.218.220.237:22255/atlas/cli`）。
+AtlasBuddy 桌面端（Tauri）自带更新器，**不需要任何签名密钥**。客户端从 CLI 镜像地址推导更新地址：把 `…/atlas/cli` 换成 `…/atlas/desktop/stable`。
 
-把 `dist-desktop/latest.yml`、`latest-mac.yml` 以及对应安装包
-（`Grok-Build-Desktop-<ver>-win-x64.exe`、`…-mac-arm64.zip`、`…-mac-x64.zip`）
-拷进 `releases/`。`files[].url` 用相对文件名即可，客户端会解析成
-`GET /atlas/cli/<文件名>`。
+完整性靠清单里的 SHA-256 和文件大小。没有签名，信任落在服务器和传输链路上，建议在前面挂 HTTPS（内部 CA 即可）。
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/atlas/cli/latest.yml` | Windows electron-updater 通道 |
-| GET | `/atlas/cli/latest-mac.yml` | macOS electron-updater 通道 |
+| GET | `/atlas/desktop/{channel}/update.json` | 更新清单，按客户端实际访问的地址生成下载链接；不缓存 |
+| GET/HEAD | `/atlas/desktop/{channel}/<文件名>` | 安装包，支持 `Range` 断点续传 |
 
-删除 `latest.yml` 可立即停掉 Windows 自动更新。
+`channel` 为 `stable` / `alpha` / `enterprise`。磁盘布局：
+
+```text
+releases/desktop/stable/manifest.json
+releases/desktop/stable/AtlasBuddy_0.2.43_x64-setup.exe
+releases/desktop/stable/AtlasBuddy_0.2.43_x64-portable.zip
+releases/desktop/stable/AtlasBuddy_0.2.43_aarch64.app.tar.gz
+releases/desktop/stable/AtlasBuddy_0.2.43_aarch64.dmg
+```
+
+发布（每个平台一次，同一版本会合并，新版本会重新开始）：
+
+```powershell
+# Windows 安装版：NSIS 安装包同时是自动更新包和手动安装包
+.\scripts\publish-desktop.ps1 -Version 0.2.43 -Platform windows-x86_64 `
+  -Payload E:\GitHub\grok-app\src-tauri\target\release\bundle\nsis\AtlasBuddy_0.2.43_x64-setup.exe
+
+# Windows 绿色版：同一版本再发一次，客户端按目录里的 README-portable.txt 选用
+.\scripts\publish-desktop.ps1 -Version 0.2.43 -Platform windows-x86_64-portable `
+  -Payload E:\GitHub\grok-app\AtlasBuddy_0.2.43_x64-portable.zip
+```
+
+```bash
+# macOS：必须在 macOS 上打包 .app（保留可执行位和符号链接）
+./scripts/publish-desktop.sh --version 0.2.43 --platform darwin-aarch64 \
+  --payload path/to/bundle/macos/AtlasBuddy.app \
+  --installer path/to/bundle/dmg/AtlasBuddy_0.2.43_aarch64.dmg
+```
+
+脚本先拷文件、算哈希，最后原子写入 `manifest.json`。服务端会剔除文件缺失或大小不符的平台，所以拷到一半时客户端看不到这个平台。
+
+- 停止推送：删除或改回 `manifest.json`（改回旧版本即回滚发布，旧文件保留在目录里）。
+- 验证：`curl http://<host>:22255/atlas/desktop/stable/update.json`。
 
 ## 推荐发布 checklist
 

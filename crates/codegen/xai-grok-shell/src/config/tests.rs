@@ -4451,3 +4451,41 @@ fn plugin_config_writes_keep_the_caller_local_set_live() {
     );
     holder.join().unwrap();
 }
+#[test]
+fn requirements_pin_login_base_url_replaces_issuer() {
+    let raw: toml::Value = toml::from_str(
+        r#"
+        [endpoints]
+        login_base_url = "http://10.1.1.1:22255/atlas"
+        cli_chat_proxy_base_url = "http://10.1.1.1:22255/atlas/v1"
+        "#,
+    )
+    .unwrap();
+    let mut cfg = crate::agent::config::Config::new_from_toml_cfg(&raw).unwrap();
+    let req: toml::Value = toml::from_str(
+        r#"
+        [endpoints]
+        login_base_url = "http://10.2.2.2:22255/atlas"
+        "#,
+    )
+    .unwrap();
+    apply_requirements_inner(
+        &mut cfg,
+        &req,
+        &RequirementSource::Requirements {
+            path: std::path::PathBuf::from("requirements.toml"),
+        },
+    );
+    assert_eq!(
+        cfg.endpoints.login_base_url.as_deref(),
+        Some("http://10.2.2.2:22255/atlas")
+    );
+    assert_eq!(
+        cfg.endpoints.cli_chat_proxy_base_url.as_deref(),
+        Some("http://10.1.1.1:22255/atlas/v1")
+    );
+    assert_eq!(
+        cfg.grok_com_config.oauth2.expect("oauth2").issuer,
+        "http://10.2.2.2:22255/atlas"
+    );
+}

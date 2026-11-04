@@ -402,7 +402,9 @@ if ($Channel -ceq 'alpha') {
 } elseif ($Channel -ceq 'enterprise') {
     $cliLines += 'channel = "enterprise"'
 }
+$LoginBaseUrl = "$AtlasServer/atlas"
 $endpointLines = @(
+    "login_base_url = `"$LoginBaseUrl`"",
     "cli_chat_proxy_base_url = `"$ProxyUrlDefault`"",
     "cli_update_base_url = `"$BaseUrl`""
 )
@@ -442,7 +444,7 @@ function Upsert-TomlSection([string]$Path, [string]$Section, [string[]]$KeysToRe
 }
 
 Upsert-TomlSection $ConfigFile 'cli' @('installer', 'channel') $cliLines
-Upsert-TomlSection $ConfigFile 'endpoints' @('cli_chat_proxy_base_url', 'cli_update_base_url') $endpointLines
+Upsert-TomlSection $ConfigFile 'endpoints' @('login_base_url', 'cli_chat_proxy_base_url', 'cli_update_base_url') $endpointLines
 
 # --- Fetch deployment config (deployment key only) ---
 

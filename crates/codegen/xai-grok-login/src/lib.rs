@@ -47,7 +47,7 @@ pub use auth_provider::{test_backdate_provider_mint, test_counting_provider};
 pub use config::LEGACY_AUTH_SCOPE;
 pub use config::{
     ForceLoginTeam, GrokComConfig, OAuth2ProviderConfig, OidcAuthConfig, PreferredAuthMethod,
-    XAI_OAUTH2_ISSUER, is_xai_oauth2_issuer, xai_oauth2_issuer,
+    XAI_OAUTH2_ISSUER, default_enterprise_oauth2, is_xai_oauth2_issuer, xai_oauth2_issuer,
 };
 pub use config::{
     force_login_team_from_env, force_login_team_from_requirements_value, resolve_force_login_team,

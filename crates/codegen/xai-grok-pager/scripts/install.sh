@@ -328,7 +328,8 @@ CLI_BLOCK="installer = \"internal\""
 if [ "$CHANNEL" != "stable" ]; then
     CLI_BLOCK="${CLI_BLOCK}\nchannel = \"${CHANNEL}\""
 fi
-ENDPOINTS_BLOCK="cli_chat_proxy_base_url = \"${PROXY_URL_DEFAULT}\"\ncli_update_base_url = \"${BASE_URL}\""
+LOGIN_BASE_URL="${ATLAS_SERVER}/atlas"
+ENDPOINTS_BLOCK="login_base_url = \"${LOGIN_BASE_URL}\"\ncli_chat_proxy_base_url = \"${PROXY_URL_DEFAULT}\"\ncli_update_base_url = \"${BASE_URL}\""
 
 upsert_toml_section() {
     local file="$1" section="$2" keys_regex="$3" block="$4"
@@ -352,7 +353,7 @@ upsert_toml_section() {
 }
 
 upsert_toml_section "$CONFIG_FILE" "cli" "installer|channel" "$CLI_BLOCK"
-upsert_toml_section "$CONFIG_FILE" "endpoints" "cli_chat_proxy_base_url|cli_update_base_url" "$ENDPOINTS_BLOCK"
+upsert_toml_section "$CONFIG_FILE" "endpoints" "login_base_url|cli_chat_proxy_base_url|cli_update_base_url" "$ENDPOINTS_BLOCK"
 
 # Fetch managed_config.toml + requirements.toml from server (deployment key only).
 if [ -n "$GROK_DEPLOYMENT_KEY" ]; then

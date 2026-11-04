@@ -3221,11 +3221,21 @@ async fn drain_and_process(
         live_events =
             super::xt_filter::filter_with_fragment_wait(xt_filter, live_events, input_rx).await;
     }
-    if should_extend_for_paste(&live_events) && detect_paste(&mut live_events, input_rx).await {
-        collect_remaining_paste(&mut live_events, input_rx).await;
-        if xt_filter.armed() {
-            live_events =
-                super::xt_filter::filter_with_fragment_wait(xt_filter, live_events, input_rx).await;
+    if should_extend_for_paste(&live_events) {
+        // Pretty-printed JSON often starts `{` + newline. That pair can already sit in
+        // `live_events` before the rest of the paste arrives; `detect_paste`'s short
+        // window then misses the follow-up and Enter would submit `{`.
+        let detected = detect_paste(&mut live_events, input_rx).await;
+        if detected || looks_like_incomplete_multiline_paste(&live_events) {
+            collect_remaining_paste(&mut live_events, input_rx).await;
+            if xt_filter.armed() {
+                live_events = super::xt_filter::filter_with_fragment_wait(
+                    xt_filter,
+                    live_events,
+                    input_rx,
+                )
+                .await;
+            }
         }
     }
     let mut coalesced = startup_events;
@@ -3435,8 +3445,16 @@ async fn drain_and_process(
 }
 /// Timeout for the first extension round (detection).
 /// If no event arrives within this window the batch was a normal keystroke.
+/// Windows console paste is KEY_EVENT bursts without `Event::Paste`; 2ms often
+/// loses the newline after `{` on pretty-printed JSON (one scheduler slice).
+#[cfg(windows)]
+const PASTE_DETECT_TIMEOUT: Duration = Duration::from_millis(16);
+#[cfg(not(windows))]
 const PASTE_DETECT_TIMEOUT: Duration = Duration::from_millis(2);
 /// Timeout for subsequent rounds once paste has been detected.
+#[cfg(windows)]
+const PASTE_CONTINUE_TIMEOUT: Duration = Duration::from_millis(30);
+#[cfg(not(windows))]
 const PASTE_CONTINUE_TIMEOUT: Duration = Duration::from_millis(10);
 /// Safety cap on events accumulated in one extension pass.
 const PASTE_EXTEND_MAX_EVENTS: usize = 5_000;
@@ -3444,7 +3462,42 @@ const PASTE_EXTEND_MAX_EVENTS: usize = 5_000;
 /// `Event::Paste` (i.e. bracketed paste is not handling it).
 fn should_extend_for_paste(events: &[TimedInputEvent]) -> bool {
     !events.iter().any(|e| matches!(e.event, Event::Paste(_)))
-        && events.iter().any(|e| is_pasteable_key_event(&e.event))
+        && events.iter().any(|e| is_paste_burst_event(&e.event))
+}
+/// Char/Enter/Tab paste keys, plus a lone LF (`Ctrl+J`) that crossterm emits for `\n`.
+fn is_paste_burst_event(ev: &Event) -> bool {
+    is_pasteable_key_event(ev) || is_paste_lf(ev)
+}
+/// `{` + Enter (or `{` + `Ctrl+J`) already in the batch: more paste keys may still be in flight.
+/// Typed submit is a lone Enter after a pause, which this does not match.
+fn looks_like_incomplete_multiline_paste(events: &[TimedInputEvent]) -> bool {
+    let mut saw_char = false;
+    let mut last_was_linebreak = false;
+    for ev in events {
+        if matches!(
+            &ev.event,
+            Event::Key(ke) if ke.kind == KeyEventKind::Release && !is_voice_chord(ke)
+        ) {
+            continue;
+        }
+        if is_pasteable_key_event(&ev.event) {
+            match &ev.event {
+                Event::Key(ke) if ke.code == KeyCode::Enter => last_was_linebreak = true,
+                Event::Key(ke) if matches!(ke.code, KeyCode::Char(_)) => {
+                    saw_char = true;
+                    last_was_linebreak = false;
+                }
+                Event::Key(ke) if ke.code == KeyCode::Tab => last_was_linebreak = false,
+                _ => last_was_linebreak = false,
+            }
+        } else if is_paste_lf(&ev.event) {
+            last_was_linebreak = true;
+        } else {
+            saw_char = false;
+            last_was_linebreak = false;
+        }
+    }
+    saw_char && last_was_linebreak
 }
 /// Wait [`PASTE_DETECT_TIMEOUT`] for a follow-up event.
 /// Returns `true` if a **pasteable key event** arrives within the window.
@@ -3461,7 +3514,7 @@ async fn detect_paste(
             batch
                 .iter()
                 .skip(prev_len)
-                .any(|e| is_pasteable_key_event(&e.event))
+                .any(|e| is_paste_burst_event(&e.event))
         }
         _ => false,
     }
@@ -3486,7 +3539,7 @@ async fn collect_remaining_paste(
                 if !batch
                     .iter()
                     .skip(prev_len)
-                    .any(|e| is_pasteable_key_event(&e.event))
+                    .any(|e| is_paste_burst_event(&e.event))
                 {
                     continue;
                 }
@@ -3674,8 +3727,15 @@ fn coalesce_live_keys(events: Vec<TimedInputEvent>) -> Vec<TimedInputEvent> {
                         }
                     }
                     i += 1;
-                } else if prev_was_enter && is_paste_lf(&ev.event) {
-                    has_crlf = true;
+                } else if is_paste_lf(&ev.event) {
+                    // Bare LF is `Ctrl+J`. After Enter it is CRLF (one newline already
+                    // pushed). On its own it is a Unix-style pasted line break.
+                    if prev_was_enter {
+                        has_crlf = true;
+                    } else {
+                        text.push('\n');
+                        seen_enter = true;
+                    }
                     prev_was_enter = false;
                     i += 1;
                 } else {
@@ -5491,6 +5551,66 @@ mod tests {
         assert_eq!(normalized.paste_provenance, PasteProvenance::Terminal);
         assert_eq!(crate::clipboard::primary_selection_read_call_count(), 1);
         crate::clipboard::clear_clipboard_probe_hook();
+    }
+    #[test]
+    fn coalesce_looks_like_incomplete_pretty_json_first_line() {
+        assert!(looks_like_incomplete_multiline_paste(&[
+            press(KeyCode::Char('{')),
+            press(KeyCode::Enter),
+        ]));
+        assert!(looks_like_incomplete_multiline_paste(&[
+            press(KeyCode::Char('{')),
+            press_ctrl(KeyCode::Char('j')),
+        ]));
+        assert!(looks_like_incomplete_multiline_paste(&[
+            press(KeyCode::Char('h')),
+            press(KeyCode::Char('i')),
+            press(KeyCode::Enter),
+        ]));
+        assert!(!looks_like_incomplete_multiline_paste(&[press(
+            KeyCode::Char('{')
+        )]));
+        assert!(!looks_like_incomplete_multiline_paste(&[press(
+            KeyCode::Enter
+        )]));
+        assert!(!looks_like_incomplete_multiline_paste(&[
+            press(KeyCode::Char('a')),
+            press(KeyCode::Char('b')),
+        ]));
+        assert!(!looks_like_incomplete_multiline_paste(&[
+            press(KeyCode::Char('a')),
+            press(KeyCode::Enter),
+            press(KeyCode::Char('b')),
+        ]));
+    }
+    #[test]
+    fn coalesce_pretty_json_crlf_without_bracketed_paste() {
+        const JSON: &str = "{\n  \"bpCode\": \"86713007\",\n  \"skuCodeList\": [\n    \"86114001\"\n  ]\n}";
+        let mut events = Vec::new();
+        for c in JSON.chars() {
+            if c == '\n' {
+                events.push(press(KeyCode::Enter));
+                events.push(press_ctrl(KeyCode::Char('j')));
+            } else {
+                events.push(press(KeyCode::Char(c)));
+            }
+        }
+        let result = coalesce_rapid_keys(events);
+        assert_eq!(result.len(), 1);
+        assert_eq!(nth(&result, 0).event, Event::Paste(JSON.to_string()));
+    }
+    #[test]
+    fn coalesce_pretty_json_lf_as_ctrl_j_without_bracketed_paste() {
+        let events = vec![
+            press(KeyCode::Char('{')),
+            press_ctrl(KeyCode::Char('j')),
+            press(KeyCode::Char(' ')),
+            press(KeyCode::Char(' ')),
+            press(KeyCode::Char('"')),
+        ];
+        let result = coalesce_rapid_keys(events);
+        assert_eq!(result.len(), 1);
+        assert_eq!(nth(&result, 0).event, Event::Paste("{\n  \"".to_string()));
     }
     #[test]
     fn coalesce_multiline_paste_without_bracketed_paste() {

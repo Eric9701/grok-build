@@ -2,7 +2,23 @@
 
 可执行文件 `atlas` / `atlas.exe`（crate 仍是 `xai-grok-pager-bin`）。家目录 **Atlas Home**（`~/.atlas`）。记法见 [README](./README.md)。
 
+## 2026-11
+
+### 2026-11-04 — 登录地址用 login_base_url
+
+- **状态**：已落地
+- **会话**：多环境登录与 task-report 地址
+- `[endpoints].login_base_url` 是企业设备码登录的 issuer（`{login_base_url}/oauth2/device/code`）。没写时仍用编译默认 issuer。已写 `[auth.oauth2].issuer` 或 `[auth.oidc]` 时不覆盖。
+- task-report 仍走 `cli_chat_proxy_base_url`。安装脚本（stable 与 enterprise）会写下 `login_base_url = {服务器}/atlas`，以及代理基址和更新地址。换环境换安装文件后要重新 `atlas login --device-auth`。
+
 ## 2026-10
+
+### 2026-10-29 — TUI 粘贴格式化 JSON 会把第一行当发送
+
+- **状态**：已落地
+- **会话**：TUI 多行 JSON 粘贴误提交
+- 无 bracketed paste（常见于 Windows 控制台）时，格式化 JSON 的 `{` + 换行被当成 Enter 提交，TUI 像退出；同一段 JSON 写成一行则正常。
+- `drain_and_process`：批次已是「字符 + 换行、后面可能还有内容」时，即使 2ms 检测没跟上，也继续收齐粘贴；Windows 检测/续收窗口加长。`Ctrl+J`（裸 LF）并进粘贴 run，不再打断 coalesce。
 
 ### 2026-10-15 — CLI Actions 的 Windows protoc 改用 Expand-Archive
 
