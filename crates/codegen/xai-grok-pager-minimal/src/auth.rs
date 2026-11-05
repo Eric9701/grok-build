@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use xai_grok_pager::app::app_view::{AuthState, TrustState};
+use xai_grok_pager::app::app_view::{AuthMode, AuthState, CredentialField, CredentialForm, TrustState};
 use xai_grok_pager::theme::Theme;
 
 /// What the minimal live region shows when there is no active agent yet.
@@ -29,6 +29,20 @@ pub(super) enum MinimalAuthHint {
     TrustFolder { workspace: PathBuf },
     /// Authenticated and trusted; the session is being created (brief transient).
     Starting,
+    /// No-browser login. The password is already masked; the live region only paints this snapshot.
+    Credentials {
+        issuer: String,
+        email: String,
+        email_cursor: usize,
+        password_mask: String,
+        password_cursor: usize,
+        machine_code: String,
+        machine_cursor: usize,
+        focus: CredentialField,
+        error: Option<String>,
+    },
+    /// Password grant is in flight. No browser and no device code.
+    SigningInPassword,
 }
 
 /// Map the app's auth and trust state to what the no-agent live region should show.
@@ -41,6 +55,11 @@ pub(super) fn minimal_auth_hint(
     is_zdr_blocked: bool,
 ) -> MinimalAuthHint {
     match auth {
+        AuthState::Credentials(form) => credential_hint(form),
+        AuthState::Authenticating {
+            mode: AuthMode::Password,
+            ..
+        } => MinimalAuthHint::SigningInPassword,
         AuthState::Authenticating { auth_url, .. } => MinimalAuthHint::SigningIn {
             url: auth_url.clone(),
             code: auth_url
@@ -90,8 +109,50 @@ pub(super) fn auth_hint_rows(hint: &MinimalAuthHint, width: u16) -> u16 {
             let path_rows = wrapped_char_rows(&path, width);
             1 + path_rows + 1 + 2 + 1 + 2 + 1 + 1
         }
-        MinimalAuthHint::Starting => 1,
+        MinimalAuthHint::Starting | MinimalAuthHint::SigningInPassword => 1,
+        // title + issuer + blank + 3 labels + 3 values + blank + hint, plus the error line when set
+        MinimalAuthHint::Credentials { error, .. } => 11 + u16::from(error.is_some()),
     }
+}
+
+fn credential_hint(form: &CredentialForm) -> MinimalAuthHint {
+    let (password_mask, password_cursor) =
+        masked_chars(form.password.text(), form.password.cursor_byte());
+    MinimalAuthHint::Credentials {
+        issuer: form.issuer.clone(),
+        email: form.email.text().to_owned(),
+        email_cursor: char_index(form.email.text(), form.email.cursor_byte()),
+        password_mask,
+        password_cursor,
+        machine_code: form.machine_code.text().to_owned(),
+        machine_cursor: char_index(form.machine_code.text(), form.machine_code.cursor_byte()),
+        focus: form.focus,
+        error: form.error.clone(),
+    }
+}
+
+fn char_index(text: &str, cursor_byte: usize) -> usize {
+    text.get(..cursor_byte.min(text.len()))
+        .unwrap_or("")
+        .chars()
+        .count()
+}
+
+fn masked_chars(text: &str, cursor_byte: usize) -> (String, usize) {
+    let mut display = String::new();
+    let mut cursor = 0usize;
+    let mut seen = 0usize;
+    for ch in text.chars() {
+        if seen < cursor_byte {
+            cursor += 1;
+        }
+        seen += ch.len_utf8();
+        display.push('*');
+    }
+    if cursor_byte >= text.len() {
+        cursor = display.chars().count();
+    }
+    (display, cursor)
 }
 
 /// How many rows `text` needs when painted char-by-char at `width` (no wrap-inserted spaces); same layout as [`render_url`].
@@ -353,7 +414,186 @@ pub(super) fn render_auth(buf: &mut Buffer, area: Rect, theme: &Theme, hint: &Mi
                 )),
             );
         }
+        MinimalAuthHint::SigningInPassword => {
+            let _ = put_line(
+                buf,
+                area,
+                y,
+                bottom,
+                Line::from(Span::styled("正在登录...", gray)),
+            );
+        }
+        MinimalAuthHint::Credentials {
+            issuer,
+            email,
+            email_cursor,
+            password_mask,
+            password_cursor,
+            machine_code,
+            machine_cursor,
+            focus,
+            error,
+        } => {
+            y = put_line(
+                buf,
+                area,
+                y,
+                bottom,
+                Line::from(Span::styled("登录", bold)),
+            );
+            y = put_line(
+                buf,
+                area,
+                y,
+                bottom,
+                Line::from(Span::styled(format!("服务器 {issuer}"), gray)),
+            );
+            y = put_line(buf, area, y, bottom, Line::default());
+            y = render_login_row(
+                buf,
+                area,
+                y,
+                bottom,
+                theme,
+                "邮箱",
+                email,
+                *email_cursor,
+                "name@example.com",
+                *focus == CredentialField::Email,
+            );
+            y = render_login_row(
+                buf,
+                area,
+                y,
+                bottom,
+                theme,
+                "密码",
+                password_mask,
+                *password_cursor,
+                "密码",
+                *focus == CredentialField::Password,
+            );
+            y = render_login_row(
+                buf,
+                area,
+                y,
+                bottom,
+                theme,
+                "机器码",
+                machine_code,
+                *machine_cursor,
+                "ABCD-EFGH",
+                *focus == CredentialField::MachineCode,
+            );
+            if let Some(err) = error {
+                let warn = Style::default().fg(theme.warning).bg(Color::Reset);
+                y = put_line(
+                    buf,
+                    area,
+                    y,
+                    bottom,
+                    Line::from(Span::styled(err.clone(), warn)),
+                );
+            }
+            y = put_line(buf, area, y, bottom, Line::default());
+            let _ = put_line(
+                buf,
+                area,
+                y,
+                bottom,
+                Line::from(Span::styled("Tab 切换   Enter 登录   Esc 返回", gray)),
+            );
+        }
     }
+}
+
+fn render_login_row(
+    buf: &mut Buffer,
+    area: Rect,
+    mut y: u16,
+    bottom: u16,
+    theme: &Theme,
+    label: &str,
+    text: &str,
+    cursor: usize,
+    placeholder: &str,
+    focused: bool,
+) -> u16 {
+    let gray = theme.muted().bg(Color::Reset);
+    let label_style = if focused {
+        Style::default()
+            .fg(theme.text_primary)
+            .add_modifier(Modifier::BOLD)
+            .bg(Color::Reset)
+    } else {
+        gray
+    };
+    y = put_line(
+        buf,
+        area,
+        y,
+        bottom,
+        Line::from(Span::styled(label, label_style)),
+    );
+    put_line(
+        buf,
+        area,
+        y,
+        bottom,
+        login_value_line(theme, text, cursor, placeholder, focused),
+    )
+}
+
+fn login_value_line(
+    theme: &Theme,
+    text: &str,
+    cursor: usize,
+    placeholder: &str,
+    focused: bool,
+) -> Line<'static> {
+    let text_style = Style::default().fg(theme.text_primary).bg(Color::Reset);
+    let dim = Style::default().fg(theme.gray_dim).bg(Color::Reset);
+    let marker = if focused { "> " } else { "  " };
+    let mut spans = vec![Span::styled(marker, text_style)];
+    if text.is_empty() {
+        spans.push(Span::styled(placeholder.to_owned(), dim));
+        if focused {
+            spans.push(Span::styled(
+                " ",
+                theme.block_cursor_over(theme.bg_base),
+            ));
+        }
+        return Line::from(spans);
+    }
+    let mut before = String::new();
+    let mut at_cursor = None;
+    let mut after = String::new();
+    for (index, ch) in text.chars().enumerate() {
+        if index < cursor {
+            before.push(ch);
+        } else if at_cursor.is_none() {
+            at_cursor = Some(ch);
+        } else {
+            after.push(ch);
+        }
+    }
+    if !before.is_empty() {
+        spans.push(Span::styled(before, text_style));
+    }
+    if let Some(ch) = at_cursor {
+        let styled = if focused {
+            theme.block_cursor_over(theme.bg_base)
+        } else {
+            text_style
+        };
+        spans.push(Span::styled(ch.to_string(), styled));
+        if !after.is_empty() {
+            spans.push(Span::styled(after, text_style));
+        }
+    } else if focused {
+        spans.push(Span::styled(" ", theme.block_cursor_over(theme.bg_base)));
+    }
+    Line::from(spans)
 }
 
 #[cfg(test)]
@@ -511,5 +751,80 @@ mod tests {
         let rows = auth_hint_rows(&hint, 40);
         // The 200-char path wraps to 5 rows at width 40, so the total sits well above the fixed rows
         assert!(rows >= 12, "expected room for wrapped path, got {rows}");
+    }
+
+    #[test]
+    fn auth_hint_maps_password_form_without_showing_the_secret() {
+        use xai_grok_pager::input::line_editor::LineEditor;
+
+        let mut email = LineEditor::default();
+        email.set_text("user@example.com");
+        let mut password = LineEditor::default();
+        password.set_text("atlas123");
+        let mut machine_code = LineEditor::default();
+        machine_code.set_text("ABCD-EFGH");
+        let form = CredentialForm {
+            email,
+            password,
+            machine_code,
+            focus: CredentialField::Password,
+            error: Some("邮箱、密码或机器码不正确".into()),
+            issuer: "http://atlas.example/atlas".into(),
+        };
+        let hint = minimal_auth_hint(
+            &AuthState::Credentials(Box::new(form)),
+            &TrustState::Done,
+            true,
+            false,
+        );
+        match &hint {
+            MinimalAuthHint::Credentials {
+                email,
+                password_mask,
+                machine_code,
+                focus,
+                error,
+                issuer,
+                ..
+            } => {
+                assert_eq!(email, "user@example.com");
+                assert_eq!(password_mask, "********");
+                assert!(!password_mask.contains("atlas123"));
+                assert_eq!(machine_code, "ABCD-EFGH");
+                assert_eq!(*focus, CredentialField::Password);
+                assert_eq!(error.as_deref(), Some("邮箱、密码或机器码不正确"));
+                assert_eq!(issuer, "http://atlas.example/atlas");
+            }
+            _ => panic!("expected Credentials"),
+        }
+        assert_eq!(auth_hint_rows(&hint, 80), 12);
+
+        let signing = AuthState::Authenticating {
+            request_seq: 3,
+            handle: None,
+            auth_url: None,
+            mode: AuthMode::Password,
+        };
+        assert!(matches!(
+            minimal_auth_hint(&signing, &TrustState::Done, true, false),
+            MinimalAuthHint::SigningInPassword
+        ));
+
+        let theme = Theme::current();
+        let area = Rect::new(0, 0, 80, 14);
+        let mut buf = Buffer::empty(area);
+        render_auth(&mut buf, area, &theme, &hint);
+        let text = crate::buffer_text(&buf);
+        // Wide characters occupy two cells, so the dump reads "登 录".
+        assert!(text.contains("登 录"), "title: {text:?}");
+        assert!(text.contains("atlas.example"), "issuer: {text:?}");
+        assert!(text.contains("user@example.com"), "email: {text:?}");
+        assert!(text.contains("********"), "masked password: {text:?}");
+        assert!(
+            !text.contains("atlas123"),
+            "password must stay masked: {text:?}"
+        );
+        assert!(text.contains("ABCD-EFGH"), "machine code: {text:?}");
+        assert!(text.contains("Enter"), "hint: {text:?}");
     }
 }
