@@ -1075,6 +1075,22 @@ struct AuthRequestMeta {
     #[serde(default)]
     request_seq: Option<u64>,
 }
+pub(super) fn password_credentials_from(
+    meta: Option<&acp::Meta>,
+) -> Option<xai_grok_login::PasswordCredentials> {
+    let value = meta?.get("credentials")?.clone();
+    let email = value.get("email")?.as_str()?.trim().to_string();
+    let password = value.get("password")?.as_str()?.to_string();
+    let machine_code = value.get("machine_code")?.as_str()?.trim().to_string();
+    if email.is_empty() || password.is_empty() || machine_code.is_empty() {
+        return None;
+    }
+    Some(xai_grok_login::PasswordCredentials {
+        email,
+        password,
+        machine_code,
+    })
+}
 impl AuthRequestMeta {
     /// `--oauth` forces loopback; otherwise default (loopback).
     fn login_override(&self) -> xai_grok_login::LoginTransportOverride {

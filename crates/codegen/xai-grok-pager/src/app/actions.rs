@@ -621,6 +621,10 @@ pub enum Action {
     SwitchAccount,
     /// User pressed login on the welcome screen.
     Login,
+    /// Leave the password form and return to the welcome login menu.
+    DismissPasswordForm,
+    /// Submit the password form. The dispatcher reads the fields from `AuthState`.
+    SubmitPasswordLogin,
     /// Cancel an in-progress login that was started from inside a session (`/login` or a 401 re-auth prompt) and return to the previous view.
     /// Distinct from `Quit`: abandoning a mid-session re-auth must not exit the app or lose the open session.
     CancelLogin,
@@ -1395,6 +1399,22 @@ pub enum AfterSessionDelete {
     /// Unused optimistic home husk: remove on-disk data without a toast or view change.
     UnusedHusk,
 }
+/// Email, password, and machine code for one password-grant attempt.
+/// Debug output redacts the password and machine code.
+pub struct PasswordGrant {
+    pub email: String,
+    pub password: String,
+    pub machine_code: String,
+}
+impl std::fmt::Debug for PasswordGrant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasswordGrant")
+            .field("email", &self.email)
+            .field("password", &"<redacted>")
+            .field("machine_code", &"<redacted>")
+            .finish()
+    }
+}
 /// Async side effect produced by [`super::dispatch::dispatch`].
 /// The event loop spawns these into a `JoinSet`; completions come back through [`TaskResult`] as `Action::TaskComplete`.
 #[derive(Debug)]
@@ -1778,6 +1798,8 @@ pub enum Effect {
         method_id: acp::AuthMethodId,
         use_oauth: bool,
         force_interactive: bool,
+        /// Set for the no-browser password form. Absent for device / loopback login.
+        credentials: Option<PasswordGrant>,
     },
     /// Poll for auth URL from the agent (ext request).
     PollAuthUrl { request_seq: u64 },

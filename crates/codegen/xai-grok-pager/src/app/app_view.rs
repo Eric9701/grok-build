@@ -389,6 +389,8 @@ pub enum AuthState {
         /// How the auth flow presents itself to the user.
         mode: AuthMode,
     },
+    /// No-browser login: email, password, and account machine code.
+    Credentials(Box<CredentialForm>),
 }
 /// How the auth flow presents itself to the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -401,6 +403,72 @@ pub enum AuthMode {
     Loopback,
     /// RFC 8628 device flow: device code and copyable URL, no paste box.
     Device,
+    /// Enterprise password form is waiting on the token endpoint. No browser.
+    Password,
+}
+/// Which field of the no-browser login form has keyboard focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialField {
+    Email,
+    Password,
+    MachineCode,
+}
+impl CredentialField {
+    fn next(self) -> Self {
+        match self {
+            Self::Email => Self::Password,
+            Self::Password => Self::MachineCode,
+            Self::MachineCode => Self::Email,
+        }
+    }
+    fn prev(self) -> Self {
+        match self {
+            Self::Email => Self::MachineCode,
+            Self::Password => Self::Email,
+            Self::MachineCode => Self::Password,
+        }
+    }
+}
+/// Email, password, and account machine code collected on the welcome screen.
+/// Debug output never includes the password or machine code.
+pub struct CredentialForm {
+    pub email: LineEditor,
+    pub password: LineEditor,
+    pub machine_code: LineEditor,
+    pub focus: CredentialField,
+    pub error: Option<String>,
+    pub issuer: String,
+}
+impl std::fmt::Debug for CredentialForm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialForm")
+            .field("email", &self.email.text())
+            .field("password", &"<redacted>")
+            .field("machine_code", &"<redacted>")
+            .field("focus", &self.focus)
+            .field("error", &self.error)
+            .field("issuer", &self.issuer)
+            .finish()
+    }
+}
+impl CredentialForm {
+    pub(crate) fn new(issuer: String) -> Self {
+        Self {
+            email: LineEditor::default(),
+            password: LineEditor::default(),
+            machine_code: LineEditor::default(),
+            focus: CredentialField::Email,
+            error: None,
+            issuer,
+        }
+    }
+    pub(crate) fn focused_mut(&mut self) -> &mut LineEditor {
+        match self.focus {
+            CredentialField::Email => &mut self.email,
+            CredentialField::Password => &mut self.password,
+            CredentialField::MachineCode => &mut self.machine_code,
+        }
+    }
 }
 /// Folder-trust state for the welcome screen.
 /// Mirrors [`AuthState`]: a welcome sub-state that drives the "Do you trust the contents of this directory?" question.
@@ -1012,6 +1080,9 @@ pub struct AppView {
     pub auth_start_mode: AuthMode,
     /// Text buffer for manual auth token paste (loopback mode).
     pub(crate) auth_code_input: LineEditor,
+    /// Login form kept while a password grant is in flight, or after Esc back to the menu.
+    /// The password field is cleared before it is stored here.
+    pub(crate) credential_form: Option<Box<CredentialForm>>,
     /// Monotonically increasing sequence number for auth requests.
     pub next_auth_request_seq: u64,
     /// Abort handle for the in-flight `PollAuthUrl` task (with its request_seq).
@@ -1567,6 +1638,7 @@ impl AppView {
             login_method_id: None,
             auth_start_mode: AuthMode::Pending,
             auth_code_input: LineEditor::default(),
+            credential_form: None,
             next_auth_request_seq: 1,
             auth_url_poll_handle: None,
             deferred_startup: Default::default(),
@@ -2458,7 +2530,7 @@ impl AppView {
                 ev,
                 &mut WelcomeInputCtx {
                     registry: &self.registry,
-                    auth_state: &self.auth_state,
+                    auth_state: &mut self.auth_state,
                     trust_state: &self.trust_state,
                     consent_state: &self.consent_state,
                     consent_link_rects: &self.welcome_consent_link_rects,
@@ -3109,7 +3181,7 @@ use crate::views::session_picker::{
 struct WelcomeInputCtx<'a> {
     /// The welcome screen looks up `ActionId::OpenSessions` here, so it opens the session picker on the same key the agent screen uses.
     registry: &'a crate::actions::ActionRegistry,
-    auth_state: &'a AuthState,
+    auth_state: &'a mut AuthState,
     /// Folder-trust state.
     /// When `Pending` (and auth is `Done`), the trust question intercepts keys and swallows the rest so no session starts.
     trust_state: &'a TrustState,
@@ -3813,6 +3885,44 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
                     return InputOutcome::Action(Action::Login);
                 }
             }
+            AuthState::Credentials(form) => {
+                if key!(Esc).matches(key) || key!('c', CONTROL).matches(key) {
+                    return InputOutcome::Action(Action::DismissPasswordForm);
+                }
+                if key!(Tab).matches(key) {
+                    form.focus = form.focus.next();
+                    return InputOutcome::Changed;
+                }
+                if crate::input::key::is_shift_tab(key) {
+                    form.focus = form.focus.prev();
+                    return InputOutcome::Changed;
+                }
+                if key!(Enter).matches(key) {
+                    return InputOutcome::Action(Action::SubmitPasswordLogin);
+                }
+                let outcome = if crate::input::key::is_paste_key(key) {
+                    let Some(text) = crate::clipboard::system_clipboard_get() else {
+                        return InputOutcome::Unchanged;
+                    };
+                    form.focused_mut().insert_paste(&text)
+                } else if key.modifiers.intersects(
+                    crossterm::event::KeyModifiers::CONTROL
+                        | crossterm::event::KeyModifiers::ALT
+                        | crossterm::event::KeyModifiers::SUPER,
+                ) && !crate::input::key::is_altgr(key.modifiers)
+                {
+                    return InputOutcome::Changed;
+                } else {
+                    form.focused_mut()
+                        .handle_key_with_insert_policy(key, |character| !character.is_control())
+                };
+                return match outcome {
+                    LineEditOutcome::TextChanged
+                    | LineEditOutcome::CursorChanged
+                    | LineEditOutcome::HandledNoChange => InputOutcome::Changed,
+                    LineEditOutcome::Unhandled => InputOutcome::Unchanged,
+                };
+            }
             AuthState::Authenticating { .. } if *ctx.show_raw_url => {
                 if key!('q', CONTROL).matches(key) || key!('c', CONTROL).matches(key) {
                     return InputOutcome::Action(Action::HideRawAuthUrl);
@@ -3889,6 +3999,10 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
                 ..
             } => {
                 let _ = ctx.auth_code_input.insert_paste(text);
+                return InputOutcome::Changed;
+            }
+            AuthState::Credentials(form) => {
+                let _ = form.focused_mut().insert_paste(text);
                 return InputOutcome::Changed;
             }
             _ => {}

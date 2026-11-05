@@ -819,6 +819,7 @@ pub fn render_welcome(
                 ..Default::default()
             }
         }
+        AuthState::Credentials(form) => render_credential_form(content_area, buf, &theme, form),
         AuthState::Authenticating { auth_url, mode, .. } => {
             let llc = logo_line_count(content_area.height);
             let (url_rect, fallback_rect) = render_welcome_authenticating(
@@ -1406,6 +1407,234 @@ fn render_browser_status_arm(
     (click_rect, fallback_rect)
 }
 
+fn password_mask(text: &str, cursor_byte: usize) -> (String, usize) {
+    let mut display = String::new();
+    let mut cursor = 0usize;
+    let mut seen = 0usize;
+    for ch in text.chars() {
+        if seen < cursor_byte {
+            cursor += 1;
+        }
+        seen += ch.len_utf8();
+        display.push('*');
+    }
+    if cursor_byte >= text.len() {
+        cursor = display.chars().count();
+    }
+    (display, cursor)
+}
+
+fn fit_login_line(text: &str, cursor_byte: usize, width: usize) -> (String, usize) {
+    if width == 0 {
+        return (String::new(), 0);
+    }
+    let buffer = xai_ratatui_textarea::EditBuffer::from_parts(text, cursor_byte.min(text.len()));
+    let viewport = buffer.single_line_viewport(width);
+    (
+        text.get(viewport.visible_byte_range)
+            .unwrap_or("")
+            .to_owned(),
+        viewport.cursor_display_column,
+    )
+}
+
+fn render_login_field(
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+    text: &str,
+    cursor_byte: usize,
+    placeholder: &str,
+    focused: bool,
+    mask: bool,
+) {
+    let border = if focused {
+        theme.accent_user
+    } else {
+        theme.gray
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border))
+        .padding(Padding {
+            left: 1,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        });
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let width = inner.width as usize;
+    let (shown, cursor) = if text.is_empty() {
+        let (display, _) = fit_login_line(placeholder, 0, width);
+        (display, 0usize)
+    } else if mask {
+        let (masked, masked_cursor) = password_mask(text, cursor_byte);
+        fit_login_line(&masked, masked_cursor, width)
+    } else {
+        fit_login_line(text, cursor_byte, width)
+    };
+    let style = if text.is_empty() {
+        Style::default().fg(theme.gray_dim)
+    } else {
+        Style::default().fg(theme.text_primary)
+    };
+    buf.set_line(
+        inner.x,
+        inner.y,
+        &Line::from(Span::styled(shown, style)),
+        inner.width,
+    );
+    if focused && let Some(cell) = buf.cell_mut((inner.x + cursor as u16, inner.y)) {
+        cell.set_style(theme.block_cursor_over(theme.bg_base));
+    }
+}
+
+/// Email / password / machine-code form for hosts that have no browser.
+fn render_credential_form(
+    content_area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+    form: &crate::app::app_view::CredentialForm,
+) -> WelcomeRenderResult {
+    use crate::app::app_view::CredentialField;
+    let logo_lines = logo_line_count(content_area.height);
+    let top_pad = content_area.height.saturating_sub(logo_lines) / 10;
+    let [
+        _,
+        logo_area,
+        _,
+        title_area,
+        issuer_area,
+        email_label,
+        email_box,
+        password_label,
+        password_box,
+        machine_label,
+        machine_box,
+        error_area,
+        _,
+        hint_area,
+        _,
+    ] = Layout::vertical([
+        Constraint::Length(top_pad),
+        Constraint::Length(logo_lines),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas(content_area);
+
+    render_logo(logo_area, buf, theme, content_area.height);
+    let column_width = content_area.width.saturating_sub(4).min(64).max(1);
+    let column = {
+        let [_, centered, _] = Layout::horizontal([
+            Constraint::Min(0),
+            Constraint::Length(column_width),
+            Constraint::Min(0),
+        ])
+        .flex(Flex::Center)
+        .areas(content_area);
+        centered.x
+    };
+    let place = |area: Rect| Rect {
+        x: column,
+        width: column_width.min(area.width),
+        ..area
+    };
+
+    Paragraph::new(
+        Line::from(Span::styled(
+            "登录",
+            Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .alignment(Alignment::Center),
+    )
+    .render(place(title_area), buf);
+    Paragraph::new(
+        Line::from(Span::styled(
+            format!("服务器 {}", form.issuer),
+            Style::default().fg(theme.gray),
+        ))
+        .alignment(Alignment::Center),
+    )
+    .render(place(issuer_area), buf);
+
+    for (area, text) in [
+        (email_label, "邮箱"),
+        (password_label, "密码"),
+        (machine_label, "机器码"),
+    ] {
+        Paragraph::new(
+            Line::from(Span::styled(text, Style::default().fg(theme.gray_bright)))
+                .alignment(Alignment::Left),
+        )
+        .render(place(area), buf);
+    }
+    render_login_field(
+        place(email_box),
+        buf,
+        theme,
+        form.email.text(),
+        form.email.cursor_byte(),
+        "name@example.com",
+        form.focus == CredentialField::Email,
+        false,
+    );
+    render_login_field(
+        place(password_box),
+        buf,
+        theme,
+        form.password.text(),
+        form.password.cursor_byte(),
+        "密码",
+        form.focus == CredentialField::Password,
+        true,
+    );
+    render_login_field(
+        place(machine_box),
+        buf,
+        theme,
+        form.machine_code.text(),
+        form.machine_code.cursor_byte(),
+        "ABCD-EFGH",
+        form.focus == CredentialField::MachineCode,
+        false,
+    );
+    if let Some(error) = form.error.as_deref() {
+        Paragraph::new(
+            Line::from(Span::styled(error, Style::default().fg(theme.accent_error)))
+                .alignment(Alignment::Center),
+        )
+        .render(place(error_area), buf);
+    }
+    Paragraph::new(
+        Line::from(Span::styled(
+            "Tab 切换   Enter 登录   Esc 返回",
+            Style::default().fg(theme.gray),
+        ))
+        .alignment(Alignment::Center),
+    )
+    .render(hint_area, buf);
+
+    WelcomeRenderResult::default()
+}
+
 /// Render the welcome screen during authentication (Authenticating state).
 #[allow(clippy::too_many_arguments)]
 fn render_welcome_authenticating(
@@ -1549,6 +1778,28 @@ fn render_welcome_authenticating(
             BrowserStatusKind::Device,
         ),
 
+        AuthMode::Password => {
+            let [_, logo_area, _, msg_area, _, hint_area, _] = Layout::vertical([
+                Constraint::Length(top_pad),
+                Constraint::Length(logo_line_count),
+                Constraint::Length(2),
+                Constraint::Length(2),
+                Constraint::Min(1),
+                Constraint::Length(1),
+                Constraint::Min(0),
+            ])
+            .areas(content_area);
+            render_logo(logo_area, buf, theme, content_area.height);
+            let msg = Line::from(Span::styled(
+                "正在登录...",
+                Style::default().fg(theme.gray_bright),
+            ))
+            .alignment(Alignment::Center);
+            Paragraph::new(msg).render(msg_area, buf);
+            let hints = Line::from(quit_hint_spans(theme)).alignment(Alignment::Center);
+            Paragraph::new(hints).render(hint_area, buf);
+            (None, None)
+        }
         AuthMode::Pending => {
             // Connecting: status text
             let [_, logo_area, _, msg_area, _, hint_area, _] = Layout::vertical([

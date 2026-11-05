@@ -353,6 +353,25 @@ pub(crate) fn cached_token_auth_method() -> acp::AuthMethod {
 
 pub const GROK_COM_METHOD_ID: &str = "grok.com";
 
+/// Attach the enterprise issuer to the `grok.com` method so the TUI can show which server it will call.
+pub(crate) fn stamp_grok_com_issuer(methods: &mut [acp::AuthMethod], issuer: &str) {
+    for method in methods.iter_mut() {
+        if method.id().0.as_ref() != GROK_COM_METHOD_ID {
+            continue;
+        }
+        let mut meta = method.meta().cloned().unwrap_or_else(acp::Meta::new);
+        meta.insert("issuer".to_owned(), serde_json::json!(issuer));
+        let description = method.description().map(str::to_owned);
+        let name = method.name().to_owned();
+        let id = method.id().clone();
+        *method = acp::AuthMethod::Agent(
+            acp::AuthMethodAgent::new(id, name)
+                .description(description)
+                .meta(Some(meta)),
+        );
+    }
+}
+
 /// xAI OAuth2/OIDC auth. Method id `"grok.com"` kept for ACP wire compatibility.
 pub(crate) fn grok_com_auth_method(
     label: Option<&str>,

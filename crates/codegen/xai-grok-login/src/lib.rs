@@ -27,6 +27,7 @@ pub mod jwt;
 pub mod manager;
 pub mod model;
 pub mod oidc;
+pub mod password;
 pub mod pre_tui;
 pub mod recovery;
 pub mod refresh;
@@ -63,6 +64,7 @@ pub use flow::{
     run_cli_login, try_ensure_fresh_auth,
 };
 pub use jwt::{is_jwt_expired_or_near, parse_jwt_expiration, parse_jwt_subject};
+pub use password::{PasswordCredentials, run_password_login};
 pub use pre_tui::{PreTuiLoginOutcome, maybe_run_pre_tui_external_login};
 pub use xai_grok_config_types::AuthProviderConfig;
 pub mod meta;

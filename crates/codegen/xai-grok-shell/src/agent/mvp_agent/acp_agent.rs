@@ -467,7 +467,17 @@ impl acp::Agent for MvpAgent {
                 preferred_method: preferred_for_advertise,
             })
         };
-        let auth_methods = built.methods;
+        let mut auth_methods = built.methods;
+        if let Some(issuer) = self
+            .cfg
+            .borrow()
+            .grok_com_config
+            .oauth2
+            .as_ref()
+            .map(|oauth| oauth.issuer.clone())
+        {
+            auth_method::stamp_grok_com_issuer(&mut auth_methods, &issuer);
+        }
         xai_grok_telemetry::unified_log::info(
             "auth: initialize() built auth_methods for ACP response",
             None,
@@ -838,25 +848,35 @@ impl acp::Agent for MvpAgent {
             auth_method::GROK_COM_METHOD_ID | auth_method::OIDC_METHOD_ID => {
                 let grok_ctx = self.auth_manager.grok_com_config();
                 let auth_meta = AuthRequestMeta::from_json(arguments.meta.as_ref());
-                tracing::info!(
-                    method = arguments.method_id.0.as_ref(),
-                    headless = auth_meta.headless,
-                    reauth = auth_meta.reauth,
-                    use_oauth = auth_meta.use_oauth,
-                    "auth: inline auth flow",
-                );
-                xai_grok_telemetry::unified_log::info(
-                    "auth: inline auth flow",
-                    None,
-                    Some(
-                        serde_json::json!({
-                        "method": arguments.method_id.0.as_ref(),
-                        "headless": auth_meta.headless,
-                        "reauth": auth_meta.reauth,
-                        "use_oauth": auth_meta.use_oauth,
-                    }),
-                    ),
-                );
+                let password_login = password_credentials_from(arguments.meta.as_ref()).is_some();
+                if password_login {
+                    tracing::info!(method = "password", "auth: password grant");
+                    xai_grok_telemetry::unified_log::info(
+                        "auth: password grant",
+                        None,
+                        Some(serde_json::json!({"method": "password"})),
+                    );
+                } else {
+                    tracing::info!(
+                        method = arguments.method_id.0.as_ref(),
+                        headless = auth_meta.headless,
+                        reauth = auth_meta.reauth,
+                        use_oauth = auth_meta.use_oauth,
+                        "auth: inline auth flow",
+                    );
+                    xai_grok_telemetry::unified_log::info(
+                        "auth: inline auth flow",
+                        None,
+                        Some(
+                            serde_json::json!({
+                            "method": arguments.method_id.0.as_ref(),
+                            "headless": auth_meta.headless,
+                            "reauth": auth_meta.reauth,
+                            "use_oauth": auth_meta.use_oauth,
+                        }),
+                        ),
+                    );
+                }
                 if auth_meta.reauth {
                     let _ = self.auth_manager.clear();
                 }
@@ -877,7 +897,20 @@ impl acp::Agent for MvpAgent {
                 let config_device_flow = self.cfg.borrow().login_device_flow;
                 let mut cancelled = false;
                 let client_seq = auth_meta.request_seq;
-                let auth_result = if !auth_meta.headless {
+                let password_creds = password_credentials_from(arguments.meta.as_ref());
+                let auth_result = if let Some(creds) = password_creds {
+                    let (cancel, _guard) = self.interactive_auth.begin(None, client_seq);
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => {
+                            cancelled = true;
+                            Err(anyhow::anyhow!("Authentication cancelled"))
+                        }
+                        r = xai_grok_login::run_password_login(&self.auth_manager, creds) => {
+                            r.map(|auth| (auth, true))
+                        }
+                    }
+                } else if !auth_meta.headless {
                     let (url_tx, url_rx) = tokio::sync::oneshot::channel();
                     let (code_tx, code_rx) = tokio::sync::mpsc::channel(1);
                     let (cancel, _guard) = self
@@ -930,11 +963,16 @@ impl acp::Agent for MvpAgent {
                         ) => r,
                     }
                 };
+                let logged_method = if password_login {
+                    "password"
+                } else {
+                    arguments.method_id.0.as_ref()
+                };
                 let (auth, _did_auth) = auth_result
                     .map_err(|e| {
                         emit_login_span(
                             false,
-                            arguments.method_id.0.as_ref(),
+                            logged_method,
                             None,
                             Some(
                                 if cancelled {
@@ -971,12 +1009,12 @@ impl acp::Agent for MvpAgent {
                 }
                 emit_login_span(
                     true,
-                    arguments.method_id.0.as_ref(),
+                    logged_method,
                     Some(auth.user_id.as_str()),
                     None,
                 );
                 log_event(xai_grok_telemetry::events::Login {
-                    auth_method: arguments.method_id.0.as_ref().to_string(),
+                    auth_method: logged_method.to_string(),
                     user_id: Some(auth.user_id.clone()),
                 });
                 self.mark_startup_session_satisfied();

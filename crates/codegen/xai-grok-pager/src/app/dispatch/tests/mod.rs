@@ -178,6 +178,7 @@ fn test_app() -> AppView {
         login_method_id: None,
         auth_start_mode: AuthMode::Pending,
         auth_code_input: Default::default(),
+        credential_form: None,
         next_auth_request_seq: 1,
         auth_url_poll_handle: None,
         deferred_startup: Default::default(),
@@ -590,6 +591,18 @@ fn plant_local_build_session(cwd: &std::path::Path, session_id: &str) -> std::pa
     std::fs::create_dir_all(&sess_dir).expect("plant session dir");
     std::fs::write(sess_dir.join("summary.json"), b"{}").expect("plant summary");
     sess_dir
+}
+/// Open the password form, fill it, and submit so the app is `Authenticating`.
+fn begin_password_login(app: &mut AppView) -> u64 {
+    dispatch(Action::Login, app);
+    let AuthState::Credentials(form) = &mut app.auth_state else {
+        panic!("expected password form, got {:?}", app.auth_state);
+    };
+    form.email.set_text("user@example.com");
+    form.password.set_text("pw");
+    form.machine_code.set_text("ABCD-EFGH");
+    dispatch(Action::SubmitPasswordLogin, app);
+    authenticating_seq(app)
 }
 /// Extract the in-flight auth request sequence, panicking if the auth state is not `Authenticating`.
 fn authenticating_seq(app: &AppView) -> u64 {

@@ -394,8 +394,7 @@ fn e2e_compact_auth_failure_holds_prompt_and_resubmits_after_login() {
         "PromptResponse must stash the compact-held prompt for AuthComplete"
     );
 
-    dispatch(Action::Login, &mut app);
-    let seq = authenticating_seq(&app);
+    let seq = begin_password_login(&mut app);
     let effects = dispatch(
         Action::TaskComplete(TaskResult::AuthComplete {
             request_seq: seq,
@@ -591,7 +590,7 @@ fn install_live_auth_task(
     app: &mut AppView,
     rt: &tokio::runtime::Runtime,
 ) -> (tokio::task::JoinHandle<()>, u64) {
-    dispatch(Action::Login, app);
+    begin_password_login(app);
     let task = rt.spawn(std::future::pending::<()>());
     match &mut app.auth_state {
         AuthState::Authenticating {
@@ -629,20 +628,14 @@ fn login_while_authenticating_aborts_prior_task() {
             "prior auth task must be aborted"
         );
     });
-    match &app.auth_state {
-        AuthState::Authenticating { request_seq, .. } => {
-            assert!(
-                *request_seq > first_seq,
-                "re-login must bump request_seq for single-flight"
-            );
-        }
-        other => panic!("expected Authenticating after re-Login, got {other:?}"),
-    }
     assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::Authenticate { .. })),
-        "re-login must emit a new Authenticate"
+        matches!(app.auth_state, AuthState::Credentials(_)),
+        "re-login returns to the password form, got {:?}",
+        app.auth_state
+    );
+    assert!(
+        effects.is_empty(),
+        "showing the form must not start another grant, got {effects:?}"
     );
 }
 
@@ -651,12 +644,8 @@ fn login_while_authenticating_aborts_prior_task() {
 #[test]
 fn stale_auth_complete_after_relogin_is_ignored() {
     let mut app = test_app_with_agent();
+    let first_seq = begin_password_login(&mut app);
     dispatch(Action::Login, &mut app);
-    let first_seq = match &app.auth_state {
-        AuthState::Authenticating { request_seq, .. } => *request_seq,
-        other => panic!("expected Authenticating after Login, got {other:?}"),
-    };
-    dispatch(Action::Login, &mut app); // re-login bumps to seq2
 
     dispatch(
         Action::TaskComplete(TaskResult::AuthComplete {
@@ -666,15 +655,11 @@ fn stale_auth_complete_after_relogin_is_ignored() {
         &mut app,
     );
 
-    match &app.auth_state {
-        AuthState::Authenticating { request_seq, .. } => {
-            assert!(
-                *request_seq > first_seq,
-                "stale AuthComplete must leave the new attempt authenticating"
-            );
-        }
-        other => panic!("stale AuthComplete must be ignored, got {other:?}"),
-    }
+    assert!(
+        matches!(app.auth_state, AuthState::Credentials(_)),
+        "stale AuthComplete must leave the password form up, got {:?}",
+        app.auth_state
+    );
 }
 
 /// Switch-account while authenticating goes through the same single-flight abort as `/login` (sibling entry point).
@@ -722,12 +707,8 @@ fn cancel_login_aborts_prior_task() {
 #[test]
 fn cancel_login_restores_view() {
     let mut app = test_app_with_agent();
-    dispatch(Action::Login, &mut app);
+    let prior_seq = begin_password_login(&mut app);
     assert_eq!(app.active_view, ActiveView::Welcome);
-    let prior_seq = match &app.auth_state {
-        AuthState::Authenticating { request_seq, .. } => *request_seq,
-        other => panic!("expected Authenticating after Login, got {other:?}"),
-    };
 
     let effects = dispatch(Action::CancelLogin, &mut app);
 
@@ -795,4 +776,56 @@ fn auth_complete_preserves_show_resolved_model_when_absent() {
     );
 
     assert!(!app.show_resolved_model);
+}
+
+#[test]
+fn password_form_rejects_empty_fields_and_redacts_secrets() {
+    let mut app = test_app();
+    dispatch(Action::Login, &mut app);
+    let effects = dispatch(Action::SubmitPasswordLogin, &mut app);
+    assert!(effects.is_empty());
+    match &app.auth_state {
+        AuthState::Credentials(form) => {
+            assert_eq!(form.error.as_deref(), Some("请填写邮箱、密码和机器码"));
+        }
+        other => panic!("expected form, got {other:?}"),
+    }
+    let AuthState::Credentials(form) = &mut app.auth_state else {
+        unreachable!();
+    };
+    form.email.set_text("dev@atlas.local");
+    form.password.set_text("atlas123");
+    form.machine_code.set_text("ABCD-EFGH");
+    let effects = dispatch(Action::SubmitPasswordLogin, &mut app);
+    let rendered = format!("{effects:?}");
+    assert!(!rendered.contains("atlas123"), "{rendered}");
+    assert!(!rendered.contains("ABCD-EFGH"), "{rendered}");
+    assert!(rendered.contains("dev@atlas.local"), "{rendered}");
+    assert!(matches!(
+        app.auth_state,
+        AuthState::Authenticating {
+            mode: AuthMode::Password,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn password_failure_keeps_email_and_clears_password() {
+    let mut app = test_app();
+    let seq = begin_password_login(&mut app);
+    dispatch(
+        Action::TaskComplete(TaskResult::AuthFailed {
+            request_seq: seq,
+            error: "邮箱、密码或机器码不正确".into(),
+        }),
+        &mut app,
+    );
+    let AuthState::Credentials(form) = &app.auth_state else {
+        panic!("expected form, got {:?}", app.auth_state);
+    };
+    assert_eq!(form.email.text(), "user@example.com");
+    assert!(form.password.text().is_empty());
+    assert_eq!(form.machine_code.text(), "ABCD-EFGH");
+    assert_eq!(form.error.as_deref(), Some("邮箱、密码或机器码不正确"));
 }

@@ -60,7 +60,7 @@ use crate::app::actions::{
 };
 use crate::app::agent::AgentId;
 use crate::app::agent_view::AgentDeferredSend;
-use crate::app::app_view::{ActiveView, AppView, AuthState};
+use crate::app::app_view::{ActiveView, AppView, AuthMode, AuthState};
 use crate::app::command_catalog::CommandCatalogSource;
 use crate::app::dispatch::settings;
 use crate::scrollback::block::RenderBlock;
@@ -1168,11 +1168,24 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
         TaskResult::AuthFailed { request_seq, error } => {
             if let AuthState::Authenticating {
                 request_seq: current_seq,
+                mode,
                 ..
             } = &app.auth_state
                 && *current_seq == request_seq
             {
-                app.auth_state = AuthState::Pending { error: Some(error) };
+                let password = *mode == AuthMode::Password;
+                if password {
+                    if let Some(mut form) = app.credential_form.take() {
+                        form.password.reset();
+                        form.error = Some(error);
+                        form.focus = crate::app::app_view::CredentialField::Password;
+                        app.auth_state = AuthState::Credentials(form);
+                    } else {
+                        app.auth_state = AuthState::Pending { error: Some(error) };
+                    }
+                } else {
+                    app.auth_state = AuthState::Pending { error: Some(error) };
+                }
                 app.auth_code_input.reset();
             }
             vec![]

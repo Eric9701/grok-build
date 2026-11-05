@@ -918,8 +918,7 @@ fn session_restored_sticky_chat_sets_conversation_entry() {
 #[test]
 fn auth_complete_restores_view_after_mid_session_login() {
     let mut app = test_app_with_agent();
-    dispatch(Action::Login, &mut app);
-    let seq = authenticating_seq(&app);
+    let seq = begin_password_login(&mut app);
     assert_eq!(app.active_view, ActiveView::Welcome);
     dispatch(
         Action::TaskComplete(TaskResult::AuthComplete {

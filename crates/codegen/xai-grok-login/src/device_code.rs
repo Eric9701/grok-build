@@ -81,19 +81,19 @@ struct DeviceCodeResponse {
 }
 
 #[derive(Deserialize)]
-struct TokenOk {
-    access_token: String,
-    refresh_token: Option<String>,
-    expires_in: Option<i64>,
+pub(crate) struct TokenOk {
+    pub(crate) access_token: String,
+    pub(crate) refresh_token: Option<String>,
+    pub(crate) expires_in: Option<i64>,
     #[expect(dead_code, reason = "field retained for protocol compatibility")]
-    scope: Option<String>,
-    id_token: Option<String>,
+    pub(crate) scope: Option<String>,
+    pub(crate) id_token: Option<String>,
 }
 
 #[derive(Deserialize)]
-struct TokenErr {
-    error: String,
-    error_description: Option<String>,
+pub(crate) struct TokenErr {
+    pub(crate) error: String,
+    pub(crate) error_description: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -375,7 +375,7 @@ async fn open_browser_detached(url: &str) -> bool {
 
 /// No id_token signature verification: the token arrives over a direct HTTPS channel (no browser redirect).
 /// It is only used for display info (email).
-async fn build_auth(
+pub(crate) async fn build_auth(
     tokens: &TokenOk,
     issuer: &str,
     client_id: &str,

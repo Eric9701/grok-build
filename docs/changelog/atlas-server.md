@@ -2,6 +2,16 @@
 
 `services/atlas-server`：Go 企业代理。登录、ListModels、settings、遥测、Task Report、托管模型。基址本环境 `http://10.218.220.237:22255/atlas`。记法见 [README](./README.md)。
 
+## 2026-11
+
+### 2026-11-05 — 密码授权签发 CLI 会话
+
+- **状态**：已落地
+- **会话**：TUI 无浏览器登录页
+- `POST /oauth2/token` 增加 `grant_type=password`：邮箱 + 密码 + 账号机器码。通过后签发与设备码相同的 access / refresh / id_token，不种网页 cookie。
+- 邮箱、密码、机器码任一不对，以及同一邮箱连续失败 8 次后的 15 分钟锁定，都返回同一句「邮箱、密码或机器码不正确」。
+- 网页登录和设备码批准页不变。与 [atlas-cli](./atlas-cli.md) 的 TUI 登录表单配套。
+
 ## 2026-09
 
 ### 2026-09-15 — Task Report 行数口径对齐 edit.lines

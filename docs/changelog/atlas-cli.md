@@ -4,6 +4,14 @@
 
 ## 2026-11
 
+### 2026-11-05 — TUI 用邮箱密码机器码登录
+
+- **状态**：已落地
+- **会话**：TUI 无浏览器登录页
+- 未登录时按 `l` 进入邮箱、密码、机器码表单，不再打开浏览器。密码不回显。失败保留邮箱和机器码，提示「邮箱、密码或机器码不正确」。
+- 成功后仍写入 `~/.atlas/auth.json`（`auth_mode = oidc`），Startup Session Gate 视为已登录。`atlas login --device-auth`、客户 OIDC、外部登录命令仍走原来的浏览器或命令流程。
+- 与 [atlas-server](./atlas-server.md) 的 `grant_type=password` 配套。
+
 ### 2026-11-04 — 登录地址用 login_base_url
 
 - **状态**：已落地

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/atlas-build/atlas-server/internal/config"
@@ -17,10 +18,32 @@ import (
 )
 
 const deviceGrantType = "urn:ietf:params:oauth:grant-type:device_code"
+const passwordGrantType = "password"
+
+// passwordLoginError is the only credential failure the TUI shows.
+// Wrong email, password, machine code, and a short lockout all use it.
+const passwordLoginError = "邮箱、密码或机器码不正确"
+
+const passwordFailLimit = 8
+const passwordLockFor = 15 * time.Minute
+
+// dummyPasswordHash keeps a missing account on the same bcrypt path as a real one.
+var dummyPasswordHash = func() string {
+	hash, err := store.HashPassword("atlas-password-grant-dummy")
+	if err != nil {
+		panic(err)
+	}
+	return hash
+}()
 
 // SessionUser resolves the logged-in web account (device approval gate).
 type SessionUser interface {
 	CurrentUser(r *http.Request) (*store.User, bool)
+}
+
+type passwordFailState struct {
+	count       int
+	lockedUntil time.Time
 }
 
 // Handler serves OAuth/OIDC endpoints expected by the Atlas CLI.
@@ -30,11 +53,21 @@ type Handler struct {
 	users   store.UserStore
 	session SessionUser
 	page    *template.Template
+
+	passwordMu    sync.Mutex
+	passwordFails map[string]passwordFailState
 }
 
 // NewHandler constructs an auth Handler.
 func NewHandler(cfg config.Config, st store.Store, users store.UserStore, session SessionUser, page *template.Template) *Handler {
-	return &Handler{cfg: cfg, store: st, users: users, session: session, page: page}
+	return &Handler{
+		cfg:           cfg,
+		store:         st,
+		users:         users,
+		session:       session,
+		page:          page,
+		passwordFails: map[string]passwordFailState{},
+	}
 }
 
 // Discovery returns OpenID Provider Metadata.
@@ -48,7 +81,7 @@ func (h *Handler) Discovery(w http.ResponseWriter, r *http.Request) {
 		"userinfo_endpoint":                     base + "/v1/user",
 		"jwks_uri":                              base + "/.well-known/jwks.json",
 		"response_types_supported":              []string{"code"},
-		"grant_types_supported":                 []string{"authorization_code", "refresh_token", deviceGrantType},
+		"grant_types_supported":                 []string{"authorization_code", "refresh_token", deviceGrantType, passwordGrantType},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"HS256"},
 		"token_endpoint_auth_methods_supported": []string{"none"},
@@ -191,9 +224,118 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 		h.tokenDevice(w, r)
 	case "refresh_token":
 		h.tokenRefresh(w, r)
+	case passwordGrantType:
+		h.tokenPassword(w, r)
 	default:
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", grant)
 	}
+}
+
+// tokenPassword exchanges an email, password, and account machine code for the same
+// access / refresh / id token a device-code approval would issue. It does not set a web session cookie.
+func (h *Handler) tokenPassword(w http.ResponseWriter, r *http.Request) {
+	clientID := strings.TrimSpace(r.Form.Get("client_id"))
+	if clientID == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "client_id required")
+		return
+	}
+	email := strings.TrimSpace(r.Form.Get("username"))
+	password := r.Form.Get("password")
+	machineCode := r.Form.Get("machine_code")
+	scope := r.Form.Get("scope")
+	if email == "" || password == "" || strings.TrimSpace(machineCode) == "" {
+		h.notePasswordFailure(email)
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", passwordLoginError)
+		return
+	}
+	if h.passwordLocked(email) {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", passwordLoginError)
+		return
+	}
+
+	var user *store.User
+	if h.users != nil {
+		if u, err := h.users.GetUserByEmail(email); err == nil {
+			user = u
+		}
+	}
+	hash := dummyPasswordHash
+	if user != nil && user.PasswordHash != "" {
+		hash = user.PasswordHash
+	}
+	passwordOK := store.CheckPassword(hash, password) == nil
+	if user == nil || !passwordOK || !machineCodeMatches(user.MachineCode, machineCode) {
+		h.notePasswordFailure(email)
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", passwordLoginError)
+		return
+	}
+
+	tokens, err := h.issueTokensForUser(user.UserID, clientID, scope)
+	if err != nil {
+		writeOAuthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
+	h.clearPasswordFailures(email)
+	writeJSON(w, http.StatusOK, tokens)
+}
+
+func machineCodeMatches(account, given string) bool {
+	account = strings.ToUpper(strings.TrimSpace(account))
+	given = strings.ToUpper(strings.TrimSpace(given))
+	return account != "" && account == given
+}
+
+func passwordFailKey(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func (h *Handler) passwordLocked(email string) bool {
+	key := passwordFailKey(email)
+	if key == "" {
+		return false
+	}
+	h.passwordMu.Lock()
+	defer h.passwordMu.Unlock()
+	state, ok := h.passwordFails[key]
+	if !ok {
+		return false
+	}
+	if !state.lockedUntil.IsZero() && time.Now().Before(state.lockedUntil) {
+		return true
+	}
+	if !state.lockedUntil.IsZero() && !time.Now().Before(state.lockedUntil) {
+		delete(h.passwordFails, key)
+	}
+	return false
+}
+
+func (h *Handler) notePasswordFailure(email string) {
+	key := passwordFailKey(email)
+	if key == "" {
+		return
+	}
+	h.passwordMu.Lock()
+	defer h.passwordMu.Unlock()
+	state := h.passwordFails[key]
+	if !state.lockedUntil.IsZero() && time.Now().Before(state.lockedUntil) {
+		return
+	}
+	state.count++
+	state.lockedUntil = time.Time{}
+	if state.count >= passwordFailLimit {
+		state.lockedUntil = time.Now().Add(passwordLockFor)
+	}
+	h.passwordFails[key] = state
+}
+
+func (h *Handler) clearPasswordFailures(email string) {
+	key := passwordFailKey(email)
+	if key == "" {
+		return
+	}
+	h.passwordMu.Lock()
+	delete(h.passwordFails, key)
+	h.passwordMu.Unlock()
 }
 
 func (h *Handler) tokenDevice(w http.ResponseWriter, r *http.Request) {

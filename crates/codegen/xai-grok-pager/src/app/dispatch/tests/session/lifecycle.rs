@@ -2041,12 +2041,14 @@ fn login_mid_session_switches_to_welcome_and_stashes_view() {
     let effects = dispatch(Action::Login, &mut app);
     assert_eq!(app.active_view, ActiveView::Welcome);
     assert_eq!(app.auth_return_view, Some(ActiveView::Agent(AgentId(0))));
-    assert!(matches!(app.auth_state, AuthState::Authenticating { .. }));
     assert!(
-        effects
-            .iter()
-            .any(|e| matches!(e, Effect::Authenticate { .. })),
-        "must still kick off the auth flow",
+        matches!(app.auth_state, AuthState::Credentials(_)),
+        "enterprise login opens the password form, got {:?}",
+        app.auth_state
+    );
+    assert!(
+        effects.is_empty(),
+        "the form must not open a browser or start device login, got {effects:?}"
     );
 }
 /// A mid-session `/login` switches to the welcome view to host the auth flow.
@@ -2074,8 +2076,7 @@ fn auth_complete_strips_reauth_prompt_after_mid_session_login() {
         .unwrap()
         .scrollback
         .push_block(RenderBlock::session_event(SessionEvent::ReAuthRequired));
-    dispatch(Action::Login, &mut app);
-    let seq = authenticating_seq(&app);
+    let seq = begin_password_login(&mut app);
     dispatch(
         Action::TaskComplete(TaskResult::AuthComplete {
             request_seq: seq,
@@ -2115,8 +2116,7 @@ fn auth_complete_retries_stashed_prompt_after_mid_session_login() {
             chip_elements: Vec::new(),
         });
     }
-    dispatch(Action::Login, &mut app);
-    let seq = authenticating_seq(&app);
+    let seq = begin_password_login(&mut app);
     let effects = dispatch(
         Action::TaskComplete(TaskResult::AuthComplete {
             request_seq: seq,

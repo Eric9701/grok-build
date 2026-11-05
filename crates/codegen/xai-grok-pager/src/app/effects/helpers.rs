@@ -944,13 +944,26 @@ pub(super) async fn send_authenticate(
     method_id: acp::AuthMethodId,
     use_oauth: bool,
     force_interactive: bool,
+    credentials: Option<crate::app::actions::PasswordGrant>,
 ) -> TaskResult {
     let mut meta = serde_json::json!({
         "use_oauth": use_oauth,
         "request_seq": request_seq,
     });
-    if force_interactive && let Some(obj) = meta.as_object_mut() {
-        obj.insert("force_interactive".into(), serde_json::json!(true));
+    if let Some(obj) = meta.as_object_mut() {
+        if force_interactive {
+            obj.insert("force_interactive".into(), serde_json::json!(true));
+        }
+        if let Some(credentials) = credentials {
+            obj.insert(
+                "credentials".into(),
+                serde_json::json!({
+                    "email": credentials.email,
+                    "password": credentials.password,
+                    "machine_code": credentials.machine_code,
+                }),
+            );
+        }
     }
     let req = acp::AuthenticateRequest::new(method_id).meta(meta.as_object().cloned());
     match acp_send(req, tx).await {

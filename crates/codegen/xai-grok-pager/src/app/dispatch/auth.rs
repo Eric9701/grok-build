@@ -4,12 +4,14 @@ use super::ctx::{restore_auth_return_view, show_welcome};
 use super::queue::{maybe_drain_queue, note_peek_page_flip};
 use super::router::dispatch;
 use super::session::lifecycle::{clear_startup_actions, drain_startup_actions};
+use crate::app::actions::PasswordGrant;
 use crate::app::actions::{Action, Effect};
 use crate::app::agent::AgentId;
 use crate::app::agent_view::AgentView;
-use crate::app::app_view::{ActiveView, AppView, AuthMode, AuthState};
+use crate::app::app_view::{ActiveView, AppView, AuthMode, AuthState, CredentialForm};
 use crate::scrollback::block::RenderBlock;
 use crate::scrollback::blocks::SessionEvent;
+use agent_client_protocol as acp;
 
 /// `/logout`: ask the shell to clear auth, then return to the login screen.
 pub(super) fn dispatch_logout(_app: &mut AppView) -> Vec<Effect> {
@@ -203,9 +205,71 @@ pub(super) fn strip_trailing_auth_error_blocks(agent: &mut AgentView) {
     }
 }
 
+/// Enterprise `grok.com` login collects a password on the TUI.
+/// External providers and customer OIDC still open their existing browser flow.
+fn uses_password_form(app: &AppView) -> bool {
+    if app.auth_start_mode == AuthMode::Command {
+        return false;
+    }
+    app.login_method_id.as_ref().map(|id| id.0.as_ref()) != Some("oidc")
+}
+
+fn login_issuer(app: &AppView) -> String {
+    app.auth_methods
+        .iter()
+        .find_map(|method| {
+            if method.id().0.as_ref() != "grok.com" {
+                return None;
+            }
+            method
+                .meta()
+                .and_then(|meta| meta.get("issuer"))
+                .and_then(|value| value.as_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| xai_grok_login::xai_oauth2_issuer().to_owned())
+}
+
+fn show_password_form(app: &mut AppView) {
+    let issuer = login_issuer(app);
+    let mut form = app
+        .credential_form
+        .take()
+        .unwrap_or_else(|| Box::new(CredentialForm::new(issuer.clone())));
+    form.issuer = issuer;
+    form.password.reset();
+    form.error = None;
+    app.auth_show_raw_url = false;
+    app.auth_state = AuthState::Credentials(form);
+}
+
+/// Browser / device / external-provider login. The password form does not use this.
+fn start_browser_login(app: &mut AppView, method_id: acp::AuthMethodId) -> Vec<Effect> {
+    let request_seq = app.next_auth_request_seq;
+    app.next_auth_request_seq += 1;
+    app.auth_code_input.reset();
+    app.auth_state = AuthState::Authenticating {
+        request_seq,
+        handle: None,
+        auth_url: None,
+        mode: app.auth_start_mode,
+    };
+    vec![
+        Effect::Authenticate {
+            request_seq,
+            method_id,
+            use_oauth: app.auth_use_oauth,
+            force_interactive: true,
+            credentials: None,
+        },
+        Effect::PollAuthUrl { request_seq },
+    ]
+}
+
 /// Start an interactive login flow. Triggered by pressing 'l' on the welcome screen or by the `/login` slash command.
-/// Only the welcome view renders the auth UI (the external auth provider's sign-in URL and status).
+/// Only the welcome view renders the auth UI.
 /// A mid-session invocation therefore stashes the caller's view in `auth_return_view` and switches to `Welcome` so the flow is visible.
+/// Enterprise login opens the password form. It does not open a browser.
 pub(super) fn dispatch_login(app: &mut AppView) -> Vec<Effect> {
     ensure_login_method(app);
     let Some(method_id) = app.login_method_id.clone() else {
@@ -224,25 +288,80 @@ pub(super) fn dispatch_login(app: &mut AppView) -> Vec<Effect> {
 
     abort_prior_auth(app);
 
+    if uses_password_form(app) {
+        show_password_form(app);
+        return vec![];
+    }
+    start_browser_login(app, method_id)
+}
+
+/// Esc on the password form returns to the Login / Quit menu and keeps the email and machine code.
+pub(super) fn dispatch_dismiss_password_form(app: &mut AppView) -> Vec<Effect> {
+    let state = std::mem::replace(&mut app.auth_state, AuthState::Pending { error: None });
+    if let AuthState::Credentials(mut form) = state {
+        form.password.reset();
+        app.credential_form = Some(form);
+    } else {
+        app.auth_state = state;
+    }
+    vec![]
+}
+
+/// Submit the password form. Empty fields stay on the form. A complete form starts the grant.
+pub(super) fn dispatch_submit_password_login(app: &mut AppView) -> Vec<Effect> {
+    let AuthState::Credentials(_) = &app.auth_state else {
+        return vec![];
+    };
+    let Some(method_id) = app.login_method_id.clone() else {
+        app.auth_state = AuthState::Pending {
+            error: Some(no_login_method_error(app)),
+        };
+        return vec![];
+    };
+    let AuthState::Credentials(mut form) =
+        std::mem::replace(&mut app.auth_state, AuthState::Pending { error: None })
+    else {
+        return vec![];
+    };
+    let email = form.email.text().trim().to_string();
+    let password = form.password.text().to_string();
+    let machine_code = form.machine_code.text().trim().to_string();
+    if email.is_empty() || password.is_empty() || machine_code.is_empty() {
+        form.error = Some("请填写邮箱、密码和机器码".to_string());
+        form.focus = if email.is_empty() {
+            crate::app::app_view::CredentialField::Email
+        } else if password.is_empty() {
+            crate::app::app_view::CredentialField::Password
+        } else {
+            crate::app::app_view::CredentialField::MachineCode
+        };
+        app.auth_state = AuthState::Credentials(form);
+        return vec![];
+    }
+
+    form.password.reset();
+    form.error = None;
+    abort_prior_auth(app);
     let request_seq = app.next_auth_request_seq;
     app.next_auth_request_seq += 1;
-    app.auth_code_input.reset();
+    app.credential_form = Some(form);
     app.auth_state = AuthState::Authenticating {
         request_seq,
         handle: None,
         auth_url: None,
-        mode: app.auth_start_mode,
+        mode: AuthMode::Password,
     };
-
-    vec![
-        Effect::Authenticate {
-            request_seq,
-            method_id,
-            use_oauth: app.auth_use_oauth,
-            force_interactive: true,
-        },
-        Effect::PollAuthUrl { request_seq },
-    ]
+    vec![Effect::Authenticate {
+        request_seq,
+        method_id,
+        use_oauth: app.auth_use_oauth,
+        force_interactive: true,
+        credentials: Some(PasswordGrant {
+            email,
+            password,
+            machine_code,
+        }),
+    }]
 }
 
 /// Only meaningful when `auth_return_view` is set (a mid-session `/login` or 401 re-auth prompt).
@@ -260,6 +379,7 @@ pub(super) fn dispatch_cancel_login(app: &mut AppView) -> Vec<Effect> {
     };
     abort_prior_auth(app);
     app.next_auth_request_seq += 1;
+    app.credential_form = None;
     app.auth_state = AuthState::Done;
     app.auth_show_raw_url = false;
     app.auth_code_input.reset();
@@ -302,6 +422,7 @@ pub(super) fn handle_auth_complete(
     } = &app.auth_state
         && *current_seq == request_seq
     {
+        app.credential_form = None;
         if let Some(meta_val) = meta.as_ref()
             && let Ok(auth_meta) =
                 serde_json::from_value::<xai_grok_login::AuthMeta>(meta_val.clone())

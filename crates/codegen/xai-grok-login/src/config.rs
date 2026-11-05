@@ -202,9 +202,7 @@ fn is_enterprise_atlas_issuer(issuer: &str) -> bool {
     }
     match url.scheme() {
         "https" => true,
-        "http" => url
-            .host_str()
-            .is_some_and(enterprise_login_host_allowed),
+        "http" => url.host_str().is_some_and(enterprise_login_host_allowed),
         _ => false,
     }
 }
