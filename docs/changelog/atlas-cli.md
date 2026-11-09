@@ -4,6 +4,12 @@
 
 ## 2026-11
 
+### 2026-11-09 — CLI Actions 增加 macOS x86_64
+
+- **状态**：已落地
+- **会话**：GitHub Actions 增补 macOS x86
+- `.github/workflows/cli-release.yml` matrix 增加 `macos-15-intel` / `x86_64-apple-darwin`，产物 `grok-{ver}-macos-x86_64`。与 ARM 一样走 `brew install protobuf`，仍是未签名 CLI。
+
 ### 2026-11-09 — 内部 OTLP span 默认不上报
 
 - **状态**：已落地

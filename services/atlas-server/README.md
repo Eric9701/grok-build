@@ -64,7 +64,7 @@ Listens on `:22255` by default. App routes are under **`/atlas`**
 Users are stored in MySQL. **Web login is required** before approving a CLI device code.
 
 1. Open `http://10.218.220.237:22255/atlas/login`
-2. Sign in (bootstrap dev user below) or register a new account
+2. Sign in (bootstrap dev user below). Self-service register is closed; ask an admin to open the account.
 3. Open `/atlas/account` to view your **machine code**
 4. Complete CLI device login at `/atlas/oauth2/device` with CLI `user_code` + your machine code
 
@@ -113,7 +113,8 @@ All application paths are under `/atlas` (except root `/healthz`).
 
 | Method | Path | Status |
 |--------|------|--------|
-| GET/POST | `/atlas/login`, `/atlas/register`, `/atlas/logout` | ready (web account) |
+| GET/POST | `/atlas/login`, `/atlas/logout` | ready (web account) |
+| GET/POST | `/atlas/register` | closed (403, contact admin) |
 | GET | `/atlas/account` | ready (machine code) |
 | POST | `/atlas/api/auth/login` | ready |
 | GET | `/atlas/api/auth/me` | ready |

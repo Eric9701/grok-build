@@ -47,6 +47,13 @@ jobs:
             os: macos
             arch: aarch64
             ext: ""
+          # Intel 标准机原生编 x86_64。不用 arm64 交叉，也不用 *-large（larger runner）。
+          # macos-15-intel 计划可用到 2027-08；也可显式换 macos-26-intel。
+          - runner: macos-15-intel
+            triple: x86_64-apple-darwin
+            os: macos
+            arch: x86_64
+            ext: ""
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7

@@ -1,6 +1,6 @@
-# 用 GitHub Actions 打包 Atlas CLI（Windows / Linux / macOS ARM）
+# 用 GitHub Actions 打包 Atlas CLI（Windows / Linux / macOS ARM / macOS x86_64）
 
-调查日期：2026-10-08。对象是本仓库 Rust 包 `xai-grok-pager-bin` 的发布二进制，不是 VS Code 扩展的 Electron 安装包。
+调查日期：2026-10-08（2026-11-09 增补 macOS Intel）。对象是本仓库 Rust 包 `xai-grok-pager-bin` 的发布二进制，不是 VS Code 扩展的 Electron 安装包。
 
 仓库根已启用 [`.github/workflows/cli-release.yml`](../.github/workflows/cli-release.yml)，只编译 `xai-grok-pager-bin`。与下面草稿的唯一差别：`bin/protoc-win64/bin/protoc.exe` 被 `.gitignore` 的 `/bin/` 与 `*.exe` 排除，checkout 里没有它。workflow 下载与 `bin/protoc` 锁定的 protoc 29.3 win64，再设置 `PROTOC`。不要把 `PROTOC` 指到仓库内的 Windows 路径。
 
@@ -8,13 +8,14 @@
 
 ## 1. 结论
 
-三类产物各用一台**同架构的托管 runner 原生编译**，再用 matrix 并行。不要在一台 Linux runner 上交叉编出三个操作系统。
+四类产物各用一台**同架构的托管 runner 原生编译**，再用 matrix 并行。不要在一台 Linux runner 上交叉编出多个操作系统；macOS x86_64 也不在 arm64 runner 上交叉编。
 
 | 产物 | 建议 `runs-on` | 当天该 label 的镜像 | Rust target | 发布文件名 |
 | --- | --- | --- | --- | --- |
 | Windows x86_64 | `windows-latest` | Windows Server 2025，x64 | `x86_64-pc-windows-msvc` | `grok-{ver}-windows-x86_64.exe` |
 | Linux x86_64（正式发布） | `ubuntu-latest` | Ubuntu 24.04，x64 | `x86_64-unknown-linux-musl` | `grok-{ver}-linux-x86_64` |
 | macOS ARM | `macos-latest` | macOS 26，arm64（Apple Silicon） | `aarch64-apple-darwin` | `grok-{ver}-macos-aarch64` |
+| macOS x86_64 | `macos-15-intel` | macOS 15，x86_64 | `x86_64-apple-darwin` | `grok-{ver}-macos-x86_64` |
 
 依据：
 
@@ -26,6 +27,7 @@
 
 - Linux 钉 `ubuntu-24.04`。它和当天的 `ubuntu-latest` 是同一张 x64 镜像。Ubuntu 24.04 镜像页的 Announcements 写着：`ubuntu-latest` 将在 **2026 年 11 月**改用 Ubuntu 26.04。横幅没有写具体哪一天。见 [Ubuntu2404-Readme.md](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md) 与 [ubuntu26/20260927 发行说明](https://github.com/actions/runner-images/releases/tag/ubuntu26/20260927.149) 里的同一句。`ubuntu-26.04` 已经可以显式选用，并且已经 GA（[runner-images#14747](https://github.com/actions/runner-images/issues/14747)）。
 - macOS ARM 可以钉 `macos-26`。runner-images README 把 `macos-latest`、`macos-26` 都标成 macOS 26 arm64。不要为了「钉死」去抄 Electron 流水线的 `macos-15`，原因见第 5 节。
+- macOS x86_64 钉 `macos-15-intel`（或 `macos-26-intel`）。不要用 `macos-*-large`（larger runner，且是另一套计费）。
 - Windows 可以钉 `windows-2025`。它和 `windows-latest` 在上述两份文档里都是 Windows Server 2025 x64。
 
 `jobs.<job_id>.runs-on` 决定 job 跑在哪种机器上，可以是托管 runner、larger runner 或 self-hosted（[workflow 语法](https://docs.github.com/en/actions/learn-github-actions/workflow-syntax-for-github-actions#jobsjob_idruns-on)）。matrix 用一份 job 定义展开成多组配置（[Running variations of jobs in a workflow](https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/running-variations-of-jobs-in-a-workflow)）。`strategy.fail-fast` 默认是 `true`：矩阵里有一个 job 失败，其余进行中和排队的 job 会被取消。三个平台要独立出包，必须写成 `fail-fast: false`（[语法：fail-fast](https://docs.github.com/en/actions/learn-github-actions/workflow-syntax-for-github-actions#jobsjob_idstrategyfail-fast)）。
@@ -137,7 +139,7 @@ Electron 流水线钉死 `macos-15` 的事实记在第 5 节。未签名的 CLI 
 
 ### 2.6 Intel Mac、以及不要再用的 label
 
-本任务的 macOS 产物是 ARM，不需要 Intel runner。Intel 标准机当天仍在表里：`macos-15-intel`、`macos-26-intel`（reference 页与 runner-images README）。larger 的 Intel 机是 `*-large`。
+macOS x86_64 用标准 Intel 机原生编译：workflow 钉 `macos-15-intel`（也可用 `macos-26-intel`）。larger 的 Intel 机是 `*-large`，本流水线不用。
 
 和「Intel 何时消失」有关的原文并不一致，不要合成一个单一日期：
 

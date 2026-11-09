@@ -3,13 +3,16 @@ package account
 import (
 	"encoding/json"
 	"html/template"
+	"io"
 	"net/http"
 	"strings"
 
 	"github.com/atlas-build/atlas-server/internal/config"
 	"github.com/atlas-build/atlas-server/internal/store"
-	"github.com/google/uuid"
 )
+
+// registrationClosedMsg is returned for every self-service signup attempt.
+const registrationClosedMsg = "请联系管理员或条线负责人开通账户"
 
 const sessionCookie = "atlas_session"
 
@@ -36,11 +39,11 @@ func (h *Handler) LoginPage(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, h.redirectTarget(next), http.StatusFound)
 			return
 		}
-		h.renderLogin(w, next, "", false)
+		h.renderLogin(w, next, "")
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		h.renderLogin(w, next, "invalid form", false)
+		h.renderLogin(w, next, "invalid form")
 		return
 	}
 	next = safeNext(r.FormValue("next"))
@@ -48,76 +51,22 @@ func (h *Handler) LoginPage(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	u, err := h.users.GetUserByEmail(email)
 	if err != nil || store.CheckPassword(u.PasswordHash, password) != nil {
-		h.renderLogin(w, next, "invalid email or password", false)
+		h.renderLogin(w, next, "invalid email or password")
 		return
 	}
 	if err := h.setSession(w, u.UserID); err != nil {
-		h.renderLogin(w, next, "failed to create session", false)
+		h.renderLogin(w, next, "failed to create session")
 		return
 	}
 	http.Redirect(w, r, h.redirectTarget(next), http.StatusFound)
 }
 
-// RegisterPage serves GET/POST /register.
+// RegisterPage refuses self-service signup on GET and POST /register.
+// Accounts are opened by an admin or line owner.
 func (h *Handler) RegisterPage(w http.ResponseWriter, r *http.Request) {
-	next := safeNext(r.URL.Query().Get("next"))
-	if r.Method == http.MethodGet {
-		h.renderLogin(w, next, "", true)
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		h.renderLogin(w, next, "invalid form", true)
-		return
-	}
-	next = safeNext(r.FormValue("next"))
-	email := strings.TrimSpace(r.FormValue("email"))
-	password := r.FormValue("password")
-	first := strings.TrimSpace(r.FormValue("first_name"))
-	last := strings.TrimSpace(r.FormValue("last_name"))
-	if email == "" || len(password) < 8 {
-		h.renderLogin(w, next, "email required and password must be at least 8 characters", true)
-		return
-	}
-	if first == "" {
-		first = "Atlas"
-	}
-	if last == "" {
-		last = "User"
-	}
-	userID := "user-" + uuid.NewString()
-	machineCode, err := store.GenerateMachineCode()
-	if err != nil {
-		h.renderLogin(w, next, "failed to generate machine code", true)
-		return
-	}
-	hash, err := store.HashPassword(password)
-	if err != nil {
-		h.renderLogin(w, next, "failed to hash password", true)
-		return
-	}
-	u := store.User{
-		UserID:        userID,
-		Email:         email,
-		PasswordHash:  hash,
-		FirstName:     first,
-		LastName:      last,
-		PrincipalType: "User",
-		PrincipalID:   userID,
-		MachineCode:   machineCode,
-	}
-	if err := h.users.CreateUser(u); err != nil {
-		msg := err.Error()
-		if err == store.ErrUserExists {
-			msg = "email already registered"
-		}
-		h.renderLogin(w, next, msg, true)
-		return
-	}
-	if err := h.setSession(w, userID); err != nil {
-		h.renderLogin(w, next, "account created but session failed; please log in", true)
-		return
-	}
-	http.Redirect(w, r, h.redirectTarget(next), http.StatusFound)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = io.WriteString(w, registrationClosedMsg)
 }
 
 // Logout clears the web session.
@@ -218,12 +167,11 @@ func (h *Handler) setSession(w http.ResponseWriter, userID string) error {
 	return nil
 }
 
-func (h *Handler) renderLogin(w http.ResponseWriter, next, errMsg string, register bool) {
+func (h *Handler) renderLogin(w http.ResponseWriter, next, errMsg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = h.login.Execute(w, map[string]any{
-		"Next":     next,
-		"Error":    errMsg,
-		"Register": register,
+		"Next":  next,
+		"Error": errMsg,
 	})
 }
 
