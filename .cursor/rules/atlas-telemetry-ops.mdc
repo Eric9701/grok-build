@@ -12,6 +12,7 @@ alwaysApply: true
 | 通道 | 路径示例 | 门控 |
 |------|----------|------|
 | Trace 产物 | GCS/S3/proxy upload | `trace_upload_enabled` / `[telemetry] trace_upload` |
+| OTLP spans | `POST {proxy}/traces` | **默认关**；仅 `OTEL_TRACES_EXPORTER=otlp` 打开 |
 | Session signals | `POST …/sessions/{id}/signals` | `telemetry_enabled` |
 | Events | `…/events` | `telemetry_enabled` |
 | Task reports | `POST …/task-reports` | **默认开**；仅 `GROK_DISABLE_TASK_REPORT=1` 可关 |

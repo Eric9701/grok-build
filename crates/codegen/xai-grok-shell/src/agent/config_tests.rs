@@ -5921,6 +5921,36 @@ fn resolve_upload_method_accepts_deployment_key_without_oauth() {
     }
 }
 #[test]
+fn traces_export_off_unless_otlp_explicit() {
+    let base = internal_otlp_test_config();
+    for raw in [
+        None,
+        Some("none".to_string()),
+        Some("  ".to_string()),
+        Some("console".to_string()),
+    ] {
+        let cfg = EndpointsConfig {
+            otel_traces_exporter: raw,
+            ..base.clone()
+        };
+        assert!(
+            !cfg.resolve_traces_export_enabled(),
+            "exporter {:?} must stay off",
+            cfg.otel_traces_exporter
+        );
+    }
+    for raw in ["otlp", " OTLP ", "console, otlp"] {
+        let cfg = EndpointsConfig {
+            otel_traces_exporter: Some(raw.to_string()),
+            ..base.clone()
+        };
+        assert!(
+            cfg.resolve_traces_export_enabled(),
+            "exporter {raw:?} must export"
+        );
+    }
+}
+#[test]
 fn otlp_traces_endpoint_precedence() {
     let proxy = "https://inference.acme.com/v1".to_string();
     let derived = EndpointsConfig {

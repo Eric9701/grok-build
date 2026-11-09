@@ -1361,6 +1361,7 @@ cursor --install-extension .\atlas-vscode-3.1.0.vsix --force</code></pre>
 <h3>遥测与 Task Report</h3>
 <table><thead><tr><th>开关</th><th>作用</th></tr></thead><tbody>
 <tr><td><code>telemetry_enabled</code> / <code>GROK_TELEMETRY_ENABLED</code></td><td>signals / events 等产品遥测</td></tr>
+<tr><td><code>OTEL_TRACES_EXPORTER</code></td><td>内部 OTLP span。默认关；只有设成 <code>otlp</code> 才向 <code>{proxy}/traces</code> 上报</td></tr>
 <tr><td><code>trace_upload_enabled</code> / <code>GROK_TELEMETRY_TRACE_UPLOAD</code></td><td><strong>只</strong>关会话 trace 产物上传（GCS/S3/proxy），不是总开关</td></tr>
 <tr><td><code>GROK_DISABLE_TASK_REPORT=1</code></td><td>关闭 Task Report（默认开；主会话 / plan / 子 agent 都会报）</td></tr>
 <tr><td><code>GROK_EXTERNAL_OTEL</code></td><td>客户侧 OTEL 导出（见 <a href="#ch-24">第 24 章</a>）</td></tr>

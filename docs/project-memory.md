@@ -73,6 +73,7 @@
 ## 遥测
 
 - `trace_upload_enabled=false` **只关** trace 产物上传，不管 signals / events / Task Report。
+- 内部 OTLP span（`POST {proxy}/traces`）**默认关**。只有 `OTEL_TRACES_EXPORTER=otlp` 才上报。未设置、`none`、其它值都不发。与 `trace_upload` / `telemetry_enabled` 无关。
 - Task Report **默认开**，仅 `GROK_DISABLE_TASK_REPORT=1` 可关。主会话、plan 模式、子 agent 都报。
 - 尽量全关：`telemetry_enabled=false` + `trace_upload_enabled=false` + `GROK_DISABLE_TASK_REPORT=1`。
 - Remote settings：`download/probe_settings.json` → `GET /atlas/v1/settings`。

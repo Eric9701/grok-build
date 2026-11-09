@@ -216,7 +216,7 @@ pub struct EndpointsConfig {
     /// When set, the standard `OTEL_EXPORTER_OTLP_*` vars are reserved for the external OTEL stream. The internal trace pipeline then ignores them entirely. An admin who opts in by *any* layer never receives the internally-authed firehose. Held as a field (not re-read in the resolvers) so the resolvers stay pure and testable without env races.
     #[serde(skip)]
     pub external_otel_master_switch: bool,
-    /// Env: `OTEL_TRACES_EXPORTER`. `otlp` (default) or `none` to disable spans.
+    /// Env: `OTEL_TRACES_EXPORTER`. Span export stays off unless this is `otlp`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub otel_traces_exporter: Option<String>,
     /// Env: `OTEL_BSP_SCHEDULE_DELAY` (OTel) or `OTEL_TRACES_EXPORT_INTERVAL` (Claude alias).
@@ -367,13 +367,15 @@ impl EndpointsConfig {
             && blank_as_unset(&self.otel_exporter_otlp_headers).is_some();
         endpoint_consumed || headers_consumed
     }
-    /// Trace export enabled unless `OTEL_TRACES_EXPORTER=none`.
-    /// Deliberately still honored by the internal pipeline even with `GROK_EXTERNAL_OTEL` set: disabling internal span export is the safe direction.
+    /// Span export is off unless `OTEL_TRACES_EXPORTER` explicitly selects `otlp`
+    /// (a comma-separated list counts when one token is `otlp`).
+    /// Unset, blank, `none`, and any other value do not report.
+    /// Still honored when `GROK_EXTERNAL_OTEL` is set.
     pub(crate) fn resolve_traces_export_enabled(&self) -> bool {
-        !matches!(
-            self.otel_traces_exporter.as_deref().map(str::trim),
-            Some("none")
-        )
+        self.otel_traces_exporter.as_deref().is_some_and(|raw| {
+            raw.split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("otlp"))
+        })
     }
     /// `OTEL_BSP_SCHEDULE_DELAY` / `OTEL_TRACES_EXPORT_INTERVAL`: tuning-only, deliberately shared between the internal and external pipelines.
     pub(crate) fn resolve_otlp_export_interval(&self) -> Option<std::time::Duration> {

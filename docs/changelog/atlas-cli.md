@@ -4,6 +4,13 @@
 
 ## 2026-11
 
+### 2026-11-09 — 内部 OTLP span 默认不上报
+
+- **状态**：已落地
+- **会话**：OTLP span 默认关闭
+- `OTEL_TRACES_EXPORTER` 未设置、空白、`none` 或其它值时，不创建 BatchSpanProcessor，不向 `{proxy}/traces` 发 span。
+- 只有显式 `otlp`（大小写不敏感；逗号列表里含 `otlp` 也算）才导出。
+
 ### 2026-11-05 — minimal 模式画出密码登录表单
 
 - **状态**：已落地
