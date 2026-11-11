@@ -52,6 +52,9 @@ impl AgentView {
         } else {
             text
         };
+        if self.prompt.offer_multiline_paste(paste_text) {
+            return (InputOutcome::Changed, ClipboardTextInsertion::Inserted);
+        }
         match self.prompt.handle_paste(paste_text) {
             PromptEvent::Edited => {
                 self.prompt.refresh_slash(&self.session.models);
@@ -627,12 +630,57 @@ pub(super) mod paste_key_tests {
         let text = "line1\nline2\nline3\nline4";
         let outcome = paste_cmd_v(&mut agent, Some(text));
         assert!(matches!(outcome, InputOutcome::Changed));
+        assert!(
+            agent.prompt.multiline_paste_is_open(),
+            "multi-line paste waits in the review box"
+        );
+        assert!(
+            agent.prompt.text().is_empty(),
+            "the composer stays empty until the box is confirmed"
+        );
+        agent.prompt.expire_multiline_paste_arm_for_test();
+        let registry = ActionRegistry::defaults();
+        let outcome = agent.handle_input(
+            &Event::Key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Enter,
+                crossterm::event::KeyModifiers::NONE,
+            )),
+            &registry,
+        );
+        assert!(
+            matches!(outcome, InputOutcome::Changed),
+            "confirm inserts, it does not send: {outcome:?}"
+        );
+        assert!(!agent.prompt.multiline_paste_is_open());
         assert_eq!(agent.prompt.text(), text);
         assert_eq!(agent.prompt.textarea().elements().len(), 1);
         assert_eq!(
             agent.prompt.textarea().elements().first().map(|e| e.kind),
             Some(KIND_PASTE)
         );
+    }
+    #[test]
+    fn multiline_paste_esc_discards_without_sending() {
+        let mut agent = make_agent();
+        agent.set_active_pane(ActivePane::Prompt, true);
+        let registry = ActionRegistry::defaults();
+        let outcome = agent.handle_input(
+            &Event::Paste("{\n    VITE_GLOB_APP_TITLE: 'srmanage',\n}\n".to_owned()),
+            &registry,
+        );
+        assert!(matches!(outcome, InputOutcome::Changed));
+        assert!(agent.prompt.multiline_paste_is_open());
+        agent.prompt.expire_multiline_paste_arm_for_test();
+        let outcome = agent.handle_input(
+            &Event::Key(crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Esc,
+                crossterm::event::KeyModifiers::NONE,
+            )),
+            &registry,
+        );
+        assert!(matches!(outcome, InputOutcome::Changed));
+        assert!(!agent.prompt.multiline_paste_is_open());
+        assert!(agent.prompt.text().is_empty());
     }
     #[test]
     fn paste_key_image_preferred_over_text() {

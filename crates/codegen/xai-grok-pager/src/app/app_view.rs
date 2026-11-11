@@ -3755,9 +3755,22 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
             }
         }
     }
-    if let Event::Key(key) = ev {
+        if let Event::Key(key) = ev {
         if key.kind == KeyEventKind::Release {
             return InputOutcome::Unchanged;
+        }
+        if ctx.prompt.multiline_paste_is_open() {
+            if key!('c', CONTROL).matches(key)
+                || key!('d', CONTROL).matches(key)
+                || key!('q', CONTROL).matches(key)
+            {
+                ctx.prompt.dismiss_multiline_paste();
+            } else if !crate::input::key::is_paste_key(key)
+                && !crate::input::key::is_inline_paste_key(key)
+            {
+                ctx.prompt.handle_multiline_paste_key(key);
+                return InputOutcome::Changed;
+            }
         }
         if ctx.is_zdr_blocked && matches!(ctx.auth_state, AuthState::Done) {
             return handle_menu_shortcuts(
@@ -3992,6 +4005,9 @@ fn handle_welcome_input(ev: &Event, ctx: &mut WelcomeInputCtx<'_>) -> InputOutco
                     return InputOutcome::Unchanged;
                 }
                 *ctx.prompt_focused = true;
+                if ctx.prompt.offer_multiline_paste(text) {
+                    return InputOutcome::Changed;
+                }
                 return InputOutcome::ActionThenForward(Action::LeaveHome);
             }
             AuthState::Authenticating {

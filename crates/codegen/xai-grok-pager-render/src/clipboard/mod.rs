@@ -1262,6 +1262,13 @@ pub mod test_support {
         PRIMARY_READS.with(|c| c.get())
     }
 
+    /// Canned CLIPBOARD text while a hook is installed.
+    /// `None` means no hook (callers must not fall through to the real clipboard in tests).
+    /// `Some(None)` is an installed hook with no text.
+    pub fn hooked_clipboard_text() -> Option<Option<String>> {
+        hook_text_result().map(|result| result.ok().flatten())
+    }
+
     /// Canned CLIPBOARD text result while a hook is installed.
     pub(super) fn hook_text_result() -> Option<Result<Option<String>, ClipboardTextReadError>> {
         HOOK.with(|h| {
@@ -1328,7 +1335,7 @@ pub use test_support::primary_selection_read_call_count;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_support::{
     ClipboardProbeHook, clear_clipboard_probe_hook, clipboard_probe_call_count,
-    set_clipboard_probe_hook,
+    hooked_clipboard_text, set_clipboard_probe_hook,
 };
 
 // ===========================================================================

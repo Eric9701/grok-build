@@ -1856,6 +1856,8 @@ pub(crate) async fn run(
     let mut csi_filter = super::csi_filter::CsiFragmentFilter::new();
     let mut x10_filter = super::x10_filter::X10ReassemblyFilter::new();
     let mut xt_filter = super::xt_filter::XtversionFilter::new();
+    let mut paste_burst: Option<std::time::Instant> = None;
+    let mut paste_swallow_until: Option<std::time::Instant> = None;
     let mut bg_update_rx = bg_update_rx;
     debug_assert_eq!(term_state.initial_theme, theme_cache::current_kind());
     let mut appearance_watcher =
@@ -2336,6 +2338,8 @@ pub(crate) async fn run(
                 let result = drain_and_process(
                     ev, &mut input_rx, &mut app, &mut tasks, &progress_tx,
                     &mut csi_filter, &mut x10_filter, &mut xt_filter,
+                    &mut paste_burst,
+                    &mut paste_swallow_until,
                     live_input_started_at,
                 ).await;
                 if let Some(window) =
@@ -3206,6 +3210,8 @@ async fn drain_and_process(
     csi_filter: &mut super::csi_filter::CsiFragmentFilter,
     x10_filter: &mut super::x10_filter::X10ReassemblyFilter,
     xt_filter: &mut super::xt_filter::XtversionFilter,
+    paste_burst: &mut Option<std::time::Instant>,
+    paste_swallow_until: &mut Option<std::time::Instant>,
     live_input_started_at: std::time::Instant,
 ) -> DrainResult {
     let mut needs_draw = false;
@@ -3226,8 +3232,11 @@ async fn drain_and_process(
         // `live_events` before the rest of the paste arrives; `detect_paste`'s short
         // window then misses the follow-up and Enter would submit `{`.
         let detected = detect_paste(&mut live_events, input_rx).await;
-        if detected || looks_like_incomplete_multiline_paste(&live_events) {
-            collect_remaining_paste(&mut live_events, input_rx).await;
+        if detected
+            || looks_like_incomplete_multiline_paste(&live_events)
+            || looks_like_open_bracketed_paste(&live_events)
+        {
+            collect_remaining_paste(&mut live_events, input_rx, PASTE_CONTINUE_TIMEOUT).await;
             if xt_filter.armed() {
                 live_events = super::xt_filter::filter_with_fragment_wait(
                     xt_filter,
@@ -3237,13 +3246,31 @@ async fn drain_and_process(
                 .await;
             }
         }
+        // `{` can arrive before its newline. If the clipboard is that multi-line paste,
+        // wait out the rest instead of inserting `{` and submitting on the next Enter.
+        if !app.gboom_active() && clipboard_burst_needs_more(&live_events) {
+            collect_remaining_paste(
+                &mut live_events,
+                input_rx,
+                PASTE_MULTILINE_CONTINUE_TIMEOUT,
+            )
+            .await;
+        }
     }
+    swallow_inflight_paste_keys(&mut live_events, paste_swallow_until);
     let mut coalesced = startup_events;
     if app.gboom_active() {
         coalesced.extend(live_events);
     } else {
-        coalesced.extend(coalesce_live_keys(live_events));
+        if adopt_clipboard_multiline_paste(&mut live_events) {
+            *paste_swallow_until =
+                Some(std::time::Instant::now() + PASTE_MULTILINE_CONTINUE_TIMEOUT);
+        }
+        coalesced.extend(coalesce_live_keys(reassemble_bracketed_paste_keys(
+            live_events,
+        )));
     }
+    rescue_split_paste_newline(&mut coalesced, paste_burst);
     let coalesced = csi_filter.filter(coalesced);
     let coalesced = x10_filter.filter(coalesced);
     let coalesced = coalesced
@@ -3456,6 +3483,10 @@ const PASTE_DETECT_TIMEOUT: Duration = Duration::from_millis(2);
 const PASTE_CONTINUE_TIMEOUT: Duration = Duration::from_millis(30);
 #[cfg(not(windows))]
 const PASTE_CONTINUE_TIMEOUT: Duration = Duration::from_millis(10);
+/// Once a newline (or an unclosed bracketed-paste start) is in the batch, keep
+/// collecting across slower Windows console chunks. A typed Enter after a pause
+/// still submits: this only extends a batch that already looks like a paste.
+const PASTE_MULTILINE_CONTINUE_TIMEOUT: Duration = Duration::from_millis(200);
 /// Safety cap on events accumulated in one extension pass.
 const PASTE_EXTEND_MAX_EVENTS: usize = 5_000;
 /// Returns `true` when the batch contains pasteable key events but no `Event::Paste` (i.e. bracketed paste is not handling it).
@@ -3499,6 +3530,281 @@ fn looks_like_incomplete_multiline_paste(events: &[TimedInputEvent]) -> bool {
     }
     saw_char && last_was_linebreak
 }
+const BRACKETED_PASTE_START: &[char] = &['[', '2', '0', '0', '~'];
+const BRACKETED_PASTE_END: &[char] = &['[', '2', '0', '1', '~'];
+fn skip_key_releases(events: &[TimedInputEvent], mut index: usize) -> usize {
+    while index < events.len()
+        && matches!(
+            &events[index].event,
+            Event::Key(ke) if ke.kind == KeyEventKind::Release
+        )
+    {
+        index += 1;
+    }
+    index
+}
+fn is_bare_esc(ev: &Event) -> bool {
+    matches!(
+        ev,
+        Event::Key(ke)
+            if ke.kind != KeyEventKind::Release
+                && ke.code == KeyCode::Esc
+                && ke.modifiers.is_empty()
+    )
+}
+fn bare_paste_char(ev: &Event) -> Option<char> {
+    let Event::Key(ke) = ev else {
+        return None;
+    };
+    if ke.kind == KeyEventKind::Release || !ke.modifiers.is_empty() {
+        return None;
+    }
+    match ke.code {
+        KeyCode::Char(ch) => Some(ch),
+        _ => None,
+    }
+}
+fn match_marker(events: &[TimedInputEvent], mut index: usize, marker: &[char]) -> Option<usize> {
+    for &expected in marker {
+        index = skip_key_releases(events, index);
+        if index >= events.len() {
+            return None;
+        }
+        match bare_paste_char(&events[index].event) {
+            Some(ch) if ch == expected => index += 1,
+            _ => return None,
+        }
+    }
+    Some(index)
+}
+fn bracketed_start_at(events: &[TimedInputEvent], index: usize) -> Option<usize> {
+    if index >= events.len() || !is_bare_esc(&events[index].event) {
+        return None;
+    }
+    match_marker(events, index + 1, BRACKETED_PASTE_START)
+}
+fn bracketed_end_at(events: &[TimedInputEvent], index: usize) -> Option<usize> {
+    if index >= events.len() || !is_bare_esc(&events[index].event) {
+        return None;
+    }
+    match_marker(events, index + 1, BRACKETED_PASTE_END)
+}
+fn paste_body_char(ev: &Event) -> Option<char> {
+    if is_paste_lf(ev) {
+        return Some('\n');
+    }
+    let Event::Key(ke) = ev else {
+        return None;
+    };
+    if ke.kind == KeyEventKind::Release
+        || ke.modifiers.contains(KeyModifiers::CONTROL)
+        || ke.modifiers.contains(KeyModifiers::ALT)
+    {
+        return None;
+    }
+    match ke.code {
+        KeyCode::Char(ch) => Some(ch),
+        KeyCode::Enter => Some('\n'),
+        KeyCode::Tab => Some('\t'),
+        _ => None,
+    }
+}
+/// `ESC[200~` with no matching `ESC[201~` yet: the rest of the paste is still arriving.
+fn looks_like_open_bracketed_paste(events: &[TimedInputEvent]) -> bool {
+    let mut index = 0;
+    while index < events.len() {
+        if let Some(after_start) = bracketed_start_at(events, index) {
+            let mut cursor = after_start;
+            let mut closed = false;
+            while cursor < events.len() {
+                if let Some(after_end) = bracketed_end_at(events, cursor) {
+                    closed = true;
+                    cursor = after_end;
+                    break;
+                }
+                cursor += 1;
+            }
+            if !closed {
+                return true;
+            }
+            index = cursor;
+            continue;
+        }
+        index += 1;
+    }
+    false
+}
+fn take_bracketed_paste(events: &[TimedInputEvent], index: usize) -> Option<(usize, String)> {
+    let mut cursor = bracketed_start_at(events, index)?;
+    let mut text = String::new();
+    while cursor < events.len() {
+        cursor = skip_key_releases(events, cursor);
+        if cursor >= events.len() {
+            return None;
+        }
+        if is_bare_esc(&events[cursor].event) {
+            return bracketed_end_at(events, cursor).map(|after_end| (after_end, text));
+        }
+        text.push(paste_body_char(&events[cursor].event)?);
+        cursor += 1;
+    }
+    None
+}
+/// Windows often delivers bracketed paste as keys (`ESC[200~` … `ESC[201~`), and the
+/// `ESC` / `Enter` inside that sequence would cancel or submit. Fold a complete region
+/// into one [`Event::Paste`], and drop a leftover start or end marker so it cannot.
+fn reassemble_bracketed_paste_keys(events: Vec<TimedInputEvent>) -> Vec<TimedInputEvent> {
+    let mut out = Vec::with_capacity(events.len());
+    let mut index = 0;
+    while index < events.len() {
+        if let Some((next, text)) = take_bracketed_paste(&events, index) {
+            let arrived_at = events[index].arrived_at;
+            out.push(TimedInputEvent {
+                event: Event::Paste(text),
+                arrived_at,
+            });
+            index = next;
+            continue;
+        }
+        if let Some(next) = bracketed_start_at(&events, index) {
+            index = next;
+            continue;
+        }
+        if let Some(next) = bracketed_end_at(&events, index) {
+            index = next;
+            continue;
+        }
+        out.push(events[index].clone());
+        index += 1;
+    }
+    out
+}
+fn normalize_paste_newlines(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+fn strip_bracket_markers(text: &str) -> &str {
+    let text = text.strip_prefix("[200~").unwrap_or(text);
+    text.strip_suffix("[201~").unwrap_or(text)
+}
+fn burst_plain_text(events: &[TimedInputEvent]) -> String {
+    let mut text = String::new();
+    for ev in events {
+        if let Some(ch) = paste_body_char(&ev.event) {
+            text.push(ch);
+        }
+    }
+    text
+}
+fn clipboard_text_for_paste_match() -> Option<String> {
+    #[cfg(test)]
+    {
+        // A developer clipboard must not change key handling inside unit tests.
+        return crate::clipboard::hooked_clipboard_text().and_then(|text| text);
+    }
+    #[cfg(not(test))]
+    {
+        crate::clipboard::system_clipboard_get()
+    }
+}
+/// Multi-line clipboard text when `burst` is a prefix of it.
+/// A single `{` is not enough: that is still a keystroke. A newline or a longer run is a paste.
+fn clipboard_multiline_for_burst(burst: &str, clipboard: &str) -> Option<String> {
+    let clip = normalize_paste_newlines(clipboard);
+    if !clip.contains('\n') || clip.trim().is_empty() {
+        return None;
+    }
+    let burst = normalize_paste_newlines(burst);
+    let burst = strip_bracket_markers(&burst);
+    if burst.is_empty() {
+        return None;
+    }
+    let substantial = burst.contains('\n') || burst.chars().count() >= 8;
+    if !substantial || !clip.starts_with(burst) {
+        return None;
+    }
+    Some(clip)
+}
+/// Short burst that is the start of a multi-line clipboard. The rest may still be in flight.
+fn clipboard_burst_needs_more(events: &[TimedInputEvent]) -> bool {
+    let burst = normalize_paste_newlines(&burst_plain_text(events));
+    let burst = strip_bracket_markers(&burst);
+    if burst.is_empty() || burst.contains('\n') || burst.chars().count() >= 8 {
+        return false;
+    }
+    let Some(clip) = clipboard_text_for_paste_match() else {
+        return false;
+    };
+    let clip = normalize_paste_newlines(&clip);
+    clip.contains('\n') && !clip.trim().is_empty() && clip.starts_with(burst)
+}
+fn is_swallowed_paste_event(ev: &Event) -> bool {
+    is_paste_burst_event(ev) || is_bare_esc(ev)
+}
+/// Drop paste keys that belong to a clipboard paste already adopted.
+/// Each swallowed key extends the quiet deadline so a slow tail cannot submit.
+fn swallow_inflight_paste_keys(
+    events: &mut Vec<TimedInputEvent>,
+    swallow_until: &mut Option<std::time::Instant>,
+) {
+    let Some(mut until) = *swallow_until else {
+        return;
+    };
+    let mut kept = Vec::with_capacity(events.len());
+    let mut swallowed = false;
+    for ev in events.drain(..) {
+        if is_swallowed_paste_event(&ev.event) && ev.arrived_at <= until {
+            until = ev
+                .arrived_at
+                .checked_add(PASTE_MULTILINE_CONTINUE_TIMEOUT)
+                .unwrap_or(until);
+            swallowed = true;
+            continue;
+        }
+        kept.push(ev);
+    }
+    *events = kept;
+    if swallowed {
+        *swallow_until = Some(until);
+    } else if std::time::Instant::now() >= until {
+        *swallow_until = None;
+    }
+}
+/// Replace a multi-line key burst with one paste of the clipboard text.
+/// Returns true when the clipboard was adopted.
+fn adopt_clipboard_multiline_paste(events: &mut Vec<TimedInputEvent>) -> bool {
+    let burst = burst_plain_text(events);
+    let Some(clip) = clipboard_text_for_paste_match() else {
+        return false;
+    };
+    let Some(text) = clipboard_multiline_for_burst(&burst, &clip) else {
+        return false;
+    };
+    let arrived_at = events
+        .iter()
+        .find(|ev| is_swallowed_paste_event(&ev.event))
+        .map(|ev| ev.arrived_at)
+        .unwrap_or_else(std::time::Instant::now);
+    let mut kept = Vec::with_capacity(events.len());
+    let mut placed = false;
+    for ev in events.drain(..) {
+        if is_swallowed_paste_event(&ev.event) {
+            if !placed {
+                kept.push(TimedInputEvent {
+                    event: Event::Paste(text.clone()),
+                    arrived_at,
+                });
+                placed = true;
+            }
+            continue;
+        }
+        kept.push(ev);
+    }
+    if !placed {
+        return false;
+    }
+    *events = kept;
+    true
+}
 /// Wait [`PASTE_DETECT_TIMEOUT`] for a follow-up event.
 /// Returns `true` if a **pasteable key event** arrives within the window.
 /// Non-key events (mouse, focus, releases) are collected but do not count as paste evidence.
@@ -3519,18 +3825,27 @@ async fn detect_paste(
         _ => false,
     }
 }
-/// Collect remaining paste events using [`PASTE_CONTINUE_TIMEOUT`].
+/// Collect remaining paste events.
+/// `quiet` is the gap that ends the burst. A batch that already ends on a newline uses the longer multiline gap.
 /// Only pasteable key events extend the timeout; non-key events are collected but do not keep the loop alive.
 async fn collect_remaining_paste(
     batch: &mut Vec<TimedInputEvent>,
     input_rx: &mut tokio::sync::mpsc::UnboundedReceiver<TimedInputEvent>,
+    quiet: Duration,
 ) {
     let mut extended = 0usize;
     loop {
         if extended >= PASTE_EXTEND_MAX_EVENTS {
             break;
         }
-        match tokio::time::timeout(PASTE_CONTINUE_TIMEOUT, input_rx.recv()).await {
+        let timeout = if looks_like_incomplete_multiline_paste(batch)
+            || looks_like_open_bracketed_paste(batch)
+        {
+            PASTE_MULTILINE_CONTINUE_TIMEOUT
+        } else {
+            quiet
+        };
+        match tokio::time::timeout(timeout, input_rx.recv()).await {
             Ok(Some(ev)) => {
                 let prev_len = batch.len();
                 batch.push(ev);
@@ -3637,8 +3952,12 @@ fn is_voice_chord(ke: &KeyEvent) -> bool {
         }
     }
 }
+/// Keys in one paste burst are this close. A human Enter after typed text is slower.
+const PASTE_BURST_MAX_GAP: Duration = Duration::from_millis(20);
 /// On terminals without bracketed paste, pasted text arrives as individual key events.
 /// Enter keys mid-run would otherwise trigger "submit prompt" and split multi-line pastes.
+/// A trailing Enter in the same burst is a pasted newline, not send. Sending that first line
+/// looks like the TUI exited, and `quit` / `exit` / `:q` actually quits.
 /// **Windows only:** `>= PATH_COALESCE_THRESHOLD` events AND the assembled text starts with a drag-drop-style path anchor.
 #[cfg(test)]
 fn coalesce_rapid_keys(events: Vec<TimedInputEvent>) -> Vec<TimedInputEvent> {
@@ -3660,8 +3979,59 @@ fn coalesce_rapid_keys_since(
     events.extend(coalesce_live_keys(live_events));
     events
 }
+fn line_break_key(ev: &Event) -> bool {
+    is_paste_lf(ev)
+        || matches!(ev, Event::Key(ke)
+            if ke.kind == KeyEventKind::Press
+                && ke.code == KeyCode::Enter
+                && ke.modifiers.is_empty())
+}
+fn run_is_tight_burst(events: &[TimedInputEvent], start: usize, end: usize) -> bool {
+    events[start..end].windows(2).all(|pair| {
+        pair[1]
+            .arrived_at
+            .saturating_duration_since(pair[0].arrived_at)
+            <= PASTE_BURST_MAX_GAP
+    })
+}
+/// A bare Enter that arrives in the next drain, still inside the paste burst, must not submit.
+/// The characters were already applied; deliver the break as a one-character paste.
+fn rescue_split_paste_newline(
+    events: &mut [TimedInputEvent],
+    last_text_at: &mut Option<std::time::Instant>,
+) {
+    for ev in events.iter_mut() {
+        if line_break_key(&ev.event)
+            && last_text_at.is_some_and(|at| {
+                ev.arrived_at.saturating_duration_since(at) <= PASTE_BURST_MAX_GAP
+            })
+        {
+            ev.event = Event::Paste("\n".to_string());
+            *last_text_at = None;
+            continue;
+        }
+        if is_burst_text_press(&ev.event) {
+            *last_text_at = Some(ev.arrived_at);
+            continue;
+        }
+        if matches!(
+            &ev.event,
+            Event::Key(ke) if ke.kind == KeyEventKind::Release && !is_voice_chord(ke)
+        ) {
+            continue;
+        }
+        *last_text_at = None;
+    }
+}
+fn is_burst_text_press(ev: &Event) -> bool {
+    matches!(ev, Event::Key(ke) if ke.kind == KeyEventKind::Press && matches!(ke.code, KeyCode::Char(_) | KeyCode::Tab)
+        && (ke.modifiers.is_empty()
+            || ke.modifiers == KeyModifiers::SHIFT
+            || crate::input::key::is_altgr(ke.modifiers)))
+}
 fn coalesce_live_keys(events: Vec<TimedInputEvent>) -> Vec<TimedInputEvent> {
-    if events.len() < PASTE_COALESCE_THRESHOLD {
+    if events.len() < PASTE_COALESCE_THRESHOLD && !events.iter().any(|ev| line_break_key(&ev.event))
+    {
         return events;
     }
     let (mut has_paste, mut has_keys) = (false, false);
@@ -3694,6 +4064,7 @@ fn coalesce_live_keys(events: Vec<TimedInputEvent>) -> Vec<TimedInputEvent> {
             let arrived_at = ev.arrived_at;
             let mut text = String::new();
             let mut seen_enter = false;
+            let mut saw_char_before_first_break = false;
             let mut has_char_after_enter = false;
             let mut has_crlf = false;
             let mut prev_was_enter = false;
@@ -3708,6 +4079,8 @@ fn coalesce_live_keys(events: Vec<TimedInputEvent>) -> Vec<TimedInputEvent> {
                                 text.push(c);
                                 if seen_enter {
                                     has_char_after_enter = true;
+                                } else {
+                                    saw_char_before_first_break = true;
                                 }
                                 prev_was_enter = false;
                             }
@@ -3720,6 +4093,8 @@ fn coalesce_live_keys(events: Vec<TimedInputEvent>) -> Vec<TimedInputEvent> {
                                 text.push('\t');
                                 if seen_enter {
                                     has_char_after_enter = true;
+                                } else {
+                                    saw_char_before_first_break = true;
                                 }
                                 prev_was_enter = false;
                             }
@@ -3743,8 +4118,12 @@ fn coalesce_live_keys(events: Vec<TimedInputEvent>) -> Vec<TimedInputEvent> {
                 }
             }
             let run_len = i - run_start;
-            let multiline_paste =
-                (run_len >= PASTE_COALESCE_THRESHOLD && has_char_after_enter) || has_crlf;
+            let trailing_newline_paste = saw_char_before_first_break
+                && seen_enter
+                && run_is_tight_burst(&events, run_start, i);
+            let multiline_paste = (run_len >= PASTE_COALESCE_THRESHOLD && has_char_after_enter)
+                || has_crlf
+                || trailing_newline_paste;
             #[cfg(target_os = "windows")]
             let path_shaped_drop = run_len >= PATH_COALESCE_THRESHOLD
                 && crate::prompt_images::starts_with_drop_anchor(&text);
@@ -3995,7 +4374,9 @@ pub(crate) fn dispatch_then_forward(
                 let _ = app.welcome_prompt.handle_key(key);
             }
             Event::Paste(text) => {
-                let _ = app.welcome_prompt.handle_paste(text);
+                if !app.welcome_prompt.offer_multiline_paste(text) {
+                    let _ = app.welcome_prompt.handle_paste(text);
+                }
             }
             _ => {}
         }
@@ -4555,6 +4936,8 @@ mod tests {
         let mut csi_filter = super::super::csi_filter::CsiFragmentFilter::new();
         let mut x10_filter = super::super::x10_filter::X10ReassemblyFilter::new();
         let mut xt_filter = super::super::xt_filter::XtversionFilter::new();
+        let mut paste_burst = None;
+        let mut paste_swallow_until = None;
         let result = drain_and_process(
             TimedInputEvent::now(Event::Paste("fix the bug".into())),
             &mut input_rx,
@@ -4564,6 +4947,8 @@ mod tests {
             &mut csi_filter,
             &mut x10_filter,
             &mut xt_filter,
+            &mut paste_burst,
+            &mut paste_swallow_until,
             std::time::Instant::now(),
         )
         .await;
@@ -4602,6 +4987,8 @@ mod tests {
         let mut csi_filter = super::super::csi_filter::CsiFragmentFilter::new();
         let mut x10_filter = super::super::x10_filter::X10ReassemblyFilter::new();
         let mut xt_filter = super::super::xt_filter::XtversionFilter::new();
+        let mut paste_burst = None;
+        let mut paste_swallow_until = None;
         let result = drain_and_process(
             press(KeyCode::Char('a')),
             &mut input_rx,
@@ -4611,6 +4998,8 @@ mod tests {
             &mut csi_filter,
             &mut x10_filter,
             &mut xt_filter,
+            &mut paste_burst,
+            &mut paste_swallow_until,
             std::time::Instant::now(),
         )
         .await;
@@ -4985,6 +5374,9 @@ mod tests {
     }
     fn press(code: KeyCode) -> TimedInputEvent {
         key_event(code, KeyModifiers::NONE, KeyEventKind::Press)
+    }
+    fn timed_key(code: KeyCode, at: std::time::Instant) -> TimedInputEvent {
+        timed(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)), at)
     }
     fn release(code: KeyCode) -> TimedInputEvent {
         key_event(code, KeyModifiers::NONE, KeyEventKind::Release)
@@ -5656,11 +6048,116 @@ mod tests {
         assert_eq!(nth(&result, 0).event, Event::Paste("Hi\nBye".to_string()));
     }
     #[test]
-    fn coalesce_below_threshold_no_change() {
+    fn split_paste_enter_becomes_newline_not_submit() {
+        let start = std::time::Instant::now();
+        let mut events = vec![timed_key(
+            KeyCode::Enter,
+            start + std::time::Duration::from_millis(10),
+        )];
+        let mut last = Some(start);
+        rescue_split_paste_newline(&mut events, &mut last);
+        assert_eq!(events[0].event, Event::Paste("\n".to_string()));
+        assert!(last.is_none());
+    }
+    #[test]
+    fn split_paste_enter_after_a_pause_still_submits() {
+        let start = std::time::Instant::now();
+        let mut events = vec![timed_key(
+            KeyCode::Enter,
+            start + std::time::Duration::from_millis(80),
+        )];
+        let mut last = Some(start);
+        rescue_split_paste_newline(&mut events, &mut last);
+        assert!(matches!(events[0].event, Event::Key(ke) if ke.code == KeyCode::Enter && ke.modifiers.is_empty()));
+    }
+    #[test]
+    fn bracketed_paste_keys_become_one_paste_without_enter() {
+        let mut events = vec![
+            press(KeyCode::Esc),
+            press(KeyCode::Char('[')),
+            press(KeyCode::Char('2')),
+            press(KeyCode::Char('0')),
+            press(KeyCode::Char('0')),
+            press(KeyCode::Char('~')),
+            press(KeyCode::Char('{')),
+            press(KeyCode::Enter),
+            press(KeyCode::Char('a')),
+            press(KeyCode::Esc),
+            press(KeyCode::Char('[')),
+            press(KeyCode::Char('2')),
+            press(KeyCode::Char('0')),
+            press(KeyCode::Char('1')),
+            press(KeyCode::Char('~')),
+        ];
+        events = reassemble_bracketed_paste_keys(events);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, Event::Paste("{\na".to_string()));
+    }
+    #[test]
+    fn bare_esc_is_not_eaten_as_bracketed_paste() {
+        let events = vec![press(KeyCode::Esc), press(KeyCode::Char('x'))];
+        let out = reassemble_bracketed_paste_keys(events);
+        assert_eq!(out.len(), 2);
+        assert!(matches!(out[0].event, Event::Key(ke) if ke.code == KeyCode::Esc));
+        assert!(matches!(out[1].event, Event::Key(ke) if ke.code == KeyCode::Char('x')));
+    }
+    #[test]
+    fn clipboard_burst_with_newline_adopts_full_clipboard() {
+        let clip = "{\n    VITE_GLOB_APP_TITLE: 'srmanage',\n    VITE_GLOB_APP_SHORT_NAME: 'srmanage',\n}\n";
+        crate::clipboard::set_clipboard_probe_hook(crate::clipboard::ClipboardProbeHook {
+            text: Some(clip.to_owned()),
+            ..Default::default()
+        });
+        let mut events = vec![
+            press(KeyCode::Char('{')),
+            press(KeyCode::Enter),
+            press(KeyCode::Char(' ')),
+        ];
+        assert!(adopt_clipboard_multiline_paste(&mut events));
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, Event::Paste(clip.replace("\r\n", "\n")));
+        crate::clipboard::clear_clipboard_probe_hook();
+    }
+    #[test]
+    fn lone_brace_does_not_adopt_clipboard() {
+        crate::clipboard::set_clipboard_probe_hook(crate::clipboard::ClipboardProbeHook {
+            text: Some("{\n    VITE_GLOB_APP_TITLE: 'srmanage',\n}".to_owned()),
+            ..Default::default()
+        });
+        let mut events = vec![press(KeyCode::Char('{'))];
+        assert!(!adopt_clipboard_multiline_paste(&mut events));
+        assert!(matches!(events[0].event, Event::Key(ke) if ke.code == KeyCode::Char('{')));
+        assert!(clipboard_burst_needs_more(&events));
+        crate::clipboard::clear_clipboard_probe_hook();
+    }
+    #[test]
+    fn swallow_drops_paste_enter_inside_the_quiet_window() {
+        let start = std::time::Instant::now();
+        let mut until = Some(start + std::time::Duration::from_millis(200));
+        let mut events = vec![timed_key(
+            KeyCode::Enter,
+            start + std::time::Duration::from_millis(20),
+        )];
+        swallow_inflight_paste_keys(&mut events, &mut until);
+        assert!(events.is_empty(), "the paste's trailing Enter must not submit");
+        assert!(until.is_some());
+    }
+    #[test]
+    fn coalesce_tight_trailing_enter_is_paste_not_submit() {
         let events = vec![press(KeyCode::Char('a')), press(KeyCode::Enter)];
         let result = coalesce_rapid_keys(events);
+        assert_eq!(result.len(), 1);
+        assert_eq!(nth(&result, 0).event, Event::Paste("a\n".to_string()));
+    }
+    #[test]
+    fn coalesce_gapped_short_enter_still_submits() {
+        let start = std::time::Instant::now();
+        let events = vec![
+            timed_key(KeyCode::Char('a'), start),
+            timed_key(KeyCode::Enter, start + std::time::Duration::from_millis(50)),
+        ];
+        let result = coalesce_rapid_keys(events);
         assert_eq!(result.len(), 2);
-        assert!(matches!(nth(&result, 0).event, Event::Key(ke) if ke.code == KeyCode::Char('a')));
         assert!(matches!(nth(&result, 1).event, Event::Key(ke) if ke.code == KeyCode::Enter));
     }
     #[test]
@@ -5742,15 +6239,38 @@ mod tests {
     }
     #[test]
     fn coalesce_type_then_submit_not_coalesced() {
+        let start = std::time::Instant::now();
         let events = vec![
-            press(KeyCode::Char('a')),
-            press(KeyCode::Char('b')),
-            press(KeyCode::Char('c')),
-            press(KeyCode::Enter),
+            timed_key(KeyCode::Char('a'), start),
+            timed_key(
+                KeyCode::Char('b'),
+                start + std::time::Duration::from_millis(40),
+            ),
+            timed_key(
+                KeyCode::Char('c'),
+                start + std::time::Duration::from_millis(80),
+            ),
+            timed_key(
+                KeyCode::Enter,
+                start + std::time::Duration::from_millis(160),
+            ),
         ];
         let result = coalesce_rapid_keys(events);
         assert_eq!(result.len(), 4);
         assert!(matches!(nth(&result, 3).event, Event::Key(ke) if ke.code == KeyCode::Enter));
+    }
+    #[test]
+    fn coalesce_quit_line_with_trailing_enter_does_not_stay_a_submit() {
+        let events = vec![
+            press(KeyCode::Char('q')),
+            press(KeyCode::Char('u')),
+            press(KeyCode::Char('i')),
+            press(KeyCode::Char('t')),
+            press(KeyCode::Enter),
+        ];
+        let result = coalesce_rapid_keys(events);
+        assert_eq!(result.len(), 1);
+        assert_eq!(nth(&result, 0).event, Event::Paste("quit\n".to_string()));
     }
     #[test]
     fn coalesce_crlf_paste_ending_in_newline_is_paste() {
@@ -5780,11 +6300,29 @@ mod tests {
         assert_eq!(nth(&result, 0).event, Event::Paste("a\nb\n".to_string()));
     }
     #[test]
-    fn coalesce_lone_ctrl_j_not_after_enter_preserved() {
+    fn coalesce_tight_ctrl_j_newline_is_paste() {
         let events = vec![
             press(KeyCode::Char('a')),
             press(KeyCode::Char('b')),
             press_ctrl(KeyCode::Char('j')),
+        ];
+        let result = coalesce_rapid_keys(events);
+        assert_eq!(result.len(), 1);
+        assert_eq!(nth(&result, 0).event, Event::Paste("ab\n".to_string()));
+    }
+    #[test]
+    fn coalesce_gapped_ctrl_j_stays_a_key() {
+        let start = std::time::Instant::now();
+        let events = vec![
+            timed_key(KeyCode::Char('a'), start),
+            timed_key(
+                KeyCode::Char('b'),
+                start + std::time::Duration::from_millis(40),
+            ),
+            timed(
+                Event::Key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
+                start + std::time::Duration::from_millis(120),
+            ),
         ];
         let result = coalesce_rapid_keys(events);
         assert_eq!(result.len(), 3);
@@ -6064,7 +6602,10 @@ mod tests {
             press(KeyCode::Char('c')),
         ];
         let result = coalesce_rapid_keys(events);
-        assert_eq!(result.len(), 5);
+        assert_eq!(result.len(), 3);
+        assert_eq!(nth(&result, 0).event, Event::Paste("ab\n".to_string()));
+        assert!(matches!(nth(&result, 1).event, Event::Mouse(_)));
+        assert!(matches!(nth(&result, 2).event, Event::Key(ke) if ke.code == KeyCode::Char('c')));
     }
     #[cfg(target_os = "windows")]
     fn press_run(text: &str) -> Vec<TimedInputEvent> {

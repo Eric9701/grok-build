@@ -17,7 +17,7 @@
 
 use std::path::Path;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -688,7 +688,20 @@ pub struct PromptWidget {
     /// One-shot: the last `handle_key` accepted an @-file completion, which can shrink a long `@query` into a short ref/chip.
     /// That big shrink is NOT a user wipe, so the clear detector must skip observing it (it resyncs on the next genuine edit).
     completion_accepted: bool,
+    /// Multi-line paste held in the review box until Enter inserts it.
+    /// Newlines stay out of the composer so a pasted Enter cannot submit or quit.
+    multiline_paste: Option<MultilinePasteDraft>,
 }
+
+/// Multi-line clipboard text waiting for confirm. Enter inserts it; Esc drops it.
+struct MultilinePasteDraft {
+    text: String,
+    scroll: usize,
+    opened_at: std::time::Instant,
+}
+
+/// Ignore Enter/Esc right after the box opens so a paste's own trailing keys cannot confirm or cancel it.
+const PASTE_BOX_ARM_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// Prefix display width (`"❯ "` or `"> "`, both 2 columns).
 const PREFIX_WIDTH: u16 = crate::glyphs::PROMPT_ARROW_WIDTH;
@@ -737,6 +750,7 @@ impl PromptWidget {
             undo_tip_fire: false,
             plan_nudge_fire: false,
             completion_accepted: false,
+            multiline_paste: None,
         };
         // Same fail-closed gate as AgentView: /dashboard is hidden in
         // CommandRegistry::new until dashboard_enabled() reveals it.
@@ -747,6 +761,99 @@ impl PromptWidget {
     /// Create a new empty prompt widget (no file search; for tests/fallback).
     pub fn new() -> Self {
         Self::new_with_cwd(Path::new("."))
+    }
+
+    /// Hold multi-line text in the paste box instead of the composer.
+    /// A single line returns false and the caller inserts it immediately.
+    /// A second offer while the box is open appends.
+    pub fn offer_multiline_paste(&mut self, text: &str) -> bool {
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        if !normalized.contains('\n') || normalized.trim().is_empty() {
+            return false;
+        }
+        match &mut self.multiline_paste {
+            Some(draft) => {
+                if !draft.text.is_empty() && !draft.text.ends_with('\n') {
+                    draft.text.push('\n');
+                }
+                draft.text.push_str(&normalized);
+            }
+            None => {
+                self.multiline_paste = Some(MultilinePasteDraft {
+                    text: normalized,
+                    scroll: 0,
+                    opened_at: std::time::Instant::now(),
+                });
+            }
+        }
+        true
+    }
+
+    pub fn multiline_paste_is_open(&self) -> bool {
+        self.multiline_paste.is_some()
+    }
+
+    pub fn dismiss_multiline_paste(&mut self) {
+        self.multiline_paste = None;
+    }
+
+    /// Handle a key while the paste box is open.
+    /// Returns true only when Enter inserted the text into the composer.
+    pub fn handle_multiline_paste_key(&mut self, key: &KeyEvent) -> bool {
+        if self.multiline_paste.is_none() || key.kind == KeyEventKind::Release {
+            return false;
+        }
+        let armed = self
+            .multiline_paste
+            .as_ref()
+            .is_some_and(|draft| draft.opened_at.elapsed() >= PASTE_BOX_ARM_DELAY);
+        match key.code {
+            KeyCode::Enter if key.modifiers.is_empty() && armed => {
+                let text = self
+                    .multiline_paste
+                    .take()
+                    .map(|draft| draft.text)
+                    .unwrap_or_default();
+                let _ = self.handle_paste(&text);
+                true
+            }
+            KeyCode::Esc if key.modifiers.is_empty() && armed => {
+                self.multiline_paste = None;
+                false
+            }
+            KeyCode::Up if key.modifiers.is_empty() => {
+                if let Some(draft) = &mut self.multiline_paste {
+                    draft.scroll = draft.scroll.saturating_sub(1);
+                }
+                false
+            }
+            KeyCode::Down if key.modifiers.is_empty() => {
+                if let Some(draft) = &mut self.multiline_paste {
+                    draft.scroll = draft.scroll.saturating_add(1);
+                }
+                false
+            }
+            KeyCode::PageUp if key.modifiers.is_empty() => {
+                if let Some(draft) = &mut self.multiline_paste {
+                    draft.scroll = draft.scroll.saturating_sub(8);
+                }
+                false
+            }
+            KeyCode::PageDown if key.modifiers.is_empty() => {
+                if let Some(draft) = &mut self.multiline_paste {
+                    draft.scroll = draft.scroll.saturating_add(8);
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expire_multiline_paste_arm_for_test(&mut self) {
+        if let Some(draft) = &mut self.multiline_paste {
+            draft.opened_at = std::time::Instant::now() - PASTE_BOX_ARM_DELAY;
+        }
     }
 
     /// Propagate the resolved per-tip gates (undo tip and plan nudge) from `AppView`.
@@ -3425,8 +3532,13 @@ impl PromptWidget {
             }
         }
 
+        if let Some(draft) = self.multiline_paste.as_mut() {
+            render_multiline_paste_box(buf, &draft.text, &mut draft.scroll);
+        }
+
         // Paste preview overlay: show when cursor is on or right after a paste element
-        if style.focused
+        if self.multiline_paste.is_none()
+            && style.focused
             && let Some(overlay) = overlay_area
             && let Some(paste_text) = self.paste_element_for_preview()
         {
@@ -3787,6 +3899,58 @@ fn normalize_line_breaks(text: &str) -> String {
 
 /// Build the styled display `Line` for a paste element chip.
 ///
+/// Centered review box for a multi-line paste. Enter inserts, Esc drops.
+fn render_multiline_paste_box(buf: &mut Buffer, text: &str, scroll: &mut usize) {
+    use ratatui::widgets::{Block, Borders, Clear, Widget};
+
+    let screen = buf.area;
+    let width = ((screen.width as u32 * 4 / 5) as u16)
+        .clamp(24, 88)
+        .min(screen.width.saturating_sub(2));
+    let height = ((screen.height as u32 * 2 / 3) as u16)
+        .clamp(8, 22)
+        .min(screen.height.saturating_sub(2));
+    if width < 20 || height < 6 {
+        return;
+    }
+    let area = Rect {
+        x: screen.x + (screen.width.saturating_sub(width)) / 2,
+        y: screen.y + (screen.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    let theme = Theme::current();
+    let style = Style::default().bg(theme.paste_bg).fg(theme.paste_fg);
+    Clear.render(area, buf);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" 粘贴多行文本 ")
+        .border_style(Style::default().fg(theme.paste_fg).bg(theme.paste_bg))
+        .style(style);
+    let inner = block.inner(area);
+    block.render(area, buf);
+    if inner.width == 0 || inner.height < 2 {
+        return;
+    }
+    let body_rows = inner.height.saturating_sub(1) as usize;
+    let lines: Vec<&str> = text.lines().collect();
+    let max_scroll = lines.len().saturating_sub(body_rows);
+    *scroll = (*scroll).min(max_scroll);
+    let width_cols = inner.width as usize;
+    for (row, line) in lines.iter().skip(*scroll).take(body_rows).enumerate() {
+        let shown = crate::render::line_utils::truncate_str(line, width_cols);
+        buf.set_string(inner.x, inner.y + row as u16, shown, style);
+    }
+    let hint = "Enter 插入    Esc 取消    ↑↓ 滚动";
+    let hint = crate::render::line_utils::truncate_str(hint, width_cols);
+    buf.set_string(
+        inner.x,
+        inner.y + inner.height.saturating_sub(1),
+        hint,
+        Style::default().bg(theme.paste_bg).fg(theme.paste_dim),
+    );
+}
+
 /// Renders as: `[Pasted: N lines]`
 fn paste_chip_display(line_count: usize) -> Line<'static> {
     chip_line(format!(

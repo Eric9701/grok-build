@@ -104,6 +104,30 @@ impl AgentView {
         // Sticky status banners (`sticky_toast`) are unaffected; ephemeral tips intentionally survive typing (cleared by TTL, submit, or clear)
         self.toast = None;
 
+        // Multi-line paste sits in a review box. Enter inserts it; a bare Enter must not send the first line.
+        if self.prompt.multiline_paste_is_open()
+            && !crate::input::key::is_paste_key(key)
+            && !crate::input::key::is_inline_paste_key(key)
+        {
+            let quit = registry.matches_id(ActionId::Quit, key)
+                || key!('c', CONTROL).matches(key)
+                || key!('d', CONTROL).matches(key);
+            if quit {
+                self.prompt.dismiss_multiline_paste();
+            } else {
+                if self.prompt.handle_multiline_paste_key(key) {
+                    self.prompt.refresh_slash(&self.session.models);
+                    if let Some(eff) = self.notify_suggestion_text_changed() {
+                        self.pending_effects.push(eff);
+                    }
+                    if let Some(eff) = self.notify_plugin_cta_text_changed() {
+                        self.pending_effects.push(eff);
+                    }
+                }
+                return InputOutcome::Changed;
+            }
+        }
+
         // Any key reaching the prompt is the user interacting with it, so hand focus back from the /btw panel (its scroll keys are consumed earlier)
         self.btw_focused = false;
 
